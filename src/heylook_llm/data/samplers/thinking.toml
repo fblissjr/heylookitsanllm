@@ -1,7 +1,0 @@
-[meta]
-name = "thinking"
-description = "Anti-loop overlay for thinking mode: presence penalty only. Per-model decode tuning (temperature/top_p/top_k) comes from the model's own vendor layer -- generation_config.json on MLX, the GGUF header's general.sampling.* on gguf -- not from this sampler. Auto-applied when a request (or model config) enables thinking."
-
-[defaults]
-presence_penalty = 1.5
-enable_thinking = true

@@ -182,9 +182,9 @@ absolute home paths. The pure-function design makes this free if decided now.
 **`served_diff` MUST take validated configs, and this is a signature
 constraint rather than a caution.** Verified here after testclaude traced it:
 `effective_loader_for_config` given a RAW merged dict returns mlx-lm for every
-mlx model — all of them — because the "auto" rule needs the model to DECLARE
-vision and that declaration is derived during pydantic validation, not by the
-merge. Through `AppConfig` the same computation matches the live listing. No
+mlx model — all of them — because the "auto" rule is gated on the model
+DECLARING vision, and that declaration is materialised during pydantic
+validation, not by the merge. Through `AppConfig` the same computation matches the live listing. No
 exception, no warning: a confident wrong answer shaped exactly like a right
 one. A diff that accepted a raw dict on either side would report engine churn
 that did not happen, from the one tool whose entire value is being trusted
@@ -198,12 +198,36 @@ where a dict was. A diff that validates one snapshot and then reads the other
 from a shared structure is reading something the first call rewrote. Copy
 before validating, or build both sides from independent reads.
 
-**A residue on the resolver itself.** The models it puts on mlx-lm include the
-entries whose directories no longer exist, so it degrades to mlx-lm when it
-cannot read the model dir — a vision model whose directory has gone missing
-reports as text-only rather than as broken. The same silent-downgrade shape as
-the thin-materialization bug. Latent today (only the dead entries), owned by
-the session that maintains that resolver.
+**One cause, not two — and a claim this plan got wrong.** An earlier revision
+said the resolver "degrades to mlx-lm when it cannot read the model dir",
+citing the dead-directory entries. That is wrong on both halves and the
+correction matters, because it points the guard at a different layer.
+
+Read `resolve_effective_loader`: the vision branch is gated on the DECLARATION
+and returns the text loader BEFORE `model_type` is ever consulted. So the
+dead entries land on mlx-lm because they declare text-only, not because their
+directories are unreadable — verified, all three carry `['text']`, and none of
+them declares `modalities` in models.toml at all, so that value is the schema's
+silent fallback. (One of the three is a VL model reporting text-only.)
+
+Better still, the unreadable-directory degradation this plan claimed does not
+exist by design: the resolver's own comment says uncertainty (config.json
+unreadable, `model_type` None) TRUSTS the vision declaration rather than
+silently degrading a working VLM. The claim was not merely unobserved, it is
+contradicted by the code.
+
+So both failures are ONE: **the resolver's answer depends on `modalities`, and
+`modalities` has a silent text-only fallback.** Raw merged dict, declaration
+absent → every model reads mlx-lm. Unreadable directory, declaration
+underivable → the fallback stands and the model is silently text. Stated for
+the plan: a config in which `modalities` is absent or underivable resolves
+every model to mlx-lm, silently and without error, so a diff computed across
+such a config reports engine changes that are artefacts of the missing
+declaration rather than of the edit.
+
+That is why the constraint above is "take `AppConfig`" and not "guard the
+`model_type` read" — guarding the read catches neither path, because the
+divergence happens before it. (testclaude, 2026-09-08, measured.)
 
 **Risk to design against:** discovery is best-effort, so a scan that degrades
 between the before and after snapshots reports every discovered model as lost —
