@@ -60,10 +60,29 @@ const TYPES = {
 // other stub here delivers a whole SSE body at once -- which is exactly the
 // shape that cannot show a painter repainting over time. The streaming-cost
 // checks let that one request through to this server instead, and it writes
-// the deltas out with real delays. `drip` is mutated by the check that is
-// about to run (checks are sequential).
+// the deltas out with real delays. The check that is about to run sets it
+// through `setDrip` (checks are sequential).
+//
+// The next stream's cadence, in ONE place. `drip` is a single mutable object
+// shared by every streaming check, so a check that set only the fields it
+// cared about INHERITED the rest from whichever check ran last. That is how
+// the streaming-paint error check ended up dripping at the 4-char/25ms cadence
+// a mid-stream-interaction check had chosen -- 4 seconds to prove something
+// about page errors, a cadence it never asked for. `setDrip` restores every
+// field before applying the overrides, so a check declares its whole cadence
+// or gets the fast default, and the hand-written "put it back for the next
+// check" lines that used to trail these checks are gone.
+const DRIP_DEFAULTS = {
+  text: '', chunkChars: 8, delayMs: 4, rowId: 'mdrip', position: 2,
+  tailPauseMs: 0, omitSaved: false, progress: [], progressDelayMs: 0,
+};
+
 function serveV3() {
-  const drip = { text: '', chunkChars: 8, delayMs: 4, rowId: 'mdrip', position: 2, tailPauseMs: 0, omitSaved: false, progress: [], progressDelayMs: 0 };
+  const drip = { ...DRIP_DEFAULTS, progress: [] };
+  // Mutates in place: streamDrip reads `drip` at REQUEST time, so the object
+  // identity has to survive. `progress` gets a fresh array so a default is
+  // never handed out shared.
+  const setDrip = (over = {}) => Object.assign(drip, DRIP_DEFAULTS, { progress: [] }, over);
   const server = http.createServer(async (req, res) => {
     if (/\/v1\/conversations\/[^/]+\/generate$/.test(req.url) && req.method === 'POST') {
       await streamDrip(req, res, drip);
@@ -81,7 +100,7 @@ function serveV3() {
     res.end(fs.readFileSync(file));
   });
   return new Promise((resolve) => {
-    server.listen(0, () => resolve({ server, base: `http://127.0.0.1:${server.address().port}`, drip }));
+    server.listen(0, () => resolve({ server, base: `http://127.0.0.1:${server.address().port}`, drip, setDrip }));
   });
 }
 
@@ -738,7 +757,7 @@ const thumbCount = (page) => page.evaluate(
   () => document.querySelectorAll('.chat__attach .attach-thumb').length);
 
 async function main() {
-  const { server, base, drip } = await serveV3();
+  const { server, base, setDrip } = await serveV3();
   const browser = await launchBrowser();
   const suite = new Suite('render');
 
@@ -1511,6 +1530,33 @@ async function main() {
       }, PRESET.nameInput, name);
       await settle(guard.page);
     };
+    // Clear a pending arm without waiting out armedConfirm's real timer.
+    // These checks share one page in a chain, so several need a KNOWN
+    // disarmed start -- and sleeping 8.2s to arrange it cost five checks
+    // 41 seconds, 39% of this suite's entire runtime, to set up state that is
+    // not what any of them is testing. `armedConfirm` exposes `disarm` on the
+    // button node for exactly this. It must reach EVERY armed control in the
+    // section: Apply, Save and Del each own their own arm and their own
+    // timer, so disarming only the one the next check clicks leaves the
+    // others carrying whatever the last check armed. The timer itself is
+    // checked once, on its own, at the foot of this block.
+    //
+    // It COUNTS what it disarmed and throws on zero. An `$$eval` over an empty
+    // NodeList is a silent no-op, and `disarm?.()` optional-chains away on a
+    // node that is not an armedConfirm button -- so a markup change would turn
+    // this into a helper that does nothing, and its callers would go on
+    // passing: they mostly assert `puts.length === 0`, which is exactly what
+    // an unexpectedly-ARMED button produces. Green-when-broken, in the
+    // direction the checks cannot see.
+    const resetArms = async () => {
+      const cleared = await guard.page.$$eval('.drawer--open .preset-section button',
+        (els) => els.filter((el) => typeof el.disarm === 'function')
+          .map((el) => { el.disarm(); return true; }).length);
+      assert(cleared > 0,
+        'resetArms found no armedConfirm buttons -- the selector or the markup moved, '
+        + 'and every check that resets through it is now inheriting arms silently');
+      await settle(guard.page);
+    };
     // Counts BOTH preset writes, not just PUT. A check asserting "zero
     // requests" must not be blind to the shape where the save landed as a
     // CREATE -- a name absent from the local list makes save() POST, and a
@@ -1599,7 +1645,7 @@ async function main() {
       // The refusal used to force a drawer rebuild, which replaces the section
       // -- so the name was gone (and on a phone the keyboard closed) at the
       // exact moment the user was told to go do something else with it.
-      await sleep(8200);
+      await resetArms();
       await typePresetName('owned');
       await guard.page.click(PRESET.saveNewBtn);
       await settle(guard.page);
@@ -1615,7 +1661,7 @@ async function main() {
       // path to an overwrite any more. Save as new creates or refuses; only
       // Update (beside the select, under the preview) overwrites, and only
       // ever the preset it is showing.
-      await sleep(8200);
+      await resetArms();
       await typeDocPrompt('a prompt that is not what pristine stores');
       await selectPreset('other');          // Update is aimed at "other"
       await typePresetName('pristine');     // ...and the name box names another
@@ -1664,7 +1710,7 @@ async function main() {
       // previous check leaves the button armed, and letting the feature under
       // test be what clears it makes the first assertion fail with a message
       // about arming when the real regression is in cancelling.
-      await sleep(8200); // armedConfirm's own timeout
+      await resetArms();
       assert((await saveLabel()) === 'Save', `Save was still armed at the start of the check: ${await saveLabel()}`);
       await typeDocPrompt('a prompt that differs from both');
       await selectPreset('owned');
@@ -1685,7 +1731,7 @@ async function main() {
       // clear the box -- the second click used to fire whatever the button was
       // now aimed at, blanking the preset with no confirm and skipping the
       // blanking guard entirely.
-      await sleep(8200);
+      await resetArms();
       await typeDocPrompt('text that will be cleared in a moment');
       await selectPreset('owned');
       let writes = await clickSave();
@@ -1702,7 +1748,7 @@ async function main() {
       // Ordinary traffic: nudge a sampler, Save it back, prompt untouched.
       // Nothing is at stake, so an arm here is pure click-through training --
       // the failure this whole release is about.
-      await sleep(8200);
+      await resetArms();
       await typeDocPrompt('STABLE PRESET PROMPT'); // exactly what "stable" stores
       await selectPreset('stable');
       const writes = await clickSave();
@@ -1768,6 +1814,27 @@ async function main() {
       line = await drift();
       assert(/^Prompt and settings differ/.test(line), `both edited reads ${JSON.stringify(line)}`);
       await setSampler('temperature', ''); // leave the panel as we found it
+    });
+
+    await suite.check('an arm expires on its own after the confirm window', async () => {
+      // The ONE place the 8s timer is exercised, and the reason every other
+      // check in this block resets with `resetArms()` instead of sleeping:
+      // five of them did, at 8.2s each, and the coverage they bought was
+      // incidental to what they were about.
+      //
+      // What is at stake is honesty, not safety -- armedConfirm's `target()`
+      // already makes a stale arm refuse to fire, so the timer only clears a
+      // button still reading "Overwrite prompt?" while aimed elsewhere. That
+      // is worth one slow check and not five.
+      await resetArms();
+      await typeDocPrompt('a prompt that differs from what "owned" stores');
+      await selectPreset('owned');
+      const writes = await clickSave();
+      assert(writes.length === 0, 'the first Save should have armed');
+      assert((await saveLabel()) !== 'Save', 'the first Save did not visibly arm');
+      await sleep(8200); // armedConfirm's own 8s window, plus slack
+      assert((await saveLabel()) === 'Save',
+        `the arm outlived its window and still reads ${JSON.stringify(await saveLabel())}`);
     });
 
     await suite.check('no uncaught page errors (preset guard)', () => {
@@ -2478,9 +2545,7 @@ async function main() {
       // A rebuild-the-subtree painter removes EVERY child on every paint; an
       // incremental one removes only the tail. The largest single removal is
       // what separates them, and it does not depend on timing.
-      drip.text = STREAM_DOC;
-      drip.chunkChars = 6;
-      drip.delayMs = 3;
+      setDrip({ text: STREAM_DOC, chunkChars: 6, delayMs: 3 });
       const st = await openChat(browser, base, { dripGenerate: true });
       await st.page.evaluate(() => {
         window.__paint = { records: 0, maxRemoved: 0, maxChildren: 0 };
@@ -2516,11 +2581,10 @@ async function main() {
       // the line counts it up; a delta clears it like it clears the wait
       // line, because the progress text BECOMES the wait line -- a zero-token
       // completion must not strand "Reading the prompt…" on screen either.
-      drip.text = 'hello there world';
-      drip.chunkChars = 8;
-      drip.delayMs = 5;
-      drip.progress = [[512, 4096], [4096, 4096]];
-      drip.progressDelayMs = 200;
+      setDrip({
+        text: 'hello there world', chunkChars: 8, delayMs: 5,
+        progress: [[512, 4096], [4096, 4096]], progressDelayMs: 200,
+      });
       const st = await openChat(browser, base, { dripGenerate: true });
       await startSend(st.page, 'go');
       let seen = '';
@@ -2535,8 +2599,6 @@ async function main() {
       assert(!/Reading the prompt/.test(after), `the progress line outlived the stream: ${JSON.stringify(after)}`);
       assert(st.pageErrors.length === 0, `page errors: ${st.pageErrors.join(' | ')}`);
       await st.page.close();
-      drip.progress = [];
-      drip.progressDelayMs = 0;
     });
 
     await suite.check('switching MODELS mid-run says the answer survives, never "Stopped"', async () => {
@@ -2551,9 +2613,7 @@ async function main() {
       // tests/smoke/). Since the client now believes the SERVER over its own
       // proxies -- correctly -- the stub has to report what a real one does or
       // this check tests the wrong world.
-      drip.text = STREAM_DOC;
-      drip.chunkChars = 4;
-      drip.delayMs = 25;
+      setDrip({ text: STREAM_DOC, chunkChars: 4, delayMs: 25 });
       const away = await openChat(browser, base, {
         dripGenerate: true, secondModel: { id: 'text-model', caps: [] },
       });
@@ -2578,9 +2638,7 @@ async function main() {
       // Different path: finishGenerate early-returns once activeId has moved,
       // so selectConversation has to say this itself. Its own boot, because
       // the check above leaves the composer in its remote-generating state.
-      drip.text = STREAM_DOC;
-      drip.chunkChars = 4;
-      drip.delayMs = 25;
+      setDrip({ text: STREAM_DOC, chunkChars: 4, delayMs: 25 });
       const swap = await openChat(browser, base, {
         dripGenerate: true, secondModel: { id: 'text-model', caps: [] },
       });
@@ -2618,9 +2676,7 @@ async function main() {
       //      a narrow timing bug into a certain one.
       //
       // Hence "and keeps it": the second assertion is the load-bearing one.
-      drip.text = STREAM_DOC;
-      drip.chunkChars = 4;
-      drip.delayMs = 25;
+      setDrip({ text: STREAM_DOC, chunkChars: 4, delayMs: 25 });
       const sw = await openChat(browser, base, {
         dripGenerate: true, secondModel: { id: 'text-model', caps: [] },
       });
@@ -2674,9 +2730,7 @@ async function main() {
       // Only a DELAYED answer can show the difference. Dispatch order was
       // already stop-then-delete; what changed is whether the second waits for
       // the first's response.
-      drip.text = STREAM_DOC;
-      drip.chunkChars = 4;
-      drip.delayMs = 25;
+      setDrip({ text: STREAM_DOC, chunkChars: 4, delayMs: 25 });
       const del = await openChat(browser, base, { dripGenerate: true });
       del.store.remote.stopDelayMs = 400;
       await startSend(del.page, 'go');
@@ -2706,9 +2760,7 @@ async function main() {
       // the run is over and "the reply keeps generating" would be a fresh
       // false claim in the opposite direction. The client derives this from
       // the server's own answer rather than from `aborted`.
-      drip.text = STREAM_DOC;
-      drip.chunkChars = 4;
-      drip.delayMs = 25;
+      setDrip({ text: STREAM_DOC, chunkChars: 4, delayMs: 25 });
       const idle = await openChat(browser, base, {
         dripGenerate: true, secondModel: { id: 'text-model', caps: [] },
       });
@@ -2740,9 +2792,11 @@ async function main() {
       // reported as "Stopped -- partial response saved.", with the token
       // line lost. Two independent reviews found it; this is the check that
       // keeps it shut.
-      drip.text = STREAM_DOC;
-      drip.chunkChars = 4;
-      drip.delayMs = 20;
+      // Fast enough not to dominate the suite, slow enough that the Stop
+      // below lands INSIDE the stream -- which is the whole arrangement. It
+      // fails loudly if it ever does not: the Stop button is gone once the
+      // stream ends, and the click evaluate throws rather than passing.
+      setDrip({ text: STREAM_DOC, chunkChars: 8, delayMs: 10 });
       const late = await openChat(browser, base, { dripGenerate: true });
       await startSend(late.page, 'go');
       await waitFor(() => streaming(late.page), { timeout: 8000, message: 'the stream never started' });
@@ -2762,9 +2816,7 @@ async function main() {
       // Deltas arrive far faster than anyone reads. A per-frame painter paints
       // once per delta (they are slower than a frame); a rate-limited one
       // paints on the order of duration/PAINT_INTERVAL_MS.
-      drip.text = STREAM_DOC;
-      drip.chunkChars = 6;
-      drip.delayMs = 3;
+      setDrip({ text: STREAM_DOC, chunkChars: 6, delayMs: 3 });
       const st = await openChat(browser, base, { dripGenerate: true });
       await st.page.evaluate(() => {
         window.__rate = { paints: 0, deltas: 0, start: performance.now(), end: 0 };
@@ -2795,16 +2847,13 @@ async function main() {
     await suite.check('the streamed message matches a whole-document render', async () => {
       // Speed is worthless if the seam shows. What was on screen at the last
       // paint must equal what a single render of the same text produces.
-      drip.text = STREAM_DOC;
-      drip.chunkChars = 5;
-      drip.delayMs = 2;
-      drip.tailPauseMs = 400; // let the last rate-limited paint land
-      // A REALISTIC tail position, overriding the stub default of 2. That
+      // tailPauseMs: let the last rate-limited paint land.
+      // position: a REALISTIC tail, overriding the stub default of 2. That
       // default makes adoptSavedRows truncate the mirror from 32 rows to 3 at
       // stream end, and the resulting collapse is a harness artifact that
       // masks the bug this check is for: measured, the real strand is caught
       // ~17% of the time at position 2 and ~79% at a realistic append.
-      drip.position = 31;
+      setDrip({ text: STREAM_DOC, chunkChars: 5, delayMs: 2, tailPauseMs: 400, position: 31 });
       const st = await openChat(browser, base, { dripGenerate: true });
       await st.page.evaluate(() => {
         window.__last = '';
@@ -2824,7 +2873,6 @@ async function main() {
         return el.innerHTML;
       }, base, STREAM_DOC);
       await st.page.close();
-      drip.tailPauseMs = 0;
       if (got !== want) {
         // Report WHERE they diverge -- the heads are identical for hundreds of
         // characters, so a head-of-string dump names nothing.
@@ -2845,10 +2893,11 @@ async function main() {
       // handful across a whole generation, so the flag went stale exactly here.
       // On a phone the keyboard resizes the viewport constantly, so this is the
       // common case, not an exotic one.
-      drip.text = STREAM_DOC;
-      drip.chunkChars = 6;
-      drip.delayMs = 7;
-      drip.tailPauseMs = 400;
+      // position 31 is stated rather than inherited: this check ran at the
+      // realistic tail the check above sets, and the reset that used to sit at
+      // its foot was handing 2 back to the NEXT check. Same value, now said
+      // out loud -- a scroll check wants a thread long enough to scroll.
+      setDrip({ text: STREAM_DOC, chunkChars: 6, delayMs: 7, tailPauseMs: 400, position: 31 });
       const st = await openChat(browser, base, { dripGenerate: true });
       await st.page.setViewport({ width: 390, height: 844 });
       await startSend(st.page);
@@ -2872,16 +2921,12 @@ async function main() {
              return `the view stranded ${at.height - at.top - at.client}px above the tail after a mid-stream resize`;
            } }).then((r) => r.g);
       await st.page.close();
-      drip.tailPauseMs = 0;
-      drip.position = 2;
       assert(gap < 120, `settled ${gap}px above the tail`);
     });
 
     await suite.check('a reader who scrolls up mid-stream is left alone', async () => {
       // The other half of the same flag: it must also go FALSE and stay false.
-      drip.text = STREAM_DOC;
-      drip.chunkChars = 6;
-      drip.delayMs = 7;
+      setDrip({ text: STREAM_DOC, chunkChars: 6, delayMs: 7 });
       const st = await openChat(browser, base, { dripGenerate: true });
       await startSend(st.page);
       await sleep(300);
@@ -2949,13 +2994,10 @@ async function main() {
       // STILL GENERATING. Since a run outlives the response that started it,
       // the second is now the common one -- and announcing "Recovered what the
       // server saved" there states that a partial answer is the whole one.
-      drip.text = STREAM_DOC;
       // Slow enough that the streaming node is OBSERVABLE: at 40 chars/1ms the
       // whole stream finished inside one poll interval and startSend timed out
       // waiting for a node that had already come and gone.
-      drip.chunkChars = 8;
-      drip.delayMs = 8;
-      drip.omitSaved = true;
+      setDrip({ text: STREAM_DOC, chunkChars: 8, delayMs: 8, omitSaved: true });
       const dead = await openChat(browser, base, { dripGenerate: true });
       await watchStatus(dead.page);
       await startSend(dead.page);
@@ -2970,7 +3012,6 @@ async function main() {
         () => [...document.querySelectorAll('.chat__composer button')]
           .find((b) => b.textContent === 'Stop' || b.textContent === 'Send')?.textContent);
       await dead.page.close();
-      drip.omitSaved = false;
       assert(!seen.some((t) => /Recovered what the server saved/.test(t)),
         `claimed recovery while the server was still generating: ${JSON.stringify(seen)}`);
       assert(seen.some((t) => /[Ss]till generating/.test(t)),
@@ -2992,9 +3033,8 @@ async function main() {
       // check has to be aimed there.
       // Long enough to be OBSERVABLE: startSend waits to SEE a streaming node,
       // and a stream that finishes inside one poll interval never shows one.
-      drip.text = 'x'.repeat(400);         // run 1: brief, and no heylook_saved
-      drip.chunkChars = 8; drip.delayMs = 8;
-      drip.omitSaved = true;
+      // run 1: brief, and no heylook_saved
+      setDrip({ text: 'x'.repeat(400), chunkChars: 8, delayMs: 8, omitSaved: true });
       const sup = await openChat(browser, base, { dripGenerate: true });
       await startSend(sup.page);
       // Set AFTER the send so only the resync GET that FOLLOWS this run is
@@ -3005,8 +3045,7 @@ async function main() {
 
       // Run 2 must still be going when run 1's terminal path resumes, or the
       // check proves nothing -- so make it long and slow.
-      drip.text = 'x'.repeat(1200); drip.chunkChars = 8; drip.delayMs = 25;
-      drip.omitSaved = false;
+      setDrip({ text: 'x'.repeat(1200), chunkChars: 8, delayMs: 25 });
       await startSend(sup.page, 'second');
       // The window must still be OPEN, or this proves nothing. `streaming()`
       // going false is not evidence that run 1 is parked on the held GET: the
@@ -3024,7 +3063,6 @@ async function main() {
       const seen = await statusLog(sup.page);
       const live = await streaming(sup.page);
       await sup.page.close();
-      drip.omitSaved = false;
       // Non-vacuous: if run 2 had already finished, its OWN completion line
       // would be the one carrying tokens and the assertion below would be
       // meaningless.
@@ -3050,8 +3088,10 @@ async function main() {
     });
 
     await suite.check('no uncaught page errors (streaming paint)', async () => {
+      // The default cadence, said out loud. This check used to set `text` and
+      // nothing else, inheriting whatever the check before it left behind.
+      setDrip({ text: STREAM_DOC, chunkChars: 8, delayMs: 6 });
       const st = await openChat(browser, base, { dripGenerate: true });
-      drip.text = STREAM_DOC;
       await sendAndWait(st.page);
       const errs = st.pageErrors.slice();
       await st.page.close();

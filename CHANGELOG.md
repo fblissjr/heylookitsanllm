@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.20]
+
+### Changed
+
+- **`bun run e2e:render` runs in ~70s instead of ~112s, with one more check
+  than before.** Measured, not estimated: the suite already prints per-check
+  timings, and nine checks of 114 held 65% of the wall clock while 67 of them
+  held 2.7s between them. No check's subject changes; the timer coverage that
+  was incidental to five of them becomes one check of its own.
+
+  Five preset-guard checks opened with `sleep(8200)` -- 41 seconds, 39% of the
+  whole suite -- purely to wait out `armedConfirm`'s 8s timer so each started
+  from a known-disarmed state. `armedConfirm` exposes `disarm` on the button
+  node for exactly that, so they now call a `resetArms()` helper that disarms
+  every control in the section (Apply, Save and Del each own a timer; the old
+  sleep expired all three, and a helper aimed at one would have left the
+  others armed). The timer's own coverage was incidental to five checks about
+  something else; it is now one named check that spends the 8.2s deliberately.
+  That check was run against a deliberately lengthened timeout and was the
+  only one of the 115 to go red, which also establishes that nothing else in
+  the suite still leans on the timer.
+
+- **The streaming stub's cadence is declared per check rather than inherited.**
+  `drip` is one mutable object shared by every streaming check, so a check
+  setting only the fields it cared about picked up the rest from whoever ran
+  last. `no uncaught page errors (streaming paint)` set `text` alone and so
+  ran at the 4-char/25ms cadence a mid-stream-interaction check had chosen --
+  four seconds to prove something about page errors. `setDrip()` restores
+  every field from one `DRIP_DEFAULTS` before applying overrides, which also
+  retires the hand-written "put it back for the next check" lines that used to
+  trail these checks (one of which was resetting a field two checks after it
+  was set). Where inheritance was load-bearing, the inherited value is now
+  stated: the mid-stream resize check says `position: 31` rather than picking
+  it up from the check above.
+
+- One check's drip was genuinely slower than its arrangement needs and was
+  retimed: `a Stop that lands after the run finished` (6.1s -> 2.1s). Its
+  requirement -- the Stop lands inside the stream -- fails loudly if the
+  margin is ever wrong, because the button is gone once the stream ends.
+  The checks whose comments say the slowness is load-bearing (`a stream that
+  dies mid-run` outlasting the client's 1s/2.5s recovery backoff, and the
+  superseded-stream window) were left alone.
+
+  Three consecutive runs: 115/115 each. Per-check diff against the baseline:
+  the only checks that moved by more than 200ms are the seven changed here.
+
+### Fixed
+
+- `tests/e2e/README.md` described the render suite as taking "a few seconds".
+
 ## [2.0.19]
 
 ### Added

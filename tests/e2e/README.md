@@ -31,7 +31,7 @@ bun install          # first time only
 bun run e2e          # both server-driven suites (chat + pages)
 bun run e2e:chat     # chat suite only
 bun run e2e:pages    # pages suite only
-bun run e2e:render   # render suite -- no server, no model, a few seconds
+bun run e2e:render   # render suite -- no server, no model, ~70s
 bun run e2e:ios      # iOS Simulator keyboard check -- real WebKit; UNRUN, see below
 ```
 
