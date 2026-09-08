@@ -158,8 +158,9 @@ def main():
     )
     # (--interactive retired 2026-07-28 with config_tui: per-model sampler/KV
     # customization at import is dead under derive-at-load thin entries --
-    # use --override/--sampler flags or edit models.toml; the Wave 4 admin
-    # CRUD is the interactive surface.)
+    # use --override or edit models.toml; the Wave 4 admin CRUD is the
+    # interactive surface. --sampler went with the named-sampler system in
+    # v2.0.30.)
 
     # Service command - manage background service (macOS/Linux)
     service_parser = subparsers.add_parser(

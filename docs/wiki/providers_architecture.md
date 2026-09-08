@@ -117,7 +117,7 @@ Audio towers are stripped at load on the MLX path, so `input_audio` content part
 - Communicates over localhost HTTP via Server-Sent Events (SSE).
 - Uses `-np 1` with process-level FIFO queue synchronization.
 - Pre-splits reasoning traces via `reasoning_content`.
-- Implements a three-way chat template ladder.
+- Implements the chat template ladder: explicit path, then the operator override beside the weights, then the publisher sidecar, then the GGUF-embedded template.
 
 *(For the complete deep dive on building `llama-server`, process lifecycle, CLI flags, and parameter resolution, see [**Llama-Server & GGUF Deep Dive**](./llama_server_build_and_spawn.md).)*
 

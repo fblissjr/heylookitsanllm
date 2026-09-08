@@ -98,10 +98,13 @@ def resolve_effective_sampling(request: Any, model_config: dict,
       2.  Model sampler fields from models.toml.
       3.  Request explicit fields -- always win.
 
-    THREE layers, down from six. The two named-sampler layers went with the
-    bundled registry (v2.0.30); the thinking anti-loop overlay went in
-    v2.0.32. `enable_thinking` is still RESOLVED here -- both engines must
-    read the same bool -- it just no longer drags a sampler change with it.
+    The layers are the ones enumerated above and no others. The named-sampler
+    layers went with the bundled registry (v2.0.30); the thinking anti-loop
+    overlay went in v2.0.32. `enable_thinking` is still RESOLVED here -- both
+    engines must read the same bool -- it just no longer drags a sampler change
+    with it. (No count here on purpose: the same cascade was described with two
+    different totals in two files on the day the layers were removed, which is
+    the drift the enumeration above cannot have.)
 
     Nothing is applied now that the model did not ask for: the values come
     from the model's own files, its models.toml entry, or the request.

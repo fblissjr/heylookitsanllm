@@ -77,7 +77,7 @@ A foundational design decision in `heylookitsanllm` is how providers are hosted:
 
 ### Why Out-of-Process `llama-server`?
 1. **Crash Isolation**: a memory fault, invalid GGUF tensor format, or Metal shader abort inside llama.cpp crashes only the child process, leaving the FastAPI backend alive to report it. How it surfaces depends on whether headers have gone out: a **non-streaming** request raises and becomes an HTTP 500; a **streaming** one is already past its 200, so the failure arrives as an in-band SSE `error` event, never as a status code. A 503 is *not* a crash outcome -- that code belongs to the gate's backpressure contract (§3.1) and to an uninitialized database.
-2. **Deterministic Cleanup & LRU**: when `ModelRouter` unloads a model (LRU eviction or idle timeout), it issues `SIGTERM` to the `llama-server` process **group**, escalating to `SIGKILL` if that is ignored, and the OS reclaims the process's memory on exit. Note the asymmetry with MLX: `MLXProvider.unload()` waits for in-flight generations *and* gate waiters (30s cap), because `_active_generations` is MLX-local; the gguf unload is a signal to a subprocess with no such wait.
+2. **Deterministic Cleanup & LRU**: when `ModelRouter` unloads a model (LRU eviction or idle timeout), it issues `SIGTERM` to the `llama-server` process **group**, escalating to `SIGKILL` if that is ignored, and the OS reclaims the process's memory on exit. Note the asymmetry with MLX: `MLXProvider.unload()` waits for in-flight generations *and* gate waiters (30s cap), because `_active_generations` is MLX-local. The gguf unload never waits for in-flight *requests* -- SIGTERM goes out regardless -- but it does wait for the process to exit before escalating, so it is not a bare signal either.
 3. **No llama.cpp C-extension in the Python process**: nothing links llama.cpp into the backend, so there are no CFFI/pybind11 build conflicts or GIL interactions from *it*. The environment does ship other native extensions (MLX, DuckDB); the claim is scoped to llama.cpp.
 
 ---
@@ -127,7 +127,7 @@ heylookitsanllm/
 │   ├── ram_fit.py               # Model sizing vs the live Metal working set
 │   ├── gguf_metadata.py         # Zero-dependency GGUF header reader
 │   ├── reasoning_parser.py      # Routing parsers + the StripSpecials wrapper
-│   ├── samplers.py              # Bundled sampler registry & the resolution cascade
+│   ├── samplers.py              # The sampler resolution cascade
 │   ├── observability.py         # Single JSONL ingestion path (opt-in, default off)
 │   ├── toml_comments.py         # Comment-preserving models.toml writes
 │   ├── auth.py                  # Optional admin-token gate ($HEYLOOK_ADMIN_TOKEN)

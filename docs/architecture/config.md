@@ -184,10 +184,10 @@ implementation used by BOTH providers (`MLXProvider._apply_model_defaults`
 wraps it to add the cached vendor-layer read and MLX runtime-default fields;
 `LlamaServerProvider._build_payload` calls it directly).
 
-**Four layers** since v2.0.30, each overriding only the fields it sets. The
-shape of the answer is: *the model's own settings, then this model's overrides,
-then what the request said outright* -- with a hardcoded fallback only where
-all three are silent.
+The layers below are the whole cascade since v2.0.30, each overriding only the
+fields it sets. The shape of the answer is: *the model's own settings, then this
+model's overrides, then what the request said outright* -- with a hardcoded
+fallback only where all three are silent.
 
 1. **Floor** -- deliberately small, and three different KINDS of value that
    are kept apart in `samplers.py` because they rot differently:

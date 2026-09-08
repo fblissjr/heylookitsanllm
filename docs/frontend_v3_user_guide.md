@@ -42,8 +42,9 @@ and the only controls on screen are the ones you changed. Presets still store "a
 for a key you never set, and auto still means "use whatever this model resolves to" —
 that is why one preset behaves correctly across models with different defaults. A few
 fields have no server-side answer (Seed, for one) and honestly still read `auto`.
-Turning Thinking on or off changes what some of these show, because the thinking
-overlay adjusts the presence penalty.
+Turning Thinking on or off does not change any of these numbers. It did until
+v2.0.32, when enabling thinking also applied a presence penalty; that overlay was
+removed, and the switch now travels alone.
 
 Two consequences worth internalising:
 

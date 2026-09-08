@@ -170,7 +170,7 @@ pass `self.thinking_capable`, admin passes `"thinking" in caps`); from v1.50.0 u
 OFF everywhere, chosen when the UI could only send true-or-absent. `samplers.thinking_default()`
 is the admin row's `thinking_default` and must stay the cascade's own answer, never a
 re-derivation. `samplers.sampler_defaults()` (v2.0.21) is its SIBLING under the same rule
-and reports EVERY key: `{"off": {...}, "on": {...}}` on the admin row and `/v1/models`,
+and reports EVERY key on the admin row and `/v1/models`,
 which v3 prints as the placeholder in a blank sampler field so "auto" stops hiding the
 number in force. ONE FLAT BAG since v2.0.33, and its `enable_thinking` equals
 `thinking_default` BY CONSTRUCTION -- one cascade call feeds both, so a second code path
@@ -270,9 +270,10 @@ v1.79.67 (lifespan, the MODEL_BUSY handler, CORS, router mounting): every route 
 a `*_api.py` router bar one (`rlm.py` carries its own), the OpenAPI narrative is `openapi_doc.py`, the static frontend
 is `frontend_static.py` (extracted v1.79.77; there is deliberately NO CATCH-ALL --
 see the frontend section), root is gone
-(v1.79.76: the frontend serves `/`), and the guards the inference routes share are `request_guards.py`
-(they were lazy in-function imports from api.py before, to dodge the cycle api.py
-creates by importing every router). A route added to api.py itself is the wrong place.
+(v1.79.76: the frontend serves `/`). The shared inference-route guards lived in
+`request_guards.py` until v2.0.30 removed it with the named-sampler system; what
+remains of that concern is a wire-model validator on `MessageCreateRequest`.
+A route added to api.py itself is the wrong place.
 ONE INFERENCE WIRE (v1.79.66): `/v1/messages` (Anthropic Messages-conformant plus the
 documented heylook extensions) and the conversation generate route that shares its
 grammar. The OpenAI-compatible `/v1/chat/completions` + `/v1/batch/chat/completions`
@@ -517,8 +518,10 @@ section the bar gets no events from, so "arm, clear the prompt box, confirm"
 blanked a preset straight past the blanking guard and no `disarm()` call in the
 bar could have seen it. `disarm()` stays for VISIBLE honesty (a button still
 reading "Overwrite prompt?" while aimed elsewhere is a lie even once clicking
-it is safe), and each control disarms only what IT re-aims: the select moves
-all three buttons, the name box moves Save alone. The reason that click happened at
+it is safe), and each control disarms only what IT re-aims: the select is the
+only control that re-aims, so it is the only one that disarms, and the name box
+disarms nothing because it feeds Save as new, which is never armed and cannot
+overwrite anything. The reason that click happened at
 all is structural: the drawer renders the preset section directly above the
 per-document prompt box, which shows the DOCUMENT's prompt whatever the select
 says, so every preset looked like it held the same text. The section now carries
@@ -751,9 +754,9 @@ in git history; a contract test pins that `/v2` stays 404.)
   `SamplerRegistry`, `ChatRequest.sampler`, models.toml `default_sampler`,
   `/v1/admin/models/samplers`, `/v1/capabilities.samplers`, the
   `bulk-default-sampler` route, `request_guards.py` and the `--sampler`/
-  `--preset`/`--profile` CLI arguments, ~460 lines. It shipped GENERIC guesses
+  `--preset`/`--profile` CLI arguments. It shipped GENERIC guesses
   applied to every model, which is the opposite of what the vendor layer does;
-  three of its five entries had no consumer at all, `thinking` was provably a
+  most of its entries had no consumer at all, `thinking` was provably a
   no-op because the cascade hardcoded the same constant as a fallback, and
   `balanced` -- the import default -- carried `temperature = 0.7`, the value
   the owner had overturned when raising the floor to 1.0. The FRONTEND NEVER

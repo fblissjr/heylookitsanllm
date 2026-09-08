@@ -144,7 +144,7 @@ sequenceDiagram
     Router->>Provider: load_model()
     Provider->>Provider: Resolve binary (config server_binary > $HEYLOOK_LLAMA_SERVER > canonical build)
     Provider->>Provider: Pick port (ephemeral unless configured)
-    Provider->>Provider: Resolve chat template (three-way ladder), ONCE
+    Provider->>Provider: Resolve chat template (ladder), ONCE
     Provider->>Provider: Pre-flight model, mmproj, draft, template files
     Provider->>Provider: Build argv (auto micro-batch sized here)
     Provider->>Subproc: subprocess.Popen(args, start_new_session=True)
@@ -253,30 +253,38 @@ Points to the multimodal projector sidecar containing visual/audio perception we
 - Multi-quant GGUF releases (such as Unsloth or Google Gemma quants) ship projectors alongside model shards.
 - Precision preference: `mmproj-f16.gguf` > `bf16` > `f32`.
 
-#### The Three-Way Chat Template Ladder (`--chat-template-file <path>`)
-Prompt templates dictate token formatting (e.g. system prompts, user turns, `<think>` boundaries). Spawn-time template resolution follows a **three-way ladder**:
+#### The Chat Template Ladder (`--chat-template-file <path>`)
+Prompt templates dictate token formatting (e.g. system prompts, user turns, `<think>` boundaries). Spawn-time resolution walks these sources in order, highest first, and every spawn logs which one won:
 
 ```mermaid
 flowchart TD
     Start["Template Resolution (_resolve_chat_template)"] --> CheckExplicit{"Explicit chat_template_path configured?"}
-    CheckExplicit -- Yes --> Rung1["Rung 1: Explicit chat_template_path wins (--chat-template-file)"]
-    CheckExplicit -- No --> CheckSidecar{"use_sidecar_chat_template == true AND<br/>chat_template.jinja exists in model dir?"}
-    
-    CheckSidecar -- Yes --> CheckMedia{"Is model multimodal (has mmproj)?<br/>Does sidecar handle media tokens?"}
-    CheckMedia -- Yes / Not Multimodal --> Rung2["Rung 2: Sidecar chat_template.jinja wins (--chat-template-file)"]
-    CheckMedia -- Multimodal but template is media-blind --> SkipSidecar["Reject Sidecar with Warning<br/>(Prevents silencing vision/audio)"]
-    
-    CheckSidecar -- No --> Rung3["Rung 3: Fall through to GGUF-embedded template"]
-    SkipSidecar --> Rung3
+    CheckExplicit -- Yes --> Configured["configured: --chat-template-file &lt;that path&gt;"]
+    CheckExplicit -- No --> CheckOverride{"chat_template.heylook.jinja<br/>beside the weights?"}
+
+    CheckOverride -- Yes --> Candidate["Candidate: the operator override"]
+    CheckOverride -- No --> CheckFlag{"use_sidecar_chat_template?"}
+    CheckFlag -- No --> Embedded["embedded in the GGUF"]
+    CheckFlag -- Yes --> CheckPublisher{"chat_template.jinja<br/>beside the weights?"}
+    CheckPublisher -- No --> Embedded
+    CheckPublisher -- Yes --> Candidate
+
+    Candidate --> CheckMedia{"Model served with a projector,<br/>and candidate has no media markers?"}
+    CheckMedia -- No --> Win["Candidate wins (--chat-template-file)"]
+    CheckMedia -- Yes --> Reject["Reject the candidate with a warning<br/>(prevents silencing vision/audio)"]
+    Reject --> Embedded
 ```
 
-1. **Rung 1: Explicit `chat_template_path`**: Highest precedence. Allows operator to point to a custom Jinja file.
-2. **Rung 2: Discovered Sidecar `chat_template.jinja`**:
-   - Quantizers bake templates into GGUF headers, which cannot be edited after quantization. Publishers frequently update Jinja templates post-release.
-   - Dropping a `chat_template.jinja` file beside the `.gguf` file automatically overrides the embedded template by default (`use_sidecar_chat_template = true`).
-   - **Multimodal Guard**: If a model has a vision projector (`mmproj`), the sidecar template must contain media markers (e.g. `part['type'] == 'image'`, `vision_start`, `image_pad`). If an operator places a text-only template beside a vision model, the sidecar is ignored to prevent image inputs from being silently dropped.
-3. **Rung 3: GGUF Embedded Template**: Lowest precedence. Uses whatever template was baked in during model quantization.
-- **Publisher Discrepancies**: Qwen3.8-27B illustrates why this ladder matters. `ggml-org` quants embed the official template, which throws a Jinja error (HTTP 500) if multiple system messages exist; `unsloth` quants embed a patched template that merges leading system messages. A sidecar Jinja provides full control over these behavioral differences.
+- **Explicit `chat_template_path`**: highest precedence, and the only rung that points outside the model's own directory.
+- **Operator override, `chat_template.heylook.jinja`**: what the admin template editor writes (`PUT /v1/admin/models/{id}/chat-template`). Deliberately **not** gated on `use_sidecar_chat_template` — that flag chooses between the *publisher's* sidecar and the quantizer's embedded template, and neither is a file the operator wrote. Letting it suppress the override would mean the editor writes a file nothing reads. The filename differs from the publisher's on purpose: it survives a re-download, and writing through to `chat_template.jinja` would destroy the vendor's only copy on most MLX checkpoints.
+- **Publisher sidecar, `chat_template.jinja`**: quantizers bake templates into GGUF headers, which cannot be edited after the fact, while publishers update their Jinja post-release. Dropping this file beside the `.gguf` overrides the embedded template by default. `use_sidecar_chat_template = false` keeps the embedded one *without* deleting a file out of a downloaded snapshot.
+- **GGUF embedded template**: lowest precedence. Whatever the quantizer baked in.
+
+**The media guard applies to whichever candidate won**, override or publisher sidecar alike — it is not specific to the publisher's. If the model is served with a projector (`mmproj`) and the candidate carries no media markers (e.g. `part['type'] == 'image'`, `vision_start`, `image_pad`), the candidate is rejected with a warning and resolution falls through to the embedded template, so image inputs are never silently dropped.
+
+A template can therefore change with no `models.toml` change at all — dropping a file beside the weights is enough — which is why the spawn log names the winning rung, and why any measurement that varies by prompt format must establish which template each arm ran against.
+
+- **Publisher Discrepancies**: Qwen3.8-27B illustrates why this ladder matters. `ggml-org` quants embed the official template, which raises a Jinja error (HTTP 500) when multiple system messages are present; `unsloth` quants embed a patched template that merges leading system messages. An override or sidecar gives full control over these behavioural differences.
 
 ---
 

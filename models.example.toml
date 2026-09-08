@@ -37,7 +37,6 @@ enabled = true
   # sampling overrides beat the model's generation_config.json
   temperature = 0.6
   max_tokens = 8192
-  # named sampler applied when a request doesn't pick one
   # force the KV cache instead of the RAM-relative auto default
   cache_type = "quantized"
   kv_bits = 8

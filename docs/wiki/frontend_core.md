@@ -87,7 +87,7 @@ Both directions are armed, but they are not symmetric. **Apply** overwrites the 
 
 **An arm is a promise about one action**, and that is enforced in the primitive rather than in consumer wiring. `armedConfirm` takes a `target()` describing destination, payload **and the stored value about to be destroyed**, captures it at arm time, and re-reads it on the confirming click -- re-arming instead of firing if any of the three moved. Including the stored value means a refresh landing between arm and confirm voids the arm. It cannot live in the bar: Save's payload is the *document's* prompt, edited in a different drawer section the bar gets no events from, so "arm, clear the prompt box, confirm" would blank a preset straight past the blanking check.
 
-`disarm()` remains for **visible honesty** -- a button still reading "Overwrite prompt?" while aimed elsewhere is a lie even once clicking it is safe. The **select** is the only control that re-aims, and it disarms all three buttons. The name box re-aims nothing and disarms nothing. (A stale comment in `preset-bar.js` still claims the name box moves Save alone; the file's own header contradicts it.)
+`disarm()` remains for **visible honesty** -- a button still reading "Overwrite prompt?" while aimed elsewhere is a lie even once clicking it is safe. The **select** is the only control that re-aims, and it disarms all three buttons. The name box re-aims nothing and disarms nothing.
 
 Enter in the name box goes straight to **Save as new**, which is correct: the rule against a second entry point past an arm exists because that is the same hole with a keyboard on it, and Save as new has no arm to get past -- it cannot overwrite anything. Update, which can, is reachable only by its own button.
 

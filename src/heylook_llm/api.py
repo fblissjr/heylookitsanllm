@@ -4,10 +4,11 @@ handler, CORS, router mounting and the static frontend mount.
 Every route lives in a ``*_api.py`` router except ``/v1/data/clear`` below,
 ``rlm.py``'s own router, and the asset routes ``frontend_static.py`` registers;
 the OpenAPI narrative is
-``openapi_doc.py``; the route guards the inference routes share are
-``request_guards.py``. This module used to carry the OpenAI-compatible chat
-route and half a dozen others (2,600 lines at v1.79.65); a new endpoint is a
-router module plus one ``include_router`` line here and its tag below.
+``openapi_doc.py``. (``request_guards.py`` held the guards the inference routes
+shared until v2.0.30 removed it with the named-sampler system; what remains of
+that concern is a validator on the wire model.) This module used to carry the
+OpenAI-compatible chat route and several others; a new endpoint is a router
+module plus one ``include_router`` line here and its tag below.
 """
 import asyncio
 import logging

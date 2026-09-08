@@ -3,9 +3,10 @@
 
 CRUD for named system_prompt + sampler-params bundles, backed by the DuckDB
 store (db.py). These are UI-authored and expanded client-side into explicit
-request fields -- distinct from the bundled TOML sampler registry
-(presets.py), which is server-side and request-scoped via
-``ChatRequest.preset``. Wire contract: docs/frontend_v3_spec.md §4.
+request fields. They are now the ONLY named-bundle system: the bundled TOML
+sampler registry that used to sit beside them, server-side and request-scoped
+via ``ChatRequest.preset``, was removed in v2.0.30.
+Wire contract: docs/frontend_v3_spec.md §4.
 """
 
 import logging

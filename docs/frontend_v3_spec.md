@@ -467,7 +467,8 @@ truncate→stream→persist sequences):**
     window. A client with no such window can omit them.
 - `POST /{id}/prompt` `{mode, message_id?, user_content?, overrides?,
   edits?:{message_id?,content?,thinking?}}` → `{prompt, model_id, provider,
-  mode, continuation:"thinking"|"content"|null, dropped_media, char_count}`
+  mode, continuation:"thinking"|"content"|null, dropped_media, unrendered_media,
+  char_count}`
   (v1.79.62). The exact string generate would feed the model, rendered by
   the model's own engine (llama-server `/apply-template`; the MLX tokenizer's
   template through the same builder generation uses). Same rows, same
@@ -543,8 +544,9 @@ failures;
 `thinking_default` (v1.79.62, every provider, always a bool; also on every `/v1/models`
 entry since v1.79.63, same value): what thinking resolves to
 for this model when a request says nothing -- the sampling cascade's own answer for an
-empty request (`config.enable_thinking`, else a `default_sampler` that turns it on, else
-the thinking CAPABILITY, which is the v1.79.62 fallback: a model that can think, thinks).
+empty request (`config.enable_thinking`, else the thinking CAPABILITY, which is the
+v1.79.62 fallback: a model that can think, thinks). A `default_sampler` rung sat between
+them until v2.0.30 removed the named-sampler system.
 Derived, so answered for unloaded models. v3 labels the tri-state thinking control's
 "Model default (on|off)" with it and the composer's thinking button reflects it; a request
 `enable_thinking: false` is the explicit off.
@@ -647,8 +649,9 @@ modalities,supports_thinking?,draft_model_path?,draft_spec_type?}], total}`
 (`ScannedModelListResponse`, wired as the route's `response_model` 2026-08-07 — it sat
 unreferenced for months while the dataclass grew, so the declared contract had no way to
 disagree loudly with what shipped);
-`POST /import` `{models:[{id,path,provider}], default_sampler?}` → `{imported:[...], total, warning?}`
-(field renamed from `profile` 2026-07-20; unknown body keys 422 via extra="forbid").
+`POST /import` `{models:[{id,path,provider}]}` → `{imported:[...], total, warning?}`
+(unknown body keys 422 via extra="forbid" -- which now includes `default_sampler`,
+removed with the named-sampler system in v2.0.30).
 
 Three things about `/scan` that bit (all fixed 2026-08-07):
 - **`paths` is not optional in practice.** The HF cache is ONE source; every locally
@@ -675,8 +678,8 @@ gated its entire UI on them.
 `POST /v1/models/{id}/load?warm=true` is what v3's Load button sends, so "Loaded" means ready
 rather than merely resident; the page renders `warm_ms` as a note and surfaces
 `warm_error` without calling the load a failure (the model is loaded either way).
-(Backend also exposes toggle/status/validate/samplers/bulk-default-sampler/discovered — the
-sampler routes were renamed from profiles/bulk-profile 2026-07-20; out of scope unless a
+(Backend also exposes toggle/status/validate/discovered — the sampler roster and
+bulk-default-sampler routes were removed in v2.0.30; out of scope unless a
 trimmed feature needs them.)
 
 **Per-model config editing** (consumed since 2026-08-11, backend v1.52-1.53):
@@ -773,11 +776,11 @@ requests_queued}}}` (30s server cache).
 count,percentage}], trends:[{hour,response_time_ms,tokens_per_second,requests}], resource_timeline,
 bottlenecks}` (in-memory ring buffer, lost on restart; 503/empty if analytics extra not installed).
 **Clear** `POST /v1/data/clear` (admin) → `{conversations_deleted, notebooks_deleted}`.
-**Capabilities** `GET /v1/capabilities`. Includes `samplers` (2026-07-20):
-`{available:[{name,description}], request_field:"sampler", model_default_field:"default_sampler"}` —
-the bundled named-sampler registry, for scripted clients; distinct from `/v1/presets`
-(saved user prompt+sampler bundles), which is what v3's preset bar uses. `server_version`
-now reports the real package version (was hardcoded "1.0.1").
+**Capabilities** `GET /v1/capabilities`. Carried a `samplers` block — the bundled
+named-sampler registry, for scripted clients — until v2.0.30 removed that system;
+`/v1/presets` (saved user prompt+sampler bundles) is the surviving named-bundle
+system and is what v3's preset bar uses. `server_version` reports the real package
+version.
 **J-space** — REMOVED v1.79.75. The `/v1/jspace/*` routes and the page are gone;
 the design docs are in `docs/archive/`.
 

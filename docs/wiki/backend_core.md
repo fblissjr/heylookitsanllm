@@ -8,7 +8,7 @@ The backend of `heylookitsanllm` is built with **FastAPI** and **Starlette**, pa
 
 The entry point [`api.py`](../../src/heylook_llm/api.py) is intended as the **application assembly hub**: business logic, route handlers and data structures live in modular route modules, and a new route belongs in one of them rather than here.
 
-**The codebase has one live exception**, worth knowing before you trust the rule: `api.py` declares `POST /v1/data/clear` inline on the app -- a destructive route that deletes all conversations, messages and notebooks. It is the only inline route in the file. `api.py`'s own module docstring still claims every route lives in a `*_api.py` router, so the docstring, the rule and the file disagree.
+**The codebase has one live exception**, worth knowing before you trust the rule: `api.py` declares `POST /v1/data/clear` inline on the app -- a destructive route that deletes all conversations, messages and notebooks. It is the only inline route in the file. `api.py`'s module docstring names this exception, along with `rlm.py`'s own router and the asset routes `frontend_static.py` registers, so the docstring and the file agree.
 
 ```
 Route modules in src/heylook_llm/:
@@ -20,10 +20,11 @@ Route modules in src/heylook_llm/:
 ├── model_ops_api.py             # models_router (/v1/models list) + model_ops_router (load)
 ├── admin_api.py                 # THREE routers, all defined here:
 │                                #   admin_router        -> /v1/admin/models  (CRUD, status, fit,
-│                                #                          toggle, reload, unload)
+│                                #                          toggle, reload, unload,
+│                                #                          chat-template)
 │                                #   scan_import_router  -> /v1/admin/models  (scan, import,
 │                                #                          discovered, validate, samplers,
-│                                #                          scan-config, bulk-default-sampler)
+│                                #                          scan-config)
 │                                #   admin_ops_router    -> /v1/admin         (model-options, ops)
 ├── config_api.py                # Operational settings: /v1/admin/config
 ├── monitoring_api.py            # /v1/capabilities, /v1/system/metrics,
@@ -151,7 +152,7 @@ Model availability is governed by [`model_registry.py`](../../src/heylook_llm/mo
 - Discovered models not listed in `models.toml` are served with automatically derived parameters. A new download needs no import, no symlink and no edit.
 - The merge **never writes `models.toml`**. A `[[models]]` entry is served exactly as written and always wins; discovery can only ADD.
 - Discovery is **best-effort**: a failing scan is logged and dropped, never fatal. An empty result is the correct answer for "no `[scan]` section", "scanning is off" and "the scan failed" alike -- all three mean `models.toml` stands alone.
-- Admin edits **materialize** an entry on write (`update_config`, `toggle_enabled`, `bulk_set_default_sampler`), because editing *is* the override. Reads never do, or browsing the models page would grow the file. `remove_config` deliberately does not materialize: the next scan would serve the model back, and a "removed" model that reappears is worse than a clear refusal.
+- Admin edits **materialize** an entry on write (`update_config`, `toggle_enabled`), because editing *is* the override. Reads never do, or browsing the models page would grow the file. `remove_config` deliberately does not materialize: the next scan would serve the model back, and a "removed" model that reappears is worse than a clear refusal.
 
 ### 5.2. Resolved Path Matching (`path_identity`)
 Models are deduplicated and merged based on **`path_identity(path)`**, which executes `Path(path).expanduser().resolve()`.

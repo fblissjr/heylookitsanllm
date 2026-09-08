@@ -1144,9 +1144,9 @@ async def delete_notebook(db: Store, notebook_id: str) -> bool:
 # Preset CRUD
 # ---------------------------------------------------------------------------
 # User presets: named system_prompt + sampler-params bundles authored from the
-# UI. Distinct from the bundled TOML sampler registry (presets.py), which is
-# server-side and request-scoped via ``ChatRequest.preset`` -- these are
-# expanded client-side into explicit request fields. Name uniqueness is
+# UI, and expanded client-side into explicit request fields. Since v2.0.30
+# they are the only named-bundle system; the bundled TOML sampler registry
+# that was server-side and request-scoped is gone. Name uniqueness is
 # enforced in code, not a constraint: the single serialized writer makes the
 # check race-free (same rationale as the dropped messages FK). Deliberately
 # NOT touched by clear_all_data -- presets are configuration, not data.
