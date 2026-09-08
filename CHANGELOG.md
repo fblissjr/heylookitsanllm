@@ -59,9 +59,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The prompt preview carries the editor's media.** `edits.content` accepts
   a block list; the overlay used to coerce it to one text block, so a row
   whose generation would carry a picture previewed as if it carried none.
-  A malformed block list is a 400 rather than a corrupt render. (On MLX the
-  preview still renders text-only -- the vision path has no text-only render,
-  a standing rough edge this does not change.)
+  A malformed block list is a 400 rather than a corrupt render.
+
+- **The prompt preview now SAYS when it cannot show the media it is sending.**
+  On MLX the vision path has no text-only render, so the preview is the text
+  template alone -- a prompt with no image in it, under a heading promising it
+  is what the model will see. Read plainly that says the image was lost, when
+  in fact it is sent. `unrendered_media` (sent, not shown) is reported beside
+  the existing `dropped_media` (not sent) and both are painted; they are
+  opposite statements and stay separate fields. Providers answer for
+  themselves via `render_prompt_represents_media` rather than the route
+  switching on a provider name, so a new backend cannot inherit a wrong claim.
 
 ### Known limits of this change
 

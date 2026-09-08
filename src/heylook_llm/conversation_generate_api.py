@@ -247,6 +247,16 @@ class PromptPreviewResponse(BaseModel):
                     "and no content, so generation resumes inside the open thinking "
                     "block; 'content' when the turn's content is being continued.")
     dropped_media: dict = Field(default_factory=dict)
+    unrendered_media: dict = Field(
+        default_factory=dict,
+        description="Media that IS being sent to the model but does not appear "
+                    "in `prompt`, because this provider's renderer has no way "
+                    "to show it (the MLX vision path renders through mlx-vlm "
+                    "and has no text-only render, so the preview is the text "
+                    "template alone). Distinct from `dropped_media`, which is "
+                    "media the model will NOT receive. A client must disclose "
+                    "this: a preview silently missing the picture reads as "
+                    "'no image will be sent'.")
     char_count: int = 0
 
 
@@ -745,6 +755,21 @@ async def preview_prompt(conv_id: str, request: Request, body: PromptPreviewRequ
         raise HTTPException(status_code=409, detail=(
             f"{model_id} is not loaded -- load it to preview its exact prompt"))
     _strip_history_specials(chat_request, provider)
+    # Counted off the REQUEST, so it is what the model actually receives --
+    # cap-dropped media is already gone by here and is reported separately.
+    unrendered = {"images": 0, "audio": 0}
+    if not getattr(provider, "render_prompt_represents_media", False):
+        for m in chat_request.messages:
+            if not isinstance(m.content, list):
+                continue
+            for part in m.content:
+                ptype = getattr(part, "type", None)
+                if ptype == "image_url":
+                    unrendered["images"] += 1
+                elif ptype == "input_audio":
+                    unrendered["audio"] += 1
+    if not (unrendered["images"] or unrendered["audio"]):
+        unrendered = {}
     try:
         prompt = await asyncio.to_thread(provider.render_prompt, chat_request)
     except InvalidGenerationRequest as e:
@@ -764,7 +789,7 @@ async def preview_prompt(conv_id: str, request: Request, body: PromptPreviewRequ
         mode=body.mode,
         continuation=(None if continue_row is None
                       else "thinking" if chat_request.resumes_thinking() else "content"),
-        dropped_media=dropped, char_count=len(prompt),
+        dropped_media=dropped, unrendered_media=unrendered, char_count=len(prompt),
     )
 
 

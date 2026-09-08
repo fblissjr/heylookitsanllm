@@ -100,6 +100,17 @@ class BaseProvider(ABC):
     # None = unknown (no guard). Set at load by providers that have one.
     context_length: Optional[int] = None
 
+    # Does render_prompt() represent MEDIA in the string it returns? gguf
+    # does (llama-server rewrites an image part into a positional media
+    # marker, which is part of the render); the MLX text strategy strips
+    # images entirely, so its preview is the text template alone. A caller
+    # showing that string to a human has to SAY which it got -- a preview
+    # that quietly omits the picture reads as "no image will be sent",
+    # which is the opposite of the truth. Asked of the provider rather than
+    # switched on a provider NAME in the route, so a new backend answers
+    # for itself instead of defaulting into a wrong claim.
+    render_prompt_represents_media: bool = False
+
     def __init__(self, model_id: str, config: Dict, verbose: bool):
         self.model_id = model_id
         self.config = config

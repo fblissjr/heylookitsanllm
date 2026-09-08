@@ -45,7 +45,7 @@ export function paintPromptPreview(host, body, onClose) {
       : 'The next reply generates after this';
   const pre = createEl('pre', { class: 'prompt-preview__text' });
   pre.append(highlightSpecials(body.prompt));
-  host.replaceChildren(
+  const children = [
     createEl('div', { class: 'prompt-preview__head' }, [
       createEl('span', { class: 'prompt-preview__title' }, ['What the model will see']),
       createEl('span', { class: 'muted small' }, [
@@ -53,8 +53,37 @@ export function paintPromptPreview(host, body, onClose) {
       ]),
       closeBtn,
     ]),
-    pre,
-  );
+  ];
+  // Media that IS being sent but cannot appear in this render (the MLX vision
+  // path has no text-only render). Said out loud, and said as "not shown
+  // here", never as a drop: the picture reaches the model. Without this line
+  // the panel is a prompt with no image in it, under a heading that promises
+  // it is what the model will see -- which reads as the image having been
+  // lost, and is the opposite of the truth.
+  const un = body.unrendered_media ?? {};
+  const missing = [
+    un.images ? `${un.images} image${un.images === 1 ? '' : 's'}` : null,
+    un.audio ? `${un.audio} audio clip${un.audio === 1 ? '' : 's'}` : null,
+  ].filter(Boolean);
+  if (missing.length) {
+    children.push(createEl('div', { class: 'prompt-preview__note muted small', role: 'note' }, [
+      `${missing.join(' and ')} will be sent but cannot be shown here — `
+      + `${body.provider === 'mlx' ? 'MLX renders the text template only' : 'this engine has no text render for media'}.`,
+    ]));
+  }
+  // Media the model will NOT receive is a different statement, and stays one.
+  const dropped = body.dropped_media ?? {};
+  const lost = [
+    dropped.images ? `${dropped.images} image${dropped.images === 1 ? '' : 's'}` : null,
+    dropped.audio ? `${dropped.audio} audio clip${dropped.audio === 1 ? '' : 's'}` : null,
+  ].filter(Boolean);
+  if (lost.length) {
+    children.push(createEl('div', { class: 'prompt-preview__note muted small', role: 'note' }, [
+      `${lost.join(' and ')} not sent — this model cannot read them.`,
+    ]));
+  }
+  children.push(pre);
+  host.replaceChildren(...children);
   host.hidden = false;
 }
 

@@ -964,6 +964,10 @@ class LlamaServerProvider(BaseProvider):
         )
         return 0, thinking_chars
 
+    # /apply-template renders media markers in place, so the preview string
+    # shows where each image sits in the conversation.
+    render_prompt_represents_media = True
+
     def render_prompt(self, request: ChatRequest) -> str:
         """The exact prompt llama-server renders for ``request`` (its own
         ``/apply-template``, same body as a generation, so the same template

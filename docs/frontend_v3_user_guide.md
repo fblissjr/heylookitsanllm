@@ -396,8 +396,10 @@ the accepted values live in the model's chat template, and for gguf inside the
 GGUF's own metadata, so the backend would have to learn and expose them before
 the UI could.
 
-**The prompt preview omits images on MLX.** The vision path renders through
-mlx-vlm and has no text-only render; the preview shows the text template.
+**The prompt preview cannot show images on MLX.** The vision path renders
+through mlx-vlm and has no text-only render, so the preview shows the text
+template. It now says so on the panel, naming how many images are being sent
+but not shown -- the picture does reach the model.
 
 **An image can only go on a user message when the model is MLX.** The attach
 control is withheld while editing an assistant message on an MLX model, and a

@@ -1093,3 +1093,63 @@ class TestPreviewOverlayKeepsMedia:
                       "content": [{"type": "image", "source": {"type": "nonsense"}}]},
         })
         assert res.status_code == 400
+
+
+class TestPreviewNamesUnrenderableMedia:
+    """A preview that omits the picture must SAY it omitted it.
+
+    The MLX vision path renders through mlx-vlm and has no text-only render,
+    so its preview is the text template alone -- a prompt with no image in it,
+    under a heading promising it is what the model will see. Read plainly that
+    says the image was lost, which is the opposite of the truth: it is sent.
+    `unrendered_media` (sent, not shown) is deliberately a different field from
+    `dropped_media` (not sent), because they are opposite statements.
+    """
+
+    IMAGE = {"type": "image",
+             "source": {"type": "base64", "media_type": "image/png",
+                        "data": "aGV5bG9vaw=="}}
+
+    @pytest.mark.asyncio
+    async def test_a_renderer_that_cannot_show_media_reports_it(self, ctx):
+        client, store, provider = ctx
+        provider.render_prompt_represents_media = False
+        conv = await db.create_conversation(store, title="t", model_id="fake-capable")
+        await db.append_message(store, conv["id"], role="user",
+                                content=[self.IMAGE, {"type": "text", "text": "look"}])
+        res = await client.post(f"/v1/conversations/{conv['id']}/prompt",
+                                json={"mode": "append"})
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["unrendered_media"] == {"images": 1, "audio": 0}
+        # It is SENT: this is not a drop, and the two must not be conflated.
+        assert not body["dropped_media"].get("images")
+
+    @pytest.mark.asyncio
+    async def test_a_renderer_that_shows_media_reports_nothing(self, ctx):
+        client, store, provider = ctx
+        provider.render_prompt_represents_media = True
+        conv = await db.create_conversation(store, title="t", model_id="fake-capable")
+        await db.append_message(store, conv["id"], role="user",
+                                content=[self.IMAGE, {"type": "text", "text": "look"}])
+        res = await client.post(f"/v1/conversations/{conv['id']}/prompt",
+                                json={"mode": "append"})
+        assert res.status_code == 200, res.text
+        assert res.json()["unrendered_media"] == {}
+
+    @pytest.mark.asyncio
+    async def test_cap_dropped_media_is_not_reported_as_unrendered(self, ctx):
+        # The model cannot read it, so it never reaches the request -- that is
+        # dropped_media's story, and unrendered_media must stay quiet or the
+        # panel would claim the image is being sent.
+        client, store, provider = ctx
+        provider.render_prompt_represents_media = False
+        conv = await db.create_conversation(store, title="t", model_id="fake-model")
+        await db.append_message(store, conv["id"], role="user",
+                                content=[self.IMAGE, {"type": "text", "text": "look"}])
+        res = await client.post(f"/v1/conversations/{conv['id']}/prompt",
+                                json={"mode": "append"})
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["dropped_media"]["images"] == 1
+        assert body["unrendered_media"] == {}

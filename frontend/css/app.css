@@ -744,6 +744,10 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 }
 .prompt-preview__head .btn { margin-left: auto; }
 .prompt-preview__title { font-weight: 600; }
+/* Media disclosure lines: media that is sent but cannot be rendered here, and
+   media the model will not receive. Sit between the head and the prompt text
+   so they are read before the string, not after it. */
+.prompt-preview__note { padding: 0 0.6rem 0.4rem; }
 .prompt-preview__text {
   margin: 0;
   padding: 0.6rem;
