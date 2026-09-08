@@ -1350,6 +1350,15 @@ function carryEditorDraft(fromEl, toEl) {
     to[i].selectionStart = f.selectionStart;
     to[i].selectionEnd = f.selectionEnd;
   });
+  // Attachments staged into the old editor come across too. A rebuild here is
+  // routine (switching model changes the row's signature), and a staged blob
+  // that disappears without a word is the silent loss this file avoids
+  // everywhere else. The new editor owns the object URLs afterwards, so the
+  // old one must NOT revoke them -- hence the handover flag.
+  if (fromEl?.__editMedia && toEl?.__adoptMedia) {
+    toEl.__adoptMedia(fromEl.__editMedia);
+    fromEl.__editMedia = null;
+  }
 }
 
 // Place `nodes` as the parent's children, moving/keeping existing elements
@@ -1541,16 +1550,17 @@ function buildActions(ctx, msg) {
     ));
     return createEl('div', { class: 'message__actions' }, actions);
   }
-  // Editing is text-only: the editor would replace content and silently drop
-  // the media blocks. Image/audio messages get delete/regenerate, not edit.
-  if (!hasMediaBlocks(msg)) {
-    actions.push(btn('Edit', () => {
-      // loud, not silent: renderMessages would orphan the stream placeholder
-      if (refuseWhileStreaming(ctx)) return;
-      ctx.state.editingId = msg.id;
-      renderMessages(ctx);
-    }));
-  }
+  // Editing carries the row's media now (v2.0.15). It was withheld here
+  // while the editor sent content as a bare string, which would have
+  // replaced the blocks with one text block -- and the store's media GC
+  // would then have reclaimed the orphaned blob, so "edit a typo" cost the
+  // picture. buildEditEl round-trips the stored blocks instead.
+  actions.push(btn('Edit', () => {
+    // loud, not silent: renderMessages would orphan the stream placeholder
+    if (refuseWhileStreaming(ctx)) return;
+    ctx.state.editingId = msg.id;
+    renderMessages(ctx);
+  }));
   if (msg.role === 'assistant') {
     actions.push(btn('Regenerate', () => regenerate(ctx, msg)));
   }
@@ -1612,7 +1622,71 @@ function buildEditEl(ctx, msg) {
     });
     thinkArea.addEventListener('input', () => autoGrow(thinkArea, thinkCap()));
   }
-  const cancel = () => { s.editingId = null; renderMessages(ctx); keepRowInView(ctx, msg); };
+  // --- media on the row -------------------------------------------------
+  // Media the row ALREADY holds is kept as the STORED block, so a save round-
+  // trips it verbatim. That is not tidiness. db.update_message re-runs
+  // _externalize_media and then _gc_media, and a url source's media_id is
+  // honoured only while some message still references that blob -- so a save
+  // that rebuilt these blocks from anything other than the stored value would
+  // drop the reference and the GC would, correctly, delete the bytes. Editing
+  // the text must not cost the picture; that risk is why Edit used to be
+  // withheld from any row carrying media at all.
+  const keptOf = (type) => (msg.content_blocks ?? [])
+    .filter((b) => b.type === type).map((b) => ({ kept: b }));
+  const editMedia = { image: keptOf('image'), audio: keptOf('audio') };
+  const editStrip = createEl('div', { class: 'chat__attach message-edit__attach', hidden: true });
+  // Dirty is tracked rather than diffed: a removed-then-re-added attachment
+  // and a re-ordered one both have to count, and comparing rebuilt blocks
+  // against stored ones would call a no-op edit a change (and hand the GC a
+  // reason to run).
+  let mediaDirty = false;
+  const repaintEditStrip = () => renderMediaStrip(editStrip, editMedia,
+    () => { mediaDirty = true; repaintEditStrip(); });
+  const editTarget = {
+    role: msg.role,
+    list: (kind) => editMedia[kind.key],
+    render: () => { mediaDirty = true; repaintEditStrip(); },
+  };
+  repaintEditStrip();  // initial paint must NOT dirty the row
+  // Read at call time, never captured: the strip is still mutable while the
+  // editor is open, and Save and Preview must agree about what is on the row.
+  const hasEditMedia = () => Boolean(editMedia.image.length || editMedia.audio.length);
+  // Media on a NON-USER turn renders only on gguf: mlx-vlm places markers on
+  // user turns only and would silently move the image to the latest user
+  // message. Withhold the control rather than refuse after the click (the
+  // staging refusal in addPendingFiles is the backstop for paste and drop).
+  const editCaps = currentCaps(ctx);
+  const mediaRoleOk = msg.role === 'user' || currentProvider(ctx) !== 'mlx';
+  const editVision = editCaps.includes('vision') && mediaRoleOk;
+  const editAudio = editCaps.includes('audio') && mediaRoleOk;
+  let editFileInput = null;
+  let editAttachBtn = null;
+  if (editVision || editAudio) {
+    editFileInput = createEl('input', {
+      type: 'file', multiple: true, hidden: true,
+      accept: [editVision && 'image/*', editAudio && 'audio/*'].filter(Boolean).join(','),
+    });
+    editFileInput.addEventListener('change', () => {
+      addFiles(ctx, editFileInput.files, editTarget);
+      editFileInput.value = '';  // re-picking the same file must re-fire change
+    });
+    const attachLabel = editVision && editAudio ? 'Attach images or audio'
+      : editAudio ? 'Attach audio' : 'Attach images';
+    editAttachBtn = createEl('button', {
+      class: 'btn btn--sm btn--ghost', title: attachLabel, 'aria-label': attachLabel,
+    }, ['Attach']);
+    editAttachBtn.addEventListener('click', () => editFileInput.click());
+  }
+
+  const cancel = () => {
+    // Staged-but-unsaved blobs die with the editor; a kept entry owns no
+    // object URL (it renders from the store's url source), so only the new
+    // ones are revoked.
+    for (const list of [editMedia.image, editMedia.audio]) {
+      for (const e of list) if (e.previewUrl) URL.revokeObjectURL(e.previewUrl);
+    }
+    s.editingId = null; renderMessages(ctx); keepRowInView(ctx, msg);
+  };
 
   const save = async (regenerateAfter, continueAfter = false) => {
     // The truncate-then-stream branches are destructive; with a stream
@@ -1628,7 +1702,17 @@ function buildEditEl(ctx, msg) {
     const convId = s.activeId;
     const next = textarea.value;
     const changes = {};
-    if (next !== msg.content) changes.content = next;
+    // Content travels as BLOCKS whenever the row holds media, so the kept
+    // blocks go back verbatim; a text-only row keeps sending a plain string,
+    // which is the shape the store, the wire and every existing test expect.
+    // Removing the last attachment therefore sends a string on purpose: the
+    // blob loses its last reference and the GC reclaims it, which IS what
+    // "remove the image" means.
+    if (next !== msg.content || mediaDirty) {
+      changes.content = hasEditMedia()
+        ? await buildContentBlocks(next, editMedia.image, editMedia.audio)
+        : next;
+    }
     // empty = clear: the PUT sends null so the row's thinking column clears
     // rather than storing an empty string that still renders a block
     if (thinkArea && thinkArea.value !== msg.thinking) changes.thinking = thinkArea.value || null;
@@ -1683,6 +1767,7 @@ function buildEditEl(ctx, msg) {
     createEl('button', { class: 'btn btn--sm' }, ['Cancel']),
     createEl('button', { class: 'btn btn--sm btn--primary' }, ['Save']),
   ];
+  if (editAttachBtn) buttons.push(editAttachBtn);
   buttons[0].addEventListener('click', cancel);
   buttons[1].addEventListener('click', () => save(false));
   // "Preview prompt": what the editor's primary action WOULD send, rendered
@@ -1702,7 +1787,15 @@ function buildEditEl(ctx, msg) {
     }, ['Preview prompt']);
     previewBtn.addEventListener('click', async () => {
       const close = () => { previewHost.hidden = true; previewHost.replaceChildren(); };
-      const edits = { message_id: msg.id, content: textarea.value };
+      // Same content the primary action would send, media included -- a
+      // preview built from the text alone would quietly show a prompt with
+      // no image in it and read as if the model were being sent one.
+      const edits = {
+        message_id: msg.id,
+        content: hasEditMedia()
+          ? await buildContentBlocks(textarea.value, editMedia.image, editMedia.audio)
+          : textarea.value,
+      };
       if (thinkArea) edits.thinking = thinkArea.value || null;
       const nextMsg = s.messages.find((m) => m.position > msg.position);
       const shape = msg.role === 'assistant'
@@ -1763,11 +1856,28 @@ function buildEditEl(ctx, msg) {
     editChildren.push(thinkArea);
     editChildren.push(createEl('div', { class: 'message-edit__label muted small' }, ['Response']));
   }
-  editChildren.push(textarea, createEl('div', { class: 'message-edit__buttons' }, buttons));
+  editChildren.push(textarea);
+  editChildren.push(editStrip);
+  if (editFileInput) editChildren.push(editFileInput);
+  editChildren.push(createEl('div', { class: 'message-edit__buttons' }, buttons));
   if (previewHost) editChildren.push(previewHost);
   const el = createEl('div', { class: `message message--${msg.role}` }, [
     createEl('div', { class: 'message-edit' }, editChildren),
   ]);
+  // Handover points for carryEditorDraft when this editor is rebuilt.
+  el.__editMedia = editMedia;
+  el.__adoptMedia = (prev) => {
+    if (!prev) return;
+    editMedia.image = prev.image;
+    editMedia.audio = prev.audio;
+    // Ownership MOVES. The outgoing editor's `cancel` closure holds this very
+    // object and would revoke the object URLs this editor is now rendering
+    // from, so empty it rather than trusting a flag it never reads.
+    prev.image = [];
+    prev.audio = [];
+    mediaDirty = true;
+    repaintEditStrip();
+  };
   // rAF, not microtask: the initial grow needs layout to have happened, or
   // scrollHeight reads short and the editor opens as a slit.
   requestAnimationFrame(() => {
@@ -2241,6 +2351,7 @@ const MAX_ATTACH_AUDIO = 2; // server-side gemma cap is 30s/clip; keep the strip
 // body. `prepare` is per-kind because only images can be downscaled.
 const ATTACH_KINDS = {
   image: {
+    key: 'image',
     mime: 'image/', cap: 'vision', stateKey: 'pendingImages', max: MAX_ATTACH_IMAGES,
     label: 'image',
     prepare: async (f) => {
@@ -2249,6 +2360,7 @@ const ATTACH_KINDS = {
     },
   },
   audio: {
+    key: 'audio',
     mime: 'audio/', cap: 'audio', stateKey: 'pendingAudio', max: MAX_ATTACH_AUDIO,
     label: 'audio clip',
     // Audio is passed through: there is no cheap, lossless equivalent of a
@@ -2359,7 +2471,14 @@ function wireDropAttach(ctx, el) {
   window.addEventListener('drop', swallow, { signal: ctx.signal });
 }
 
-function addFiles(ctx, files) {
+// `target` says WHERE what is staged lands and how that place repaints -- the
+// composer by default, an open message editor when one is doing the staging.
+// It is a parameter rather than a second routine because everything below
+// (the no-kind-matched message, the capability refusal, the count cap, the
+// mid-read orphan check, the resize disclosure and the aria-live lines) has to
+// hold on every attach surface; paste spent a release being image-only for
+// exactly as long as it had its own copy of this.
+function addFiles(ctx, files, target = composerTarget(ctx)) {
   const all = [...files];
   // A drop of a PDF, a .txt or a folder (File.type is '') matches no kind and
   // would otherwise vanish -- indistinguishable from a broken drop target.
@@ -2375,11 +2494,20 @@ function addFiles(ctx, files) {
     return;
   }
   for (const kind of Object.values(ATTACH_KINDS)) {
-    addPendingFiles(ctx, all.filter((f) => f.type.startsWith(kind.mime)), kind);
+    addPendingFiles(ctx, all.filter((f) => f.type.startsWith(kind.mime)), kind, target);
   }
 }
 
-async function addPendingFiles(ctx, files, kind) {
+// The composer's bag: page state, repainted through the composer's own strip.
+function composerTarget(ctx) {
+  return {
+    role: 'user',
+    list: (kind) => ctx.state[kind.stateKey],
+    render: () => renderAttachStrip(ctx),
+  };
+}
+
+async function addPendingFiles(ctx, files, kind, target = composerTarget(ctx)) {
   if (!files.length) return;
   // Refuse at STAGING time. The send-side guard is for a DIFFERENT case --
   // media staged on a capable model, then a switch that loses the cap, where
@@ -2392,7 +2520,19 @@ async function addPendingFiles(ctx, files, kind) {
     showStatus(ctx, `This model does not take ${kind.label}s -- pick a model that does.`, true);
     return;
   }
-  const pendingAtStart = ctx.state[kind.stateKey];
+  // MLX can only render a media marker on a USER turn: mlx-vlm gates it on
+  // role in three separate places, so media on an assistant message is not
+  // rejected there -- it is MOVED to the latest user turn and described to
+  // the model as if it arrived in that message. The provider refuses such a
+  // request outright; refusing at STAGING time is the same call the cap gate
+  // makes just above, for the same reason (a blob accepted here and rejected
+  // at send is a blob the user has to hunt down and clear).
+  if (target.role !== 'user' && currentProvider(ctx) === 'mlx') {
+    showStatus(ctx, `This model puts ${kind.label}s on user messages only -- `
+      + `a gguf model can attach one to a ${target.role} message.`, true);
+    return;
+  }
+  const pendingAtStart = target.list(kind);
   const reads = await Promise.all([...files]
     .map((f) => kind.prepare(f).catch(() => null)));  /* unreadable file -- skip */
   if (!ctx.alive) {
@@ -2406,7 +2546,7 @@ async function addPendingFiles(ctx, files, kind) {
   // us holding an orphan: pushing into it would render nothing and lose the
   // file without a word. Drag-and-drop makes multi-megabyte reads routine, so
   // this window is no longer theoretical.
-  const pending = ctx.state[kind.stateKey];
+  const pending = target.list(kind);
   if (pending !== pendingAtStart) {
     for (const r of reads) {
       if (r?.previewUrl) URL.revokeObjectURL(r.previewUrl);
@@ -2423,7 +2563,7 @@ async function addPendingFiles(ctx, files, kind) {
   }
   const staged = usable.slice(0, room);
   pending.push(...staged);
-  renderAttachStrip(ctx);
+  target.render();
   // Disclosure, not a prompt: the resolution cap is a cost the user pays
   // silently otherwise, and a confirm on every photo would only train
   // click-through. Says it once per staging batch, and only when it happened.
@@ -2450,43 +2590,51 @@ function clearPendingAttachments(ctx) {
   renderAttachStrip(ctx);
 }
 
+// Thumbnail strip for a set of attachments. SHARED by the composer and by an
+// open message editor: the remove control, its aria-label and the object-URL
+// revoke live here once, so a fix to any of them cannot land on one surface
+// and miss the other. `media` is {image: [], audio: []} whose entries are
+// either FRESHLY STAGED (a blob plus an object URL) or KEPT -- a stored
+// content block the editor is round-tripping verbatim.
+function renderMediaStrip(host, media, onChange) {
+  // A kept entry renders from the store's own url source; only a staged blob
+  // has an object URL, which is also why only a staged one gets revoked.
+  const src = (entry) => (entry.kept ? blockSourceUrl(entry.kept) : entry.previewUrl);
+  // Real <button> + aria-label naming the target: keyboard-reachable and
+  // announced correctly even though the strip has no per-thumb text.
+  const removeBtn = (label, fn) => {
+    const b = createEl('button', { class: 'attach-thumb__remove', title: label, 'aria-label': label }, ['×']);
+    b.addEventListener('click', fn);
+    return b;
+  };
+  const drop = (list, i) => {
+    const [removed] = list.splice(i, 1);
+    if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+    onChange();
+  };
+  host.hidden = !media.image.length && !media.audio.length;
+  const imageThumbs = media.image.map((img, i) => createEl('div', { class: 'attach-thumb' }, [
+    createEl('img', { src: src(img), alt: '', decoding: 'async' }),
+    removeBtn(`Remove image ${i + 1}`, () => drop(media.image, i)),
+  ]));
+  const audioChips = media.audio.map((clip, i) => createEl('div', { class: 'attach-thumb attach-thumb--audio' }, [
+    createEl('span', { class: 'attach-thumb__audio-name', title: clip.name || 'audio' },
+      [clip.name || 'audio']),
+    removeBtn(`Remove audio ${clip.name || i + 1}`, () => drop(media.audio, i)),
+  ]));
+  host.replaceChildren(...imageThumbs, ...audioChips);
+}
+
 function renderAttachStrip(ctx) {
   const s = ctx.state;
-  s.attachStrip.hidden = !s.pendingImages.length && !s.pendingAudio.length;
-  const imageThumbs = s.pendingImages.map((img, i) => {
-    // Real <button> + aria-label naming the target image: keyboard-reachable
-    // and announced correctly even though the strip has no per-thumb text.
-    const label = `Remove image ${i + 1}`;
-    const remove = createEl('button', { class: 'attach-thumb__remove', title: label, 'aria-label': label }, ['×']);
-    remove.addEventListener('click', () => {
-      const [removed] = s.pendingImages.splice(i, 1);
-      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
-      renderAttachStrip(ctx);
-    });
-    return createEl('div', { class: 'attach-thumb' }, [
-      createEl('img', { src: img.previewUrl, alt: '', decoding: 'async' }),
-      remove,
-    ]);
-  });
-  const audioChips = s.pendingAudio.map((clip, i) => {
-    const label = `Remove audio ${clip.name || i + 1}`;
-    const remove = createEl('button', { class: 'attach-thumb__remove', title: label, 'aria-label': label }, ['×']);
-    remove.addEventListener('click', () => {
-      const [removed] = s.pendingAudio.splice(i, 1);
-      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
-      renderAttachStrip(ctx);
-    });
-    return createEl('div', { class: 'attach-thumb attach-thumb--audio' }, [
-      createEl('span', { class: 'attach-thumb__audio-name', title: clip.name || 'audio' },
-        [clip.name || 'audio']),
-      remove,
-    ]);
-  });
-  s.attachStrip.replaceChildren(...imageThumbs, ...audioChips);
+  renderMediaStrip(s.attachStrip, { image: s.pendingImages, audio: s.pendingAudio },
+    () => renderAttachStrip(ctx));
 }
 
 // Stored shape is Messages-style content blocks (what the server persists);
-// hasMediaBlocks gates the flows that only make sense for text (edit).
+// hasMediaBlocks feeds msgSignature: a row carrying media has to rebuild when
+// the model's capabilities change, because what is sendable changes with them.
+// It no longer gates Edit -- the editor round-trips media since v2.0.15.
 function hasBlocks(msg, type) {
   return Boolean(msg.content_blocks?.some((b) => b.type === type));
 }
@@ -2517,9 +2665,15 @@ async function buildContentBlocks(text, images, audio) {
   // FileReader round trips in series at exactly the moment the user is waiting
   // on the send. Promise.all costs the slowest read instead of their sum;
   // block order within each kind is all that has to hold, and it does.
-  const encode = (entry, type) => blobToBase64(entry.blob).then((data) => ({
-    type, source: { type: 'base64', media_type: entry.mediaType, data },
-  }));
+  // A KEPT entry (the message editor round-tripping media the row already
+  // holds) is already a stored block: pass it through byte-for-byte. Rebuilt
+  // bytes would be a new blob and would strand the old one -- see the media
+  // note in buildEditEl.
+  const encode = (entry, type) => (entry.kept
+    ? Promise.resolve(entry.kept)
+    : blobToBase64(entry.blob).then((data) => ({
+      type, source: { type: 'base64', media_type: entry.mediaType, data },
+    })));
   const blocks = await Promise.all([
     ...images.map((img) => encode(img, 'image')),
     ...audio.map((clip) => encode(clip, 'audio')),

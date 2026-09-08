@@ -60,6 +60,44 @@ def _reconstruct_thinking(msg_dict: dict) -> dict:
     return msg_dict
 
 
+def _flatten_for_log(content) -> str:
+    """Block-form or string content as plain text, for the no-template fallback
+    and for error logs. Never used to build a real prompt."""
+    if isinstance(content, list):
+        return " ".join(b.get("text") or "" for b in content
+                        if isinstance(b, dict) and b.get("type") == "text")
+    return content if isinstance(content, str) else str(content)
+
+
+def content_for_template(text: str, num_images: int):
+    """Content for ONE message, in the shape mlx-vlm allocates media from.
+
+    A message carrying images travels as BLOCK-form content with one bare
+    ``{"type": "image"}`` marker per image, because mlx-vlm's
+    ``apply_chat_template`` attributes media PER MESSAGE by counting explicit
+    markers (``_content_media_count``) and dumps only what it CANNOT attribute
+    onto the last user turn. Handing it a flattened string plus a bare
+    ``num_images=`` total -- what this function did until v2.0.15 -- attributed
+    nothing, so EVERY image in a conversation rendered its marker on the final
+    user message: an image attached in turn 1 was presented to the model as if
+    it had arrived in the latest turn, and two images from different turns
+    arrived adjacent, in load order. The bytes were always in context; what was
+    wrong was which turn they were announced in.
+
+    The marker is BARE on purpose. mlx-vlm re-derives each message's content
+    from the extracted text plus the COUNT, emitting markers in that model's
+    own order (llava appends, qwen3_5 prepends), so this function never has to
+    know the per-model shape, and a multi-MB data URI never enters the template
+    call.
+
+    Text-only messages keep travelling as a plain string, so a conversation
+    with no images renders byte-identically to before this change.
+    """
+    if num_images <= 0:
+        return text
+    return [{"type": "image"}] * num_images + [{"type": "text", "text": text}]
+
+
 def prepare_vlm_inputs_parallel(
     messages: List,
     processor,
@@ -95,6 +133,9 @@ def prepare_vlm_inputs_parallel(
         content = msg.content
         if isinstance(content, list):
             text_parts = []
+            # Per-message count, not just the running total: this is what lets
+            # each image render its marker on the turn it was attached to.
+            msg_images = 0
 
             for part in content:
                 # Handle both object and dict formats
@@ -104,6 +145,7 @@ def prepare_vlm_inputs_parallel(
                         text_parts.append(part.text)
                     elif part.type == 'image_url':
                         image_urls.append(part.image_url.url)
+                        msg_images += 1
                         has_images = True
                 elif isinstance(part, dict):
                     # Dict format
@@ -117,11 +159,16 @@ def prepare_vlm_inputs_parallel(
                             url = image_url.url if hasattr(image_url, 'url') else ''
                         if url:
                             image_urls.append(url)
+                            msg_images += 1
                             has_images = True
 
-            # Combine text parts
+            # Combine text parts. `image_urls` is appended in message order and
+            # the markers are placed in that same order, so the flat image list
+            # the caller loads still lines up with the markers the template
+            # renders.
             combined_content = " ".join(text_parts) if text_parts else ""
-            msg_dict = {"role": msg.role, "content": combined_content}
+            msg_dict = {"role": msg.role,
+                        "content": content_for_template(combined_content, msg_images)}
             # Prior thinking, the way this template takes it (see helper)
             if hasattr(msg, 'thinking') and msg.thinking:
                 msg_dict = thinking_for_template({**msg_dict, 'thinking': msg.thinking}, template_info)
@@ -138,15 +185,20 @@ def prepare_vlm_inputs_parallel(
     else:
         images = []
 
-    # Format prompt -- ensure all content is strings (some templates
-    # have bugs with non-string content)
-    safe_messages = [
-        {
-            "role": str(msg["role"]) if not isinstance(msg["role"], str) else msg["role"],
-            "content": str(msg["content"]) if not isinstance(msg["content"], str) else msg["content"],
-        }
-        for msg in text_messages
-    ]
+    # Format prompt -- coerce a stray non-string SCALAR (some templates have
+    # bugs with non-string content) without touching block-form content: a
+    # blanket str() here would hand the template a Python repr of the block
+    # list, image markers and all, which is how the media placement above
+    # would silently stop working. Keys thinking_for_template may have set
+    # (reasoning_content) ride along rather than being rebuilt away.
+    safe_messages = []
+    for msg in text_messages:
+        safe = dict(msg)
+        if not isinstance(safe.get("role"), str):
+            safe["role"] = str(safe.get("role"))
+        if not isinstance(safe.get("content"), (str, list)):
+            safe["content"] = str(safe.get("content"))
+        safe_messages.append(safe)
 
     try:
         # vlm_apply_chat_template performs the enable_thinking None-guard itself
@@ -168,8 +220,11 @@ def prepare_vlm_inputs_parallel(
             )
         except Exception as fallback_error:
             logging.error(f"Fallback template error: {fallback_error}")
+            # Last ditch, no template at all. Block-form content has to be
+            # flattened by hand here -- interpolating the list would put its
+            # repr in the prompt.
             formatted_prompt = "\n".join(
-                f"{msg['role']}: {msg['content']}" for msg in text_messages
+                f"{msg['role']}: {_flatten_for_log(msg['content'])}" for msg in text_messages
             )
 
     return images, formatted_prompt, has_images, image_urls

@@ -1028,3 +1028,68 @@ class TestPromptPreview:
                                   json={"mode": "continue"})).status_code == 400
         assert (await client.post("/v1/conversations/nope/prompt",
                                   json={"mode": "append"})).status_code == 404
+
+
+class TestPreviewOverlayKeepsMedia:
+    """The preview overlay must carry the editor's media, not just its text.
+
+    The editor sends `edits.content` as a BLOCK LIST once the row it is
+    editing holds media (v2.0.15). The overlay used to coerce whatever it got
+    into a single text block, so a row whose generation would carry a picture
+    previewed as if it carried none -- the preview being wrong about the one
+    thing it exists to show, and wrong SILENTLY.
+    """
+
+    IMAGE = {"type": "image",
+             "source": {"type": "base64", "media_type": "image/png",
+                        "data": "aGV5bG9vaw=="}}
+
+    @pytest.mark.asyncio
+    async def test_block_form_edits_keep_the_image_on_the_wire(self, ctx):
+        client, store, provider = ctx
+        conv = await db.create_conversation(store, title="t", model_id="fake-capable")
+        row = await db.append_message(
+            store, conv["id"], role="user",
+            content=[self.IMAGE, {"type": "text", "text": "what is this?"}])
+        assert row is not None
+
+        res = await client.post(f"/v1/conversations/{conv['id']}/prompt", json={
+            "mode": "append",
+            "edits": {"message_id": row["id"],
+                      "content": [self.IMAGE, {"type": "text", "text": "edited"}]},
+        })
+        assert res.status_code == 200, res.text
+        parts = provider.last_render.messages[-1].content
+        assert [getattr(p, "type", None) for p in parts] == ["image_url", "text"]
+        assert parts[1].text == "edited"
+
+    @pytest.mark.asyncio
+    async def test_string_edits_still_replace_the_row_with_text(self, ctx):
+        # Removing the last attachment sends a plain string on purpose, and
+        # that must still mean "this row is text now".
+        client, store, provider = ctx
+        conv = await db.create_conversation(store, title="t", model_id="fake-capable")
+        row = await db.append_message(
+            store, conv["id"], role="user",
+            content=[self.IMAGE, {"type": "text", "text": "what is this?"}])
+        assert row is not None
+
+        res = await client.post(f"/v1/conversations/{conv['id']}/prompt", json={
+            "mode": "append",
+            "edits": {"message_id": row["id"], "content": "just text now"},
+        })
+        assert res.status_code == 200, res.text
+        assert provider.last_render.messages[-1].content == "just text now"
+
+    @pytest.mark.asyncio
+    async def test_malformed_block_is_a_400_not_a_corrupt_render(self, ctx):
+        client, store, _ = ctx
+        conv = await db.create_conversation(store, title="t", model_id="fake-capable")
+        row = await db.append_message(store, conv["id"], role="user", content="hi")
+        assert row is not None
+        res = await client.post(f"/v1/conversations/{conv['id']}/prompt", json={
+            "mode": "append",
+            "edits": {"message_id": row["id"],
+                      "content": [{"type": "image", "source": {"type": "nonsense"}}]},
+        })
+        assert res.status_code == 400

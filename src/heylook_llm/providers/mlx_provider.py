@@ -516,6 +516,40 @@ def _has_audio_parts(messages) -> bool:
     return False
 
 
+def _non_user_image_roles(messages) -> list[str]:
+    """Roles other than ``user`` that carry an image part, in order.
+
+    mlx-vlm can only render an image marker on a USER turn: the role is gated
+    three times over in its ``prompt_utils`` -- media on a non-user message is
+    not counted (``_content_media_count`` is skipped for system/assistant/tool),
+    the surplus is reallocated to the last user turn, and the per-message
+    formatter itself tests ``role == "user"`` before emitting a marker. So an
+    image attached to an assistant turn does not fail there; it MOVES, and the
+    model is told the picture arrived in the user's latest message.
+
+    That silent relocation is the reason this refuses instead of proceeding.
+    llama-server has no such gate (it rewrites an image part into a positional
+    media marker wherever it sits, whatever the role), so the same conversation
+    is servable by a gguf model -- which is what the error says.
+    """
+    roles = []
+    for message in messages:
+        role = getattr(message, 'role', None)
+        if role == 'user':
+            continue
+        content = message.content
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            ptype = getattr(part, 'type', None)
+            if ptype is None and isinstance(part, dict):
+                ptype = part.get('type')
+            if ptype == 'image_url':
+                roles.append(str(role))
+                break
+    return roles
+
+
 class VLMVisionStrategy:
     """Strategy for VLM requests with images.
 
@@ -1450,6 +1484,18 @@ class MLXProvider(BaseProvider):
                             f"Model '{self.model_id}' is served by the MLX provider, "
                             f"which does not support audio input (audio towers are "
                             f"skipped at load). Use a gguf model for audio."
+                        )
+
+                    non_user_image_roles = _non_user_image_roles(request.messages)
+                    if non_user_image_roles:
+                        raise InvalidGenerationRequest(
+                            f"Model '{self.model_id}' is served by the MLX provider, "
+                            f"which can only place an image on a user turn -- an image "
+                            f"on a "
+                            f"{', '.join(sorted(set(non_user_image_roles)))} message "
+                            f"would be silently moved to the latest user message and "
+                            f"described to the model as if it had arrived there. Use a "
+                            f"gguf model to put an image on that turn."
                         )
 
                     # Continuation is a TEXT-path feature: the vision strategy

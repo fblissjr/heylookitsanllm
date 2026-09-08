@@ -235,7 +235,9 @@ class PromptPreviewResponse(BaseModel):
     prompt: str = Field(description="The exact prompt string the model would be fed: "
                                     "special tokens, role markers and thinking blocks "
                                     "as the template renders them. Images in history "
-                                    "are not represented on MLX (text template only).")
+                                    "are not represented on MLX (text template only); "
+                                    "on gguf they appear as the media markers "
+                                    "llama-server renders in place.")
     model_id: str
     provider: str
     mode: str
@@ -675,7 +677,18 @@ async def preview_prompt(conv_id: str, request: Request, body: PromptPreviewRequ
     def overlay(row: dict) -> dict:
         row = dict(row)
         if "content" in edits:
-            row["content_blocks"] = [{"type": "text", "text": edits.get("content") or ""}]
+            # The editor sends a BLOCK LIST when the row it is editing holds
+            # media, and a plain string otherwise. Coercing everything to one
+            # text block (what this did until v2.0.15) silently dropped the
+            # images from the preview, so a row whose generation WOULD carry a
+            # picture rendered as if it carried none -- the preview lying about
+            # exactly the thing it exists to show. normalize_blocks validates,
+            # so a malformed block list is a 400 here rather than a corrupt
+            # render.
+            try:
+                row["content_blocks"] = db.normalize_blocks(edits.get("content"))
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
         if "thinking" in edits:
             row["thinking"] = edits.get("thinking") or None
         return row

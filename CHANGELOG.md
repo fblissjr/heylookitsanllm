@@ -5,6 +5,74 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.18]
+
+### Fixed
+
+- **MLX rendered every image's marker on the LAST user turn, whatever turn
+  it was attached to.** `vlm_inputs` flattened each message to a plain string
+  and handed mlx-vlm a bare `num_images=` total, which attributes nothing --
+  so its allocator fell back to pooling the whole conversation's media onto
+  the final user message. An image attached in turn 1 was announced to the
+  model as if it had arrived in the latest turn, and two images from
+  different turns arrived adjacent, in load order. The bytes were always in
+  context; which turn they belonged to was wrong. Magnitude on output quality
+  is unmeasured and deliberately not claimed here.
+  - Messages carrying images now travel as block-form content with one bare
+    `{"type": "image"}` marker each, which is what mlx-vlm attributes per
+    message. The marker is bare on purpose: mlx-vlm re-derives each message's
+    content from the text plus the count, in that model's own marker order,
+    so heylook never has to know the per-model shape and no data URI enters
+    the template call.
+  - A text-only conversation renders byte-identically to before, so the
+    blast radius is exactly the messages that carry media.
+  - The `str()` coercion in the same function would have flattened the new
+    block list into a Python repr; it now coerces stray scalars only.
+  - Nothing in the suite could see this: every existing test here passes a
+    MagicMock template fn and asserts on the total. `TestMediaAttribution`
+    asserts per-message attribution, and `TestUpstreamAttributionAssumption`
+    runs the REAL mlx-vlm allocator (it cannot use the `mock_mlx` fixture,
+    which stubs `apply_chat_template` to a fixed string) so an upstream
+    change of rule is not silently absorbed.
+
+### Added
+
+- **The message editor takes media.** Edit was withheld from any row carrying
+  an image or audio clip, so the only options were copy and delete. It now
+  round-trips the row's stored blocks verbatim and can attach, remove or
+  replace them -- on a user turn, on an assistant prefill, and on a row that
+  already had media.
+  - Round-tripping the STORED block is load-bearing rather than tidy:
+    `update_message` re-runs `_externalize_media` and then `_gc_media`, and a
+    url source's `media_id` is honoured only while a message still references
+    that blob -- so a save that rebuilt the block from anything else would
+    drop the reference and the GC would, correctly, delete the bytes. That
+    risk is why Edit was gated off in the first place.
+  - The staging routine is PARAMETERIZED by target rather than copied: the
+    capability gate, the count cap, the mid-read orphan check, the resize
+    disclosure and the aria-live lines stay in one place. `renderMediaStrip`
+    is likewise shared by the composer and the editor.
+  - Attachments staged into an editor survive a mid-edit rebuild (switching
+    model changes the row's signature); ownership of the object URLs MOVES,
+    so the outgoing editor cannot revoke what the new one is rendering.
+
+- **The prompt preview carries the editor's media.** `edits.content` accepts
+  a block list; the overlay used to coerce it to one text block, so a row
+  whose generation would carry a picture previewed as if it carried none.
+  A malformed block list is a 400 rather than a corrupt render.
+
+### Changed
+
+- **MLX refuses an image on a non-user turn instead of moving it.** mlx-vlm
+  gates the marker on `role == "user"` in three separate places, so media on
+  an assistant or system message is not rejected there -- it is relocated to
+  the latest user turn and described to the model as if it arrived in that
+  message. The provider now raises, naming gguf (whose server rewrites an
+  image part into a positional media marker wherever it sits, whatever the
+  role). The editor withholds the attach control in that combination and the
+  staging routine refuses paste and drop, so the refusal is not the first the
+  user hears of it.
+
 ## [2.0.17]
 
 ### Fixed
