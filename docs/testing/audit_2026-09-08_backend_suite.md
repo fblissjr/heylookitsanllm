@@ -21,21 +21,20 @@ expires. Nothing was generating, so it burned the cap on every run.
 | CPU during that run | 10% | 90% |
 | full suite | 64.56s | 35.20s |
 
-**[reported]** 289 sleeps totalling ~29s, all from that one destructor; 64 of
-the file's 65 `__del__` entries slept zero times.
+**[reported]** Instrumented at the call site, effectively all of the sleeping
+came from one `__del__` entry in that file; the rest slept not at all.
 
 The transferable part is why nobody found it from the suite's own output:
 **`--durations` cannot see one second of it.** The stall happens inside
-`__del__` during GC, outside every phase pytest times. That file reported 2.5s
-across its duration entries while taking 33.5s, and the slowest test pytest
-would name ran about a second. **When a suite's reported times do not add up to
-its wall clock, the gap is the finding.**
+`__del__` during GC, outside every phase pytest times. That file's duration entries summed to a small fraction of its own wall time,
+and the slowest test pytest would name ran about a second. **When a suite's
+reported times do not add up to its wall clock, the gap is the finding.**
 
 Fixed in `fb1bb8c`.
 
 ## 2. Verdicts
 
-**[reported]** Nine valid mutations, eight of which killed something. Verified
+**[reported]** Almost every valid mutation killed something. Verified
 load-bearing by mutation: the retired-field wire guard, reasoning-parser
 invariants and the shared strip holdback, MODEL_BUSY propagation (both the AST
 guard and the behavioural pair), the frontend mount shape, stop-reason
@@ -43,18 +42,18 @@ single-writer, vlm-inputs media attribution, observability level gating, and
 the config `effect` metadata. No scar tissue was found; no test file imports a
 deleted module.
 
-**[verified here]** Three oracles were defective and are now repaired
+**[verified here]** These oracles were defective and are now repaired
 (`90a04f2`):
 
 - `test_all_routes_have_schema_entries` walked `app.routes`, where most entries
-  are `_IncludedRouter` objects with no `.path`. It saw one `/v1` path while
-  the schema published forty-six, so its assertion body was reachable for one
-  route in forty-six. Planting a route with `include_in_schema=False` — the
+  are `_IncludedRouter` objects with no `.path`. It saw a single `/v1` path
+  while the schema published the whole surface, so its assertion body was
+  reachable for one route. Planting a route with `include_in_schema=False` — the
   defect it names — left it green. Replaced with a walk that recurses through
   `original_router` and compares both directions; red on the planted route and
   naming it.
-- `test_endpoint_count` asserted `>= 10` against roughly forty-six operations.
-  Removed.
+- `test_endpoint_count` asserted a floor far below the number of operations
+  actually published, so most of the API could be deleted under it. Removed.
 - `test_every_stop_reason_write_goes_through_the_mapper` read only the text
   right of the `=`, so hoisting the mapped value into a variable failed a
   passing test **on correct code**. Rewritten on AST. Verified green on the
@@ -65,8 +64,8 @@ the first was justified by "the banner test subsumes it". **It does not.**
 Planting the hidden route left `test_startup_banner.py` green too, because
 `server.get_api_endpoints` reads `app.openapi()` — comparing it to the schema
 compares the schema to itself for that case. The banner test is still
-load-bearing for *its own* claim (reverting `get_api_endpoints` to the old walk
-reds three of its tests); it simply never claimed to catch a hidden route.
+load-bearing for *its own* claim — reverting `get_api_endpoints` to the old
+walk turns its tests red — it simply never claimed to catch a hidden route.
 Delete became replace on the strength of one experiment.
 
 ## 3. Envelope: what this suite structurally cannot see
@@ -83,17 +82,17 @@ Delete became replace on the strength of one experiment.
   only ever needed the mocks so imports would succeed, while unit tests use
   the mock objects' behaviour, so removing the patch would break tests rather
   than reveal drift.
-- **[verified here] The real-library surface test pins one call site of two.**
-  `tests/contract/test_mlxvlm_surface.py` imports the real libraries and pins
-  `mlx_provider.py`'s call by source text. It does not read `vlm_inputs.py`,
-  which is where per-message media attribution now lives (v2.0.18). Both files
-  contain the call today; only one is pinned.
+- **[verified here] The real-library surface test pinned `mlx_provider.py`'s
+  call site but not `vlm_inputs.py`'s**, which is where per-message media
+  attribution has lived since v2.0.18 — so the file that decides how images
+  are attributed was unwatched against the library surface this module tracks.
+  **Closed** in `c8a4857`.
 - **[reported] The contract suite has no per-test isolation.** `app`, `client`
   and `MockRouter` are session-scoped and `MockRouter.providers` accumulates
   with no reset. Verified by the subagent as not currently biting — all
   contract files pass alone — but structurally reachable.
 - **[reported] Source-text oracles constrain spelling, not behaviour.**
-  Thirteen files assert on `read_text()` / `inspect.getsource` / AST. The
+  A number of files assert on `read_text()` / `inspect.getsource` / AST. The
   false-positive direction is now proven, not theoretical (§2). Others were
   not audited.
 - **[verified here] No coverage tooling and no xdist** are installed. There is
@@ -105,20 +104,23 @@ Delete became replace on the strength of one experiment.
 
 Ranked by what the finding is worth, not by effort.
 
-1. **`BaseProvider.__del__` can block for thirty seconds.** This is a
-   production hazard, not a test-runtime one: GC fires on any thread,
-   including one delivering tokens. The test-side leak is fixed; the
-   destructor is not. **Recommendation: make the `__del__` path non-blocking**
-   — a destructor is the wrong place to wait on anything.
-2. **Roughly three-quarters of the suite was never probed.** The largest
-   unprobed files are `test_rlm.py`, `test_llama_server_provider.py`,
-   `test_conversation_generate.py` and `test_template_info.py`. The 8:1 kill
-   ratio applies to the groups there was reason to suspect, not to the suite.
+1. ~~**`BaseProvider.__del__` can block.**~~ **Closed** in `c8a4857`.
+   `unload(drain=...)` is now the caller stating whether it can afford to
+   wait; `__del__` passes `drain=False`, which leaves live work alone and
+   warns rather than tearing down mid-decode. Pinned by two checks (collection
+   with traffic returns at once and stays loaded; collection with nothing in
+   flight still unloads), verified red against the old destructor.
+2. **Most of the suite was never probed.** The largest unprobed files are `test_rlm.py`, `test_llama_server_provider.py`,
+   `test_conversation_generate.py` and `test_template_info.py`. The kill rate
+   above applies to the groups there was reason to suspect, not to the suite.
 3. **`test_mlx_provider.py` could not be mutated at all** — another session
-   held `mlx_provider.py` and `base.py` dirty for the whole audit. Its
-   seventy-odd tests are unclassified.
-4. **Extend `test_mlxvlm_surface.py` to `vlm_inputs.py`** (§3). Cheap, and it
-   pins the file that actually carries the behaviour now.
+   held `mlx_provider.py` and `base.py` dirty for the whole audit, so its
+   tests are unclassified.
+4. ~~**Extend `test_mlxvlm_surface.py` to `vlm_inputs.py`.**~~ **Closed** in
+   `c8a4857`; verified red against a renamed kwarg. Note the first version of
+   that pin asserted a kwarg the call does not pass and failed on its first
+   run — the useful kind of red, and the reason to run a new pin before
+   trusting it.
 5. **[reported] `model_registry.discover` sleeps** account for a few seconds
    of what remains. Worth a look only after (1).
 6. **[reported] Stale pytest temp garbage** produces warnings on every run,
