@@ -653,10 +653,43 @@ export async function runPagesSuite({ suite, ctx, config }) {
 
     // Lazy by design: nothing is fetched until the section is opened.
     assert(await details.evaluate((el) => !el.open), 'template panel starts open');
-    await page.$eval('.cfg-tmpl > summary', (el) => el.click());
+
+    // HOLD the GET so the pre-load state is observable instead of raced. The
+    // editor must be disabled until a render says what this model's template
+    // says and whether it is writable at all: it used to be empty AND
+    // editable, so typing enabled Save and one click PUT a fragment as the
+    // model's ENTIRE template after a failed load -- and during a slow one,
+    // `draft[TMPL_DRAFT] ?? serverText` showed the fragment and hid the body
+    // that had just arrived.
+    let held = null;
+    await page.setRequestInterception(true);
+    const hold = (req) => {
+      if (req.method() === 'GET' && req.url().includes('/chat-template')) held = req;
+      else req.continue();
+    };
+    page.on('request', hold);
+    try {
+      await page.$eval('.cfg-tmpl > summary', (el) => el.click());
+      await waitFor(async () => held !== null,
+        { timeout: 10000, message: 'the template GET was never sent' });
+      assert(await page.$eval('.cfg-tmpl__body', (el) => el.disabled),
+        'the template editor was editable before anything had loaded');
+      assert(await page.$eval('.cfg-tmpl .cfg-actions button', (el) => el.disabled),
+        'Save was live before anything had loaded');
+      const releasing = held;
+      held = null;
+      await releasing.continue();
+    } finally {
+      page.off('request', hold);
+      await page.setRequestInterception(false);
+    }
 
     await waitFor(async () => Boolean((await textOf(page, '.cfg-tmpl__origin') || '').trim()),
       { timeout: 10000, message: 'template panel never resolved an origin' });
+    // The other half of the same flag: a successful render re-enables it, or
+    // the panel is a read-only box for a model whose template IS writable.
+    assert(!(await page.$eval('.cfg-tmpl__body', (el) => el.disabled)),
+      'the editor stayed disabled after a successful load of a writable model');
     const origin = await textOf(page, '.cfg-tmpl__origin');
     assert(/In force:/.test(origin), `origin line reads ${JSON.stringify(origin)}`);
 

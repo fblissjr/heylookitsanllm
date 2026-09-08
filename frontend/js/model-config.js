@@ -268,8 +268,19 @@ function buildChatTemplatePanel({ model, draft, onDraftChange }) {
   const statusEl = createEl('div', { class: 'cfg-tmpl__status', role: 'status' });
   const originEl = createEl('div', { class: 'cfg-tmpl__origin muted small' });
   const areaId = `cfg-tmpl-${model.id}`.replace(/[^a-zA-Z0-9_-]/g, '-');
+  // Disabled until the FIRST SUCCESSFUL render, which is the only thing that
+  // knows whether this model's template is writable -- or what it currently
+  // says. Before that the box is empty because nothing has loaded, not because
+  // the model has no template, and typing into it enabled Save: one click then
+  // PUT a fragment as the model's ENTIRE template (after a failed load), or
+  // threw away the body that arrived mid-typing (during one, where
+  // `draft[TMPL_DRAFT] ?? serverText` shows the fragment and hides what came
+  // back). render() re-enables it, so both paths are covered by the one flag.
+  // A REJECTED SAVE deliberately leaves it enabled: that path never re-renders,
+  // and the repair belongs in the box you typed the template into.
   const area = createEl('textarea', {
     class: 'cfg-tmpl__body', id: areaId, spellcheck: 'false', rows: '16',
+    disabled: true,
   });
   const label = createEl('label', { class: 'cfg-tmpl__label', for: areaId },
     ['Template body']);
