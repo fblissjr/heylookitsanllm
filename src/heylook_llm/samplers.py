@@ -367,6 +367,48 @@ def thinking_default(model_config: dict, *, thinking_capable: bool) -> bool:
     ).get('enable_thinking'))
 
 
+class _ThinkingRequest(_NoRequest):
+    """An empty request that states the thinking switch and nothing else."""
+
+    def __init__(self, enable_thinking: bool):
+        self.enable_thinking = enable_thinking
+
+
+def sampler_defaults(model_config: dict, *, thinking_capable: bool,
+                     vendor: dict | None = None) -> dict[str, dict[str, Any]]:
+    """What EVERY sampler key resolves to when a request says nothing.
+
+    Sibling of :func:`thinking_default` and bound by the same rule: this is
+    the cascade's own answer, run for real, never a re-derivation. Reported
+    on the admin row and ``/v1/models`` so the settings panel can show a
+    blank field's actual value instead of the word "auto" -- a user who has
+    to generate to find out what temperature they are running is the
+    complaint this closes.
+
+    Keyed by the THINKING SWITCH, ``{"off": {...}, "on": {...}}``, because
+    the anti-loop overlay fires off that switch (thinking.toml sets
+    presence_penalty) while the panel's thinking control is live and
+    independent. Reporting one state's numbers while the user has selected
+    the other would put a WRONG number on screen, which is worse than the
+    "auto" it replaces. Two dict merges and no I/O, so the honest shape is
+    also the cheap one.
+
+    ``vendor`` must be passed for MLX exactly as the provider passes it
+    (``load_vendor_sampling``): temperature/top_p/top_k are precisely the
+    vendor keys, so omitting it would report the global floor for every
+    model whose generation_config.json overrides it -- the models where the
+    number matters most. gguf passes None, as it does at generation time.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for state, active in (("off", False), ("on", True)):
+        merged = resolve_effective_sampling(
+            _ThinkingRequest(active), model_config, vendor,
+            thinking_capable=thinking_capable,
+        )
+        out[state] = {k: merged[k] for k in REQUEST_SAMPLER_FIELDS if k in merged}
+    return out
+
+
 def load_vendor_sampling(model_path: str) -> dict[str, Any]:
     """Sampling defaults from ``<model_path>/generation_config.json``.
 

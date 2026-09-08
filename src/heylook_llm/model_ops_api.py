@@ -230,6 +230,7 @@ def list_models(request: Request):
             if facts.capabilities:
                 model_entry["capabilities"] = facts.capabilities
             model_entry["thinking_default"] = facts.thinking_default
+            model_entry["sampler_defaults"] = facts.sampler_defaults
             model_entry["context_length"] = facts.context_length
 
         models_data.append(model_entry)

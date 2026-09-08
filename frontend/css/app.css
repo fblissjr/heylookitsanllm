@@ -302,6 +302,43 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .settings-row__note { display: block; font-weight: 400; line-height: 1.35; }
 .settings-row:has(.settings-row__note) { align-items: flex-start; }
 .settings-row:has(.settings-row__note) .input { margin-top: 0.1rem; }
+
+/* A sampler row's control side: the input plus its reset. ONE wrapper, because
+   .settings-row is a two-child space-between flex and a third child re-spaces
+   it (settings.js says the same at the build site). */
+.settings-row__control { display: flex; align-items: center; gap: 0.35rem; }
+/* Reset-to-model-default. Visible only while the key is OVERRIDDEN, so its
+   presence is the override signal and an untouched panel stays quiet. That is
+   state-driven, not hover-driven, so DESIGN.md §7's touch-fallback rule is
+   satisfied by construction -- but the tap target still has to be real, hence
+   the 44px floor under a coarse pointer while the glyph stays small. */
+/* `:not([hidden])` is load-bearing, not tidiness: an author `display` on the
+   class beats the UA's `[hidden]{display:none}` outright, so styling this
+   button at all un-hid it and every row showed a reset icon while nothing was
+   overridden. Caught by LOOKING at the rendered panel -- the DOM assertion
+   read el.hidden, which was correctly true the whole time. */
+.settings-row__reset:not([hidden]) {
+  flex: none;
+  width: 1.5rem; height: 1.5rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0; border: 0; border-radius: var(--radius-sm, 4px);
+  background: none; color: var(--accent); cursor: pointer;
+  font-size: 0.95rem; line-height: 1;
+}
+.settings-row__reset:hover { background: var(--accent-tint, var(--warn-tint)); }
+.settings-row__reset:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (hover: none) {
+  /* Grow the HIT AREA, not the glyph: negative margin keeps the row's height
+     and the input's alignment exactly where they were on the phone. */
+  .settings-row__reset:not([hidden]) { width: 44px; height: 44px; margin: -0.6rem -0.5rem -0.6rem 0; }
+}
+/* An overridden key reads as deliberate: the field's own border carries it
+   (visible next to the greyed placeholder of an untouched neighbour) and the
+   label goes accent. Colour is not the only channel -- the reset button
+   appearing beside it is the redundant, non-colour signal. */
+.settings-row--overridden > label { color: var(--accent); font-weight: 600; }
+.settings-row--overridden .input { border-color: var(--accent); }
+
 .settings-panel details { border-top: 1px solid var(--line); padding-top: 0.5rem; }
 .settings-panel summary { cursor: pointer; color: var(--ink-muted); font-size: var(--text-sm); }
 .settings-panel details > div { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem; }

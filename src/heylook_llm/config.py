@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 # with GET /props. One source of truth for server.py argparse,
 # service_manager install defaults, and the OpenAPI servers entry.
 DEFAULT_PORT = 8000
-from typing import ClassVar, List, Literal, Optional, Union, Dict
+from typing import Any, ClassVar, List, Literal, Optional, Union, Dict
 
 class ImageUrl(BaseModel):
     url: str
@@ -1378,6 +1378,12 @@ class AdminModelResponse(BaseModel):
                     "same, but it has no stored config, and the first edit "
                     "writes an entry for it.",
     )
+    # {"off": {...}, "on": {...}} -- every sampler key's value for a request
+    # that says nothing, from the cascade itself (samplers.sampler_defaults).
+    # Keyed by the thinking switch because the anti-loop overlay moves with
+    # it and the UI's thinking control is independent. The settings panel
+    # labels blank fields with these instead of the word "auto".
+    sampler_defaults: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     stale_reload_fields: List[str] = Field(default_factory=list)
     effective_loader: Optional[Literal["mlx-lm", "mlx-vlm"]] = Field(
         default=None,
@@ -1429,6 +1435,47 @@ class AdminModelListResponse(BaseModel):
     """Response for listing all model configs."""
     models: List[AdminModelResponse] = Field(default_factory=list)
     total: int = 0
+
+
+class ChatTemplateResponse(BaseModel):
+    """What chat template a model resolves to, and whether an edit reaches it.
+
+    Answers for models that are NOT resident -- the prompt format a model will
+    load with is exactly the thing worth seeing before loading it -- so every
+    field here comes from files, never from a running process. The one
+    exception is ``stale``, which needs a loaded model to mean anything and is
+    ``null`` without one.
+    """
+    model_id: str
+    provider: str
+    supported: bool = Field(
+        description="False for providers that render no chat template (embeddings).")
+    template: Optional[str] = Field(
+        default=None, description="The resolved template body, or null if the model has none.")
+    origin: str = Field(
+        description="Which rung of the ladder produced it -- the same phrase the load log uses.")
+    override_present: bool = False
+    override_path: Optional[str] = Field(
+        default=None, description="Where the override lives, whether or not it exists yet.")
+    writable: bool = Field(
+        default=False, description="Whether the model folder accepts a write.")
+    inert_reason: Optional[str] = Field(
+        default=None,
+        description=("Set when an override exists but something outranks it. An "
+                     "editor whose writes go nowhere is worse than no editor, so "
+                     "this is a field rather than a note."))
+    stale: Optional[bool] = Field(
+        default=None,
+        description=("True when the LOADED model renders with something other than "
+                     "what is on disk now (edited since load -- reload to apply). "
+                     "null when the model is not loaded, which is NOT the same as false."))
+    notes: List[str] = Field(default_factory=list)
+
+
+class ChatTemplateUpdateRequest(BaseModel):
+    """Write a model's chat-template override."""
+    template: str = Field(
+        description="The jinja body. Validated before anything touches disk.")
 
 
 class FitRequest(BaseModel):

@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.21]
+
+### Added
+
+- **A blank sampler field shows the value the model will actually use,
+  instead of the word "auto".** `samplers.sampler_defaults()` reports what
+  every sampler key resolves to for a request that says nothing -- the
+  cascade's own answer, run for real, exactly as the sibling
+  `thinking_default()` already did for one key. It rides the admin row and
+  every `/v1/models` entry as `{"off": {...}, "on": {...}}`, and v3 uses it as
+  the placeholder in each empty control. A gemma model now reads `64` under
+  Top-k rather than `auto`, because that is what its `generation_config.json`
+  asks for.
+
+  Keyed by the thinking switch on purpose: the anti-loop overlay sets
+  `presence_penalty` off that switch, and the panel's thinking control is live
+  and independent, so reporting a single state would put a wrong number on
+  screen half the time -- worse than the "auto" it replaces. Two dict merges,
+  no I/O. The MLX vendor layer is included exactly where the provider includes
+  it (cached per row), since temperature/top_p/top_k are precisely the vendor
+  keys; gguf reports without one, as it generates. Keys the cascade does not
+  set are absent and still render "auto", which stays the honest answer.
+
+- **Overridden sampler keys are marked, and each has its own reset.** A key you
+  have set renders its label and input border in the accent colour and reveals
+  a small reset control beside it; an untouched key shows nothing extra, so the
+  control's presence IS the override signal. It shares one wrapper with its
+  input because `.settings-row` is a two-child space-between flex and a third
+  child re-spaces it. The hit area grows to 44px under a coarse pointer while
+  the glyph stays small, and because it is revealed by STATE rather than hover
+  it needs no §7 touch fallback.
+
+  Its rule is `.settings-row__reset:not([hidden])`, and the `:not` is
+  load-bearing: an author `display` on the class beats the UA's
+  `[hidden]{display:none}`, so styling the button at all un-hid every one of
+  them. The DOM check read `el.hidden` and reported the correct `true`
+  throughout -- a screenshot of the rendered panel is what caught it, which is
+  the same lesson as every other assertion in this repo aimed at something the
+  reader never sees.
+
 ## [2.0.20]
 
 ### Changed

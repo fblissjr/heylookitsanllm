@@ -126,6 +126,9 @@ export function mountSettingsDrawer(navDesktop, navBottom) {
 //                                           an UNSET sampler key to (today:
 //                                           enable_thinking); labels the
 //                                           tri-state's "Model default"
+//   samplerDefaults?(): {off:{},on:{}}   -- the server's sampler_defaults for
+//                                           the current model; labels every
+//                                           blank field with its real value
 //   onOpen?():  void                     -- fired each time the drawer opens
 //                                           (e.g. lazily refresh presets)
 // }
@@ -221,6 +224,7 @@ function render() {
       caps: current?.caps?.() ?? [],
       scope: current?.scope?.() ?? null,
       modelDefaults: current?.modelDefaults?.() ?? {},
+      samplerDefaults: current?.samplerDefaults?.() ?? null,
     });
     if (samplers === 'disabled') {
       for (const el of panel.querySelectorAll('input, button')) el.disabled = true;

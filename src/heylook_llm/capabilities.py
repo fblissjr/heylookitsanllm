@@ -23,7 +23,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from heylook_llm.providers.common.loader_routing import effective_loader_for_config
-from heylook_llm.samplers import thinking_default
+from heylook_llm.samplers import load_vendor_sampling, sampler_defaults, thinking_default
 
 
 def config_dict(config, *, exclude_unset: bool = False) -> dict:
@@ -286,8 +286,20 @@ class ModelFacts:
     capabilities: list[str]
     effective_loader: str | None
     thinking_default: bool
+    sampler_defaults: dict
     context_length: int | None
     context_running: int | None
+
+
+@lru_cache(maxsize=64)
+def _vendor_sampling_pairs(model_path: str) -> tuple:
+    """``load_vendor_sampling`` behind the per-row cache the other derived
+    reads use -- a row builder must not re-read generation_config.json per
+    request. Returns sorted PAIRS, not a dict: a cached mutable would let
+    one caller's edit poison every later row (the same trap the Metal
+    device-info cache carries a comment about).
+    """
+    return tuple(sorted(load_vendor_sampling(model_path).items()))
 
 
 def derived_model_facts(model_config, router=None) -> ModelFacts:
@@ -322,6 +334,15 @@ def derived_model_facts(model_config, router=None) -> ModelFacts:
     # cascade's own last fallback.
     default_thinking = thinking_default(
         resolved, thinking_capable="thinking" in capabilities)
+    # Every sampler key's unset answer, from the SAME cascade, so the panel
+    # labels a blank field with the value generation will really use. The
+    # vendor layer is passed exactly where the provider passes it -- MLX
+    # reads generation_config.json, gguf never does.
+    vendor = None
+    if model_config.provider == "mlx" and resolved.get("model_path"):
+        vendor = dict(_vendor_sampling_pairs(str(resolved["model_path"])))
+    defaults = sampler_defaults(
+        resolved, thinking_capable="thinking" in capabilities, vendor=vendor)
     context_length = model_context_length(
         model_config.provider, resolved.get("model_path"),
         override=resolved.get("context_length"))
@@ -336,6 +357,7 @@ def derived_model_facts(model_config, router=None) -> ModelFacts:
         capabilities=capabilities,
         effective_loader=effective_loader,
         thinking_default=default_thinking,
+        sampler_defaults=defaults,
         context_length=context_length,
         context_running=context_running,
     )

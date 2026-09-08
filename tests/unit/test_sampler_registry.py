@@ -300,3 +300,60 @@ class TestThinkingDefault:
         assert thinking_default({}, thinking_capable=True) is True
         assert thinking_default({"enable_thinking": False}, thinking_capable=True) is False
         assert thinking_default({"default_sampler": "thinking"}, thinking_capable=False) is True
+
+
+@pytest.mark.unit
+class TestSamplerDefaultsReporting:
+    """`sampler_defaults` is what the settings panel prints in a blank field,
+    so it has to be the cascade's ANSWER, not a second implementation of it.
+    Every check here compares against `resolve_effective_sampling` itself or
+    against a layer the cascade owns."""
+
+    def test_it_is_the_cascade_not_a_re_derivation(self):
+        # The strongest available oracle: run the real cascade for the same
+        # thinking state and demand agreement on every reported key.
+        from heylook_llm.samplers import (REQUEST_SAMPLER_FIELDS, _ThinkingRequest,
+                                          resolve_effective_sampling, sampler_defaults)
+        cfg = {"temperature": 0.42, "default_sampler": None}
+        vendor = {"top_k": 64, "top_p": 0.9}
+        got = sampler_defaults(cfg, thinking_capable=True, vendor=vendor)
+        for state, active in (("off", False), ("on", True)):
+            want = resolve_effective_sampling(
+                _ThinkingRequest(active), cfg, vendor, thinking_capable=True)
+            assert got[state] == {k: want[k] for k in REQUEST_SAMPLER_FIELDS if k in want}
+
+    def test_the_vendor_layer_reaches_the_report(self):
+        # temperature/top_p/top_k ARE the vendor keys. Dropping the vendor
+        # argument would report the global floor for every model whose
+        # generation_config.json overrides it -- silently, and precisely on
+        # the models where the number is worth showing.
+        from heylook_llm.samplers import GLOBAL_SAMPLER_FLOOR, sampler_defaults
+        assert GLOBAL_SAMPLER_FLOOR["top_k"] != 64, "pick a value the floor does not already have"
+        with_vendor = sampler_defaults({}, thinking_capable=False, vendor={"top_k": 64})
+        assert with_vendor["off"]["top_k"] == 64
+        assert sampler_defaults({}, thinking_capable=False)["off"]["top_k"] == GLOBAL_SAMPLER_FLOOR["top_k"]
+
+    def test_models_toml_beats_vendor_the_way_the_cascade_orders_them(self):
+        from heylook_llm.samplers import sampler_defaults
+        got = sampler_defaults({"temperature": 0.6}, thinking_capable=False,
+                               vendor={"temperature": 0.7})
+        assert got["off"]["temperature"] == 0.6
+
+    def test_both_thinking_states_are_reported_and_differ(self):
+        # The reason the field is keyed at all: the anti-loop overlay fires off
+        # the thinking switch while the panel's thinking control is live and
+        # independent, so one state's numbers would be wrong half the time.
+        # Asserted as "the overlay moved something", not as a copy of the
+        # overlay's contents -- that list lives in thinking.toml.
+        from heylook_llm.samplers import sampler_defaults
+        got = sampler_defaults({}, thinking_capable=True)
+        assert set(got) == {"off", "on"}
+        assert got["off"]["enable_thinking"] is False and got["on"]["enable_thinking"] is True
+        assert got["off"] != got["on"]
+
+    def test_every_reported_key_is_a_request_sampler_field(self):
+        # The panel writes these keys back as request params; a key here that
+        # no request accepts would render a control that cannot do anything.
+        from heylook_llm.samplers import REQUEST_SAMPLER_FIELDS, sampler_defaults
+        for bag in sampler_defaults({}, thinking_capable=True).values():
+            assert set(bag) <= set(REQUEST_SAMPLER_FIELDS)

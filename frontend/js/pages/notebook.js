@@ -93,6 +93,10 @@ export default createPage({
       modelDefaults: () => ({
         enable_thinking: ctx.state.models.find((m) => m.id === ctx.state.modelSelect.value)?.thinking_default ?? null,
       }),
+      // Every other key's resolved value, so a blank field shows the number
+      // it will really use (v2.0.21).
+      samplerDefaults: () => ctx.state.models.find(
+        (m) => m.id === ctx.state.modelSelect.value)?.sampler_defaults ?? null,
       samplers: 'enabled',
       scope: () => documentScopeNote('notebook', Boolean(s.activeId)),
       sections: () => [s.presetBar.buildSection(), s.promptSection.element],

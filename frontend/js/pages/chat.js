@@ -135,6 +135,7 @@ export default createPage({
       // admin row's thinking_default) -- labels the tri-state's "Model
       // default (on|off)". Null until the admin rows land.
       modelDefaults: () => ({ enable_thinking: currentThinkingDefault(ctx) }),
+      samplerDefaults: () => currentModelRow(ctx)?.sampler_defaults ?? null,
       // A ticked "Show special tokens" on a gguf model changes nothing:
       // llama-server never emits them (the reasoning split and the stop
       // token happen inside it). Say so under the box rather than let the
@@ -744,9 +745,13 @@ function refreshThinkBtn(ctx) {
 // admin row reports the same server-derived value and is not consulted --
 // two sources for one fact only leaves room for them to disagree). Null
 // until the models list lands. notebook.js reads the same row the same way.
-function currentThinkingDefault(ctx) {
+function currentModelRow(ctx) {
   const s = ctx.state;
-  return s.models.find((m) => m.id === s.modelSelect.value)?.thinking_default ?? null;
+  return s.models.find((m) => m.id === s.modelSelect.value) ?? null;
+}
+
+function currentThinkingDefault(ctx) {
+  return currentModelRow(ctx)?.thinking_default ?? null;
 }
 
 function currentProvider(ctx) {

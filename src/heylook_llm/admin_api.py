@@ -16,6 +16,7 @@ from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from heylook_llm import chat_template_files
 from heylook_llm.auth import require_admin_token
 from heylook_llm.capabilities import config_dict, derived_model_facts
 from heylook_llm.config import (
@@ -24,6 +25,8 @@ from heylook_llm.config import (
     AdminModelResponse,
     AdminValidationResult,
     BulkDefaultSamplerRequest,
+    ChatTemplateResponse,
+    ChatTemplateUpdateRequest,
     configurable_fields,
     FitRequest,
     FitResponse,
@@ -177,6 +180,7 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
         context_length=facts.context_length,
         context_running=facts.context_running,
         thinking_default=facts.thinking_default,
+        sampler_defaults=facts.sampler_defaults,
     )
 
 
@@ -961,3 +965,123 @@ def reload_models(request: Request):
     except Exception as e:
         logger.error(f"Failed to reload models: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Chat template
+#
+# The template is the single biggest determinant of what a model actually
+# sees, and until now nothing on any surface showed it: the ladder that picks
+# it is documented, logged at load, and completely invisible from outside.
+# These three routes are that surface. They read FILES, never a running
+# process, so they answer for models that are not resident -- which is the
+# case that matters, since the prompt format a model will load with is the
+# thing worth seeing BEFORE loading it.
+#
+# Writing goes to one file beside the weights and touches no config at all
+# (see chat_template_files for why the filename differs from the vendor's).
+# Nothing here calls update_config, so editing a template cannot materialize
+# a discovered entry, and revert is deleting our own file.
+# ---------------------------------------------------------------------------
+
+def _loaded_provider(request: Request, model_id: str):
+    """The live provider for a model, or None when it is not resident."""
+    router = request.app.state.router_instance
+    return router.get_loaded_models().get(model_id)
+
+
+def _template_view(request: Request, model_id: str):
+    """Shared GET body -- also the response a write returns, so a client never
+    has to re-fetch to learn what its write resolved to."""
+    model = _resolve_config(request, model_id)
+    if model is None:
+        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
+    provider = _loaded_provider(request, model_id)
+    view = chat_template_files.view(
+        model_id, model.provider, config_dict(model.config),
+        loaded_template=getattr(provider, "loaded_chat_template", None),
+    )
+    return ChatTemplateResponse(**asdict(view))
+
+
+@admin_router.get(
+    "/{model_id:path}/chat-template",
+    summary="Get Chat Template",
+    description=(
+        "The chat template this model resolves to, which rung of the ladder "
+        "produced it, and whether an override is in force. Reads files only -- "
+        "it never loads a model and never queries a running one, so it answers "
+        "for models that are not resident."
+    ),
+    response_model=ChatTemplateResponse,
+)
+def get_chat_template(model_id: str, request: Request):
+    # Sync on purpose (threadpool): reads a model directory and, for gguf, the
+    # GGUF header. Async here would put file I/O on the event loop and stall
+    # in-flight SSE streams.
+    return _template_view(request, model_id)
+
+
+@admin_router.put(
+    "/{model_id:path}/chat-template",
+    summary="Set Chat Template",
+    description=(
+        "Write this model's chat-template override, beside its weights. "
+        "Validated BEFORE anything touches disk -- llama-server turns a raised "
+        "jinja exception into a 500, so an unparseable template would make "
+        "every request to the model fail with nothing naming the cause. "
+        "Takes effect on the model's next load: both engines bind the template "
+        "at load, so the response's `stale` says whether a reload is owed."
+    ),
+    response_model=ChatTemplateResponse,
+)
+def set_chat_template(model_id: str, request: Request,
+                      body: ChatTemplateUpdateRequest):
+    model = _resolve_config(request, model_id)
+    if model is None:
+        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
+    config = config_dict(model.config)
+    if model.provider not in chat_template_files.TEMPLATE_PROVIDERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"The {model.provider} provider does not render a chat template.",
+        )
+    try:
+        chat_template_files.write_override(
+            str(config.get("model_path") or ""), body.template,
+            provider=model.provider, config=config,
+        )
+    except chat_template_files.TemplateWriteRefused as e:
+        # 400, not 500: every refusal here is about the SUBMITTED template, and
+        # the message is the whole point -- it names what would have broken.
+        raise HTTPException(status_code=400, detail=str(e))
+    return _template_view(request, model_id)
+
+
+@admin_router.delete(
+    "/{model_id:path}/chat-template",
+    summary="Remove Chat Template Override",
+    description=(
+        "Delete this model's override so it falls back to its own template. "
+        "Safe because the override is a SEPARATE file: nothing the vendor "
+        "shipped was ever modified, so there is no backup to restore and "
+        "nothing to lose. 404 if no override exists."
+    ),
+    response_model=ChatTemplateResponse,
+)
+def delete_chat_template(model_id: str, request: Request):
+    model = _resolve_config(request, model_id)
+    if model is None:
+        raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
+    config = config_dict(model.config)
+    try:
+        removed = chat_template_files.remove_override(
+            str(config.get("model_path") or ""))
+    except chat_template_files.TemplateWriteRefused as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not removed:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Model '{model_id}' has no chat template override to remove",
+        )
+    return _template_view(request, model_id)

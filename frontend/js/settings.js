@@ -312,13 +312,28 @@ export function setDisplayPref(key, value) {
 const TRISTATE_FROM_VALUE = { '': null, on: true, off: false };
 const TRISTATE_TO_VALUE = (v) => (v === true ? 'on' : v === false ? 'off' : '');
 
-function bindControl(key, meta, modelDefaults = {}) {
+// How a resolved model default reads in a placeholder. null/undefined means
+// the page does not know (no model row yet, or a key the server does not
+// report) -- callers fall back to the literal word "auto", which is the
+// honest answer for "we cannot tell you".
+function defaultText(v) {
+  if (v === null || v === undefined) return null;
+  if (v === true) return 'on';
+  if (v === false) return 'off';
+  return String(v);
+}
+
+// `lookup(key)` rather than a snapshot object: the numeric defaults depend on
+// the THINKING switch (the anti-loop overlay sets presence_penalty), and that
+// switch is a live control in this same panel. A snapshot taken at build time
+// would go stale the moment someone flips it.
+function bindControl(key, meta, lookup = () => null) {
   if (meta.type === 'tristate') {
     // The default option NAMES the value it stands for when the page knows
     // it (`modelDefaults[key]`, the admin row's thinking_default) -- a
     // "model default" that hides whether it means on or off is the exact
     // mystery the control exists to end. Unknown = plain "Model default".
-    const known = modelDefaults[key];
+    const known = lookup(key);
     const suffix = known === true ? ' (on)' : known === false ? ' (off)' : '';
     const sel = createEl('select', { id: `set-${key}`, class: 'input' }, [
       createEl('option', { value: '' }, [`${meta.defaultLabel}${suffix}`]),
@@ -333,8 +348,9 @@ function bindControl(key, meta, modelDefaults = {}) {
     // '' is the empty option and means "don't send the key at all" -- for
     // reasoning_effort that leaves the model's chat template on its own
     // default, which is NOT the same as any of the listed values.
+    const shown = defaultText(lookup(key));
     const sel = createEl('select', { id: `set-${key}`, class: 'input' },
-      [createEl('option', { value: '' }, ['auto']),
+      [createEl('option', { value: '' }, [shown ? `auto (${shown})` : 'auto']),
        ...meta.options.map((o) => createEl('option', { value: o }, [o]))]);
     sel.value = cache[key] ?? '';
     sel.addEventListener('change', () => setSetting(key, sel.value || null));
@@ -352,7 +368,10 @@ function bindControl(key, meta, modelDefaults = {}) {
     class: 'input',
     type: 'number',
     min: meta.min, max: meta.max, step: meta.step,
-    placeholder: 'auto',
+    // The model's REAL resolved value, not the word "auto" -- a greyed
+    // placeholder already reads as "this is what you get if you leave it
+    // alone", and "auto" left the reader to generate something to find out.
+    placeholder: defaultText(lookup(key)) ?? 'auto',
     value: cache[key] ?? '',
   });
   input.addEventListener('change', () => {
@@ -380,23 +399,81 @@ export function documentScopeNote(noun, hasActive) {
 // with nothing useful to say. `modelDefaults` is what the current model
 // resolves an UNSET key to, keyed like PARAM_META (today: enable_thinking
 // from the admin row's thinking_default) -- read by the tri-state control.
-export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {} } = {}) {
+export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {},
+                                    samplerDefaults = null } = {}) {
   const rows = { core: [], advanced: [] };
   const controls = [];
 
+  // Which half of `samplerDefaults` is in force: the user's explicit thinking
+  // pick when they made one, else the model's own default. Read live.
+  const thinkingOn = () => {
+    const picked = cache.enable_thinking;
+    return picked === null || picked === undefined
+      ? modelDefaults.enable_thinking === true
+      : picked === true;
+  };
+  // enable_thinking keeps answering from `modelDefaults` -- the tri-state
+  // labels the MODEL's own default, which does not move when the user picks.
+  const lookup = (key) => {
+    if (key === 'enable_thinking' || !samplerDefaults) return modelDefaults[key] ?? null;
+    return (samplerDefaults[thinkingOn() ? 'on' : 'off'] ?? {})[key] ?? null;
+  };
+
   for (const [key, meta] of Object.entries(PARAM_META)) {
     if (meta.requiresCap && !caps.includes(meta.requiresCap)) continue;
-    const control = bindControl(key, meta, modelDefaults);
-    controls.push({ key, meta, control });
-    // The note lives INSIDE the label, not as a third child: .settings-row is
-    // a two-child space-between flex row, and a third child would re-space it.
-    rows[meta.section].push(createEl('div', { class: 'settings-row' }, [
+    const control = bindControl(key, meta, lookup);
+    // Shown only while the key is overridden, so its presence IS the "you
+    // changed this" signal and there is nothing extra on screen otherwise.
+    // Not a hover reveal -- state, not pointer -- so DESIGN.md §7's
+    // touch-fallback rule does not apply; the hit area is padded to 44px
+    // under `hover:none` in app.css.
+    const reset = createEl('button', {
+      class: 'settings-row__reset', type: 'button', hidden: true,
+      title: 'Back to the model default',
+      'aria-label': `Reset ${meta.label} to the model default`,
+    }, ['\u21ba']);
+    const row = createEl('div', { class: 'settings-row' }, [
       createEl('label', { for: `set-${key}` }, [
         meta.label,
         meta.note ? createEl('span', { class: 'settings-row__note muted small' }, [meta.note]) : null,
       ]),
-      control,
-    ]));
+      // The control and its reset share ONE wrapper: .settings-row is a
+      // two-child space-between flex row and a third child re-spaces it.
+      createEl('div', { class: 'settings-row__control' }, [control, reset]),
+    ]);
+    const sync = () => {
+      const overridden = cache[key] !== null && cache[key] !== undefined;
+      row.classList.toggle('settings-row--overridden', overridden);
+      reset.hidden = !overridden;
+    };
+    // Registered AFTER bindControl's own handler, so the cache is already
+    // updated by the time this reads it.
+    control.addEventListener('change', () => { sync(); if (key === 'enable_thinking') syncDefaults(); });
+    reset.addEventListener('click', () => {
+      setSetting(key, null);
+      if (meta.type === 'checkbox') control.checked = false; else control.value = '';
+      sync();
+      if (key === 'enable_thinking') syncDefaults();
+    });
+    controls.push({ key, meta, control, sync });
+    sync();
+    rows[meta.section].push(row);
+  }
+
+  // Repaint every placeholder against the current thinking state. Only the
+  // keys the overlay moves actually change, but repainting all of them keeps
+  // this from having to know WHICH keys those are -- that list lives in the
+  // sampler TOML, and a second copy here is the drift this repo names as a
+  // defect with a delay.
+  function syncDefaults() {
+    for (const { key, meta, control } of controls) {
+      if (meta.type === 'number') control.placeholder = defaultText(lookup(key)) ?? 'auto';
+      else if (meta.type === 'select') {
+        const shown = defaultText(lookup(key));
+        const blank = control.querySelector('option[value=""]');
+        if (blank) blank.textContent = shown ? `auto (${shown})` : 'auto';
+      }
+    }
   }
 
   // "Clear all overrides", not "Reset to defaults": this sets every value to
@@ -408,10 +485,12 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
   const resetBtn = createEl('button', { class: 'btn btn--sm btn--ghost' }, ['Clear all overrides']);
   resetBtn.addEventListener('click', () => {
     resetSettings();
-    for (const { meta, control } of controls) {
+    for (const { meta, control, sync } of controls) {
       if (meta.type === 'checkbox') control.checked = false;
       else control.value = ''; // selects + tristates: '' is the unset option
+      sync();
     }
+    syncDefaults();
   });
 
   return createEl('div', { class: 'settings-panel' }, [

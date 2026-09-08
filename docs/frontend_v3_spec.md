@@ -511,7 +511,7 @@ conversation + copy `params` into the settings panel); NOT the server's TOML pre
 
 **Admin models** (`X-Heylook-Admin-Token`): `GET /v1/admin/models` →
 `{models:[{id,provider,description?,tags,enabled,capabilities,config,loaded,source,
-stale_reload_fields,effective_loader,context_length,context_running,thinking_default}], total}`.
+stale_reload_fields,effective_loader,context_length,context_running,thinking_default,sampler_defaults}], total}`.
 `source` (v1.70.0) is `"config"` (a models.toml `[[models]]` entry) or `"discovered"`
 (found under `[scan].folders`, served with no entry). NOT derivable from `config`: a
 discovered model's `config` is not empty — it carries what the scanner assigned
@@ -542,6 +542,21 @@ the thinking CAPABILITY, which is the v1.79.62 fallback: a model that can think,
 Derived, so answered for unloaded models. v3 labels the tri-state thinking control's
 "Model default (on|off)" with it and the composer's thinking button reflects it; a request
 `enable_thinking: false` is the explicit off.
+
+`sampler_defaults` (v2.0.21, every provider; also on every `/v1/models` entry, same
+value): `{"off": {...}, "on": {...}}` — what EVERY sampler key resolves to for a request
+that says nothing, from the same cascade (`samplers.sampler_defaults`, sibling of
+`thinking_default` and bound by the same never-re-derive rule). Keys are a subset of
+`REQUEST_SAMPLER_FIELDS`; a key the cascade does not set is absent, and the UI falls back
+to the word "auto" for it. KEYED BY THE THINKING SWITCH because the anti-loop overlay
+fires off that switch (thinking.toml sets `presence_penalty`) while the panel's thinking
+control is live and independent — reporting one state while the user has selected the
+other would put a wrong number on screen, which is worse than the "auto" it replaces.
+The MLX vendor layer (`generation_config.json`) is included exactly where the provider
+includes it, so a gemma row reports its `top_k: 64` rather than the global floor's `0`;
+gguf reports without a vendor layer, as it generates. v3 uses it as the placeholder in
+every blank sampler field, so a reader can see what an untouched control means without
+generating to find out.
 
 `context_length` (v1.79.61 gguf, v1.79.65 every provider with a chat context; also on every
 `/v1/models` entry, same value; `null` where the files do not say): the model's context

@@ -168,7 +168,21 @@ THINKING DEFAULT (v1.79.62): the cascade resolves request > models.toml `enable_
 pass `self.thinking_capable`, admin passes `"thinking" in caps`); from v1.50.0 unset meant
 OFF everywhere, chosen when the UI could only send true-or-absent. `samplers.thinking_default()`
 is the admin row's `thinking_default` and must stay the cascade's own answer, never a
-re-derivation. `MLXModelConfig.enable_thinking` is Optional (None = follow capability).
+re-derivation. `samplers.sampler_defaults()` (v2.0.21) is its SIBLING under the same rule
+and reports EVERY key: `{"off": {...}, "on": {...}}` on the admin row and `/v1/models`,
+which v3 prints as the placeholder in a blank sampler field so "auto" stops hiding the
+number in force. Keyed by the thinking switch because the anti-loop overlay moves
+`presence_penalty` off it while the panel's thinking control is independent -- one
+state's numbers would be WRONG half the time, and a wrong number is worse than "auto".
+It takes the MLX VENDOR layer (`load_vendor_sampling`, cached per row in capabilities.py)
+exactly where the provider takes it: temperature/top_p/top_k ARE the vendor keys, so
+omitting it would report the floor for every model whose generation_config.json overrides
+it -- gemma reports `top_k: 64`, not `0`. gguf passes none, as it does at generation time.
+The panel marks an OVERRIDDEN key (accent label + border) and reveals a per-field reset
+beside it; that reset is hidden by the `hidden` ATTRIBUTE, so its CSS rule is
+`.settings-row__reset:not([hidden])` -- an author `display` on the class beats the UA's
+`[hidden]{display:none}` and un-hid every one of them, which a DOM check reading
+`el.hidden` could not see and a screenshot caught immediately. `MLXModelConfig.enable_thinking` is Optional (None = follow capability).
 THINKING DEPTH: `reasoning_effort` (v1.71.0) is a CHAT-TEMPLATE VARIABLE, not a sampler
 knob -- it rides `chat_template_kwargs` beside `enable_thinking` (gguf) / apply_chat_template
 kwargs (MLX). Sent WHENEVER SET, never gated on enable_thinking: gpt-oss/harmony reads it

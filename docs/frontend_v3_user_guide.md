@@ -32,6 +32,19 @@ The system prompt has the same three layers: a draft parked in your browser
 before any conversation exists, the conversation's own prompt, and the prompt a
 preset carries.
 
+**A blank sampler field shows the value it will actually use** (v2.0.21). Leaving
+Top-k empty on a gemma model shows a greyed `64`, because that is what the model's
+own config asks for — not the word "auto", which told you nothing. The moment you
+type your own value, the field's name turns accent-coloured, its border matches, and
+a small reset control appears beside it that puts the field back to the model's
+value. Nothing appears next to fields you have not touched, so the panel stays quiet
+and the only controls on screen are the ones you changed. Presets still store "auto"
+for a key you never set, and auto still means "use whatever this model resolves to" —
+that is why one preset behaves correctly across models with different defaults. A few
+fields have no server-side answer (Seed, for one) and honestly still read `auto`.
+Turning Thinking on or off changes what some of these show, because the thinking
+overlay adjusts the presence penalty.
+
 Two consequences worth internalising:
 
 - **The sampler panel is the active conversation's settings**, and it says so:
