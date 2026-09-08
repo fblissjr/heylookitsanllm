@@ -23,6 +23,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from heylook_llm.providers.common.loader_routing import effective_loader_for_config
+from heylook_llm import gguf_metadata
 from heylook_llm.samplers import load_vendor_sampling, sampler_defaults, thinking_default
 
 
@@ -292,14 +293,32 @@ class ModelFacts:
 
 
 @lru_cache(maxsize=64)
-def _vendor_sampling_pairs(model_path: str) -> tuple:
-    """``load_vendor_sampling`` behind the per-row cache the other derived
-    reads use -- a row builder must not re-read generation_config.json per
-    request. Returns sorted PAIRS, not a dict: a cached mutable would let
-    one caller's edit poison every later row (the same trap the Metal
-    device-info cache carries a comment about).
+def _vendor_sampling_pairs(provider: str, model_path: str) -> tuple:
+    """The model's own recommended decode settings, from wherever ITS engine
+    keeps them -- the same read the provider does at generation time.
+
+    ONE concept, two spellings on disk: MLX reads the model dir's
+    generation_config.json, gguf reads `general.sampling.*` out of the GGUF
+    header (which converters write FROM that same file). Both must be here.
+    An engine that gains a vendor layer in its provider and not here reports
+    the global FLOOR for its models while generation uses the vendor values
+    -- a plausible number that is not the one in force, which is the exact
+    failure `sampler_defaults` exists to prevent. That is not hypothetical:
+    it happened within one commit of this function being written, when gguf
+    gained its header vendor layer (v2.0.22) and this gate still said mlx.
+
+    Behind the per-row cache the sibling derived reads use, and returning
+    sorted PAIRS rather than a dict: a cached mutable would let one caller's
+    edit poison every later row (the trap the Metal device-info cache
+    carries its own comment about).
     """
-    return tuple(sorted(load_vendor_sampling(model_path).items()))
+    if provider == "mlx":
+        vendor = load_vendor_sampling(model_path)
+    elif provider == "gguf":
+        vendor = gguf_metadata.vendor_sampling(Path(model_path))
+    else:
+        vendor = {}
+    return tuple(sorted(vendor.items()))
 
 
 def derived_model_facts(model_config, router=None) -> ModelFacts:
@@ -338,19 +357,14 @@ def derived_model_facts(model_config, router=None) -> ModelFacts:
     # labels a blank field with the value generation will really use. The
     # vendor layer is passed exactly where the provider passes it -- MLX
     # reads generation_config.json, gguf never does.
-    # PROVIDER-GATED, and the gate is a coupling: it must name every engine
-    # whose PROVIDER overlays a vendor layer at generation time. Today that is
-    # MLX alone (gguf passes None). The day another engine gains one -- gguf
-    # reading `general.sampling.*` out of the GGUF header is in flight as this
-    # is written -- adding it there and not here reports the global FLOOR for
-    # those models while generation uses the vendor values, which is the exact
-    # wrong-number failure this whole field exists to prevent, and it fails
-    # silently: the panel simply shows a plausible number that is not the one
-    # in force. There is no test that can derive this pairing, so it is a
-    # comment and a grep: `resolve_effective_sampling(... vendor=`.
+    # Every engine's vendor layer is resolved in ONE place, keyed by provider
+    # -- see _vendor_sampling_pairs for why a missing engine there is a silent
+    # wrong number rather than a missing one. `test_vendor_layer_reaches_the
+    # _report_on_every_engine` pins the pairing.
     vendor = None
-    if model_config.provider == "mlx" and resolved.get("model_path"):
-        vendor = dict(_vendor_sampling_pairs(str(resolved["model_path"])))
+    if resolved.get("model_path"):
+        vendor = dict(_vendor_sampling_pairs(
+            model_config.provider, str(resolved["model_path"]))) or None
     defaults = sampler_defaults(
         resolved, thinking_capable="thinking" in capabilities, vendor=vendor)
     context_length = model_context_length(

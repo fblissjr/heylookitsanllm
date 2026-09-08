@@ -175,15 +175,27 @@ which v3 prints as the placeholder in a blank sampler field so "auto" stops hidi
 number in force. Keyed by the thinking switch because the anti-loop overlay moves
 `presence_penalty` off it while the panel's thinking control is independent -- one
 state's numbers would be WRONG half the time, and a wrong number is worse than "auto".
-It takes the MLX VENDOR layer (`load_vendor_sampling`, cached per row in capabilities.py)
-exactly where the provider takes it: temperature/top_p/top_k ARE the vendor keys, so
-omitting it would report the floor for every model whose generation_config.json overrides
-it -- gemma reports `top_k: 64`, not `0`. gguf passes none, as it does at generation time.
-The panel marks an OVERRIDDEN key (accent label + border) and reveals a per-field reset
-beside it; that reset is hidden by the `hidden` ATTRIBUTE, so its CSS rule is
-`.settings-row__reset:not([hidden])` -- an author `display` on the class beats the UA's
-`[hidden]{display:none}` and un-hid every one of them, which a DOM check reading
-`el.hidden` could not see and a screenshot caught immediately. `MLXModelConfig.enable_thinking` is Optional (None = follow capability).
+It takes each engine's VENDOR layer exactly where that engine's provider takes it, and
+`capabilities._vendor_sampling_pairs` is the ONE place naming which engine reads what:
+MLX `load_vendor_sampling` (generation_config.json), gguf `gguf_metadata.vendor_sampling`
+(the header's `general.sampling.*`), cached per row. temperature/top_p/top_k ARE the vendor
+keys, so an engine present in its provider and ABSENT there reports the global floor while
+generation uses the vendor values -- gemma must report `top_k: 64` and Qwen3.6 `20`, not
+`0`. That drifted WITHIN ONE COMMIT (gguf gained its layer in v2.0.22, the gate still said
+mlx), which is why the pairing now has a test rather than a comment
+(`test_vendor_layer_reaches_the_report_on_every_engine`). Header floats are ROUNDED at the
+reader: float32 widening makes a published 0.95 read 0.949999988079071, harmless to the
+sampler and not harmless as the placeholder of a `step=0.01` field.
+The panel marks an OVERRIDDEN key (accent label + border) and shows a per-field reset,
+where "overridden" is `key in samplerParams(caps)` and NOT `cache[key] != null` -- those
+disagree, because samplerParams drops a `top_k`/`presence_penalty` of 0 and every
+capability-gated key, so the naive test made the panel claim a value the model never
+receives. The reset hides by VISIBILITY, keeping its box so a row cannot jog sideways as
+you edit it. The `hidden` ATTRIBUTE is the trap that class of control used to fall into:
+an author `display` beats the UA's `[hidden]{display:none}`, which un-hid every reset
+button AND kept `.chat__ctx` on screen for models its own code believed it hid -- a DOM
+check reading `el.hidden` sees neither, a screenshot sees both. `app.css` now carries one
+global `[hidden]{display:none!important}` so the next `display` cannot re-open it. `MLXModelConfig.enable_thinking` is Optional (None = follow capability).
 THINKING DEPTH: `reasoning_effort` (v1.71.0) is a CHAT-TEMPLATE VARIABLE, not a sampler
 knob -- it rides `chat_template_kwargs` beside `enable_thinking` (gguf) / apply_chat_template
 kwargs (MLX). Sent WHENEVER SET, never gated on enable_thinking: gpt-oss/harmony reads it

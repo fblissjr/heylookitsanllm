@@ -278,7 +278,9 @@ def resolve_effective_sampling(request: Any, model_config: dict,
     Layers, later overriding earlier (each only for fields it sets):
       1.  Global floor (``GLOBAL_SAMPLER_FLOOR``).
       1b. Vendor layer -- the model's own generation_config.json values,
-          passed by the caller (``load_vendor_sampling``); gguf passes None.
+          passed by the caller: MLX from generation_config.json
+          (``load_vendor_sampling``), gguf from the GGUF header's
+          ``general.sampling.*`` (``gguf_metadata.vendor_sampling``, v2.0.22).
       2.  Thinking anti-loop overlay (the slimmed 'thinking' sampler),
           keyed on the EFFECTIVE switch: request.enable_thinking when
           present, else the model config flag. Hardcoded fallback mirrors
@@ -400,11 +402,15 @@ def sampler_defaults(model_config: dict, *, thinking_capable: bool,
     "auto" it replaces. Two dict merges and no I/O, so the honest shape is
     also the cheap one.
 
-    ``vendor`` must be passed for MLX exactly as the provider passes it
-    (``load_vendor_sampling``): temperature/top_p/top_k are precisely the
-    vendor keys, so omitting it would report the global floor for every
-    model whose generation_config.json overrides it -- the models where the
-    number matters most. gguf passes None, as it does at generation time.
+    ``vendor`` must be passed exactly as the model's own PROVIDER passes it
+    at generation time -- MLX from the model dir's generation_config.json
+    (``load_vendor_sampling``), gguf from the GGUF header's
+    ``general.sampling.*`` (``gguf_metadata.vendor_sampling``, v2.0.22).
+    temperature/top_p/top_k are precisely the vendor keys, so omitting it for
+    an engine that has one reports the global floor for every model that
+    overrides it -- the models where the number matters most.
+    ``capabilities._vendor_sampling_pairs`` is the one place that pairing
+    lives; it drifted once already, within a commit.
     """
     out: dict[str, dict[str, Any]] = {}
     for state, active in (("off", False), ("on", True)):

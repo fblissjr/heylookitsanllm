@@ -20,6 +20,12 @@
   --brand-tint: oklch(0.962 0.05 95);    /* selected-item background */
   --accent: oklch(0.47 0.10 78);         /* deep bronze: actions, links, focus */
   --accent-hover: oklch(0.40 0.10 78);
+  /* Accent's tint surface, built the way --warn-tint and --danger-tint are
+     (same lightness, low chroma, the base hue). It was REFERENCED before it
+     existed, and var()'s fallback hid that: every reset-button hover painted
+     the warning colour on a neutral control. A fallback on a token that is
+     simply missing is a bug that can never report itself. */
+  --accent-tint: oklch(0.962 0.03 78);
   --on-accent: oklch(1 0 0);
   --danger: oklch(0.50 0.18 29);
   --danger-tint: oklch(0.962 0.03 29);
@@ -306,31 +312,43 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 /* A sampler row's control side: the input plus its reset. ONE wrapper, because
    .settings-row is a two-child space-between flex and a third child re-spaces
    it (settings.js says the same at the build site). */
+/* The reset the codebase never had. `el.hidden` is how this app toggles
+   visibility in ~40 places, and the UA sheet's `[hidden]{display:none}` is
+   only a UA rule -- ANY author `display` on the same element beats it, with
+   no warning and no test that reads `el.hidden` able to see it. That shipped
+   twice: the sampler reset button, and `.chat__ctx`, whose own comment in
+   context-select.js says it hides for non-gguf models while its
+   `display:inline-flex` kept it on screen for every model. One rule, so the
+   next `display` added anywhere cannot re-open it. */
+[hidden] { display: none !important; }
+
 .settings-row__control { display: flex; align-items: center; gap: 0.35rem; }
 /* Reset-to-model-default. Visible only while the key is OVERRIDDEN, so its
    presence is the override signal and an untouched panel stays quiet. That is
    state-driven, not hover-driven, so DESIGN.md §7's touch-fallback rule is
    satisfied by construction -- but the tap target still has to be real, hence
    the 44px floor under a coarse pointer while the glyph stays small. */
-/* `:not([hidden])` is load-bearing, not tidiness: an author `display` on the
-   class beats the UA's `[hidden]{display:none}` outright, so styling this
-   button at all un-hid it and every row showed a reset icon while nothing was
-   overridden. Caught by LOOKING at the rendered panel -- the DOM assertion
-   read el.hidden, which was correctly true the whole time. */
-.settings-row__reset:not([hidden]) {
+/* Reset-to-model-default. Present in every row and INERT until the key is
+   overridden -- hidden by visibility, so the row never jogs sideways as you
+   edit it and the tap target does not move. `visibility:hidden` also drops it
+   from the a11y tree and the tab order, so an inert row exposes nothing. */
+.settings-row__reset {
   flex: none;
   width: 1.5rem; height: 1.5rem;
   display: inline-flex; align-items: center; justify-content: center;
-  padding: 0; border: 0; border-radius: var(--radius-sm, 4px);
+  padding: 0; border: 0; border-radius: var(--r-ctl);
   background: none; color: var(--accent); cursor: pointer;
   font-size: 0.95rem; line-height: 1;
+  visibility: hidden;
 }
-.settings-row__reset:hover { background: var(--accent-tint, var(--warn-tint)); }
-.settings-row__reset:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.settings-row__reset--on { visibility: visible; }
+.settings-row__reset--on:hover { background: var(--accent-tint); }
+.settings-row__reset--on:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 @media (hover: none) {
-  /* Grow the HIT AREA, not the glyph: negative margin keeps the row's height
-     and the input's alignment exactly where they were on the phone. */
-  .settings-row__reset:not([hidden]) { width: 44px; height: 44px; margin: -0.6rem -0.5rem -0.6rem 0; }
+  /* A real tap target on the phone. The box is reserved whether or not the
+     key is overridden, so growing it costs the input a fixed 44px once --
+     it never moves under the reader's finger. */
+  .settings-row__reset { width: 44px; height: 44px; margin: -0.6rem 0; }
 }
 /* An overridden key reads as deliberate: the field's own border carries it
    (visible next to the greyed placeholder of an untouched neighbour) and the

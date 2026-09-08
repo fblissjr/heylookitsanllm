@@ -552,11 +552,14 @@ to the word "auto" for it. KEYED BY THE THINKING SWITCH because the anti-loop ov
 fires off that switch (thinking.toml sets `presence_penalty`) while the panel's thinking
 control is live and independent — reporting one state while the user has selected the
 other would put a wrong number on screen, which is worse than the "auto" it replaces.
-The MLX vendor layer (`generation_config.json`) is included exactly where the provider
-includes it, so a gemma row reports its `top_k: 64` rather than the global floor's `0`;
-gguf reports without a vendor layer, as it generates. v3 uses it as the placeholder in
-every blank sampler field, so a reader can see what an untouched control means without
-generating to find out.
+Each engine's vendor layer is included exactly where that engine's provider includes it
+— MLX from `generation_config.json`, gguf from the GGUF header's `general.sampling.*` —
+so a gemma row reports its `top_k: 64` and a Qwen3.6 gguf its `20`, rather than the
+global floor's `0`. v3 uses it as the placeholder in every blank sampler field, so a
+reader can see what an untouched control means without generating to find out. A field
+is rendered as OVERRIDDEN only when the key survives `samplerParams(caps)` — a `top_k`
+or `presence_penalty` of 0 is dropped at the wire, so marking it would claim a value the
+server never receives.
 
 `context_length` (v1.79.61 gguf, v1.79.65 every provider with a chat context; also on every
 `/v1/models` entry, same value; `null` where the files do not say): the model's context

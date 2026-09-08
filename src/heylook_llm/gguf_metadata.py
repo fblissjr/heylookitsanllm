@@ -241,7 +241,15 @@ def vendor_sampling(primary: Path) -> dict[str, Any]:
     for our_key, gguf_key in _VENDOR_SAMPLING_KEYS.items():
         value = found.get(gguf_key)
         if isinstance(value, (int, float)) and not isinstance(value, bool):
-            out[our_key] = value
+            # The header stores these as float32; widening to a Python float
+            # exposes the representation error, so a top_p the publisher wrote
+            # as 0.95 reads back 0.949999988079071. Harmless to the sampler,
+            # NOT harmless on screen: the settings panel prints this value as
+            # the placeholder of a `step=0.01` field. Six digits is well past
+            # float32's ~7 significant digits, so this only removes the
+            # expansion artifact -- it cannot round away a value a publisher
+            # meant. Ints (top_k) pass through untouched.
+            out[our_key] = round(value, 6) if isinstance(value, float) else value
     return out
 
 

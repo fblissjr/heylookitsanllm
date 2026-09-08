@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.25]
+
+### Fixed
+
+- **Every gguf row advertised the global sampler floor while generation used
+  the GGUF header's values.** `sampler_defaults` (v2.0.21) gated its vendor
+  layer on the provider being MLX; v2.0.22 gave gguf a vendor layer from the
+  header one commit later, and the gate was not widened. Measured: gemma-4
+  GGUFs ask for `top_k: 64` and Qwen3.6 for `20`, and the panel printed `0`
+  for both. The pairing of engine to vendor reader now lives in one function
+  and has a test rather than the comment that predicted this exact drift and
+  did not prevent it.
+- **A sampler value of 0 was marked as an override the model never received.**
+  `samplerParams` drops `top_k` and `presence_penalty` when they are 0, and
+  drops every capability-gated key, but the new marking keyed off
+  `cache[key] != null` — so typing 0 lit the row and offered to reset an
+  override that did not exist. Marking is now derived from `samplerParams`
+  itself, which is the function that decides what reaches the model.
+- **A stale thinking pick selected the wrong defaults on a model that cannot
+  think.** The panel read the cached `enable_thinking` without the capability
+  filter the wire applies, so a `true` left over from a thinking-capable model
+  showed the thinking bag's presence penalty on a model the server resolves
+  to off.
+- **`[hidden]` did nothing wherever an author `display` rule existed**, which
+  is the whole codebase: there was no global reset, and `el.hidden` is how
+  this app toggles ~40 elements. It had already shipped twice — the sampler
+  reset button, and `.chat__ctx`, which its own code believes it hides for
+  non-gguf models and which was visible on every model. One
+  `[hidden]{display:none!important}` now covers all of them. The sampler
+  reset additionally hides by visibility, so it keeps its box and a row no
+  longer jogs sideways as you edit it.
+- **`--accent-tint` and `--radius-sm` were referenced and never defined**, so
+  the reset button hovered in the WARNING colour and rounded at a hardcoded
+  fallback. `--accent-tint` is now a real token built like its siblings, the
+  radius uses the design system's control token, and a sweep confirms no
+  other undefined custom property is referenced anywhere in the stylesheet.
+- **GGUF header floats are rounded at the reader.** float32 widening made a
+  published `0.95` read back `0.949999988079071` — harmless to the sampler,
+  not harmless as the placeholder of a `step=0.01` field.
+
 ## [2.0.24]
 
 ### Changed

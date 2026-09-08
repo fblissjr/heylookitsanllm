@@ -406,7 +406,20 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
 
   // Which half of `samplerDefaults` is in force: the user's explicit thinking
   // pick when they made one, else the model's own default. Read live.
+  //
+  // The CAP GATE first, and it is not defensive padding: `samplerParams(caps)`
+  // deletes `enable_thinking` at the wire for a model without the capability,
+  // so a `true` left in the cache by a previous, thinking-capable model would
+  // pick the "on" bag here while the server resolves thinking OFF -- the panel
+  // would label presence-penalty 1.5 on a model running 0.0. A wrong number is
+  // the one outcome this whole field exists to avoid.
+  //
+  // NB chat.js `effectiveThinking` answers a neighbouring question (what the
+  // composer's button shows) with its own spelling of this rule. They agree
+  // today; this copy is the one that forgot the cap gate, which is how the
+  // drift announced itself. Worth collapsing into one exported resolver.
   const thinkingOn = () => {
+    if (!caps.includes('thinking')) return false;
     const picked = cache.enable_thinking;
     return picked === null || picked === undefined
       ? modelDefaults.enable_thinking === true
@@ -427,8 +440,14 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
     // Not a hover reveal -- state, not pointer -- so DESIGN.md §7's
     // touch-fallback rule does not apply; the hit area is padded to 44px
     // under `hover:none` in app.css.
+    // Hidden by VISIBILITY, not by the `hidden` attribute or `display`, and
+    // the difference is layout: the button keeps its box either way, so a row
+    // does not jog sideways the moment a key becomes overridden -- which it
+    // would under `display:none`, by the button's whole width, and by more on
+    // a phone where the tap target is larger. `visibility:hidden` also leaves
+    // the a11y tree and the tab order, so an inert row exposes nothing.
     const reset = createEl('button', {
-      class: 'settings-row__reset', type: 'button', hidden: true,
+      class: 'settings-row__reset', type: 'button',
       title: 'Back to the model default',
       'aria-label': `Reset ${meta.label} to the model default`,
     }, ['\u21ba']);
@@ -442,9 +461,15 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
       createEl('div', { class: 'settings-row__control' }, [control, reset]),
     ]);
     const sync = () => {
-      const overridden = cache[key] !== null && cache[key] !== undefined;
+      // DERIVED from samplerParams, not from `cache[key] != null`. The two
+      // disagree: samplerParams drops a top_k or presence_penalty of 0
+      // (`!(v > 0)`) and drops any capability-gated key the model lacks, so a
+      // typed 0 used to light the row accent and offer a reset for a value the
+      // server never sees and never applies. Marking is a CLAIM about what the
+      // model is running, so it has to be read off the thing that decides it.
+      const overridden = key in samplerParams(caps);
       row.classList.toggle('settings-row--overridden', overridden);
-      reset.hidden = !overridden;
+      reset.classList.toggle('settings-row__reset--on', overridden);
     };
     // Registered AFTER bindControl's own handler, so the cache is already
     // updated by the time this reads it.

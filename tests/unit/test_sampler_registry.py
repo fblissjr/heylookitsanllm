@@ -20,6 +20,8 @@ through.
 
 from __future__ import annotations
 
+from unittest import mock
+
 import pytest
 from heylook_llm.samplers import GLOBAL_SAMPLER_FLOOR
 
@@ -350,6 +352,42 @@ class TestSamplerDefaultsReporting:
         assert set(got) == {"off", "on"}
         assert got["off"]["enable_thinking"] is False and got["on"]["enable_thinking"] is True
         assert got["off"] != got["on"]
+
+    def test_vendor_layer_reaches_the_report_on_every_engine(self):
+        """Each engine's vendor layer must reach the reported defaults.
+
+        This is the check the drift needed and did not have: `sampler_defaults`
+        takes `vendor` from `capabilities._vendor_sampling_pairs`, which names
+        the engines by hand, and gguf gained a vendor layer in its provider one
+        commit after that gate was written -- so every gguf row advertised the
+        global floor while generation used the GGUF header's values. Silent,
+        because a plausible number is indistinguishable from the right one.
+
+        Sentinels rather than real files: the claim is about the WIRING, and a
+        fixture model would only prove it for whichever engine the fixture used.
+        """
+        from heylook_llm import capabilities
+        from heylook_llm.config import ModelConfig
+
+        cases = {
+            "mlx": ("load_vendor_sampling", "/fake/mlx-model", 11),
+            "gguf": ("_gguf_vendor", "/fake/model.gguf", 22),
+        }
+        for provider, (_, path, sentinel) in cases.items():
+            capabilities._vendor_sampling_pairs.cache_clear()
+            with mock.patch.object(capabilities, "load_vendor_sampling",
+                                   return_value={"top_k": sentinel}), \
+                 mock.patch.object(capabilities.gguf_metadata, "vendor_sampling",
+                                   return_value={"top_k": sentinel}):
+                mc = ModelConfig(id=f"t-{provider}", provider=provider,
+                                 config={"model_path": path})
+                got = capabilities.derived_model_facts(mc).sampler_defaults
+            assert got["off"]["top_k"] == sentinel, (
+                f"{provider}: the reported default ignored that engine's vendor "
+                f"layer, so its rows will advertise the global floor while "
+                f"generation uses the vendor values"
+            )
+        capabilities._vendor_sampling_pairs.cache_clear()
 
     def test_every_reported_key_is_a_request_sampler_field(self):
         # The panel writes these keys back as request params; a key here that
