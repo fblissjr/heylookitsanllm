@@ -3328,6 +3328,45 @@ async function main() {
     // which ended up active. Model-free and server-free, so it belongs here
     // rather than in the suite that needs a GPU.
     const cl = await openChat(browser, base);
+    await suite.check('the global [hidden] rule beats an author display rule', async () => {
+      // The app hides ~37 elements with `el.hidden`, and the UA's
+      // `[hidden]{display:none}` is only a UA rule -- ANY author `display` on
+      // the same element beats it, silently, with no test that reads
+      // `el.hidden` able to see it. That shipped twice: the sampler reset
+      // button, and `.chat__ctx`, whose own code hides it for non-gguf models
+      // while its `display:inline-flex` kept it on screen for every model.
+      // app.css carries one `[hidden]{display:none!important}` so the next
+      // `display` added anywhere cannot re-open it, and NOTHING pinned that
+      // the rule exists -- deleting it went green.
+      //
+      // Asserts the PROPERTY, not a component: an author declaration losing
+      // to `hidden` is the whole contract, so the check needs no knowledge of
+      // which elements are hidden today. Inline style is the strongest normal
+      // author declaration there is, so beating it is the strongest form of
+      // the claim; only an `!important` author rule can.
+      const out = await cl.page.evaluate(() => {
+        const el = document.createElement('div');
+        el.setAttribute('style', 'display: flex');
+        el.hidden = true;
+        document.body.appendChild(el);
+        const hiddenDisplay = getComputedStyle(el).display;
+        el.hidden = false;
+        const shownDisplay = getComputedStyle(el).display;
+        el.remove();
+        return { hiddenDisplay, shownDisplay };
+      });
+      assert(out.hiddenDisplay === 'none',
+        `an element with [hidden] computed display:${out.hiddenDisplay} -- the global `
+        + `[hidden]{display:none!important} rule in app.css is missing or was overridden, `
+        + `so every el.hidden in the app is now advisory`);
+      // Guard the guard: if the element were hidden for some unrelated reason
+      // the first assert would pass vacuously, so prove the attribute is what
+      // did it.
+      assert(out.shownDisplay === 'flex',
+        `removing [hidden] left display:${out.shownDisplay}, so the check above `
+        + `was not measuring the attribute`);
+    });
+
     await suite.check('a double-tapped Clone issues exactly one clone', async () => {
       cl.store.remote.cloneDelayMs = 400;
       const clones = () => cl.reqs.filter(
