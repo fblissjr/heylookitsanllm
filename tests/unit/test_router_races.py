@@ -79,7 +79,7 @@ class SlowTrackingProvider(BaseProvider):
             cls.peak = max(cls.peak, len(cls.live))
         time.sleep(cls.load_seconds)
 
-    def unload(self):
+    def unload(self, *, drain: bool = True):
         cls = SlowTrackingProvider
         with cls._lock:
             cls.live.discard(self.model_id)

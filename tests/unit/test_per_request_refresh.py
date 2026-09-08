@@ -37,7 +37,7 @@ class _ConfigDictProvider(BaseProvider):
     def create_chat_completion(self, request, abort_event=None):  # pragma: no cover
         yield from ()
 
-    def unload(self):
+    def unload(self, *, drain: bool = True):
         pass
 
 

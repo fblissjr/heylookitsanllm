@@ -290,6 +290,15 @@ class BaseProvider(ABC):
         weights mid-decode faults Metal. `__del__` cannot -- see below.
         Implementations with nothing to wait for accept the argument and
         ignore it.
+
+        AN OVERRIDE MUST ACCEPT ``drain``. ``__del__`` passes it, and a
+        subclass declaring plain ``unload(self)`` raises TypeError inside the
+        destructor -- where Python swallows it, prints one ``Exception ignored
+        while calling deallocator`` line to stderr, and DOES NOT UNLOAD. The
+        object is then never torn down and almost nothing says so. Two test
+        doubles were in that state for the length of one session before a
+        review caught it; the three shipped providers were updated with the
+        contract.
         """
         pass
 
