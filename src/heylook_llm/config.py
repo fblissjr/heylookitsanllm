@@ -937,6 +937,33 @@ class GGUFModelConfig(BaseModel):
     # when n_batch is not set. Named so the validator's message can say it.
     LLAMA_DEFAULT_N_BATCH: ClassVar[int] = 2048
 
+    # llama.cpp's three options that write to disk. heylook passes none of
+    # them and strips the one that is env-reachable (LLAMA_ARG_LOG_FILE), so
+    # `extra_args` is the last route by which a gguf model can put a file
+    # somewhere heylook did not choose -- and for --log-prompts-dir that file
+    # is PROMPT TEXT, at observability_level="off", with nothing announcing
+    # it. Refuse them here rather than at spawn: this catches an import, an
+    # admin PATCH and a hand-edited models.toml, and the author sees the
+    # message where the value is.
+    DISK_WRITING_FLAGS: ClassVar[tuple] = (
+        "--log-file", "--log-prompts-dir", "--slot-save-path")
+
+    @model_validator(mode="after")
+    def _extra_args_writes_no_files(self):
+        for token in self.extra_args:
+            # `--log-file=X` and `--log-file X` are both accepted by llama.cpp,
+            # so match the flag NAME, not the whole token.
+            flag = token.split("=", 1)[0]
+            if flag in self.DISK_WRITING_FLAGS:
+                raise ValueError(
+                    f"extra_args carries {flag}, which makes llama-server write "
+                    f"to disk on its own. heylook owns this subprocess's output: "
+                    f"it goes nowhere at observability_level='off' (the default) "
+                    f"and to logs/llama_server_<id>.log above it. Raise "
+                    f"observability_level instead of passing {flag}."
+                )
+        return self
+
     @model_validator(mode="after")
     def _ubatch_within_batch(self):
         # llama_context takes min(n_batch, n_ubatch) WITHOUT a word, so an

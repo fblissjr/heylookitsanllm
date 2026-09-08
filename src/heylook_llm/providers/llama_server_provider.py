@@ -98,6 +98,32 @@ _SSE_READ_TIMEOUT_S = 120.0
 # may be setting deliberately -- those are warned about, never removed.
 _ENV_STRIPPED_AT_SPAWN = ("LLAMA_ARG_LOG_FILE",)
 
+# llama-server reads three env vars that do NOT carry the LLAMA_ARG_ prefix
+# the warning loop keys on, so they were invisible to it. Two are worth
+# naming; both are surfaced, not stripped, like every other behaviour knob.
+#
+# LLAMA_API_KEY is the one that BREAKS us: set, llama-server demands a bearer
+# token heylook does not send, and /health is a PUBLIC endpoint (server.cpp),
+# so load_model polls 200, the model reports READY, and every generation then
+# 401s. `_read_running_ctx` swallows its own 401, so context_running silently
+# reads None as well. Nothing else in the stack names the cause.
+# MTMD_BACKEND_DEVICE moves the mmproj tower to another backend.
+# HF_TOKEN is deliberately NOT here: it is near-ubiquitous, heylook passes
+# local paths so llama-server never downloads, and warning on it is noise.
+_ENV_SURFACED_UNPREFIXED = ("LLAMA_API_KEY", "MTMD_BACKEND_DEVICE")
+
+# llama.cpp applies these BEFORE both env and CLI (common/arg.cpp: "config
+# file applies first, so env variables and CLI arguments override it"), and
+# their keys dispatch into the same arg handlers -- so a `log-file` line in
+# one is a spawn setting heylook neither passes nor can override, since our
+# only counter would be passing --log-file ourselves, which redirects the
+# stream we capture. Their existence is therefore REPORTED at spawn: heylook
+# cannot own the log destination in their presence and should not claim to.
+def _llama_system_config_paths() -> list[Path]:
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    user_dir = Path(xdg) if xdg else Path.home() / ".config"
+    return [Path("/etc/llama.cpp/config.ini"), user_dir / "llama.cpp" / "config.ini"]
+
 # cascade key -> llama-server request key
 _PAYLOAD_KEY_MAP = (
     ("temperature", "temperature"),
@@ -598,24 +624,14 @@ class LlamaServerProvider(BaseProvider):
             log_stdout = self._log_handle
             log_ref = f"see {log_path}"
 
-        # llama-server reads LLAMA_ARG_* from the environment for most flags.
-        # A CLI arg WINS over its env var (llama.cpp warns and overrides), so
-        # anything heylook passes is safe -- but a flag we DON'T pass is set
-        # silently, and then the running process differs from what models.toml
-        # and the admin API say it is. Surface those rather than stripping the
-        # env: someone may be using one deliberately, and quietly changing the
-        # child's environment would be its own invisible behaviour.
-        #
-        # ONE of them is removed instead of reported, because it does not merely
-        # change behaviour -- it defeats the switch above. LLAMA_ARG_LOG_FILE
-        # makes llama-server open its own log file, so observability_level=off
-        # would still put a file on disk; and a file sink REPLACES stdout in
-        # llama.cpp's logger rather than adding to it (common/log.cpp:
-        # `if (!fcur) { fcur = stdout; }`), so it would ALSO divert the stream
-        # heylook does capture when the level is raised. heylook owns where this
-        # subprocess's output goes, and "off" has to mean nothing on disk. The
-        # removal is LOGGED, which is what keeps the reasoning above intact: the
-        # objection to stripping is that it is invisible, not that it is wrong.
+        # A flag heylook passes explicitly WINS over its env var (llama.cpp
+        # warns and overrides), so the spawn argv is safe -- but a flag we do
+        # NOT pass is set silently from the environment, and the running
+        # process then differs from what models.toml and the admin API say it
+        # is. Those are surfaced, never scrubbed: someone may be setting one
+        # deliberately, and quietly editing the child's environment would be
+        # its own invisible behaviour change. The ONE exception, and why it is
+        # an exception, is at _ENV_STRIPPED_AT_SPAWN.
         child_env = os.environ.copy()
         for key in _ENV_STRIPPED_AT_SPAWN:
             stripped = child_env.pop(key, None)
@@ -629,13 +645,27 @@ class LlamaServerProvider(BaseProvider):
                     f"subprocess's log destination."
                 )
 
-        llama_env = sorted(k for k in child_env if k.startswith("LLAMA_ARG_"))
+        llama_env = sorted(
+            k for k in child_env
+            if k.startswith("LLAMA_ARG_") or k in _ENV_SURFACED_UNPREFIXED
+        )
         if llama_env:
             logging.warning(
                 f"[GGUF] {', '.join(llama_env)} set in the environment. Flags "
                 f"heylook passes explicitly override these, but any flag it "
                 f"does NOT pass is being set from the environment and will not "
                 f"be visible in this model's config."
+            )
+
+        # Reported, not overridable -- see _llama_system_config_paths.
+        present = [p for p in _llama_system_config_paths() if p.is_file()]
+        if present:
+            logging.warning(
+                f"[GGUF] llama.cpp system config present "
+                f"({', '.join(str(p) for p in present)}). Its keys are applied "
+                f"BEFORE heylook's flags and are not visible in this model's "
+                f"config; a log-file/log-prompts-dir/slot-save-path key there "
+                f"writes to disk whatever observability_level says."
             )
 
         logging.info(f"[GGUF] Spawning llama-server for '{self.model_id}': {' '.join(args)}")

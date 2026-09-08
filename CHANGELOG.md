@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.15]
+
+### Fixed
+
+- **v2.0.14's "heylook owns this subprocess's log destination" was a claim,
+  not a fact -- two routes went around it.** Both found by review of that
+  commit, both verified against the pinned llama.cpp checkout.
+  - `extra_args` is appended to spawn argv verbatim, so a `models.toml`
+    entry (or an admin `PATCH` -- the field is `ui:"advanced"`, not
+    forbidden) could carry `--log-prompts-dir` and write **prompt text** to
+    disk at `observability_level = "off"` with nothing announcing it, the
+    one thing the repo's rules single out. A `GGUFModelConfig` validator now
+    refuses `--log-file`, `--log-prompts-dir` and `--slot-save-path` there,
+    matching the flag NAME so the `--flag=value` form is caught too, and
+    names `observability_level` as the lever instead. On the config rather
+    than at spawn, so import, admin write and hand-edit all hit it.
+  - llama.cpp applies `/etc/llama.cpp/config.ini` and
+    the user config dir's `llama.cpp/config.ini` (`$XDG_CONFIG_HOME`, else the platform default) BEFORE both env and
+    CLI (`common/arg.cpp`, and its own comment says so), dispatching their
+    keys into the same arg handlers. A `log-file` line there is a spawn
+    setting heylook neither passes nor can counter -- the only counter would
+    be passing `--log-file` ourselves, which redirects the stream we
+    capture. The provider now REPORTS their existence at spawn rather than
+    claiming an ownership it does not have.
+- **The `LLAMA_ARG_*` warning missed the env vars llama.cpp reads without
+  that prefix**, of which `LLAMA_API_KEY` fails silently and badly: set,
+  llama-server demands a bearer token heylook never sends, but `/health` is
+  a PUBLIC endpoint, so load_model polls 200, the model reports READY, and
+  every generation then 401s while `_read_running_ctx` swallows its own 401
+  and leaves `context_running` null -- with no log line naming the cause.
+  It and `MTMD_BACKEND_DEVICE` are now surfaced too (`HF_TOKEN` deliberately
+  is not: near-ubiquitous, and heylook passes local paths so llama-server
+  never downloads).
+
+### Changed
+
+- The v2.0.14 spawn-environment test asserted against a bag of kwargs merged
+  from every `Popen` in the load path -- the patch is process-global, so it
+  also caught `ram_fit`'s `vm_stat` probe, and the assertion was right only
+  because the llama-server call happened to run last. It now keys on the
+  binary being spawned. It also pins `observability.current_level` itself
+  rather than inheriting whatever another module's fixture last set
+  process-globally; above "off" the load path would `mkdir` a CWD-relative
+  `logs/` in the repo and leak the append handle the test's raise skips past.
+
 ## [2.0.14]
 
 ### Changed

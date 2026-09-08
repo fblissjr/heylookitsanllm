@@ -183,6 +183,27 @@ class TestBuildArgs:
         ok = GGUFModelConfig(model_path="/fake/model.gguf", n_ubatch=4096, n_batch=4096)
         assert ok.n_ubatch == 4096
 
+    @pytest.mark.parametrize("token", [
+        "--log-prompts-dir", "--log-file", "--slot-save-path",
+        "--log-prompts-dir=/tmp/p",  # `=` form: the flag NAME is what matters
+    ])
+    def test_extra_args_may_not_make_llama_server_write_files(self, token):
+        # extra_args is appended to argv verbatim, so it was the last route by
+        # which a gguf model could put a file somewhere heylook did not choose
+        # -- and for --log-prompts-dir that file is PROMPT TEXT, written at
+        # observability_level="off", with nothing announcing it. Stripping the
+        # env var while leaving this open would have made the invariant a
+        # claim rather than a fact.
+        with pytest.raises(ValueError, match="write"):
+            GGUFModelConfig(model_path="/fake/model.gguf", extra_args=[token, "/tmp/x"])
+
+    def test_extra_args_still_passes_ordinary_flags(self):
+        # Guard the guard: a validator that rejected extra_args outright would
+        # pass every case above for free.
+        cfg = GGUFModelConfig(model_path="/fake/model.gguf",
+                              extra_args=["--verbose", "--slot-prompt-similarity", "0.5"])
+        assert cfg.extra_args[0] == "--verbose"
+
     def test_chat_template_override_reaches_argv(self):
         args = self._args(chat_template_path="/tmp/qwen38-official.jinja")
         assert ("--chat-template-file", "/tmp/qwen38-official.jinja") in \
@@ -313,11 +334,27 @@ class TestSpawnEnvironment:
         monkeypatch.setenv("LLAMA_ARG_CACHE_RAM", "4096")
         monkeypatch.setattr(LlamaServerProvider, "_resolve_binary",
                             lambda self: tmp_path / "llama-server")
+        # load_model's own precondition, made this test's rather than
+        # inherited: above "off" it mkdirs a CWD-relative logs/ in the repo and
+        # opens an append handle that fake_popen's raise never lets it close.
+        # The level is process-global and another module's fixture sets it to
+        # "debug" with no teardown, so "it is off right now" is luck, not a
+        # property of this file.
+        monkeypatch.setattr(llama_mod.observability, "current_level", lambda: "off")
+
+        # Popen is patched process-globally, so this ALSO intercepts ram_fit's
+        # `vm_stat` probe, which runs first. Key the capture on the binary we
+        # spawn rather than merging every call's kwargs into one bag -- that
+        # bag was correct only because the llama-server call happened to be
+        # last, and would read another process's environment the moment either
+        # moved.
         seen = {}
 
-        def fake_popen(*a, **k):
-            seen.update(k)
-            raise RuntimeError("stop here -- spawned")
+        def fake_popen(argv, *a, **k):
+            if argv and str(argv[0]).endswith("llama-server"):
+                seen.update(k)
+                raise RuntimeError("stop here -- spawned")
+            raise FileNotFoundError("unrelated probe, not this test's subject")
 
         monkeypatch.setattr(llama_mod.subprocess, "Popen", fake_popen)
         provider = make_provider(model_path=str(_weights(tmp_path)))
