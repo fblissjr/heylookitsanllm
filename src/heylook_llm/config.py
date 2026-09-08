@@ -1344,12 +1344,12 @@ class AdminModelResponse(BaseModel):
                     "same, but it has no stored config, and the first edit "
                     "writes an entry for it.",
     )
-    # {"off": {...}, "on": {...}} -- every sampler key's value for a request
-    # that says nothing, from the cascade itself (samplers.sampler_defaults).
-    # Keyed by the thinking switch because the anti-loop overlay moves with
-    # it and the UI's thinking control is independent. The settings panel
-    # labels blank fields with these instead of the word "auto".
-    sampler_defaults: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+    # Every sampler key's value for a request that says nothing, from the
+    # cascade itself (samplers.sampler_defaults). ONE flat bag since v2.0.33 --
+    # it was {"off":..., "on":...} while the anti-loop overlay moved a value
+    # off the thinking switch. The settings panel labels blank fields with
+    # these instead of the word "auto".
+    sampler_defaults: Dict[str, Any] = Field(default_factory=dict)
     stale_reload_fields: List[str] = Field(default_factory=list)
     effective_loader: Optional[Literal["mlx-lm", "mlx-vlm"]] = Field(
         default=None,

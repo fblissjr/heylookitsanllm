@@ -73,18 +73,22 @@ class TestSamplerDefaultsOnModelRows:
     reads this off the response, so the response is what has to be pinned.
     """
 
-    def test_present_and_keyed_by_thinking_on_every_entry(self, client):
+    def test_present_and_flat_on_every_entry(self, client):
         data = client.get("/v1/models").json()["data"]
         assert data
         for entry in data:
-            bags = entry["sampler_defaults"]
-            assert set(bags) == {"off", "on"}, entry["id"]
+            bag = entry["sampler_defaults"]
+            assert bag, entry["id"]
+            # ONE bag since v2.0.33. It was {"off","on"} while the anti-loop
+            # overlay moved a sampler value off the thinking switch; with that
+            # gone the halves were identical but for `enable_thinking`, so the
+            # nesting reported a distinction the cascade no longer makes.
+            assert not (set(bag) & {"off", "on"}), \
+                f"{entry['id']}: sampler_defaults is nested again"
             # The panel prints these as placeholders; a non-scalar would
             # render as "[object Object]" rather than a number.
-            for bag in bags.values():
-                assert bag, entry["id"]
-                for key, value in bag.items():
-                    assert isinstance(value, (int, float, bool, str)), (entry["id"], key)
+            for key, value in bag.items():
+                assert isinstance(value, (int, float, bool, str)), (entry["id"], key)
 
     def test_every_reported_key_is_one_a_request_accepts(self, client):
         # A key here that no request takes would drive a control that cannot
@@ -92,17 +96,17 @@ class TestSamplerDefaultsOnModelRows:
         from heylook_llm.samplers import REQUEST_SAMPLER_FIELDS
 
         for entry in client.get("/v1/models").json()["data"]:
-            for bag in entry["sampler_defaults"].values():
-                assert set(bag) <= set(REQUEST_SAMPLER_FIELDS), entry["id"]
+            assert set(entry["sampler_defaults"]) <= set(REQUEST_SAMPLER_FIELDS), entry["id"]
 
-    def test_the_thinking_switch_is_the_key_it_claims_to_be(self, client):
-        # The whole reason the field is keyed: each half must report its own
-        # side of the switch, or the panel labels a control with the other
-        # state's numbers.
+    def test_the_reported_thinking_value_matches_the_rows_own_field(self, client):
+        # `thinking_default` is the field that OWNS this answer; the bag
+        # carries it too because it is a request sampler field. One cascade
+        # call feeds both now, so a disagreement means something re-derived it.
         for entry in client.get("/v1/models").json()["data"]:
-            bags = entry["sampler_defaults"]
-            assert bags["off"]["enable_thinking"] is False, entry["id"]
-            assert bags["on"]["enable_thinking"] is True, entry["id"]
+            if "thinking_default" not in entry:
+                continue
+            assert entry["sampler_defaults"]["enable_thinking"] == entry["thinking_default"], \
+                entry["id"]
 
     def test_agrees_with_the_admin_row(self, client):
         # Two row builders derived these separately once and drifted; one

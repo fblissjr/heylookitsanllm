@@ -67,7 +67,7 @@ VENDOR_SAMPLING_KEYS = ('temperature', 'top_p', 'top_k')
 
 
 # Model-config / request keys the cascade resolves. Providers whose config
-# class lacks a key (GGUFModelConfig has only max_tokens/default_sampler)
+# class lacks a key (GGUFModelConfig carries fewer of them than MLX's)
 # simply never contribute it; unknown keys in the result are ignored by the
 # consumer (gguf's payload map picks only what llama-server understands).
 EFFECTIVE_SAMPLER_KEYS = (
@@ -157,10 +157,9 @@ class _NoRequest:
 def thinking_default(model_config: dict, *, thinking_capable: bool) -> bool:
     """What thinking resolves to when a request says NOTHING about it.
 
-    The cascade's own answer for an empty request -- a `default_sampler`
-    naming the thinking sampler, the models.toml `enable_thinking` flag and
-    the capability fallback all count, exactly as they do at generation
-    time. Reported on the admin row (`thinking_default`) so a UI can label
+    The cascade's own answer for an empty request -- the models.toml
+    `enable_thinking` flag and the capability fallback both count, exactly as
+    they do at generation time. Reported on the admin row (`thinking_default`) so a UI can label
     its "model default" choice with the value it actually means instead of
     leaving the user to find out by generating.
     """
@@ -169,15 +168,8 @@ def thinking_default(model_config: dict, *, thinking_capable: bool) -> bool:
     ).get('enable_thinking'))
 
 
-class _ThinkingRequest(_NoRequest):
-    """An empty request that states the thinking switch and nothing else."""
-
-    def __init__(self, enable_thinking: bool):
-        self.enable_thinking = enable_thinking
-
-
 def sampler_defaults(model_config: dict, *, thinking_capable: bool,
-                     vendor: dict | None = None) -> dict[str, dict[str, Any]]:
+                     vendor: dict | None = None) -> dict[str, Any]:
     """What EVERY sampler key resolves to when a request says nothing.
 
     Sibling of :func:`thinking_default` and bound by the same rule: this is
@@ -187,37 +179,31 @@ def sampler_defaults(model_config: dict, *, thinking_capable: bool,
     to generate to find out what temperature they are running is the
     complaint this closes.
 
-    Keyed by the THINKING SWITCH, ``{"off": {...}, "on": {...}}``. That shape
-    was earned: the anti-loop overlay moved ``presence_penalty`` off the
-    switch while the panel's thinking control is live and independent, so
-    reporting one state while the user had selected the other put a WRONG
-    number on screen.
+    ONE bag since v2.0.33. It was ``{"off": {...}, "on": {...}}`` while the
+    anti-loop overlay moved ``presence_penalty`` off the thinking switch and
+    the panel's thinking control could therefore disagree with the numbers
+    shown. That overlay went in v2.0.32 and the two halves became identical
+    in every key but ``enable_thinking`` itself, so the shape was reporting a
+    distinction the cascade no longer makes.
 
-    THE OVERLAY IS GONE (v2.0.32), so the two states are now IDENTICAL in
-    every key but ``enable_thinking`` itself -- measured, not assumed. Nothing
-    in the cascade reads the thinking switch any more except the line that
-    sets that key. The shape is retained pending a decision to collapse it;
-    it is two dict merges and no I/O, so it is cheap, but it is no longer
-    carrying information and should not be defended as if it were.
+    The switch still resolves INSIDE this call, through the documented order,
+    which is why the returned ``enable_thinking`` equals
+    :func:`thinking_default` by construction rather than by a second code
+    path that could drift from it.
 
     ``vendor`` must be passed exactly as the model's own PROVIDER passes it
     at generation time -- MLX from the model dir's generation_config.json
     (``load_vendor_sampling``), gguf from the GGUF header's
-    ``general.sampling.*`` (``gguf_metadata.vendor_sampling``, v2.0.22).
+    ``general.sampling.*`` (``gguf_metadata.vendor_sampling``, v2.0.23).
     temperature/top_p/top_k are precisely the vendor keys, so omitting it for
     an engine that has one reports the global floor for every model that
     overrides it -- the models where the number matters most.
     ``capabilities._vendor_sampling_pairs`` is the one place that pairing
     lives; it drifted once already, within a commit.
     """
-    out: dict[str, dict[str, Any]] = {}
-    for state, active in (("off", False), ("on", True)):
-        merged = resolve_effective_sampling(
-            _ThinkingRequest(active), model_config, vendor,
-            thinking_capable=thinking_capable,
-        )
-        out[state] = {k: merged[k] for k in REQUEST_SAMPLER_FIELDS if k in merged}
-    return out
+    merged = resolve_effective_sampling(
+        _NoRequest(), model_config, vendor, thinking_capable=thinking_capable)
+    return {k: merged[k] for k in REQUEST_SAMPLER_FIELDS if k in merged}
 
 
 def load_vendor_sampling(model_path: str) -> dict[str, Any]:

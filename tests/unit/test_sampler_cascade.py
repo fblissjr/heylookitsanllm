@@ -13,9 +13,8 @@ failure the shared cascade exists to prevent:
 1b. Vendor -- the model's OWN published settings (generation_config.json on
     MLX, the GGUF header's general.sampling.* on gguf). The per-model answer,
     and the one that should normally win over anything global.
-2.  Thinking anti-loop overlay, keyed on the effective thinking switch
-3.  Model sampler fields from models.toml
-4.  Request explicit fields -- always win
+2.  Model sampler fields from models.toml
+3.  Request explicit fields -- always win
 """
 
 from __future__ import annotations
@@ -201,17 +200,16 @@ class TestSamplerDefaultsReporting:
     against a layer the cascade owns."""
 
     def test_it_is_the_cascade_not_a_re_derivation(self):
-        # The strongest available oracle: run the real cascade for the same
-        # thinking state and demand agreement on every reported key.
-        from heylook_llm.samplers import (REQUEST_SAMPLER_FIELDS, _ThinkingRequest,
+        # The strongest available oracle: run the real cascade for an empty
+        # request and demand agreement on every reported key.
+        from heylook_llm.samplers import (REQUEST_SAMPLER_FIELDS, _NoRequest,
                                           resolve_effective_sampling, sampler_defaults)
-        cfg = {"temperature": 0.42, "default_sampler": None}
+        cfg = {"temperature": 0.42}
         vendor = {"top_k": 64, "top_p": 0.9}
         got = sampler_defaults(cfg, thinking_capable=True, vendor=vendor)
-        for state, active in (("off", False), ("on", True)):
-            want = resolve_effective_sampling(
-                _ThinkingRequest(active), cfg, vendor, thinking_capable=True)
-            assert got[state] == {k: want[k] for k in REQUEST_SAMPLER_FIELDS if k in want}
+        want = resolve_effective_sampling(
+            _NoRequest(), cfg, vendor, thinking_capable=True)
+        assert got == {k: want[k] for k in REQUEST_SAMPLER_FIELDS if k in want}
 
     def test_the_vendor_layer_reaches_the_report(self):
         # temperature/top_p/top_k ARE the vendor keys. Dropping the vendor
@@ -220,27 +218,28 @@ class TestSamplerDefaultsReporting:
         # the models where the number is worth showing.
         from heylook_llm.samplers import GLOBAL_SAMPLER_FLOOR, sampler_defaults
         assert GLOBAL_SAMPLER_FLOOR["top_k"] != 64, "pick a value the floor does not already have"
-        with_vendor = sampler_defaults({}, thinking_capable=False, vendor={"top_k": 64})
-        assert with_vendor["off"]["top_k"] == 64
-        assert sampler_defaults({}, thinking_capable=False)["off"]["top_k"] == GLOBAL_SAMPLER_FLOOR["top_k"]
+        assert sampler_defaults({}, thinking_capable=False, vendor={"top_k": 64})["top_k"] == 64
+        assert sampler_defaults({}, thinking_capable=False)["top_k"] == GLOBAL_SAMPLER_FLOOR["top_k"]
 
     def test_models_toml_beats_vendor_the_way_the_cascade_orders_them(self):
         from heylook_llm.samplers import sampler_defaults
         got = sampler_defaults({"temperature": 0.6}, thinking_capable=False,
                                vendor={"temperature": 0.7})
-        assert got["off"]["temperature"] == 0.6
+        assert got["temperature"] == 0.6
 
-    def test_both_thinking_states_are_reported_and_differ(self):
-        # The reason the field is keyed at all: the anti-loop overlay fires off
-        # the thinking switch while the panel's thinking control is live and
-        # independent, so one state's numbers would be wrong half the time.
-        # Asserted as "the overlay moved something", not as a copy of the
-        # overlay's contents -- that list lives in thinking.toml.
-        from heylook_llm.samplers import sampler_defaults
-        got = sampler_defaults({}, thinking_capable=True)
-        assert set(got) == {"off", "on"}
-        assert got["off"]["enable_thinking"] is False and got["on"]["enable_thinking"] is True
-        assert got["off"] != got["on"]
+    def test_the_reported_thinking_value_is_thinking_defaults_own_answer(self):
+        """One bag since v2.0.33, so the two cannot disagree by construction.
+
+        It was `{"off","on"}` while the anti-loop overlay moved a sampler value
+        off the thinking switch; with that gone the halves were identical but
+        for this key, so the shape reported a distinction the cascade no longer
+        made. What replaces the old "both states differ" claim is that the
+        surviving key agrees with the field that owns it.
+        """
+        from heylook_llm.samplers import sampler_defaults, thinking_default
+        for cfg, cap in (({}, True), ({}, False), ({"enable_thinking": False}, True)):
+            assert (sampler_defaults(cfg, thinking_capable=cap)["enable_thinking"]
+                    is thinking_default(cfg, thinking_capable=cap))
 
     def test_vendor_layer_reaches_the_report_on_every_engine(self):
         """Each engine's vendor layer must reach the reported defaults.
@@ -271,7 +270,7 @@ class TestSamplerDefaultsReporting:
                 mc = ModelConfig(id=f"t-{provider}", provider=provider,
                                  config={"model_path": path})
                 got = capabilities.derived_model_facts(mc).sampler_defaults
-            assert got["off"]["top_k"] == sentinel, (
+            assert got["top_k"] == sentinel, (
                 f"{provider}: the reported default ignored that engine's vendor "
                 f"layer, so its rows will advertise the global floor while "
                 f"generation uses the vendor values"
@@ -282,5 +281,4 @@ class TestSamplerDefaultsReporting:
         # The panel writes these keys back as request params; a key here that
         # no request accepts would render a control that cannot do anything.
         from heylook_llm.samplers import REQUEST_SAMPLER_FIELDS, sampler_defaults
-        for bag in sampler_defaults({}, thinking_capable=True).values():
-            assert set(bag) <= set(REQUEST_SAMPLER_FIELDS)
+        assert set(sampler_defaults({}, thinking_capable=True)) <= set(REQUEST_SAMPLER_FIELDS)

@@ -82,8 +82,8 @@ def get_smart_defaults(model_info: dict[str, Any]) -> dict[str, Any]:
     determine how the model loads and what its cache looks like: cache_type,
     KV quantization knobs, draft-token count.
 
-    Users pick a sampler preset via ``--preset NAME`` on import (records
-    ``default_sampler``) or per-request via ``ChatRequest.preset``.
+    Sampler values are NOT touched here -- they resolve per request through
+    ``samplers.resolve_effective_sampling``.
     """
     provider = model_info.get("provider", "mlx")
     if provider == "mlx_embedding":

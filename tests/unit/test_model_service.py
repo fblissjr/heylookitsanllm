@@ -6,7 +6,7 @@ now live in the runtime preset registry and are applied at request time
 on the model's config; ``get_smart_defaults()`` emits only load-time
 fields (cache type, KV quantization, draft tokens). (The intermediate
 ``SamplerPreset``/``load_sampler_presets`` adapter layer was collapsed
-onto ``SamplerRegistry`` 2026-07-20 -- code-review finding.)
+onto the sampler registry, itself removed in v2.0.30.)
 
 Preset-registry semantics are covered by ``test_preset_registry.py``.
 This file focuses on:

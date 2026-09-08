@@ -323,10 +323,10 @@ function defaultText(v) {
   return String(v);
 }
 
-// `lookup(key)` rather than a snapshot object: the numeric defaults depend on
-// the THINKING switch (the anti-loop overlay sets presence_penalty), and that
-// switch is a live control in this same panel. A snapshot taken at build time
-// would go stale the moment someone flips it.
+// `lookup(key)` rather than a snapshot object: the caller decides where a
+// default comes from, and `enable_thinking` still answers from a different
+// source than the rest. (It also used to depend on the live thinking switch,
+// which is why the indirection exists at all -- see the lookup itself.)
 function bindControl(key, meta, lookup = () => null) {
   if (meta.type === 'tristate') {
     // The default option NAMES the value it stands for when the page knows
@@ -404,32 +404,17 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
   const rows = { core: [], advanced: [] };
   const controls = [];
 
-  // Which half of `samplerDefaults` is in force: the user's explicit thinking
-  // pick when they made one, else the model's own default. Read live.
+  // `samplerDefaults` is ONE bag since v2.0.33. It was `{off,on}` and this
+  // read had a resolver to pick a half, because the anti-loop overlay moved
+  // presence_penalty off the thinking switch and the panel's thinking control
+  // could disagree with the number shown. That overlay is gone, the halves
+  // became identical, and the resolver went with them.
   //
-  // The CAP GATE first, and it is not defensive padding: `samplerParams(caps)`
-  // deletes `enable_thinking` at the wire for a model without the capability,
-  // so a `true` left in the cache by a previous, thinking-capable model would
-  // pick the "on" bag here while the server resolves thinking OFF -- the panel
-  // would label presence-penalty 1.5 on a model running 0.0. A wrong number is
-  // the one outcome this whole field exists to avoid.
-  //
-  // NB chat.js `effectiveThinking` answers a neighbouring question (what the
-  // composer's button shows) with its own spelling of this rule. They agree
-  // today; this copy is the one that forgot the cap gate, which is how the
-  // drift announced itself. Worth collapsing into one exported resolver.
-  const thinkingOn = () => {
-    if (!caps.includes('thinking')) return false;
-    const picked = cache.enable_thinking;
-    return picked === null || picked === undefined
-      ? modelDefaults.enable_thinking === true
-      : picked === true;
-  };
-  // enable_thinking keeps answering from `modelDefaults` -- the tri-state
-  // labels the MODEL's own default, which does not move when the user picks.
+  // enable_thinking still answers from `modelDefaults` -- the tri-state labels
+  // the MODEL's own default, which does not move when the user picks.
   const lookup = (key) => {
     if (key === 'enable_thinking' || !samplerDefaults) return modelDefaults[key] ?? null;
-    return (samplerDefaults[thinkingOn() ? 'on' : 'off'] ?? {})[key] ?? null;
+    return samplerDefaults[key] ?? null;
   };
 
   for (const [key, meta] of Object.entries(PARAM_META)) {

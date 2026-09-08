@@ -200,9 +200,9 @@ class BaseProvider(ABC):
         This exists because they did. The parser used to resolve the flag
         itself from the RAW request while the prompt was templated from the
         CASCADE OUTPUT -- two readings of one decision, differing by the whole
-        sampler layer. So `sampler="thinking"` (or a model whose
-        `default_sampler` is thinking) built a thinking prompt and armed a
-        content-state parser, and on a ``prefills_thinking`` template
+        sampler layer. A model whose config turned thinking on therefore built
+        a thinking prompt and armed a content-state parser, and on a
+        ``prefills_thinking`` template
         (Qwen3.5 pre-fills an unclosed ``<think>``) the model's output starts
         inside the block -- the entire reasoning trace lands in content. Same
         failure as v1.34.64, reachable again through a different door.

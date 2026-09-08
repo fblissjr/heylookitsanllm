@@ -8,7 +8,7 @@
 # Claims (what breaks if a test is deleted):
 # - config tests: "gguf" regresses out of the provider registry / Literal and
 #   models.toml entries stop validating.
-# - payload tests: the sampler cascade (floor -> default_sampler -> named
+# - payload tests: the sampler cascade (floor -> vendor -> model fields ->
 #   sampler -> explicit request fields) or the llama.cpp param mapping
 #   (repetition_penalty -> repeat_penalty, always-send max_tokens, thinking
 #   -> chat_template_kwargs) silently drifts.
@@ -616,7 +616,7 @@ class TestPayload:
         """
         payload = make_provider()._build_payload(req())
         assert payload["chat_template_kwargs"] == {"enable_thinking": False}
-        assert payload["presence_penalty"] == 0.0  # off => no anti-loop overlay
+        assert payload["presence_penalty"] == 0.0
 
     def test_multimodal_content_parts_pass_through(self):
         p = make_provider()

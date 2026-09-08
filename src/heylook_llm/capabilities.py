@@ -328,7 +328,7 @@ def derived_model_facts(model_config, router=None) -> ModelFacts:
     Two row builders used to derive these separately, each with its own
     config-dict spelling, and they had already drifted once: the admin row
     built the resolved dump for mlx entries only, so a gguf entry's
-    models.toml ``enable_thinking`` or ``default_sampler`` never reached its
+    models.toml ``enable_thinking`` never reached its
     ``thinking_default`` while the same value on ``/v1/models`` did. The dump
     is built for EVERY row here because three consumers read it (loader
     routing, the thinking cascade, the context resolver); the per-row cost

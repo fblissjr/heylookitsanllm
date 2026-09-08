@@ -598,7 +598,7 @@ class ModelRouter:
         """Push per_request defaults from the fresh config into LOADED providers.
 
         A provider is constructed with a SNAPSHOT of its config dict and reads
-        per_request defaults (default_sampler, enable_thinking, temperature,
+        per_request defaults (enable_thinking, temperature,
         vision_tokens, ...) from that snapshot at request time -- so without
         this, a PATCH to one of them returned "no reload required" while the
         loaded model kept serving the old default: the exact stale-snapshot

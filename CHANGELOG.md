@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.33]
+
+### Changed
+
+- **`sampler_defaults` is one flat bag instead of two identical ones.** It was
+  `{"off": {...}, "on": {...}}`, and that shape was EARNED: while the
+  anti-loop overlay moved `presence_penalty` off the thinking switch, and the
+  settings panel's thinking control is live, reporting one state while the
+  user had the other selected put a wrong number on screen. v2.0.32 removed
+  the overlay and the two halves became identical in every key but
+  `enable_thinking` itself -- measured, not assumed -- so the nesting was
+  reporting a distinction the cascade no longer makes.
+
+  Its `enable_thinking` now equals the row's `thinking_default` **by
+  construction**: one cascade call feeds both, where before two calls could
+  drift. Wire change on the admin row and every `/v1/models` entry: same keys
+  and values, one level shallower.
+
+  `settings.js`'s `thinkingOn()` goes with it -- it was choosing between two
+  identical objects. That also retires one of the TWO copies of the thinking
+  resolver whose drift its own comment recorded ("this copy is the one that
+  forgot the cap gate, which is how the drift announced itself");
+  `chat.js effectiveThinking` is the survivor.
+
+### Fixed
+
+- **Prose across the codebase still described the removed sampler system as
+  live.** The v2.0.30 and v2.0.32 removals corrected the code and left the
+  comments: `llama_server_provider`'s header still listed `default_sampler ->
+  request.sampler` as cascade layers, `router.reload_config` and
+  `model_service` named `default_sampler` and `ChatRequest.preset` as things
+  users set, `base.py` explained a parser bug in terms of a sampler that no
+  longer exists, and the `sampler_defaults` field comment described the keyed
+  shape being deleted here. All corrected; what remains mentioning the old
+  system now says explicitly that it was removed.
+
+- **Two tests still enumerated dead inputs.** `test_thinking_capability` and
+  `test_mlx_provider` built cross-products including `{"sampler": "thinking"}`
+  and `default_sampler` configs. `ChatRequest` has no `sampler` field, so
+  those cases were silently identical to the empty one -- a cross-product
+  smaller than it claimed, in tests written specifically to catch what
+  example-per-case misses.
+
 ## [2.0.32]
 
 ### Removed

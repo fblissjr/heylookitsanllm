@@ -117,8 +117,8 @@ def _resolve_enable_thinking(effective_request: dict) -> bool:
     Read straight off the effective request: the shared cascade
     (``samplers.resolve_effective_sampling``) materializes ``enable_thinking``
     unconditionally, so the key is always present and already carries every
-    layer -- request field, named sampler, model default_sampler, model
-    config. There is nothing left to resolve here.
+    layer -- request field, then model config. There is nothing left to
+    resolve here.
 
     It must stay an explicit bool: an ABSENT kwarg is uncontrollable, because
     mlx-lm's TokenizerWrapper silently injects ``enable_thinking=True`` when

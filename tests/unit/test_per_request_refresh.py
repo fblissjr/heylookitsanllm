@@ -2,7 +2,7 @@
 
 A provider is constructed with a snapshot of its config dict and reads
 per_request defaults from it at request time. Without the refresh, a PATCH to
-default_sampler/temperature/enable_thinking on a loaded model reported "no
+temperature/enable_thinking on a loaded model reported "no
 reload required" while the loaded process kept serving the old default -- the
 stale-snapshot lie the effect classification exists to prevent, relocated
 into the per_request bucket (found by the 2026-08-11 review; the first real

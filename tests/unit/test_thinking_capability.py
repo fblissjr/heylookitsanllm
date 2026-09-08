@@ -117,10 +117,11 @@ class TestThinkingFlagAgreesAcrossSurfaces:
 
     One shared resolver was supposed to prevent this, but the two sides
     stopped feeding it the same INPUT: the prompt side reads the cascade
-    OUTPUT (which includes the sampler layers) while the parser side read the
-    RAW request (which does not). So any sampler that sets enable_thinking --
-    the bundled `thinking` sampler by request, or a model's default_sampler --
-    split them. Stated as a property over the cross-product because the
+    OUTPUT while the parser side read the RAW request. Anything resolving the
+    switch outside the request itself -- a models.toml `enable_thinking`, the
+    capability fallback -- therefore split them. (Named samplers were a third
+    such input until v2.0.30 removed them.) Stated as a property over the
+    cross-product because the
     divergence lives in specific COMBINATIONS, and an example-per-case test
     is exactly what missed it.
     """
@@ -129,15 +130,11 @@ class TestThinkingFlagAgreesAcrossSurfaces:
         {"model_path": "/fake", "vision": False},
         {"model_path": "/fake", "vision": False, "enable_thinking": True},
         {"model_path": "/fake", "vision": False, "enable_thinking": False},
-        {"model_path": "/fake", "vision": False, "default_sampler": "thinking"},
-        {"model_path": "/fake", "vision": False, "default_sampler": "deterministic"},
     ]
     REQUESTS = [
         {},
         {"enable_thinking": True},
         {"enable_thinking": False},
-        {"sampler": "thinking"},
-        {"sampler": "deterministic"},
         {"sampler": "thinking", "enable_thinking": False},
         {"sampler": "deterministic", "enable_thinking": True},
     ]
@@ -178,8 +175,7 @@ class TestThinkingFlagAgreesAcrossSurfaces:
         Making unset mean OFF (v1.50.0) is right, but GGUFModelConfig is
         extra="forbid" and had no such field -- so a gguf model that used to
         inherit its template's thinking-ON default had NO way to ask for that
-        back, short of `default_sampler = "thinking"`, which drags a
-        presence_penalty change along with it.
+        back at all.
         """
         from heylook_llm.config import ChatMessage, ChatRequest, GGUFModelConfig
 

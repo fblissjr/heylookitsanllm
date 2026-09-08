@@ -548,16 +548,17 @@ Derived, so answered for unloaded models. v3 labels the tri-state thinking contr
 `enable_thinking: false` is the explicit off.
 
 `sampler_defaults` (v2.0.21, every provider; also on every `/v1/models` entry, same
-value): `{"off": {...}, "on": {...}}` — what EVERY sampler key resolves to for a request
+value): ONE FLAT OBJECT of key → value — what EVERY sampler key resolves to for a request
 that says nothing, from the same cascade (`samplers.sampler_defaults`, sibling of
 `thinking_default` and bound by the same never-re-derive rule). Keys are a subset of
 `REQUEST_SAMPLER_FIELDS`; a key the cascade does not set is absent, and the UI falls back
-to the word "auto" for it. KEYED BY THE THINKING SWITCH, and that key is now VESTIGIAL:
-since v2.0.32 removed the anti-loop overlay, the two bags are identical in every key but
-`enable_thinking` itself, and no mechanism exists by which a models.toml field varies with
-the switch. The shape earned itself when `presence_penalty` did move off it — reporting one
-state while the user had the other selected put a wrong number on screen — and is retained
-pending a decision to collapse it to a single bag.
+to the word "auto" for it. Its `enable_thinking` equals the row's `thinking_default` BY
+CONSTRUCTION — one cascade call feeds both, so they cannot drift.
+It was `{"off": {...}, "on": {...}}` until v2.0.33, and that nesting was earned while the
+anti-loop overlay moved `presence_penalty` off the thinking switch: the panel's thinking
+control is live, so reporting one state while the user had the other selected put a wrong
+number on screen. v2.0.32 removed the overlay, the two halves became identical in every key
+but `enable_thinking`, and the shape was reporting a distinction the cascade no longer made.
 Each engine's vendor layer is included exactly where that engine's provider includes it
 — MLX from `generation_config.json`, gguf from the GGUF header's `general.sampling.*` —
 so a gemma row and a Qwen3.6 gguf row each report their own top-k rather than the

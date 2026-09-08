@@ -14,8 +14,7 @@
 #   heylook's parser stack is pass-through (never re-parse another engine's
 #   output).
 # - Sampler cascade IS MLX's: the shared samplers.resolve_effective_sampling
-#   (floor -> VENDOR -> thinking anti-loop overlay -> model fields ->
-#   default_sampler -> request.sampler -> explicit request fields).
+#   (floor -> VENDOR -> model fields -> explicit request fields).
 #   The vendor layer comes from the GGUF HEADER (v2.0.22), not from a
 #   generation_config.json -- a gguf dir carries no such file, but the
 #   converter writes those very values into `general.sampling.*`, so the

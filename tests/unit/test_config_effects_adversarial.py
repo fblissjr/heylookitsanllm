@@ -246,7 +246,7 @@ def test_allowlist_widening_added_exactly_the_dropped_fields():
     Deriving it fixed five silently-dropped fields, but "derived" also means
     nobody chose the contents. This pins what the change actually admits, so a
     future field lands here as a visible diff rather than appearing in written
-    config unnoticed. `default_sampler` is included deliberately: it is now
+    config unnoticed. (`default_sampler` was listed here until v2.0.30; it is now
     settable via the config block, where previously only the explicit importer
     argument could set it (and that argument still wins, being stamped after).
     """

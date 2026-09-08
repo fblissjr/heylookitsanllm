@@ -126,7 +126,7 @@ export function mountSettingsDrawer(navDesktop, navBottom) {
 //                                           an UNSET sampler key to (today:
 //                                           enable_thinking); labels the
 //                                           tri-state's "Model default"
-//   samplerDefaults?(): {off:{},on:{}}   -- the server's sampler_defaults for
+//   samplerDefaults?(): {temperature,...}  -- the server's sampler_defaults for
 //                                           the current model; labels every
 //                                           blank field with its real value
 //   onOpen?():  void                     -- fired each time the drawer opens

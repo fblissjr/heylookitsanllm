@@ -454,11 +454,10 @@ class TestMLXPromptSideMatchesReportedThinking:
             MLXProvider, _resolve_enable_thinking,
         )
 
-        cases = [{}, {"enable_thinking": True}, {"enable_thinking": False},
-                 {"sampler": "thinking"}, {"sampler": "deterministic"}]
+        cases = [{}, {"enable_thinking": True}, {"enable_thinking": False}]
         for config in ({"model_path": "/fake", "vision": False},
                        {"model_path": "/fake", "vision": False, "enable_thinking": True},
-                       {"model_path": "/fake", "vision": False, "default_sampler": "thinking"}):
+                       {"model_path": "/fake", "vision": False, "enable_thinking": False}):
             provider = MLXProvider(model_id="m", config=dict(config), verbose=False)
             for kw in cases:
                 req = ChatRequest(messages=[ChatMessage(role="user", content="hi")], **kw)

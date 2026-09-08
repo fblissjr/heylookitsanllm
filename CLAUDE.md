@@ -172,14 +172,15 @@ is the admin row's `thinking_default` and must stay the cascade's own answer, ne
 re-derivation. `samplers.sampler_defaults()` (v2.0.21) is its SIBLING under the same rule
 and reports EVERY key: `{"off": {...}, "on": {...}}` on the admin row and `/v1/models`,
 which v3 prints as the placeholder in a blank sampler field so "auto" stops hiding the
-number in force. Still `{"off": ..., "on": ...}`, and that shape is now VESTIGIAL: the
-anti-loop overlay that moved `presence_penalty` off the thinking switch went in v2.0.32,
-and the two states are measurably identical in every key but `enable_thinking` itself.
-Nothing in the cascade reads the switch except the line that sets that key, and there is
-no mechanism by which a models.toml field varies with it. `settings.js`'s `thinkingOn()`
--- whose cap gate cites the presence-penalty case in its own comment -- therefore cannot
-change a number on screen. Retained pending a decision to collapse it to one bag; do not
-defend it as load-bearing.
+number in force. ONE FLAT BAG since v2.0.33, and its `enable_thinking` equals
+`thinking_default` BY CONSTRUCTION -- one cascade call feeds both, so a second code path
+cannot drift from it. It was `{"off": ..., "on": ...}`, and that nesting was EARNED while
+the anti-loop overlay moved `presence_penalty` off the thinking switch: the panel's
+thinking control is live, so reporting one state while the user had selected the other put
+a wrong number on screen. v2.0.32 removed the overlay, the halves became identical in every
+key but `enable_thinking`, and `settings.js`'s `thinkingOn()` resolver -- cap gate and all
+-- was picking between two identical objects. Both went in v2.0.33, which also retired one
+of the TWO copies of the thinking resolver (`chat.js effectiveThinking` is the survivor).
 It takes each engine's VENDOR layer exactly where that engine's provider takes it, and
 `capabilities._vendor_sampling_pairs` is the ONE place naming which engine reads what:
 MLX `load_vendor_sampling` (generation_config.json), gguf `gguf_metadata.vendor_sampling`
