@@ -1625,4 +1625,74 @@ export async function runChatSuite({ suite, ctx, config }) {
     await waitFor(async () => (await count(page, '.message--user .message-image')) === 2,
       { message: 'images did not survive a reload (store round-trip)' });
   });
+
+  await suite.check('editing a message that carries an image keeps the image, in its own position', async () => {
+    // The invariant editedContentBlocks exists for: an edit preserves THAT
+    // ROW's block order, because llama-server rewrites an image part into a
+    // POSITIONAL media marker, so a text-only edit that reordered the row
+    // would move the picture relative to its caption in the rendered prompt.
+    // chat.js says outright that this had to be REASONED about rather than
+    // observed, because on MLX it cannot matter (mlx-vlm re-derives marker
+    // order per model). On a gguf vision arm it can, and nothing observed it
+    // until this check -- run it on a gguf model or it proves the weaker half.
+    await requireCap(page, config.model, 'vision');
+    await page.select(MODEL_SELECT, config.model);
+    const convId = await newFreshConversation(page);
+
+    await page.waitForSelector('.chat__composer input[type="file"]', { timeout: 5000 });
+    await page.evaluate(async () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 8;
+      canvas.height = 8;
+      const c2d = canvas.getContext('2d');
+      c2d.fillStyle = 'rgb(40,160,40)';
+      c2d.fillRect(0, 0, 8, 8);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+      const dt = new DataTransfer();
+      dt.items.add(new File([blob], 'edit-me.png', { type: 'image/png' }));
+      const input = document.querySelector('.chat__composer input[type="file"]');
+      input.files = dt.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await waitFor(async () => (await count(page, '.attach-thumb')) === 1,
+      { message: 'the image never staged for send' });
+
+    await sendText(page, 'Caption one.');
+    await waitFor(async () => (await conversationStateById(page, convId)).lastUser !== null,
+      { message: 'the user message with an image never persisted' });
+    const beforeOrder = ((await conversationStateById(page, convId)).lastUser.content_blocks ?? [])
+      .map((b) => b.type);
+    assert(beforeOrder.includes('image'),
+      `the stored row carries no image block: ${beforeOrder.join(',')}`);
+    await waitIdle(page);
+
+    await clickByText(page, '.message--user .message__actions button', 'Edit');
+    await page.waitForSelector('.message-edit textarea', { timeout: 5000 });
+    // The editor must SHOW what it is keeping: an edit box that hides the
+    // image reads as the image already being gone, which is how someone
+    // drops one without meaning to.
+    assert((await count(page, '.message-edit .attach-thumb')) === 1,
+      'the editor did not show the image the row already carries');
+
+    await page.click('.message-edit textarea', { clickCount: 3 });
+    await page.type('.message-edit textarea', 'Caption two.');
+    await clickByText(page, '.message-edit__buttons button', 'Save & Regenerate');
+    // Wait on the EDIT landing server-side, not on a count that was already
+    // true before the click.
+    await waitFor(async () => {
+      const st = await conversationStateById(page, convId);
+      return (st.lastUser?.content_blocks ?? []).some(
+        (b) => b.type === 'text' && (b.text || '').includes('Caption two'));
+    }, { timeout: 20000, message: 'the edited text never persisted' });
+    await waitIdle(page);
+
+    const after = (await conversationStateById(page, convId)).lastUser;
+    const afterOrder = (after.content_blocks ?? []).map((b) => b.type);
+    assert(afterOrder.filter((t) => t === 'image').length === 1,
+      `a text-only edit lost the image: ${afterOrder.join(',')}`);
+    assert(afterOrder.join(',') === beforeOrder.join(','),
+      `the edit reordered the row (${beforeOrder.join(',')} -> ${afterOrder.join(',')}) -- on gguf that moves the picture relative to its caption in the prompt`);
+    await waitFor(async () => (await count(page, '.message--user .message-image')) === 1,
+      { message: 'the edited row stopped rendering its image' });
+  });
 }

@@ -4,7 +4,7 @@
 // unload + folder & HF scan + danger-zone clear). Data is cleared by the
 // orchestrator before this runs; the danger-zone clear check runs LAST.
 
-import { assert, waitFor, sleep, proveQuiet } from '../lib/harness.mjs';
+import { assert, waitFor, sleep, skip, proveQuiet } from '../lib/harness.mjs';
 import { serverGet } from '../lib/server-state.mjs';
 import { clickByText, armedClick, count, textOf, waitForLabel, findModelRow, modelRowState, noHorizontalOverflow, openDrawer, closeDrawer, driftText, handleByText } from '../lib/dom.mjs';
 
@@ -15,6 +15,44 @@ function watchRequests(page, regex) {
   const handler = (req) => { if (regex.test(req.url())) urls.push(req.url()); };
   page.on('request', handler);
   return { urls, stop: () => page.off('request', handler) };
+}
+
+// Is the beforeunload guard armed? Dispatched at `window`, which is where the
+// handler is registered and where the browser fires the real one -- not a
+// convenient node that happened to be in scope. What it cannot see is whether
+// Chrome paints the dialog; chat.mjs's mid-stream reload observes that end for
+// real, by having to accept one.
+const unloadGuardArmed = (page) => page.evaluate(() =>
+  !window.dispatchEvent(new Event('beforeunload', { cancelable: true })));
+
+// Empty the template editor, which is also how a check hands back a DISARMED
+// guard. Leaving one armed is not a tidy-up nit: a later ctx.open() does a real
+// reload, puppeteer auto-dismisses the dialog, dismissing CANCELS the
+// navigation, and the reload times out -- so an earlier failure resurfaces as
+// an unrelated navigation timeout in a different check.
+async function clearTemplateBody(page) {
+  await page.$eval('.cfg-tmpl__body', (el) => { el.focus(); el.select(); });
+  await page.keyboard.press('Backspace');
+  await waitFor(async () => (await page.$eval('.cfg-tmpl__body', (el) => el.value)) === '',
+    { timeout: 5000, message: 'the template body never cleared' });
+}
+
+// Open a model's config panel and its (lazy) template section, resolved.
+async function openTemplatePanel(page, modelId) {
+  const row = await findModelRow(page, modelId);
+  assert(row, `no model row titled ${modelId}`);
+  const handle = await row.evaluateHandle((r) =>
+    [...r.querySelectorAll('.model-row__actions button')].find((b) => b.textContent.trim() === 'Configure'));
+  const btn = handle.asElement();
+  assert(btn, `no Configure button on the row for ${modelId}`);
+  await btn.click();
+  await handle.dispose();
+  await page.waitForSelector('.model-config', { timeout: 10000 });
+  if (await page.$eval('.cfg-tmpl', (el) => !el.open)) {
+    await page.$eval('.cfg-tmpl > summary', (el) => el.click());
+  }
+  await waitFor(async () => Boolean((await textOf(page, '.cfg-tmpl__origin') || '').trim()),
+    { timeout: 10000, message: 'template panel never resolved an origin' });
 }
 
 // Server-side notebook state, read straight from the API inside the page --
@@ -648,6 +686,7 @@ export async function runPagesSuite({ suite, ctx, config }) {
     await page.type('.cfg-tmpl__body', TYPED);
 
     const bodies = [];
+    const templateWrites = [];
     await page.setRequestInterception(true);
     const fake = (req) => {
       if (req.method() === 'PATCH' && req.url().includes('/v1/admin/models/')) {
@@ -661,8 +700,15 @@ export async function runPagesSuite({ suite, ctx, config }) {
           }),
         });
       } else if (req.method() === 'PUT' && req.url().includes('/chat-template')) {
-        // Never let a template write land on a real model folder.
-        assert(false, 'the template panel PUT during a rebuild check');
+        // Never let a template write land on a real model folder. RECORD and
+        // ABORT -- do not assert here. `assert` throws, and a throw inside a
+        // puppeteer request listener is raised on the emitter, not on the
+        // check body awaiting below: it can never turn this check red. The
+        // branch also has to dispose of the request, or the PUT hangs and the
+        // safety property holds only by accident of the stall. The recorded
+        // flag is asserted after the awaits, where a failure is real.
+        templateWrites.push(req.url());
+        req.abort();
       } else {
         req.continue();
       }
@@ -698,6 +744,12 @@ export async function runPagesSuite({ suite, ctx, config }) {
         const v = await page.$eval('.cfg-tmpl__body', (el) => el.value).catch(() => '');
         return v.includes(TYPED);
       }, { timeout: 10000, message: 'typed template text was discarded by the rebuild' });
+
+      // Asserted HERE, on the check body, which is the only place a failure
+      // can be seen. A draft is not a save: nothing in this check should ever
+      // put a template on disk.
+      assert(templateWrites.length === 0,
+        `the template panel wrote a template during a rebuild check: ${templateWrites.join(', ')}`);
     } finally {
       page.off('request', fake);
       await page.setRequestInterception(false);
@@ -711,40 +763,58 @@ export async function runPagesSuite({ suite, ctx, config }) {
     // rebuild constructs a NEW editor over the SAME draft object with no
     // destroy hook -- so a per-panel enable() leaks one count per rebuild and
     // the first disarm below could never reach zero.
-    // The probe dispatches at `window`, which is where the handler is
-    // registered and where the browser fires the real one -- not a convenient
-    // node that happened to be in scope. What it cannot see is whether Chrome
-    // paints the dialog; chat.mjs's mid-stream reload observes that end for
-    // real, by having to accept it.
-    const armed = () => page.evaluate(() =>
-      !window.dispatchEvent(new Event('beforeunload', { cancelable: true })));
+    try {
+      // Assert the precondition rather than assuming it: the text typed in
+      // the previous check must ALREADY have the guard armed here, which is
+      // also the only proof that a rebuilt panel re-arms through
+      // render()/syncDirty rather than only on a keystroke. Without this the
+      // disarm below could pass on a guard that was never armed at all.
+      assert(await unloadGuardArmed(page),
+        'the draft left by the rebuild check did not arm the guard -- everything below would pass vacuously');
 
-    // Assert the precondition rather than assuming it: the text typed in the
-    // previous check must ALREADY have the guard armed here, which is also
-    // the only proof that a rebuilt panel re-arms through render()/syncDirty
-    // rather than only on a keystroke. Without this the disarm below could
-    // pass on a guard that was never armed at all.
-    assert(await armed(),
-      'the draft left by the rebuild check did not arm the guard -- everything below would pass vacuously');
+      await clearTemplateBody(page);
+      assert(!(await unloadGuardArmed(page)),
+        'the guard stayed armed after the draft was cleared -- a refcount leaked on the rebuild, and the dialog now fires on every page');
 
-    const clearBody = async () => {
-      await page.$eval('.cfg-tmpl__body', (el) => { el.focus(); el.select(); });
-      await page.keyboard.press('Backspace');
-      await waitFor(async () => (await page.$eval('.cfg-tmpl__body', (el) => el.value)) === '',
-        { timeout: 5000, message: 'the template body never cleared' });
-    };
+      await page.type('.cfg-tmpl__body', '{# E2E-GUARD-MARKER #}');
+      assert(await unloadGuardArmed(page), 'unsaved template text did not arm the unload guard');
 
-    await clearBody();
-    assert(!(await armed()),
-      'the guard stayed armed after the draft was cleared -- a refcount leaked on the rebuild, and the dialog now fires on every page');
+      // A blank box is not pending work -- Save refuses it -- so the guard
+      // must agree with the button rather than warn about losing nothing.
+      await clearTemplateBody(page);
+      assert(!(await unloadGuardArmed(page)), 'the guard stayed armed with nothing left to save');
+    } finally {
+      await clearTemplateBody(page).catch(() => {});
+    }
+  });
 
-    await page.type('.cfg-tmpl__body', '{# E2E-GUARD-MARKER #}');
-    assert(await armed(), 'unsaved template text did not arm the unload guard');
+  await suite.check('a draft holds the guard from a panel that is no longer on screen', async () => {
+    // syncUnsavedGuard asks EVERY draft on the page, and this is the check
+    // that says so: narrow it to the open panel's draft and every other guard
+    // check here stays green while the real regression ships -- type into one
+    // model, open another, reload, and the first model's text is gone with no
+    // warning. Opening the second panel is what forces the recomputation; a
+    // closed panel alone would leave a stale armed guard and prove nothing.
+    const otherId = await page.evaluate((mine) =>
+      [...document.querySelectorAll('.model-row__title strong')]
+        .map((el) => el.textContent.trim())
+        .find((id) => id && id !== mine) || null, config.model);
+    if (!otherId) skip('only one model is served -- nothing to switch panels to');
 
-    // A blank box is not pending work -- Save refuses it -- so the guard must
-    // agree with the button rather than warn about losing nothing.
-    await clearBody();
-    assert(!(await armed()), 'the guard stayed armed with nothing left to save');
+    try {
+      await page.type('.cfg-tmpl__body', '{# E2E-OTHER-PANEL #}');
+      assert(await unloadGuardArmed(page), 'typed template text did not arm the guard');
+
+      await openTemplatePanel(page, otherId);
+      assert(await unloadGuardArmed(page),
+        `opening ${otherId}'s panel disarmed the guard -- the first model's unsaved template is now silently losable`);
+    } finally {
+      // Hand back both a disarmed guard AND the E2E model's panel, which the
+      // next check expects to find open.
+      await openTemplatePanel(page, config.model).catch(() => {});
+      await clearTemplateBody(page).catch(() => {});
+    }
+    assert(!(await unloadGuardArmed(page)), 'clearing the original draft left the guard armed');
   });
 
   await suite.check('open config panel fits a phone viewport', async () => {
@@ -785,37 +855,73 @@ export async function runPagesSuite({ suite, ctx, config }) {
     // disable() leaves the dialog armed over chat, notebook and perf, which
     // own no unsaved work at all and would never clear it. createUnloadGuard
     // registers that disarm itself; this checks the page routes through it.
-    // The probe dispatches at `window`, which is where the handler is
-    // registered and where the browser fires the real one -- not a convenient
-    // node that happened to be in scope. What it cannot see is whether Chrome
-    // paints the dialog; chat.mjs's mid-stream reload observes that end for
-    // real, by having to accept it.
-    const armed = () => page.evaluate(() =>
-      !window.dispatchEvent(new Event('beforeunload', { cancelable: true })));
-
     await ctx.open('#/models');
     await page.waitForSelector('.models');
     await waitFor(async () => (await count(page, '.model-row')) > 0, { message: 'no model rows' });
-    const row = await findModelRow(page, config.model);
-    const btn = await row.evaluateHandle((r) =>
-      [...r.querySelectorAll('.model-row__actions button')].find((b) => b.textContent.trim() === 'Configure'));
-    await btn.asElement().click();
-    await btn.dispose();
-    await page.waitForSelector('.model-config', { timeout: 10000 });
-    await page.$eval('.cfg-tmpl > summary', (el) => el.click());
-    await waitFor(async () => Boolean((await textOf(page, '.cfg-tmpl__origin') || '').trim()),
-      { timeout: 10000, message: 'template panel never resolved an origin' });
+    await openTemplatePanel(page, config.model);
 
     await page.type('.cfg-tmpl__body', '{# E2E-TEARDOWN-MARKER #}');
-    assert(await armed(), 'typed template text did not arm the guard');
+    assert(await unloadGuardArmed(page), 'typed template text did not arm the guard');
 
     // Hash nav, not a reload: the path beforeunload cannot see, and the one
     // that discards the draft. The draft dying here is by design; the dialog
     // outliving the page that raised it is not.
     await ctx.goHash('#/chat');
     await page.waitForSelector('.chat', { timeout: 15000 });
-    assert(!(await armed()),
+    assert(!(await unloadGuardArmed(page)),
       'the guard survived the models page teardown -- the dialog is armed on every other page now');
+  });
+
+  await suite.check('a template save failing AFTER the page is gone cannot re-arm the guard', async () => {
+    // The leak a review found in the first version of this feature. commit()
+    // optimistically deletes the draft key before its await, and its finally
+    // re-writes it from the textarea when the PUT rejects. Landing that after
+    // teardown re-armed a guard nobody owns: no teardown left to disarm it,
+    // and the next mount's guard is a different closure whose set(false)
+    // early-returns -- so the leave-site dialog stuck to every page for the
+    // rest of the session. load()'s GET has the same shape (no signal).
+    //
+    // The PUT is HELD and answered with a failure, so nothing is ever written
+    // beside the weights.
+    let held = null;
+    await page.setRequestInterception(true);
+    const hold = (req) => {
+      if (req.method() === 'PUT' && req.url().includes('/chat-template')) held = req;
+      else req.continue();
+    };
+    page.on('request', hold);
+    try {
+      await ctx.open('#/models');
+      await page.waitForSelector('.models');
+      await waitFor(async () => (await count(page, '.model-row')) > 0, { message: 'no model rows' });
+      await openTemplatePanel(page, config.model);
+
+      await page.type('.cfg-tmpl__body', '{# E2E-LATE-FAILURE #}');
+      assert(await unloadGuardArmed(page), 'typed template text did not arm the guard');
+      await clickByText(page, '.cfg-tmpl .cfg-actions button', 'Save template');
+      await waitFor(async () => held !== null,
+        { timeout: 10000, message: 'the template PUT was never sent' });
+
+      await ctx.goHash('#/chat');
+      await page.waitForSelector('.chat', { timeout: 15000 });
+      assert(!(await unloadGuardArmed(page)), 'teardown did not disarm the guard');
+
+      // Now let the save fail, on a page that no longer exists.
+      const failing = held;
+      held = null;
+      await failing.respond({
+        status: 400,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'e2e: template rejected' }),
+      });
+      await sleep(300);
+      assert(!(await unloadGuardArmed(page)),
+        'a save rejecting after teardown re-armed the guard -- it is now stuck on every page with nothing able to clear it');
+    } finally {
+      if (held) await held.abort().catch(() => {});
+      page.off('request', hold);
+      await page.setRequestInterception(false);
+    }
   });
 
   await suite.check('no uncaught page errors during the suite', async () => {

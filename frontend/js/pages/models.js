@@ -313,7 +313,11 @@ function renderModelList(ctx) {
     }
   }
   // An open panel whose model vanished (removed entry) just doesn't render;
-  // its draft stays in configDrafts, which is harmless and tiny.
+  // its draft stays in configDrafts. Not quite harmless since v2.0.35: an
+  // unsaved template body in such a draft keeps the unload guard armed with
+  // no panel left to save or clear it from. Kept anyway -- a vanished model
+  // is usually one rescan from coming back, and dropping the text to quiet a
+  // dialog would be the loss the dialog exists to prevent.
   s.listEl.replaceChildren(...children);
   // After mounting: a live region only announces text written into a node
   // already in the document, so the panel's status note is written here, not

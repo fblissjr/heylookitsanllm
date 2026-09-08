@@ -421,6 +421,14 @@ render an image marker on a user turn, and would otherwise move the picture to
 your latest message and describe it to the model as if it had arrived there.
 Switch to a gguf model to put an image on an assistant turn.
 
+**An unsaved chat template survives a reload on a desktop, but not a page
+change and not a phone.** Type a template into a model's config panel and the
+browser asks before you reload or close the tab. It does not ask when you click
+Chat or Notebook in the nav bar: the app changes pages without the browser
+noticing, so there is no moment to ask at, and the text is gone. It does not
+ask on iOS Safari either, which does not raise that dialog reliably. The draft
+is never stored anywhere -- Save is the only thing that keeps it.
+
 **Save & Continue on an assistant message carrying an image works on some
 models and not others.** It depends on whether the model's chat template keeps
 the image's place in the turn being continued. Where it does not, you get a

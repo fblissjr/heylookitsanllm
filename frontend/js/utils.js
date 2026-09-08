@@ -117,14 +117,23 @@ const beforeUnloadGuard = {
 // question the app can just answer by saving.
 export function createUnloadGuard(ctx) {
   let armed = false;
+  let disposed = false;
   const set = (unsaved) => {
-    const want = Boolean(unsaved);
-    if (want === armed) return;
-    armed = want;
-    if (want) beforeUnloadGuard.enable();
+    // A page's async tails outlive the page. An unaborted GET landing after
+    // teardown, or a PUT that REJECTS after it (the failure path re-writes
+    // the draft it optimistically cleared), re-runs whatever computes
+    // "unsaved" and would re-arm a guard nobody owns any more: there is no
+    // teardown left to disarm it, and the next mount's guard is a different
+    // closure whose set(false) early-returns on its own `armed`. That is a
+    // leave-site dialog stuck on every page for the rest of the session.
+    // The check belongs here rather than in each caller -- a per-caller
+    // `ctx.alive` test leaves the hole open for the next consumer.
+    if (disposed || Boolean(unsaved) === armed) return;
+    armed = !armed;
+    if (armed) beforeUnloadGuard.enable();
     else beforeUnloadGuard.disable();
   };
-  ctx.onTeardown(() => set(false));
+  ctx.onTeardown(() => { set(false); disposed = true; });
   return set;
 }
 

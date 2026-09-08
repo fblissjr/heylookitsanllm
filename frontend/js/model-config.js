@@ -229,16 +229,20 @@ const gib = (v) => `${v.toFixed(1)} GiB`;
 //
 // It is deliberately PAGE-SCOPED, and the scope is wider than a reload:
 // `s.configDrafts` is built fresh on every mount, so an in-app hash
-// navigation discards an unsaved body exactly as a reload does, unwarned in
-// both cases (`beforeunload` cannot see a hashchange at all).
+// navigation discards an unsaved body exactly as a reload does. Only the
+// RELOAD half is warned (v2.0.35 arms the unload guard while a draft holds
+// text); `beforeunload` cannot see a hashchange at all, so the nav half is
+// still silent -- as is iOS Safari in EVERY case, which does not fire
+// `beforeunload` reliably. That asymmetry is the reason to read this before
+// "improving" either half.
 // The tempting precedent is chat.js parking its system prompt in
 // localStorage, and it does NOT transfer. That draft is typed before a
 // conversation exists, so the parking is a bridge to adoption, not a
 // durability feature; a template body has a home from the first keystroke,
-// one enabled button away. Storing it would also go STALE: render() refetches
-// `override_template` from the server, and `draft[TMPL_DRAFT] ?? serverText`
-// lets a stored body win over a template that changed on disk -- including
-// one another session wrote. An in-memory draft can only ever be as old as
+// one enabled button away. Storing it would also go STALE: `load()` refetches
+// on every new panel, and `draft[TMPL_DRAFT] ?? serverText` lets a stored body
+// win over whatever came back -- the override's own text where one exists, the
+// model's otherwise -- including a template another session wrote. An in-memory draft can only ever be as old as
 // the page, which is the property you want here.
 const TMPL_DRAFT = '__chat_template_body';
 const TMPL_OPEN = '__chat_template_open';
@@ -247,8 +251,10 @@ const TMPL_OPEN = '__chat_template_open';
 // draft but not the panel. Presence is the whole test because syncDirty
 // DELETES the key the moment the body matches the server's -- but a blank
 // body is not pending work: Save refuses it, so a warning about losing it
-// would fire where no button could have saved anything. The guard and the
-// Save button answer the same question.
+// would fire where no button could have saved anything -- the same CONTENT
+// test Save's enabled state makes. It is deliberately asked of drafts whose
+// panel is CLOSED or rebuilt, where there is no Save button on screen at all,
+// and it ignores `busy`, so an in-flight save stays armed until it lands.
 export const hasUnsavedTemplate = (draft) =>
   Boolean(draft && String(draft[TMPL_DRAFT] ?? '').trim());
 
@@ -534,7 +540,8 @@ function buildFitMeter({ model, overrides, onGate }) {
   return { el, refresh, refreshObserved, scheduleRefresh: debounce(refresh, 300) };
 }
 
-// createModelConfigEditor({ model, fields, draft, initialNote, onError, onSaved, onReload, onReset })
+// createModelConfigEditor({ model, fields, draft, initialNote, onError,
+//                            onSaved, onReload, onReset, onFitGate, onDraftChange })
 //
 // - model:  the AdminModelResponse row (id, provider, loaded, config,
 //           stale_reload_fields, ...). stale_reload_fields is SERVER truth
@@ -542,6 +549,12 @@ function buildFitMeter({ model, overrides, onGate }) {
 //           what re-arms the Reload offer on every rebuild -- panel-local
 //           state cannot survive a remount, and a client-side copy of this
 //           fact drifts (it did).
+// - onDraftChange: fires whenever the template panel writes or clears its
+//           reserved draft key -- from render() and commit() as well as from
+//           typing, so it CAN fire after the caller's page is torn down (an
+//           unaborted GET landing late, a PUT that rejects). A consumer that
+//           acts on process-global state must tolerate that; createUnloadGuard
+//           does it for you.
 // - fields: the option schema's field list for model.provider (ui:"hidden"
 //           fields are filtered here, so callers pass the schema verbatim)
 // - draft:  caller-owned {fieldName: rawControlValue} of unsaved edits; the
