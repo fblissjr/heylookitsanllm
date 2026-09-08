@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.24]
+
+### Changed
+
+- **`uv run pytest tests/unit/ tests/contract/` runs in ~35s instead of ~65s,
+  from one line in one test.** `test_metrics_active_requests` sets
+  `_active_generations = 3` and never puts it back. When that provider is
+  garbage-collected, `BaseProvider.__del__` calls `unload()`, whose drain loop
+  polls `time.sleep(0.1)` until the active count reaches zero or a 30s cap
+  expires -- and nothing is generating, so the counter never falls and the
+  whole cap burns. Measured: 289 sleeps totalling ~29s, all from that one
+  destructor. The test now restores the counter in a `finally`.
+
+  Worth holding onto is WHY nobody found it from the suite's own output:
+  `--durations` cannot see one second of it. The stall happens inside
+  `__del__` during garbage collection, outside every phase pytest times, so
+  `tests/unit/test_mlx_provider.py` reported 2.5s across its 80 duration
+  entries while actually taking 33.5s -- 53% of the clock in a file holding 4%
+  of the tests, and the slowest test pytest would name ran 1.02s. Duration
+  triage is structurally blind to teardown and GC work; when a suite's
+  reported times do not add up to its wall clock, that gap is the finding.
+  Verified in isolation (33.51s -> 3.29s on that file, CPU 10% -> 90%) and on
+  the full suite (64.56s -> 35.20s, 1934 passed).
+
+  Also worth flagging beyond the tests: a destructor that can block for 30
+  seconds is a production hazard, not only a test-runtime one -- GC can fire
+  on any thread, including one delivering tokens.
+
 ## [2.0.23]
 
 ### Changed

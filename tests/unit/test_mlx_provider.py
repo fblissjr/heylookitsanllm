@@ -710,8 +710,19 @@ class TestGetMetrics:
 
     def test_metrics_active_requests(self, mock_mlx_provider):
         mock_mlx_provider._active_generations = 3
-        metrics = mock_mlx_provider.get_metrics()
-        assert metrics.requests_active == 3
+        try:
+            metrics = mock_mlx_provider.get_metrics()
+            assert metrics.requests_active == 3
+        finally:
+            # PUT THE COUNTER BACK. BaseProvider.__del__ calls unload(), whose
+            # drain loop polls `time.sleep(0.1)` until the active count reaches
+            # zero or a 30s cap expires -- and nothing here is generating, so a
+            # counter left at 3 burns the whole cap at garbage-collection time.
+            # That single leak was 29s of a 63s suite (289 sleeps, measured),
+            # and `--durations` cannot see one second of it: the stall happens
+            # in __del__ during GC, outside every phase pytest times. The file
+            # reported 2.5s across its 80 duration entries while taking 33.5s.
+            mock_mlx_provider._active_generations = 0
 
 
 @pytest.mark.unit
