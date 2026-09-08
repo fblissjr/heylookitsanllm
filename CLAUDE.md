@@ -859,6 +859,24 @@ in git history; a contract test pins that `/v2` stays 404.)
 - A SEPARATE interpreter-teardown crash, `Fatal Python error: gilstate_tss_set: failed to set current tstate (TSS)` (exit 134, printed AFTER the pass count), is NOT that MLX-GC class: it needs the MagicMock MLX tree, and reproduces model-free and pytest-free in a bare interpreter -- `import heylook_llm.api` under `patch.dict(sys.modules, create_mlx_module_mocks())` aborts at finalization, while the same import with real MLX exits 0 and the mock tree without that import exits 0. No stray Python thread survives the import, so the foreign thread doing it was not identified (timeboxed). Contract runs on Apple hardware no longer hit it at all since `mlx_mocks` stopped patching there (v1.77.1); it remains a residual on the mocked path.
 - Real-MLX failures POISON later real-MLX tests in the same process: one `RuntimeError: [read] Unable to read from file` inside `test_embedding_provider.py` also took down an unrelated test in another file, which passed the moment the first was fixed. Chase the FIRST such failure, not the count. Its cause is worth knowing generally: `mx.load` is lazy/mmap-backed, so `mx.save_safetensors` back over the SAME path without `mx.eval`-ing the loaded arrays first corrupts them -- latent in that test until mlx 0.32.1 surfaced it.
 - Provider unit tests build `MLXProvider` from RAW config dicts (bypassing `MLXModelConfig` validation; production passes `model_config.config.model_dump()`), so provider/loader code must tolerate un-normalized config (e.g. missing `modalities`) -- a back-compat branch that looks dead in the router path may be live only in tests.
+- A `git archive` EXPORT IS NOT ISOLATION -- the package is installed EDITABLE
+  (`__editable__.*.pth` in site-packages), so `import heylook_llm` resolves to
+  this repo's own `src/` from ANY cwd. Exporting a commit to a temp dir and
+  running pytest there with the repo venv therefore gives you THAT COMMIT'S
+  TESTS AGAINST THE WORKING TREE'S SOURCE -- neither commit nor tree, and worse
+  than either because it looks like the strictest option available. It produced
+  a confident "HEAD is green" and a confident "HEAD is broken" ten minutes
+  apart on an UNCHANGED HEAD (2026-09-08), where the failures actually belonged
+  to a third session's uncommitted work and nearly stopped a push over a break
+  that did not exist -- a live hazard here, because parallel sessions are normal
+  and someone else's half-finished work is what gets imported. Put
+  `PYTHONPATH=<export>/src` ahead of the venv python and PRINT
+  `heylook_llm.__file__` before trusting the run; verified in both directions.
+  The print is not optional, and the second-order failure is why: the SETUP step
+  can fail silently -- a sandboxed `mktemp -d` is blocked, the `tar`/`cp` after
+  it fails, and the probe still prints a confident answer about the wrong tree.
+  Any probe of this shape needs its setup to fail LOUDLY, or it cannot tell a
+  genuine negative from a broken experiment.
 - Backend: `uv run pytest tests/unit/ tests/contract/ -v`. INVOCATION ORDER IS
   NOT LOAD-BEARING (v1.77.1, verified on Apple hardware in both directions and
   each directory alone) -- historically it was: tests/contract/conftest.py's
