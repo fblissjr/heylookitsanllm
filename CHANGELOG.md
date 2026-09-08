@@ -176,6 +176,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`the reset button says it clears overrides` was a race, not an oracle.**
+  Its selector took the first `button` in the Sampling panel, and the panel
+  carries a hidden per-row reset (`\u21ba`) for every sampler control ahead of
+  the one it means -- so what it read depended on whether the read beat the
+  rows being populated. It passed 5/5 sequentially and failed 5/5 under CPU
+  contention with the button perfectly correct, and a probe inside a PASSING
+  sequential run found nine `.settings-row__reset` buttons ahead of it. Now
+  anchored on `button:not(.settings-row__reset)`: green 3/3 under the load
+  that used to red it, and red when the button is relabelled. Found by
+  mutation-auditing the suite, not by the suite.
+
 - `tests/e2e/README.md` described the render suite as taking "a few seconds".
 
 ## [2.0.19]

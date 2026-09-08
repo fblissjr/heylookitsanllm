@@ -1776,7 +1776,17 @@ async function main() {
       // It sets every value to null, handing each back to the backend cascade,
       // and writes that onto the open conversation -- "Reset to defaults" read
       // as something global.
-      const label = await guard.page.$eval('.drawer--open .settings-panel button',
+      // `.settings-panel button` was a RACE, not an oracle. The panel carries a
+      // hidden per-row reset (`\u21ba`) for every sampler control, all of them
+      // ahead of this button in document order, so `$eval` returned whichever
+      // existed when it looked: it passed only while the read beat the rows
+      // being populated, and went red under CPU load with the button perfectly
+      // correct. Measured 2026-09-08 -- 5/5 green sequentially, 5/5 red in
+      // parallel, and a probe in a PASSING sequential run found nine
+      // `.settings-row__reset` buttons ahead of it. Anchor on the class the
+      // panel-level action actually carries.
+      const label = await guard.page.$eval(
+        '.drawer--open .settings-panel button:not(.settings-row__reset)',
         (el) => el.textContent);
       assert(label === 'Clear all overrides', `the reset button reads ${JSON.stringify(label)}`);
     });
