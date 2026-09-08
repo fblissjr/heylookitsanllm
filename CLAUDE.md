@@ -172,9 +172,11 @@ is the admin row's `thinking_default` and must stay the cascade's own answer, ne
 re-derivation. `samplers.sampler_defaults()` (v2.0.21) is its SIBLING under the same rule
 and reports EVERY key: `{"off": {...}, "on": {...}}` on the admin row and `/v1/models`,
 which v3 prints as the placeholder in a blank sampler field so "auto" stops hiding the
-number in force. Keyed by the thinking switch because the anti-loop overlay moves
-`presence_penalty` off it while the panel's thinking control is independent -- one
-state's numbers would be WRONG half the time, and a wrong number is worse than "auto".
+number in force. Still keyed by the thinking switch and reported as both states, even
+though no sampler value moves off it any more (the anti-loop overlay went in v2.0.32):
+a model config or a future layer may key on it again, and the panel's thinking control
+is live and independent, so reporting one state while the user has selected the other
+would put a wrong number on screen -- worse than the "auto" it replaces.
 It takes each engine's VENDOR layer exactly where that engine's provider takes it, and
 `capabilities._vendor_sampling_pairs` is the ONE place naming which engine reads what:
 MLX `load_vendor_sampling` (generation_config.json), gguf `gguf_metadata.vendor_sampling`

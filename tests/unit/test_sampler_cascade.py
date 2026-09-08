@@ -96,26 +96,59 @@ class TestResolveEffectiveSampling:
         assert merged["temperature"] == 1.0
         assert merged["top_k"] == 64
 
-    def test_request_thinking_engages_overlay(self):
+    def test_thinking_resolves_the_switch_and_changes_nothing_else(self):
+        """Thinking flips the switch and NO sampler value with it (v2.0.32).
+
+        Until then it dragged `presence_penalty 1.5` along on every
+        thinking-capable model on both engines -- a value derived from one
+        family's July 2026 docs, made automatic on the strength of a single
+        observed gemma loop, and never measured. Both engines still have to
+        read the same resolved bool, which is why the switch is materialized
+        here; what is gone is the sampler change riding on it.
+        """
+        from heylook_llm.samplers import resolve_effective_sampling, GLOBAL_SAMPLER_FLOOR
+
+        on = resolve_effective_sampling(self._req(enable_thinking=True), {})
+        assert on["enable_thinking"] is True
+        assert on["presence_penalty"] == GLOBAL_SAMPLER_FLOOR["presence_penalty"], \
+            "thinking still applies a repetition penalty nobody asked for"
+
+        off = resolve_effective_sampling(self._req(enable_thinking=False), {})
+        # The switch is the ONLY thing that differs between the two.
+        assert {k: v for k, v in on.items() if k != "enable_thinking"} == \
+               {k: v for k, v in off.items() if k != "enable_thinking"}
+
+    def test_the_switch_still_resolves_in_the_documented_order(self):
         from heylook_llm.samplers import resolve_effective_sampling
 
-        merged = resolve_effective_sampling(self._req(enable_thinking=True), {})
-        assert merged["presence_penalty"] == 1.5
-        assert merged["enable_thinking"] is True
+        # model config sets it
+        assert resolve_effective_sampling(
+            self._req(), {"enable_thinking": True})["enable_thinking"] is True
+        # an explicit request False beats the model config
+        assert resolve_effective_sampling(
+            self._req(enable_thinking=False),
+            {"enable_thinking": True})["enable_thinking"] is False
+        # silent everywhere follows the capability
+        assert resolve_effective_sampling(
+            self._req(), {}, thinking_capable=True)["enable_thinking"] is True
 
-    def test_model_config_thinking_engages_overlay(self):
+    def test_repetition_control_is_still_reachable_per_model(self):
+        """Removing the automatic overlay must not remove the ability.
+
+        A model that genuinely loops is fixed on THAT model rather than by a
+        global default, and both engines can carry the field -- gguf gained it
+        in the same change, having had no per-model lever before.
+        """
+        from heylook_llm.config import PROVIDER_CONFIG_CLASSES
         from heylook_llm.samplers import resolve_effective_sampling
 
-        merged = resolve_effective_sampling(self._req(), {"enable_thinking": True})
-        assert merged["presence_penalty"] == 1.5
-
-    def test_request_false_beats_model_thinking(self):
-        from heylook_llm.samplers import resolve_effective_sampling
+        for provider in ("mlx", "gguf"):
+            assert "presence_penalty" in PROVIDER_CONFIG_CLASSES[provider].model_fields, \
+                f"{provider} cannot set presence_penalty per model"
 
         merged = resolve_effective_sampling(
-            self._req(enable_thinking=False), {"enable_thinking": True})
-        assert merged["presence_penalty"] == 0.0
-        assert merged["enable_thinking"] is False
+            self._req(enable_thinking=True), {"presence_penalty": 1.5})
+        assert merged["presence_penalty"] == 1.5
 
     def test_explicit_request_fields_win(self):
         from heylook_llm.samplers import resolve_effective_sampling

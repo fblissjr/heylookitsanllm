@@ -891,6 +891,15 @@ class GGUFModelConfig(BaseModel):
     # with it -- and named samplers are gone (v2.0.30). None = unset = off.
     enable_thinking: Optional[bool] = Field(
         default=None, json_schema_extra={"effect": EFFECT_PER_REQUEST})
+    # Per-model repetition control, the MLX config's counterpart. Added in
+    # v2.0.32 with the removal of the automatic thinking overlay: that overlay
+    # applied presence_penalty 1.5 to every thinking model on both engines,
+    # and MLX could already be tuned per model while gguf could not. Removing
+    # a global default without leaving a per-model lever would have been a
+    # capability loss rather than a simplification.
+    presence_penalty: Optional[float] = Field(
+        default=None, ge=0.0, le=2.0,
+        json_schema_extra={"effect": EFFECT_PER_REQUEST})
     # Model-level default thinking DEPTH, mirroring the MLX config's field of
     # the same name. Reaches llama-server as a chat_template_kwargs entry, so
     # the accepted set is whatever THIS model's embedded template accepts --

@@ -212,19 +212,29 @@ all three are silent.
       that same generation_config.json. gemma-4 runs 1.0/64/0.95, Qwen3.6
       1.0/20/0.95, each from its own file. Best-effort: a missing or malformed
       source yields nothing and never blocks a load.
-2. **Thinking anti-loop overlay** (`THINKING_PRESENCE_PENALTY = 1.5`), keyed
-   on the *effective* thinking switch: the request's `enable_thinking` when
-   present, else the model config's, else the capability.
-   **UNMEASURED.** The value came from a "Qwen3-style" bundle in July 2026 and
-   became automatic in the same commit that slimmed that bundle away, on the
-   strength of one gemma MoE repetition loop. It is the sole survivor of a set
-   whose other values the vendor layer replaced, and it survived only because
-   no vendor ships a `presence_penalty` -- it is not an HF generation_config
-   field at all. Qwen's own published guidance for a THINKING model is 0.0;
-   1.5 is what they recommend for the non-thinking variant.
-3. **Model sampler fields** from `models.toml` (per-model overrides in the
+2. **Model sampler fields** from `models.toml` (per-model overrides in the
    table above).
-4. **Request-level explicit field values** -- always win.
+3. **Request-level explicit field values** -- always win.
+
+The **thinking switch is still resolved here** -- request `enable_thinking`,
+else the model config's, else the capability -- because both engines must read
+the same bool. It just no longer drags a sampler value with it.
+
+**Removed in v2.0.32: the thinking anti-loop overlay.** It applied
+`presence_penalty 1.5` to every thinking-capable model on both engines. The
+value came from a "Qwen3-style" bundle in July 2026 and became automatic in
+the same commit that slimmed that bundle away, on the strength of one observed
+gemma MoE repetition loop. It was never measured, it was the sole survivor of
+a set whose other values the vendor layer replaced (surviving only because no
+vendor ships a `presence_penalty` -- it is not an HF generation_config field
+at all), and Qwen's own guidance for a THINKING model is 0.0, with 1.5 being
+their NON-thinking value.
+
+Repetition control did not go with it: `presence_penalty` is settable per
+model in `models.toml` and per request. gguf gained the per-model field in the
+same change, having had none -- removing a global default without leaving a
+per-model lever would have been a capability loss rather than a
+simplification. A model that genuinely loops is now fixed on that model.
 
 **Removed in v2.0.30: the bundled sampler registry.** Layers 3b (models.toml
 `default_sampler`) and 4 (`ChatRequest.sampler`) named entries in a

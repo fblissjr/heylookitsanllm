@@ -552,14 +552,21 @@ class TestPayload:
         payload = p._build_payload(req(max_tokens=64))
         assert payload["max_tokens"] == 64
 
-    def test_request_thinking_engages_antiloop_overlay(self):
-        """Claim: gguf mirrors MLX -- a thinking request gets the slimmed
-        'thinking' sampler's presence_penalty (loop control). Without it a
-        thinking model runs floor sampling with zero repetition control."""
+    def test_thinking_reaches_the_template_and_changes_no_sampler_value(self):
+        """gguf mirrors MLX: thinking is a TEMPLATE kwarg, not a sampler
+        change. It carried presence_penalty 1.5 until v2.0.32; that value was
+        never measured and contradicted the guidance of the family it came
+        from, so the switch now travels alone."""
         p = make_provider()
         payload = p._build_payload(req(enable_thinking=True))
-        assert payload["presence_penalty"] == 1.5
         assert payload["chat_template_kwargs"] == {"enable_thinking": True}
+        assert payload["presence_penalty"] == GLOBAL_SAMPLER_FLOOR["presence_penalty"]
+
+    def test_a_looping_model_can_still_be_tuned_per_model(self):
+        """gguf gained the per-model field in v2.0.32, having had none: the
+        removal must not cost the ABILITY, only the automatic default."""
+        p = make_provider(presence_penalty=1.5)
+        assert p._build_payload(req(enable_thinking=True))["presence_penalty"] == 1.5
 
     def test_request_thinking_off_no_penalty(self):
         p = make_provider()

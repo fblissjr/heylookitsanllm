@@ -197,12 +197,12 @@ class TestApplyModelDefaults:
         assert effective["max_tokens"] == 1024
 
     def test_thinking_mode_defaults(self, mock_mlx):  # noqa: ARG001
-        """Model-config thinking triggers the anti-loop overlay ONLY.
+        """Model-config thinking sets the switch and nothing else.
 
-        Claim: the 'thinking' sampler is slimmed to loop control
-        (presence_penalty); decode tuning (temperature/top_k/top_p) comes
-        from the vendor layer or floor, never a Qwen-tuned hardcode that is
-        wrong for other families (gemma wants 1.0/64, not 0.6/20).
+        Decode tuning comes from the vendor layer or the floor -- never a
+        hardcode tuned for one family and wrong for the rest (gemma wants
+        1.0/64, not Qwen's 0.6/20). Since v2.0.32 that includes
+        presence_penalty, which the overlay used to add here.
         """
         from heylook_llm.providers.mlx_provider import MLXProvider
 
@@ -219,15 +219,15 @@ class TestApplyModelDefaults:
             messages=[ChatMessage(role="user", content="think about this")],
         )
         effective = provider._apply_model_defaults(req)
-        assert effective["presence_penalty"] == 1.5
         assert effective["enable_thinking"] is True
+        assert effective["presence_penalty"] == GLOBAL_SAMPLER_FLOOR["presence_penalty"]
         assert effective["temperature"] == GLOBAL_SAMPLER_FLOOR["temperature"]  # floor, NOT Qwen's 0.6
 
-    def test_request_thinking_triggers_overlay(self, mock_mlx):  # noqa: ARG001
-        """Claim: a request flipping thinking ON engages the anti-loop
-        overlay even when the model config never declares enable_thinking.
-        Keying the layer on model config alone made it dead code (nothing
-        sets it) -- the 2026-07-28 gemma thinking repetition loop.
+    def test_request_thinking_reaches_the_prompt_without_a_sampler_change(self, mock_mlx):  # noqa: ARG001
+        """A request flipping thinking ON resolves the switch even when the
+        model config never declares it -- keying the layer on model config
+        alone made it dead code, since nothing sets it. What it must NOT do
+        any more is change sampling on the way (v2.0.32).
         """
         from heylook_llm.providers.mlx_provider import MLXProvider
 
@@ -241,8 +241,8 @@ class TestApplyModelDefaults:
             enable_thinking=True,
         )
         effective = provider._apply_model_defaults(req)
-        assert effective["presence_penalty"] == 1.5
         assert effective["enable_thinking"] is True
+        assert effective["presence_penalty"] == GLOBAL_SAMPLER_FLOOR["presence_penalty"]
 
     def test_request_thinking_false_suppresses_overlay(self, mock_mlx):  # noqa: ARG001
         """Claim: request enable_thinking=False beats a thinking-on model

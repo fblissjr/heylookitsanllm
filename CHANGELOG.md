@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.32]
+
+### Removed
+
+- **The thinking anti-loop overlay.** Enabling thinking applied
+  `presence_penalty = 1.5` to every thinking-capable model on both engines --
+  17 of the 35 models served here, across Qwen, gemma, DeepSeek and community
+  merges. It no longer applies anything: the switch is still resolved, because
+  both engines must read the same bool, but it travels alone.
+
+  Why it went. The value came from a "Qwen3-style" bundle in July 2026 and
+  became automatic in the same commit that slimmed that bundle away, on the
+  strength of one observed gemma MoE repetition loop. It was never measured
+  here. It was the sole survivor of a set whose other values the vendor layer
+  replaced, and it survived only because no vendor publishes a
+  `presence_penalty` -- it is not an HF `generation_config` field at all. And
+  Qwen's own guidance for a THINKING model is 0.0; 1.5 is the value they
+  recommend for the NON-thinking variant, so on the family it came from the
+  server was applying the wrong half.
+
+  This is the change the v2.0.30 registry removal deliberately did NOT make.
+  That one was behaviour-preserving; this one changes output for every
+  thinking request, which is why it is its own entry.
+
+### Added
+
+- **`presence_penalty` is now settable per model on gguf**, which it was not.
+  MLX could already be tuned per model; gguf had only the per-request field,
+  so removing the global default bare would have left it with no models.toml
+  lever at all. Removing a default must not remove the ability -- a model that
+  genuinely loops is now fixed on that model rather than by a default applied
+  to every other one.
+
+### Note
+
+The gemma MoE loop that motivated the overlay was real and is documented in
+`09140b9`. Nothing here proves it will not recur; what it establishes is that
+the fix was an unmeasured global default derived from a different model family,
+and that the per-model remedy is available on both engines if it does.
+
 ## [2.0.31]
 
 ### Fixed

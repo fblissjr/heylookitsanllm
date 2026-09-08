@@ -62,21 +62,6 @@ GLOBAL_SAMPLER_FLOOR = {
     **KNOBS_OFF,
 }
 
-# Anti-loop overlay applied whenever thinking is ON, both engines, every
-# thinking-capable model.
-#
-# UNMEASURED, and worth knowing before trusting it: the value came from a
-# "Qwen3-style" bundle in July 2026 and became automatic in the same commit
-# that slimmed that bundle away, on the strength of one gemma MoE repetition
-# loop. It is the one survivor of a set whose other values were replaced by
-# the vendor layer, and it survived only because no vendor ships a
-# `presence_penalty` -- it is not an HF generation_config field at all.
-# Qwen's own published guidance for a THINKING model is 0.0; 1.5 is what they
-# recommend for the non-thinking variant. Nothing here has been measured on
-# this hardware. See CLAUDE.md on why an unmeasured sampling default is the
-# kind of thing this repo otherwise refuses to generalise.
-THINKING_PRESENCE_PENALTY = 1.5
-
 
 VENDOR_SAMPLING_KEYS = ('temperature', 'top_p', 'top_k')
 
@@ -110,17 +95,16 @@ def resolve_effective_sampling(request: Any, model_config: dict,
           passed by the caller: MLX from generation_config.json
           (``load_vendor_sampling``), gguf from the GGUF header's
           ``general.sampling.*`` (``gguf_metadata.vendor_sampling``, v2.0.22).
-      2.  Thinking anti-loop overlay (``THINKING_PRESENCE_PENALTY``), keyed
-          on the EFFECTIVE switch: request.enable_thinking when present,
-          else the model config flag, else the capability.
-      3.  Model sampler fields from models.toml.
-      4.  Request explicit fields -- always win.
+      2.  Model sampler fields from models.toml.
+      3.  Request explicit fields -- always win.
 
-    Four layers, not the six this had until v2.0.30: the two named-sampler
-    layers (models.toml ``default_sampler`` and ``ChatRequest.sampler``) are
-    gone with the bundled registry. A user who wants a named bundle uses the
-    ``/v1/presets`` system, which the client expands into explicit fields --
-    so those arrive at layer 4 and need no layer of their own.
+    THREE layers, down from six. The two named-sampler layers went with the
+    bundled registry (v2.0.30); the thinking anti-loop overlay went in
+    v2.0.32. `enable_thinking` is still RESOLVED here -- both engines must
+    read the same bool -- it just no longer drags a sampler change with it.
+
+    Nothing is applied now that the model did not ask for: the values come
+    from the model's own files, its models.toml entry, or the request.
     """
     merged = dict(GLOBAL_SAMPLER_FLOOR)
     if vendor:
@@ -151,8 +135,6 @@ def resolve_effective_sampling(request: Any, model_config: dict,
         else thinking_capable
     )
     merged['enable_thinking'] = thinking_active
-    if thinking_active:
-        merged['presence_penalty'] = THINKING_PRESENCE_PENALTY
 
     merged.update({k: v for k, v in model_config.items()
                    if k in EFFECTIVE_SAMPLER_KEYS and v is not None})
