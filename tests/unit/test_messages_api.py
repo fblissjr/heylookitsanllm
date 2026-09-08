@@ -642,32 +642,72 @@ class TestStopReasonHasOneMapper:
     def _source(self, path):
         return (_REPO_ROOT / path).read_text()
 
-    def _assignments(self, path):
-        import re
-        # Strip comments and docstring-ish lines first: the raw regex matched
-        # prose mentioning the field and would have failed on a comment.
-        lines = [ln for ln in self._source(path).splitlines()
-                 if not ln.lstrip().startswith("#")]
-        # Also match ANNOTATED assignment. messages_api.py:87 already spells
-        # it `self.stop_reason: str = "end_turn"`, so respelling a bad
-        # default that way evaded the check entirely -- the pattern was
-        # not hypothetical, it was one line away from live.
-        # `=(?!=)` -- a COMPARISON is not a write. Without the lookahead,
-        # `if translator.stop_reason == "end_turn":` was read as an assignment
-        # of `= "end_turn"):`, which matches neither the literal branch nor
-        # the mapper branch and failed. Guarding a write by first reading the
-        # field is the natural way to express "only override the default",
-        # so the check has to tell reads from writes or it forbids the shape
-        # rather than the defect.
-        return re.findall(r"\.stop_reason(?:\s*:\s*[^=\n]+)?\s*=(?!=)\s*(.+)",
-                          "\n".join(lines))
+    def _stop_reason_writes(self, path):
+        """Every expression written to a `stop_reason` field, as AST nodes.
+
+        THIS PARSES RATHER THAN GREPS, and the reason is a measured false
+        alarm rather than tidiness. The regex this replaces read only the
+        text to the right of the `=`, so hoisting the mapped value into a
+        variable --
+
+            mapped = to_stop_reason(chunk_finish)
+            translator.stop_reason = mapped
+
+        -- turned the check RED on code that is correct and semantically
+        identical to the form it accepts. Found 2026-09-08 by rewriting the
+        line during a mutation audit and watching a passing test fail. A
+        check that forbids a SHAPE rather than the defect costs its next
+        reader a real debugging session and teaches them to route around it,
+        which is worse than not having it.
+
+        A bare name on the right is resolved to what that name was last
+        assigned ABOVE it in the same file (three hops, then it gives up and
+        reports the name). File order rather than true scope analysis is the
+        approximation here; it is deliberately loose in the direction of
+        asking for more, since an unresolvable name still fails.
+        """
+        import ast
+
+        tree = ast.parse(self._source(path))
+        assigns, writes = [], []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                targets, value = node.targets, node.value
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                targets, value = [node.target], node.value
+            else:
+                continue
+            for t in targets:
+                name = t.attr if isinstance(t, ast.Attribute) else getattr(t, "id", None)
+                if name == "stop_reason":
+                    writes.append((node.lineno, value))
+                elif isinstance(t, ast.Name):
+                    assigns.append((node.lineno, t.id, value))
+
+        def resolve(value, before, hops=3):
+            if not (isinstance(value, ast.Name) and hops):
+                return value
+            prior = [(ln, v) for ln, n, v in assigns if n == value.id and ln < before]
+            if not prior:
+                return value
+            ln, v = max(prior)
+            return resolve(v, ln, hops - 1)
+
+        return [(ln, resolve(v, ln)) for ln, v in writes]
 
     @pytest.mark.parametrize("path", MESSAGES_GRAMMAR_ROUTES)
     def test_every_stop_reason_write_goes_through_the_mapper(self, path):
-        writes = self._assignments(path)
+        import ast
+
+        writes = self._stop_reason_writes(path)
         assert writes, f"{path} no longer writes stop_reason -- update this test"
-        for rhs in writes:
-            rhs = rhs.strip()
+
+        def check(node, lineno):
+            # A conditional writes two values; both have to be answerable.
+            if isinstance(node, ast.IfExp):
+                check(node.body, lineno)
+                check(node.orelse, lineno)
+                return
             # A literal from the shared vocabulary is fine (an explicit
             # end-state, e.g. an abort); a bare provider value is not.
             #
@@ -677,20 +717,27 @@ class TestStopReasonHasOneMapper:
             # finish_reason vocabulary reaching the Messages wire verbatim, and
             # it passed -- it starts with a quote. Checking membership costs
             # nothing and closes the literal-shaped path back to the defect.
-            if rhs.startswith('"') or rhs.startswith("'"):
-                literal = rhs[1:].split(rhs[0])[0]
-                assert literal in get_args(StopReason), (
-                    f"{path} assigns stop_reason = {literal!r}, which is not in "
-                    f"the Messages vocabulary {get_args(StopReason)} -- a "
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                assert node.value in get_args(StopReason), (
+                    f"{path}:{lineno} assigns stop_reason = {node.value!r}, which is not "
+                    f"in the Messages vocabulary {get_args(StopReason)} -- a "
                     "provider finish_reason spelled as a literal is still a "
                     "provider finish_reason on the wire"
                 )
-                continue
-            assert "to_stop_reason(" in rhs, (
-                f"{path} assigns stop_reason from {rhs!r} without "
-                "to_stop_reason() -- a provider finish_reason would reach the "
-                "Messages wire verbatim"
+                return
+            if isinstance(node, ast.Call):
+                func = node.func
+                fname = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+                if fname == "to_stop_reason":
+                    return
+            raise AssertionError(
+                f"{path}:{lineno} assigns stop_reason from {ast.unparse(node)!r} "
+                "without to_stop_reason() -- a provider finish_reason would "
+                "reach the Messages wire verbatim"
             )
+
+        for lineno, node in writes:
+            check(node, lineno)
 
     @pytest.mark.parametrize("path", MESSAGES_GRAMMAR_ROUTES)
     def test_route_imports_the_shared_mapper(self, path):

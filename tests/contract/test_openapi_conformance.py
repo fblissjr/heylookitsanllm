@@ -40,28 +40,51 @@ class TestOpenAPISchema:
         for path in expected_paths:
             assert path in paths, f"Missing endpoint in OpenAPI schema: {path}"
 
-    def test_all_routes_have_schema_entries(self, app, schema):
-        """Every registered HTTP route with a /v1/ prefix has a schema entry.
+    def test_every_served_v1_route_is_in_the_schema(self, app, schema):
+        """A `/v1` route this app SERVES is documented, and vice versa.
 
-        WebSocket routes are excluded (OpenAPI does not document them).
+        The version of this that walked `app.routes` directly was decorative,
+        and measured so: a route added with `include_in_schema=False` -- the
+        exact defect it names -- was planted and it stayed green. `app.routes`
+        holds 4 Routes, 6 APIRoutes and 17 `_IncludedRouter` entries, and an
+        `_IncludedRouter` has no `.path`, so the loop saw ONE `/v1` path
+        (`/v1/data/clear`, the only route mounted straight on the app) while
+        the schema published 46. The assertion body was reachable for 1 route
+        in 46.
+
+        That is the same `_IncludedRouter` blind spot that
+        `test_startup_banner.py` commemorates as a shipped bug -- the banner
+        printed 12 of 48 -- and the broken walk outlived the fix, one module
+        away, inside a contract test.
+
+        `server.get_api_endpoints` is NOT the oracle here, deliberately: it
+        reads `app.openapi()`, so comparing it to the schema compares the
+        schema to itself. That tautology is why nothing caught the planted
+        route. Recursing through `original_router` is what actually reaches
+        the served set independently of the schema.
         """
-        from starlette.routing import WebSocketRoute
+        from fastapi.routing import APIRoute
+        from starlette.routing import Route
 
-        paths = set(schema["paths"].keys())
-        for route in app.routes:
-            if isinstance(route, WebSocketRoute):
-                continue
-            if hasattr(route, "path") and route.path.startswith("/v1/"):
-                # Normalize path params: {model_id:path} -> {model_id}
-                normalized = route.path
-                if ":path}" in normalized:
-                    normalized = normalized.replace(":path}", "}")
-                # Only check fixed paths (no path params) -- parameterized
-                # routes use OpenAPI's {param} syntax which may differ
-                if "{" not in normalized:
-                    assert normalized in paths, (
-                        f"Route {normalized} not found in OpenAPI schema"
-                    )
+        def walk(routes):
+            for route in routes:
+                inner = getattr(route, "original_router", None)
+                if inner is not None:
+                    yield from walk(inner.routes)
+                elif isinstance(route, (APIRoute, Route)):
+                    yield route
+
+        # Normalize the path-converter spelling: a route declares
+        # `{model_id:path}` where OpenAPI publishes `{model_id}`.
+        served = {
+            r.path.replace(":path}", "}")
+            for r in walk(app.routes) if r.path.startswith("/v1/")
+        }
+        published = {p for p in schema["paths"] if p.startswith("/v1/")}
+        assert served == published, (
+            f"served but undocumented: {sorted(served - published)}; "
+            f"documented but not served: {sorted(published - served)}"
+        )
 
     def test_openai_chat_routes_are_gone(self, schema):
         """The OpenAI-compatible chat routes were removed in v1.79.66 and must
@@ -105,14 +128,3 @@ class TestOpenAPISchema:
         req = schemas.get("MessageCreateRequest", {})
         required = req.get("required", [])
         assert "messages" in required
-
-    def test_endpoint_count(self, schema):
-        """Sanity check: we have a reasonable number of endpoints."""
-        paths = schema["paths"]
-        endpoint_count = 0
-        for path, methods in paths.items():
-            for method in methods:
-                if method in ("get", "post", "put", "delete", "patch"):
-                    endpoint_count += 1
-        # We expect at least 10 endpoints (models, messages, admin CRUD, etc.)
-        assert endpoint_count >= 10, f"Only {endpoint_count} endpoints found"

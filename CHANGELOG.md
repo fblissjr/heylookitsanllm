@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.26]
+
+### Changed
+
+- **The route/schema conformance check now reaches every served route
+  instead of one in forty-six.** `test_all_routes_have_schema_entries` walked
+  `app.routes` directly, and that was measured decorative, not suspected: a
+  route added with `include_in_schema=False` -- the exact defect it names --
+  was planted and it stayed green. `app.routes` holds 4 Routes, 6 APIRoutes
+  and 17 `_IncludedRouter` entries, and an `_IncludedRouter` has no `.path`,
+  so the loop saw ONE `/v1` path while the schema published 46. It is the same
+  blind spot `test_startup_banner.py` commemorates as a shipped bug (the
+  banner printed 12 of 48) -- the broken walk outlived the fix, one module
+  away, in a contract test.
+
+  Replaced with a walk that recurses through `original_router` and compares
+  the served set to the schema in both directions. `server.get_api_endpoints`
+  is deliberately NOT the oracle: it reads `app.openapi()`, so comparing it to
+  the schema compares the schema to itself, which is why nothing caught the
+  planted route. (That does not make the banner test decorative -- reverting
+  `get_api_endpoints` to the old walk turns three of its tests red. It simply
+  never claimed to catch a hidden route.) Verified: green normally, red on the
+  planted route and naming it.
+
+- **The stop-reason single-writer check parses instead of grepping.** It read
+  only the text right of the `=`, so hoisting the mapped value into a variable
+  -- `mapped = to_stop_reason(chunk_finish)` then `translator.stop_reason =
+  mapped` -- turned it RED on correct code, semantically identical to the form
+  it accepts. Found by rewriting that line during an audit and watching a
+  passing test fail. It now walks the AST and resolves a bare name to what it
+  was last assigned above it. Verified both ways: green on the hoisted form,
+  red on a raw provider value.
+
+### Removed
+
+- `test_endpoint_count` asserted `>= 10` against roughly 46 published
+  operations, so three-quarters of the API could be deleted under it. Its own
+  docstring called it a sanity check, and `test_core_endpoints_in_schema`
+  above it names seven specific paths.
+
 ## [2.0.25]
 
 ### Fixed
