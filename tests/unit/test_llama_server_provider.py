@@ -456,6 +456,68 @@ class TestSubprocessRegistry:
         assert proc not in llama_mod._ACTIVE_PROCS
         assert killed, "unload should still signal the group"
 
+    def test_destructor_signals_without_waiting(self, monkeypatch):
+        """A destructor must not block, on THIS provider too.
+
+        v2.0.28 gave `unload` a `drain` argument and honoured it in MLX only;
+        here it was accepted and ignored, with a comment saying so. But
+        `BaseProvider.__del__` is inherited, so collecting a gguf provider ran
+        SIGTERM -> wait(10) -> SIGKILL -> wait(5): up to 15 seconds on
+        whatever thread the GC fired on. Both halves of that release's claim
+        failed for gguf.
+        """
+        waits = []
+
+        class _RecordingProc(_FakeProc):
+            def wait(self, timeout=None):
+                waits.append(timeout)
+                return super().wait(timeout)
+
+        p = make_provider()
+        proc = _RecordingProc()
+        killed = []
+        monkeypatch.setattr(llama_mod.os, "getpgid", lambda pid: pid)
+        monkeypatch.setattr(llama_mod.os, "killpg", lambda pgid, sig: killed.append((pgid, sig)))
+        p._register_proc(proc)
+        p._proc = proc
+
+        p.unload(drain=False)
+
+        assert waits == [], f"unload(drain=False) waited on the subprocess: {waits}"
+        assert killed == [(proc.pid, signal.SIGTERM)], (
+            "drain=False must still SIGNAL -- not signalling strands a whole "
+            "llama-server holding GPU memory for the life of the parent, which "
+            "is worse than an unreaped child"
+        )
+        assert proc in llama_mod._ACTIVE_PROCS, (
+            "an unwaited process must stay registered: without a wait we cannot "
+            "escalate to SIGKILL here, so the atexit backstop has to keep that "
+            "option. Safe because we did NOT wait -- the Popen is unreaped, so "
+            "its poll() there still speaks for this pid."
+        )
+
+    def test_deliberate_unload_still_waits(self, monkeypatch):
+        """The other half of the same contract: a caller that CAN afford to
+        wait still does, or drain=False stops being a distinction."""
+        waits = []
+
+        class _RecordingProc(_FakeProc):
+            def wait(self, timeout=None):
+                waits.append(timeout)
+                return super().wait(timeout)
+
+        p = make_provider()
+        proc = _RecordingProc()
+        monkeypatch.setattr(llama_mod.os, "getpgid", lambda pid: pid)
+        monkeypatch.setattr(llama_mod.os, "killpg", lambda pgid, sig: None)
+        p._register_proc(proc)
+        p._proc = proc
+
+        p.unload()
+
+        assert waits, "the deliberate teardown path stopped waiting for the process to exit"
+        assert proc not in llama_mod._ACTIVE_PROCS
+
     def test_backstop_kills_leftover_process_group(self, monkeypatch):
         """Claim: this is the last line of defense. Delete it and any exit path
         that skips the lifespan shutdown (startup crash, second Ctrl-C) leaks

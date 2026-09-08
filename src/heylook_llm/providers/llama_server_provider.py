@@ -835,20 +835,56 @@ class LlamaServerProvider(BaseProvider):
         _ACTIVE_PROCS.add(proc)
 
     def unload(self, *, drain: bool = True):
-        # `drain` is accepted for the BaseProvider contract and ignored:
-        # unloading gguf is a SIGTERM to a subprocess, which has never
-        # waited for in-flight requests (the wait below is the process
-        # exiting, not its traffic draining).
+        """Stop this model's llama-server.
+
+        `drain` is NOT ignorable here, which is what the comment this replaces
+        claimed for a release. It is true that unloading gguf never waited for
+        in-flight REQUESTS -- SIGTERM goes out either way -- but it does wait
+        for the PROCESS to exit: up to 10s, plus 5s more after escalating to
+        SIGKILL. `__del__` passes drain=False and can afford neither, because
+        it runs on whatever thread the GC fired on. The destructor contract
+        shipped MLX-only in v2.0.28 and left this provider blocking for up to
+        15s there; gguf is not a footnote to the MLX path.
+
+        drain=False therefore still SIGNALS -- skipping that strands a whole
+        llama-server holding GPU memory for the life of the parent, which is
+        far worse than an unreaped child -- and skips both waits.
+        """
         proc = getattr(self, "_proc", None)
         self._proc = None
         self._base_url = None
         self.running_ctx = None
-        # Deregister FIRST: once we've decided to stop it, the exit hook must
-        # never signal this pid again -- by then it may belong to something else.
-        _ACTIVE_PROCS.discard(proc)
         if proc is None or proc.poll() is not None:
+            _ACTIVE_PROCS.discard(proc)
             self._cleanup_handles()
             return
+        if not drain:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            except Exception:
+                logging.error(
+                    f"[GGUF] error signalling llama-server for '{self.model_id}'",
+                    exc_info=True,
+                )
+            self._cleanup_handles()
+            # LEFT REGISTERED, deliberately: with no wait we cannot escalate to
+            # SIGKILL from here, so the atexit backstop has to keep that option.
+            # Safe precisely BECAUSE we did not wait -- the Popen is unreaped,
+            # so `poll()` in _kill_orphans still speaks for this pid instead of
+            # whatever process may have inherited it.
+            logging.warning(
+                f"[GGUF] llama-server for '{self.model_id}' was signalled from a "
+                "destructor and not waited on. A provider collected with a live "
+                "subprocess means a dropped reference -- the deliberate teardown "
+                "path (router eviction, lifespan shutdown) waits."
+            )
+            return
+        # Deregister FIRST: once we've decided to stop it AND to wait, the exit
+        # hook must never signal this pid again -- once reaped it may belong to
+        # something else.
+        _ACTIVE_PROCS.discard(proc)
         try:
             pgid = os.getpgid(proc.pid)
             os.killpg(pgid, signal.SIGTERM)  # llama-server handles SIGTERM gracefully

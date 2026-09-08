@@ -36,6 +36,7 @@
 
 import dataclasses
 import inspect
+import re
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -60,27 +61,23 @@ from heylook_llm.providers.common.model_wrappers import wrap_language_model
 from heylook_llm.providers.common.generation_core import _reset_vlm_positions
 
 
-_MLX_PROVIDER_SRC = Path(
-    __file__
-).parent.parent.parent / "src" / "heylook_llm" / "providers" / "mlx_provider.py"
+_SRC_ROOT = Path(__file__).parent.parent.parent / "src" / "heylook_llm"
+
+
+def _source(*parts: str) -> str:
+    """Read one of our own files for a source-text pin. ONE path walk: the
+    second call site arrived with a verbatim copy of the first, parents walk
+    included, which is the hand-copied-constant shape this repo keeps paying
+    for elsewhere."""
+    return _SRC_ROOT.joinpath(*parts).read_text()
 
 
 def _mlx_provider_source() -> str:
-    return _MLX_PROVIDER_SRC.read_text()
-
-
-# The SECOND call site. Per-message media attribution moved into vlm_inputs.py
-# in v2.0.18, and the source-text pin below stayed pointed at mlx_provider.py
-# alone -- so the file that actually decides how images are attributed was not
-# pinned to the library surface this module exists to track. Both files call
-# apply_chat_template today; only one was watched.
-_VLM_INPUTS_SRC = Path(
-    __file__
-).parent.parent.parent / "src" / "heylook_llm" / "providers" / "common" / "vlm_inputs.py"
+    return _source("providers", "mlx_provider.py")
 
 
 def _vlm_inputs_source() -> str:
-    return _VLM_INPUTS_SRC.read_text()
+    return _source("providers", "common", "vlm_inputs.py")
 
 
 # ---------------------------------------------------------------------------
@@ -238,21 +235,27 @@ class TestApplyChatTemplate:
     def test_the_media_attribution_call_site_is_pinned_too(self):
         """vlm_inputs.py is where per-message media attribution lives.
 
-        It builds the BLOCK-form content mlx-vlm counts markers in, then calls
-        apply_chat_template itself -- so a signature change there breaks image
-        placement, which is the failure this module is for. It was unpinned
-        while mlx_provider.py's call was pinned, found by audit 2026-09-08.
+        OWN-CODE TRACEABILITY, like the test above it and NOT a library-compat
+        check -- stated plainly because the module around it is a library-
+        surface suite and the first version of this docstring read as one.
+        vlm_inputs.py does not call mlx-vlm: it calls heylook's own
+        `vlm_apply_chat_template` (mlx_provider.py), which is what reaches
+        `mlx_vlm.prompt_utils`. So this watches OUR call keeping its kwargs.
+
+        WHAT IT STILL DOES NOT COVER: `reasoning_effort` reaches mlx-vlm only
+        through `**kwargs`, so the swallow case -- a library that quietly stops
+        forwarding it to the template -- remains unpinned by anything here.
         """
         src = _vlm_inputs_source()
-        # The kwargs THIS call site actually uses. It does not pass
-        # return_messages -- that belongs to mlx_provider.py's call, and
-        # asserting it here failed on first run, which is the useful kind of
-        # red: the pin has to describe the call that exists.
-        assert "num_images=len(images)" in src, (
-            "vlm_inputs.py no longer passes num_images to apply_chat_template "
-            "-- if the media-attribution call moved again, move this pin with it"
+        # Whitespace-tolerant: an exact-substring pin breaks on a reformat and
+        # then reports that the call MOVED, which sends a reader after a change
+        # nobody made. The claim is "this kwarg is still passed", so the check
+        # is aimed at that and not at the formatting around it.
+        assert re.search(r"num_images\s*=\s*len\(images\)", src), (
+            "vlm_inputs.py no longer passes num_images to the chat-template call "
+            "-- if media attribution moved again, move this pin with it"
         )
-        assert "reasoning_effort=reasoning_effort" in src, (
+        assert re.search(r"reasoning_effort\s*=\s*reasoning_effort", src), (
             "vlm_inputs.py stopped forwarding reasoning_effort to the template"
         )
 

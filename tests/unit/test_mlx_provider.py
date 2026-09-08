@@ -493,7 +493,7 @@ class TestGetMetrics:
 
 @pytest.mark.unit
 class TestCollectionDoesNotBlock:
-    """A destructor must not wait, and must not tear down live GPU state.
+    """A destructor must not wait.
 
     `BaseProvider.__del__` used to run the full `unload()`, whose drain loop
     polls for up to 30s. Anything collected while its active counter was
@@ -501,49 +501,77 @@ class TestCollectionDoesNotBlock:
     that was ~29s of a 65s run from one leaked counter, and in the server it
     would land on whichever thread GC chose, including one delivering tokens.
 
-    Nothing here asserts the counter is ever non-zero in production; a running
-    generation holds a reference, so it should not be. This pins what happens
-    if that assumption is ever wrong, which is the case a destructor cannot
-    afford to get wrong.
+    WHAT THESE CANNOT SAY: they call `__del__()` as a method while the
+    fixture, the local name and pytest's frame all still hold references, so
+    they pin the BRANCH, not collection. In particular they no longer assert
+    the provider keeps its model. v2.0.28 claimed the branch "leaves it
+    loaded" and this class asserted it via `hasattr` -- which is true by
+    construction here and false in the only case that matters: a destructor
+    that returns early retains NOTHING, because `__del__` runs during
+    deallocation. Corrected in v2.0.34.
+
+    The drain-poll check below also passes against 2.0.28: it guards the fix
+    that release made, and its green says nothing about the work in v2.0.34.
     """
 
-    def test_collection_with_traffic_returns_at_once(self, mock_mlx_provider):
-        import time as _time
+    def test_collection_with_traffic_never_enters_the_drain_poll(
+        self, mock_mlx_provider, monkeypatch, caplog
+    ):
+        """The invariant is "the polling loop was not entered", so that is
+        what is observed. The wall-clock form this replaces (`elapsed < 1.0`)
+        passes for any implementation that happens to be fast and reds on a
+        loaded machine with no behaviour change at all."""
+        import logging as _logging
+
+        import heylook_llm.providers.mlx_provider as _mod
+
+        slept: list = []
+        monkeypatch.setattr(_mod.time, "sleep", lambda s: slept.append(s))
         mock_mlx_provider.model = create_mock_model()
         mock_mlx_provider._active_generations = 3
         try:
-            started = _time.perf_counter()
-            mock_mlx_provider.__del__()
-            elapsed = _time.perf_counter() - started
-            # Two orders of magnitude under the 30s cap: this is asserting
-            # "did not wait", not a latency budget.
-            assert elapsed < 1.0, (
-                f"__del__ blocked for {elapsed:.1f}s with generations in flight -- "
-                "the drain loop is running in a destructor again"
+            with caplog.at_level(_logging.WARNING):
+                mock_mlx_provider.__del__()
+            assert slept == [], (
+                f"__del__ entered the drain poll ({len(slept)} sleeps) with "
+                "generations in flight -- the loop is running in a destructor again"
             )
-            # And it declined to tear down rather than freeing weights
-            # mid-decode, which is the fault the drain loop exists to prevent.
-            # `unload()` ends in `del self.model`, so the attribute surviving
-            # is the observable. `_strategies` is NOT: it is empty on a
-            # provider that never loaded, so asserting on it passes whether or
-            # not anything was torn down -- which is how the first version of
-            # this check failed for the wrong reason.
-            assert hasattr(mock_mlx_provider, "model"), (
-                "__del__ tore down a provider that still had generations in "
-                "flight -- skipping the wait must mean leaving it alone, not "
-                "releasing resources out from under a live decode"
+            # The branch's whole remaining value is this warning. The weights
+            # go regardless, so what the branch buys a reader is the name of
+            # the model whose reference was dropped.
+            said = [r.getMessage() for r in caplog.records]
+            assert any("test-model" in m and "3 active" in m for m in said), (
+                f"no warning naming the model and its active count: {said}"
             )
         finally:
             mock_mlx_provider._active_generations = 0
 
     def test_a_quiet_provider_still_unloads_on_collection(self, mock_mlx_provider):
-        """The refusal is conditional. With nothing in flight -- the normal
+        """The skip is conditional. With nothing in flight -- the normal
         case -- collection must still release the model, or the change trades
         a stall for a leak."""
         mock_mlx_provider.model = create_mock_model()
         mock_mlx_provider._active_generations = 0
         mock_mlx_provider.__del__()
         assert not hasattr(mock_mlx_provider, "model")
+
+    def test_another_models_gate_waiters_do_not_suppress_teardown(self, mock_mlx_provider):
+        """The generation gate is a PROCESS-GLOBAL singleton, so its `waiting`
+        count can be entirely another model's traffic.
+
+        The destructor branch read it anyway: model A collected while model B
+        had queue waiters skipped A's cleanup and logged a warning naming A,
+        telling the reader to go find A's leaked counter or dropped reference.
+        Both halves were wrong, and `max_loaded_models=1` bounding it in
+        practice is a default, not an invariant.
+        """
+        mock_mlx_provider.model = create_mock_model()
+        mock_mlx_provider._active_generations = 0
+        mock_mlx_provider.generation_queue_stats = lambda: {"active": 0, "waiting": 4}
+        mock_mlx_provider.__del__()
+        assert not hasattr(mock_mlx_provider, "model"), (
+            "another model's gate waiters suppressed this provider's teardown"
+        )
 
 
 @pytest.mark.unit

@@ -5,6 +5,151 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.34]
+
+### Verified
+
+- `tests/unit/` + `tests/contract/` green. `bun run e2e:render` green, and the
+  two repairs to the aggregate page-error check were each put in the state
+  they exist to catch: with registration removed it fails naming the derived
+  count, and with a top-level throw before any check it still runs, still
+  prints, and still exits non-zero. Vendored frontend libs match the manifest.
+
+- **Release standard met: `tests/smoke/` green on all three engine arms**
+  (71/71, plus 11/11 contract-only), against an isolated live server. Same
+  arms and same models as 2.0.28, so the two runs are comparable: mlx-lm
+  `Qwen3.5-0.8B-MLX-8bit-textonly`, mlx-vlm `google_gemma_4-E4B-it-bf16-mlx`,
+  gguf `google_gemma-4-E4B-it-qat-q4_0-gguf`.
+
+  The same three mechanisms report UNCOVERED rather than passing, unchanged
+  from 2.0.28 and named rather than passed over: thinking DEPTH on mlx-lm and
+  on mlx-vlm (neither arm's model advertises `reasoning_effort` -- the
+  standing gap; the only served MLX model that does is a 120B), and the nested
+  image-source row on mlx-lm (a text-only model cannot cover it).
+
+- **The smoke run cannot reach the branch this release is about, so a green
+  run is not evidence for it.** The harness drives HTTP and loads one model
+  per arm under `max_loaded_models=1`, so every teardown it causes is a ROUTER
+  EVICTION -- `drain=True`, the deliberate path. It never collects a provider.
+  Three live probes cover the destructor directly:
+
+  - gguf `unload(drain=False)` against a REAL llama-server rather than the
+    fake Popen the unit test uses: returned in 0.000s where the old code
+    waited, the process stayed registered for the exit backstop, and the
+    signalled server exited on its own (rc=0) in about 0.3s. This is the one
+    claim the first draft of this entry could only reason from the code.
+  - gguf DELIBERATE unload through the admin route with the model resident:
+    0.23s, subprocess reaped, no orphan left behind.
+  - MLX both branches on a real loaded model: the busy branch warns and
+    returns in 0.095s, AND the weights are released anyway -- the correction
+    below, now shown on real weights instead of a synthetic object -- while
+    the quiet branch's full teardown (`gc.collect()` + `mx.clear_cache()`)
+    runs from `__del__` without faulting.
+
+  The warning channel was re-established live before reading anything into its
+  silence: the dev server runs at `--log-level WARNING`, and a deliberately
+  provoked server warning reached the log. So no destructor warning during the
+  smoke run means the branch was never entered, not that nothing would have
+  said so.
+
+### Fixed
+
+- **The destructor fix in 2.0.28 shipped a false claim about what it
+  guarantees.** `BaseProvider.__del__` calls `unload(drain=False)`, and MLX's
+  `drain=False` branch returns early when work is in flight, saying it leaves
+  the model loaded rather than tearing down mid-decode. **A destructor that
+  returns early retains nothing.** `__del__` runs during deallocation; the
+  weights are released as it returns, whatever it decided. Measured on a
+  synthetic provider: the warning prints, then a weakref to both the provider
+  and its model reads dead.
+
+  The branch stays, and what it buys is narrower than the claim it replaces:
+  no 30s drain poll. It also skips the engine teardown (`gc.collect()` +
+  `mx.clear_cache()`) in the busy case, and that half is deliberate caution
+  about calling MLX from an arbitrary GC thread -- NOT a measured fault.
+  Nothing here establishes those calls are unsafe from a GC thread, and the
+  QUIET path has always made them from `__del__`. What the branch cannot buy
+  is safety: a provider collected mid-generation is a bug the destructor can
+  only decline to make worse, and say so.
+
+  Corrected in three places, all of which said otherwise: the `__del__`
+  comment, the MLX warning text, and the 2.0.28 entry above (in place, marked).
+
+- **gguf never got that fix at all.** `LlamaServerProvider.unload` accepted
+  `drain` and ignored it, with a comment saying so on the reasoning that
+  unloading gguf never waited for in-flight REQUESTS. True, and the wrong
+  conclusion: it waits for the PROCESS -- SIGTERM, `wait(10)`, SIGKILL,
+  `wait(5)`. `__del__` is inherited, so collecting a gguf provider could block
+  a GC thread for up to fifteen seconds. The WAIT half of 2.0.28's title
+  failed here; the other half was never achievable for any provider, which is
+  the finding above and a different defect.
+
+  `drain=False` now signals and skips both waits. It still SIGNALS: not
+  signalling strands a whole llama-server holding GPU memory for the life of
+  the parent, which is worse than an unreaped child. The process stays
+  REGISTERED in the exit backstop, because without a wait we cannot escalate
+  to SIGKILL here -- safe precisely because we did not wait, so the unreaped
+  Popen's `poll()` there still speaks for that pid.
+
+- **The destructor branch decided on a PROCESS-GLOBAL counter.** It read
+  `generation_queue_stats()["waiting"]`, which is the shared generation gate,
+  so another model's queue waiters made this provider skip its own cleanup and
+  log a warning naming this model and telling the reader to go find its leaked
+  counter. Both halves wrong, and `max_loaded_models=1` bounding it in
+  practice is a default, not an invariant. It reads its own `_active_generations`
+  and nothing else.
+
+### Changed
+
+- **The `unload(drain=...)` contract is enforced at class creation instead of
+  in prose.** A subclass declaring plain `unload(self)` raised TypeError
+  inside `__del__`, where Python swallows it, prints one line to stderr and
+  does not unload; two test doubles sat in that state for a session with every
+  suite green, because nothing could go red on it. `__init_subclass__` now
+  rejects an `unload` that cannot take `drain`, so the wrong thing fails to
+  import. Same derive-rather-than-document rule the reload set and the import
+  allowlist already follow, pointed at a signature.
+
+- **The browser suite's aggregate page-error check could not run on the runs
+  that need it.** 2.0.28 collapsed the per-boot checks into one at the foot of
+  `main()`'s `try`. Most `openChat` calls sit at that top level, OUTSIDE
+  `suite.check` (the only thing that swallows a throw), so any one of them
+  timing out unwound past the check and the run reported ZERO page-error
+  coverage -- where the per-boot checks it replaced had at least reported for
+  every boot that completed. It now runs in `finally`, and the fatal error is
+  reported after `printSummary` rather than rethrown past it, so the result is
+  printed as well as computed.
+
+  Three more holes in the same check: contexts registered AFTER the boot wait
+  that rethrows, so a page whose module-load error stopped any rendering never
+  reached the registry -- exactly the boot worth reporting; the vacuity guard
+  ran after the assertion it guards, so it could not fire on a run that had a
+  page error; and the markdown page, which hosts the URL-scheme checks, had no
+  error listener at all under a check named "no page ANYWHERE threw". Wiring
+  and registration are now one call made the moment a page exists, the guard
+  is ordered first, and its threshold is derived from the `openChat` call
+  count rather than hand-kept.
+
+- **`chat.js` exports the status-prefix ARRAY.** (The `chat.js` half landed
+  with 04eee50, a concurrent session's commit that swept the file up; the
+  check that consumes it is here.) Exporting the two constants
+  individually moved the hand-enumeration rather than removing it: `chat.js`
+  still listed them twice and the check still named them one at a time, so a
+  third status wording would have reached neither. `isGeneratingNote`
+  iterates the exported array and the check spreads it.
+
+- **The `vlm_inputs.py` pin says what it is.** It reads as a library-surface
+  check in a library-surface module, but `vlm_inputs.py` does not call
+  mlx-vlm -- it calls heylook's own `vlm_apply_chat_template`. It is own-code
+  traceability, like the pin above it, and the docstring says so along with
+  what it still does not cover (`reasoning_effort` reaches mlx-vlm through
+  `**kwargs`, so the swallow case remains unpinned). Its substring match is
+  now whitespace-tolerant, so a reformat cannot report that the call moved.
+
+- **Red-first narration removed from tracked files**, per the standing rule:
+  three "Verified red against ..." lines in 2.0.28 and one source comment in
+  `test_mlxvlm_surface.py`. The checks stay; the ritual does not.
+
 ## [2.0.33]
 
 ### Changed
@@ -273,8 +418,11 @@ the names.
   1. **The guarded branch behaves correctly when reached** is NOT established
      by this run, and does not need to be: `TestCollectionDoesNotBlock`
      drives `__del__()` with the active counter at 3 and asserts it returns
-     without waiting and without tearing down, verified red against the old
-     destructor (30.16s, the full cap).
+     without waiting.
+
+     (Corrected in 2.0.34: this said "and without tearing down". The branch
+     does skip the teardown, and that buys nothing on its own -- a destructor
+     returning early retains nothing.)
   2. **No provider was collected mid-generation during the live run** is what
      the smoke silence says. It is real signal because the channel was shown
      live first: the warning is a plain `logging.warning` in `mlx_provider`,
@@ -289,8 +437,9 @@ the names.
 
 ### Fixed
 
-- **`BaseProvider.__del__` no longer waits, and no longer tears down live GPU
-  state.** It ran the full `unload()`, and `MLXProvider`'s drain loop polls
+- **`BaseProvider.__del__` no longer waits.** (Headline corrected in 2.0.34:
+  it also said "and no longer tears down live GPU state", which is not
+  something a destructor can achieve.) It ran the full `unload()`, and `MLXProvider`'s drain loop polls
   until in-flight work clears or a 30s cap expires -- so a provider collected
   while its active counter was non-zero stalled whatever thread the GC fired
   on. A test leaking that counter is what surfaced it, but the hazard is in
@@ -298,18 +447,22 @@ the names.
   delivering tokens.
 
   `unload(drain=...)` is now the caller saying whether it can afford to wait.
-  Every deliberate teardown can and does; `__del__` passes `drain=False`,
-  which means "if there is live work, leave everything alone and warn" --
-  NOT "tear down faster". Skipping the wait to free weights anyway would
-  release them mid-decode, which is the Metal fault the loop exists to
-  prevent. Being collected mid-generation is a bug in itself (a running
-  generation holds a reference), so the warning names it as a leaked counter
-  or dropped reference rather than a teardown to tune.
+  Every deliberate teardown can and does; `__del__` passes `drain=False`.
 
-  Pinned by two checks: collection with traffic returns at once and leaves the
-  model loaded, and collection with nothing in flight still unloads -- so the
-  fix cannot decay into a leak. Verified red against the old destructor, where
-  the first blocks for the full cap.
+  **What this release said `drain=False` MEANS is false, and 2.0.34 corrects
+  it**: it claimed the branch leaves the model loaded rather than tearing down
+  mid-decode. A destructor cannot do that -- returning early retains nothing,
+  because `__del__` runs during deallocation and the weights are released as
+  it returns. See 2.0.34 for what the branch actually buys, and note that this
+  release honoured `drain` on MLX only.
+
+  Being collected mid-generation is a bug in itself (a running generation
+  holds a reference), so the warning names it as a dropped reference rather
+  than a teardown to tune.
+
+  Pinned by two checks: collection with traffic does not enter the drain poll,
+  and collection with nothing in flight still unloads -- so the fix cannot
+  decay into a leak.
 
 ### Changed
 
@@ -319,8 +472,7 @@ the names.
   contexts were asserted on nowhere. `openChat` now registers every context it
   hands out, and one check at the foot of the run covers all of them, naming
   the `render.mjs` line each offending page was opened at. It also asserts
-  that contexts were registered, so it cannot go quietly vacuous. Verified
-  against a copy of the frontend that throws on every chat page.
+  that contexts were registered, so it cannot go quietly vacuous.
 
   One per-context check is deliberately KEPT: `no uncaught page errors
   (streaming paint)` drives a full streamed message before asserting, so
@@ -336,7 +488,7 @@ the names.
 - **`test_mlxvlm_surface.py` pins `vlm_inputs.py`'s call site too.** Per-message
   media attribution moved there in v2.0.18 while the source-text pin stayed on
   `mlx_provider.py`, so the file that decides how images are attributed was not
-  watched against the library surface. Verified red against a renamed kwarg.
+  watched against the library surface.
 
 ## [2.0.27]
 

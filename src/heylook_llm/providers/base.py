@@ -1,4 +1,5 @@
 # src/heylook_llm/providers/base.py
+import inspect
 import threading
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
@@ -121,6 +122,34 @@ class BaseProvider(ABC):
     # reader to wonder why nothing changed. None means "not known", which is
     # every unloaded model.
     loaded_chat_template: Optional[str] = None
+
+    def __init_subclass__(cls, **kwargs):
+        """Refuse, at class creation, an `unload` that cannot take `drain`.
+
+        The contract below says an override MUST accept it. Prose did not
+        hold: a subclass declaring plain `unload(self)` raises TypeError
+        inside `__del__`, where Python SWALLOWS it, prints one "Exception
+        ignored while calling deallocator" line and DOES NOT UNLOAD. Two test
+        doubles sat in that state for a session with every suite green,
+        because nothing anywhere could go red on it. This is the derive-
+        rather-than-document rule the repo applies to its constant lists,
+        pointed at a signature: the wrong thing now fails to import.
+        """
+        super().__init_subclass__(**kwargs)
+        unload = cls.__dict__.get("unload")
+        if unload is None:
+            return  # inherits a conforming one
+        params = inspect.signature(unload).parameters
+        if "drain" in params or any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+        ):
+            return
+        raise TypeError(
+            f"{cls.__module__}.{cls.__qualname__}.unload must accept `drain` "
+            "(`def unload(self, *, drain: bool = True)`) -- BaseProvider.__del__ "
+            "passes it, and a signature that cannot take it makes the destructor "
+            "raise a TypeError Python swallows, silently never unloading."
+        )
 
     def __init__(self, model_id: str, config: Dict, verbose: bool):
         self.model_id = model_id
@@ -291,14 +320,13 @@ class BaseProvider(ABC):
         Implementations with nothing to wait for accept the argument and
         ignore it.
 
-        AN OVERRIDE MUST ACCEPT ``drain``. ``__del__`` passes it, and a
-        subclass declaring plain ``unload(self)`` raises TypeError inside the
-        destructor -- where Python swallows it, prints one ``Exception ignored
-        while calling deallocator`` line to stderr, and DOES NOT UNLOAD. The
-        object is then never torn down and almost nothing says so. Two test
-        doubles were in that state for the length of one session before a
-        review caught it; the three shipped providers were updated with the
-        contract.
+        AN OVERRIDE MUST ACCEPT ``drain`` -- enforced by
+        ``__init_subclass__``, not by this paragraph, because the failure it
+        describes is invisible: a subclass declaring plain ``unload(self)``
+        raises TypeError inside the destructor, where Python swallows it,
+        prints one ``Exception ignored while calling deallocator`` line to
+        stderr, and DOES NOT UNLOAD. Two test doubles sat in that state for a
+        session with every suite green. It is now a class-creation error.
         """
         pass
 
@@ -324,10 +352,18 @@ class BaseProvider(ABC):
         # but the hazard is here, not there: in the server, GC fires on any
         # thread, including one delivering tokens.
         #
-        # `drain=False` does NOT mean "tear down faster". It means "you are a
-        # destructor: if there is live work, leave everything alone and say
-        # so". Being collected mid-generation is a bug in its own right -- a
-        # running generation holds a reference -- so the provider that reports
-        # it is telling you something worth reading, and holding the resources
-        # is strictly better than faulting Metal to release them.
+        # `drain=False` means ONLY "do not wait, and do not reach for the
+        # engine on the way out". It CANNOT mean "keep the model loaded":
+        # RETURNING EARLY FROM A DESTRUCTOR RETAINS NOTHING. `__del__` runs
+        # during deallocation, so the weights are released when it returns,
+        # whatever it decided -- measured 2026-09-08, against the claim this
+        # comment used to make. What skipping buys is narrower and real: no
+        # 30s poll, and no engine teardown call (`gc.collect()` +
+        # `mx.clear_cache()`) issued from a thread we did not choose while
+        # another may be mid-decode.
+        #
+        # So a provider collected mid-generation is a bug the destructor
+        # CANNOT make safe -- it can only decline to make it worse, and say
+        # so. A running generation holds a reference to its provider, so
+        # reaching that branch at all means one was dropped.
         self.unload(drain=False)

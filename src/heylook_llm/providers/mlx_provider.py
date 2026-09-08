@@ -1773,25 +1773,30 @@ class MLXProvider(BaseProvider):
         bounded by the same 30s force-unload cap as before.
         """
         if not drain:
-            # Called from __del__, which must neither block nor tear down live
-            # GPU state. Both halves matter: the loop below polls for up to 30s
-            # (a stall on whatever thread the GC fired on), and skipping the
-            # loop to free weights anyway would release them mid-decode, which
-            # is the Metal fault the loop exists to prevent. So: if anything is
-            # in flight, keep the resources and say so. Nothing should reach
-            # this branch with traffic -- a running generation holds a
-            # reference to its provider -- so the warning is a real signal, not
-            # noise to tune out.
+            # Called from __del__, which must not block: the loop below polls
+            # for up to 30s on whatever thread the GC happened to fire on.
+            #
+            # Skipping it does NOT keep the model loaded. A destructor that
+            # returns early retains nothing -- the weights are released as it
+            # returns, whatever it decided (see BaseProvider.__del__). What
+            # the skip actually avoids is the poll, and the engine teardown at
+            # the tail of this method (`gc.collect()` + `mx.clear_cache()`),
+            # neither of which belongs on an arbitrary GC thread while another
+            # may be mid-decode.
+            #
+            # Only THIS provider's counter is read. `generation_queue_stats()`
+            # reports the PROCESS-GLOBAL gate, so its waiters can belong
+            # entirely to another model -- and a warning naming this model for
+            # someone else's traffic sends the reader after a bug that is not
+            # there.
             with self._active_lock:
                 active = self._active_generations
-            waiting = (self.generation_queue_stats() or {}).get("waiting", 0)
-            if active or waiting:
+            if active:
                 logging.warning(
-                    f"{self.model_id} was garbage-collected with {active} active / "
-                    f"{waiting} waiting generation(s); leaving it loaded rather than "
-                    "tearing down mid-decode. A provider should not be collectable "
-                    "while it believes it is generating -- treat this as a leaked "
-                    "counter or a dropped reference, not as a teardown to tune."
+                    f"{self.model_id} was garbage-collected with {active} active "
+                    "generation(s). Its weights are released either way -- a "
+                    "destructor cannot hold them -- so this is a dropped reference "
+                    "or a leaked counter to go and find, not a teardown to tune."
                 )
                 return
 

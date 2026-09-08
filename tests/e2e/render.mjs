@@ -421,14 +421,34 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
 // Every page context openChat has handed out, for the one error check at the
 // foot of the run. Pages close; these arrays outlive them.
 const PAGE_CONTEXTS = [];
+// How many times openChat was ENTERED, so the vacuity guard has a number it
+// derives instead of one somebody maintains by hand.
+let OPEN_CHAT_CALLS = 0;
+
+// Wire a page for the aggregate error check and register it in one step, so
+// the two can never drift apart. Called the moment a page exists -- before any
+// navigation or wait that could throw and take the context with it.
+function watchPageErrors(page, label) {
+  const pageErrors = [];
+  page.on('pageerror', (err) => pageErrors.push(err.message));
+  const openedAt = label ?? (new Error().stack || '').split('\n')
+    .map((l) => (l.match(/render\.mjs:(\d+):/) || [])[1])
+    .filter(Boolean)[1] ?? '?';
+  PAGE_CONTEXTS.push({ openedAt, pageErrors });
+  return pageErrors;
+}
 
 async function openChat(browser, base, {
   residencyDelayMs = 0, sseDelayMs = 0, unsaved = false, mobile = false, caps = [],
   secondModel = null, withMedia = false, dripGenerate = false, presets = [], appliedPresetId = null,
 } = {}) {
+  OPEN_CHAT_CALLS += 1;
   const page = await browser.newPage();
-  const pageErrors = [];
-  page.on('pageerror', (err) => pageErrors.push(err.message));
+  // Registered HERE, not after the boot wait below. That wait rethrows, so a
+  // page whose module-load error stops any message rendering used to never
+  // reach the registry -- losing the context of exactly the boot the aggregate
+  // check exists to report on.
+  const pageErrors = watchPageErrors(page);
   const store = makeStubStore({ unsaved, caps, secondModel, withMedia, presets, appliedPresetId });
   const reqs = [];
 
@@ -545,20 +565,6 @@ async function openChat(browser, base, {
     err.message = `${err.message}\n      ${why}`;
     throw err;
   }
-  // EVERY context is registered, so one check at the end can speak for all of
-  // them. Eighteen separate `no uncaught page errors (...)` checks used to do
-  // this one context at a time, and between them they caught none of the
-  // twenty defects a mutation audit planted (2026-09-08) -- while three
-  // contexts had their errors asserted nowhere at all. One check covers more
-  // and cannot be forgotten by the next person who calls openChat.
-  //
-  // The stack line is the label: it names the openChat call site without
-  // asking 30-odd call sites to pass a name they would then have to keep
-  // accurate.
-  const openedAt = (new Error().stack || '').split('\n')
-    .map((l) => (l.match(/render\.mjs:(\d+):/) || [])[1])
-    .filter(Boolean)[1] ?? '?';
-  PAGE_CONTEXTS.push({ openedAt, pageErrors });
   return { page, pageErrors, reqs, store };
 }
 
@@ -805,6 +811,7 @@ async function main() {
   const { server, base, setDrip } = await serveV3();
   const browser = await launchBrowser();
   const suite = new Suite('render');
+  let fatal = null;
 
   try {
     // ---- boot 1: the unsaved fallback row ---------------------------------
@@ -2410,6 +2417,10 @@ async function main() {
     // both reach it; a falsy return does not fall back to marked's default
     // renderer -- verified against 18.0.11).
     const md = await browser.newPage();
+    // Not an openChat context, so it needs wiring of its own -- and it
+    // hosts the markdown/DOMPurify URL-scheme checks, which is the last
+    // page a check named 'no page ANYWHERE threw' should be blind to.
+    watchPageErrors(md, 'markdown renderer page');
     await md.goto(`${base}/`, { waitUntil: 'domcontentloaded' });
     const render = (src) => md.evaluate(async (b, text) => {
       const { renderMarkdown } = await import(`${b}/js/markdown.js`);
@@ -3104,12 +3115,21 @@ async function main() {
       // scenario this check is for. Both times the check stayed green. The
       // page has already loaded chat.js, so `import()` returns the cached
       // module rather than re-evaluating it.
+      //
+      // COVERAGE BOUNDARY, restated because the rewrite that read these from
+      // chat.js dropped it: no boot here switches models mid-stream. The stub
+      // drives the RECOVERY branch, so MODEL_SWITCH_PREFIX is in the pattern
+      // for completeness and is the half this scenario does not exercise.
+      // Reading the constant removed the drift, not the gap.
+      // The ARRAY, spread -- naming the two exports here would have been the
+      // same hand-enumeration one level along, and a third status wording
+      // would have reached neither side.
       const prefixes = await md.evaluate(async (b) => {
         const m = await import(`${b}/js/pages/chat.js`);
-        return [m.GENERATING_PREFIX, m.MODEL_SWITCH_PREFIX];
+        return m.GENERATING_PREFIXES;
       }, base);
-      assert(prefixes.every(Boolean),
-        `chat.js stopped exporting the status prefixes: ${JSON.stringify(prefixes)}`);
+      assert(Array.isArray(prefixes) && prefixes.length >= 2 && prefixes.every(Boolean),
+        `chat.js stopped exporting GENERATING_PREFIXES: ${JSON.stringify(prefixes)}`);
       const TERMINAL = new RegExp([
         'recovering', 'Recovered',                       // the recovery notice
         ...prefixes.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
@@ -3390,26 +3410,44 @@ async function main() {
     });
     await cl.page.close();
 
-    // LAST, and deliberately: every context above has been exercised and
-    // closed by now, and the arrays outlive their pages. This replaces the
-    // per-context canaries -- it covers the contexts they covered plus the
-    // ones nobody remembered to assert on.
+  } catch (err) {
+    fatal = err;
+  } finally {
+    // LAST, and in `finally` deliberately. Every context above has been
+    // exercised and closed by now, and the arrays outlive their pages -- but
+    // most openChat calls sit at this function's top level, OUTSIDE
+    // suite.check (the only thing that swallows a throw). Placed at the end of
+    // the `try`, any one of them timing out unwound straight past this and the
+    // run reported ZERO page-error coverage, where the per-boot checks it
+    // replaced had at least reported for every boot that completed. That is
+    // the run you most want it on.
     await suite.check('no page anywhere threw an uncaught error', () => {
+      // Guard the guard FIRST: if registration ever breaks, the assertion
+      // below goes quietly vacuous and takes the suite's only error coverage
+      // with it -- and ordered last it could not fire on a run that HAD a page
+      // error, which is precisely the run where you need to know the registry
+      // is intact. Derived from the call count rather than a hand-kept
+      // number, so it cannot rot as boots are added or removed.
+      assert(OPEN_CHAT_CALLS > 0 && PAGE_CONTEXTS.length >= OPEN_CHAT_CALLS,
+        `${PAGE_CONTEXTS.length} contexts registered for ${OPEN_CHAT_CALLS} openChat `
+        + 'calls -- registration is no longer happening for every page');
       const bad = PAGE_CONTEXTS.filter((c) => c.pageErrors.length > 0);
       assert(bad.length === 0, bad.map(
         (c) => `page opened at render.mjs:${c.openedAt}: ${c.pageErrors.join(' | ')}`).join('\n    '));
-      // Guard the guard: if openChat ever stops registering, this check goes
-      // quietly vacuous and takes the suite's only error coverage with it.
-      assert(PAGE_CONTEXTS.length > 20,
-        `only ${PAGE_CONTEXTS.length} page contexts registered -- openChat is no longer recording them`);
     });
-  } finally {
     await browser.close();
     server.close();
   }
 
   const failed = printSummary([suite]); // a COUNT, not a boolean
-  process.exit(failed > 0 ? 1 : 0);
+  // Reported, not rethrown: letting it propagate to main().catch would skip
+  // printSummary entirely, trading "the aggregate check never runs" for "its
+  // result is never printed".
+  if (fatal) {
+    console.error('\n  the run did not complete -- checks after this point never ran:');
+    console.error(fatal);
+  }
+  process.exit(failed > 0 || fatal ? 1 : 0);
 }
 
 main().catch((err) => {
