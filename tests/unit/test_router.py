@@ -11,6 +11,8 @@ import os
 import tempfile
 import textwrap
 import unittest
+
+import pytest
 from unittest.mock import patch
 
 from heylook_llm.router import ModelRouter
@@ -292,3 +294,84 @@ class TestModelRouter(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+@pytest.mark.unit
+class TestConfiguredPathAudit:
+    """The startup report for entries whose configured paths no longer exist.
+
+    Owner ask 2026-09-08: one summary rather than a warning per entry per
+    field, and once per process rather than on every reload -- a warning that
+    repeats unchanged is one people learn to scroll past.
+
+    Every fixture here is SYNTHETIC. No path in this file comes from the
+    machine it runs on: the missing ones are invented and the present one is
+    pytest's tmp_path. That is deliberate, not incidental -- real entries carry
+    absolute home paths, and a fixture is the easiest place for one to end up
+    committed.
+    """
+
+    @staticmethod
+    def _reset():
+        from heylook_llm.router import ModelRouter
+        ModelRouter._paths_audited = False
+
+    def _audit(self, config_data, caplog):
+        from heylook_llm.router import ModelRouter
+        self._reset()
+        with caplog.at_level(logging.WARNING):
+            ModelRouter._audit_configured_paths(config_data)
+        return caplog.text
+
+    def test_a_dead_entry_is_named_once_with_its_field(self, caplog):
+        text = self._audit({"models": [
+            {"id": "ghost", "config": {"model_path": "/synthetic/gone/ghost"}},
+        ]}, caplog)
+        assert "ghost" in text and "model_path" in text
+        assert text.count("no longer exist") == 1
+
+    def test_a_live_entry_is_not_reported(self, caplog, tmp_path):
+        live = tmp_path / "present"
+        live.mkdir()
+        text = self._audit({"models": [
+            {"id": "fine", "config": {"model_path": str(live)}},
+        ]}, caplog)
+        assert "fine" not in text
+
+    def test_every_dead_entry_appears_in_one_summary(self, caplog):
+        text = self._audit({"models": [
+            {"id": "ghost-a", "config": {"model_path": "/synthetic/gone/a"}},
+            {"id": "ghost-b", "config": {"model_path": "/synthetic/gone/b"}},
+        ]}, caplog)
+        assert "ghost-a" in text and "ghost-b" in text
+        # ONE block, not one per entry -- that is the whole change.
+        assert text.count("no longer exist") == 1
+
+    def test_it_reports_once_per_process_not_once_per_load(self, caplog):
+        from heylook_llm.router import ModelRouter
+        data = {"models": [{"id": "ghost", "config": {"model_path": "/synthetic/gone/x"}}]}
+        self._reset()
+        with caplog.at_level(logging.WARNING):
+            ModelRouter._audit_configured_paths(data)
+            ModelRouter._audit_configured_paths(data)   # a reload
+        assert caplog.text.count("no longer exist") == 1
+
+    def test_a_twin_claiming_the_same_path_is_disclosed(self, caplog):
+        """Two entries can claim ONE resolved path (verified in this repo: a
+        plain entry beside a text-only twin). The report says so, because
+        'delete it, discovery will re-add it' is false when a twin still
+        claims the path -- and that reasoning is what makes a naive prune
+        dangerous.
+        """
+        text = self._audit({"models": [
+            {"id": "twin-a", "config": {"model_path": "/synthetic/gone/shared"}},
+            {"id": "twin-b", "config": {"model_path": "/synthetic/gone/shared",
+                                        "loader": "mlx-lm"}},
+        ]}, caplog)
+        assert "another entry also claims this model_path" in text
+
+    def test_a_lone_dead_entry_says_removal_costs_nothing_else(self, caplog):
+        text = self._audit({"models": [
+            {"id": "solo", "config": {"model_path": "/synthetic/gone/solo"}},
+        ]}, caplog)
+        assert "takes this id and nothing else" in text

@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.29]
+
+### Changed
+
+- **Stale `models.toml` entries are reported once, as one summary, instead of
+  a warning per entry per field on every load.** A config with several dead
+  entries printed the same block at startup and again on every reload, and a
+  warning that repeats unchanged is one people learn to scroll past -- which
+  is the opposite of what it is for. It now names every entry whose configured
+  paths no longer resolve, in a single block, once per process.
+
+  Each line also says whether deleting that entry would disturb anything else,
+  which is the question a reader actually has. Answering it is only safe
+  because a dead path is the NARROW case: discovery cannot re-add an entry
+  whose path does not exist, so removal takes the id and nothing more.
+
+  The general version of that question is deliberately NOT answered here, and
+  the reason is a trap this repo really contains. Entries are matched to
+  discovery on RESOLVED PATH while the served unit is an id, and those are not
+  one-to-one: two entries can claim one path (verified live -- a plain entry
+  and a text-only twin used for the smoke arm). So an entry that reads as
+  redundant because discovery would derive the same config CANNOT simply be
+  deleted; the twin still claims the path, discovery still skips it, and the
+  model disappears. Found by another session simulating a prune, and reported
+  rather than reasoned about -- the documented rule ("an explicit entry always
+  wins, discovery can only add") predicts the opposite. Where an entry does
+  share its path, the report says so.
+
+  No prune command ships with this. A prune has to reason about what an edit
+  does to the served set, which is a diff over the merge rather than an
+  existence check, and writing one on top of an existence check is how the
+  above becomes a data-loss bug.
+
+  Fixtures for this are synthetic by construction -- invented paths and
+  pytest's `tmp_path`, never the machine's. Real entries carry absolute home
+  paths, and a test fixture is the easiest place for one to end up committed.
+
 ## [2.0.28]
 
 ### Verified

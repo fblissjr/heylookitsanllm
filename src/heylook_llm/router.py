@@ -191,6 +191,8 @@ class ModelRouter:
         ModelRouter._audit_configured_paths(config_data)
         return merge_discovered(config_data, discover(config_data))
 
+    _paths_audited = False
+
     @staticmethod
     def _audit_configured_paths(config_data: dict) -> None:
         """Name every EXPLICIT entry whose configured paths no longer resolve.
@@ -206,20 +208,68 @@ class ModelRouter:
         filesystem a moment ago, so it cannot be stale in this way. Warn, never
         raise -- one dead entry must not stop the other models from serving,
         which is the same best-effort posture discovery itself takes.
+
+        ONE SUMMARY, ONCE PER PROCESS. This warned per entry per field on every
+        load, so a config with several stale entries printed the same block at
+        startup and again on every reload -- and a warning that repeats
+        unchanged is one people learn to scroll past, which is the opposite of
+        what it is for. Owner ask 2026-09-08.
+
+        It also says, per entry, whether deleting it would disturb anything
+        else. That question is the one a reader actually has, and answering it
+        HERE is only safe because a dead path is the narrow case: discovery
+        cannot re-add an entry whose path does not exist, so removal takes the
+        id and nothing more. The general question -- what a config edit does to
+        the served set -- is NOT answerable from this loop and must not be
+        guessed at from it: entries are matched to discovery on RESOLVED PATH
+        while the served unit is an id, and those are not one-to-one. Two
+        entries can claim one path (verified in this repo: a plain entry and a
+        text-only twin), so deleting a live entry that reads as redundant can
+        remove a model outright because the twin still claims its path. If a
+        general "what would this edit change" answer is ever wanted, it belongs
+        in a diff over the merge, not in an existence check.
         """
-        for entry in (config_data.get("models") or []):
+        if ModelRouter._paths_audited:
+            return
+        ModelRouter._paths_audited = True
+
+        FIELDS = ("model_path", "mmproj_path", "draft_model_path",
+                  "chat_template_path")
+        entries = config_data.get("models") or []
+        # Which resolved paths more than one entry claims -- see the docstring.
+        claimed: dict[str, int] = {}
+        for entry in entries:
+            value = (entry.get("config") or {}).get("model_path")
+            if value:
+                claimed[str(Path(value).expanduser())] = \
+                    claimed.get(str(Path(value).expanduser()), 0) + 1
+
+        dead: list[str] = []
+        for entry in entries:
             cfg = entry.get("config") or {}
-            for field in ("model_path", "mmproj_path", "draft_model_path",
-                          "chat_template_path"):
-                value = cfg.get(field)
-                # exists(), not is_file(): an MLX model_path is a DIRECTORY.
-                if value and not Path(value).expanduser().exists():
-                    logging.warning(
-                        "[config] %s: %s points at %s, which does not exist. "
-                        "The entry will fail to load. Fix the path, or delete "
-                        "the entry -- a model under [scan].folders is served "
-                        "with derived defaults and needs no entry at all.",
-                        entry.get("id", "<unnamed>"), field, value)
+            # exists(), not is_file(): an MLX model_path is a DIRECTORY.
+            missing = [f for f in FIELDS
+                       if cfg.get(f) and not Path(cfg[f]).expanduser().exists()]
+            if not missing:
+                continue
+            model_path = cfg.get("model_path")
+            shared = model_path and claimed.get(str(Path(model_path).expanduser()), 0) > 1
+            note = (" -- another entry also claims this model_path, so removing "
+                    "this one leaves that one serving it"
+                    if shared else
+                    " -- removing it takes this id and nothing else")
+            dead.append(f"  - {entry.get('id', '<unnamed>')}: "
+                        f"{', '.join(missing)} does not exist{note}")
+
+        if not dead:
+            return
+        logging.warning(
+            "[config] entries in models.toml point at paths that no longer "
+            "exist and will fail to load:\n%s\n"
+            "Fix the path, or delete the entry -- a model under [scan].folders "
+            "is served with derived defaults and needs no entry at all. This "
+            "is reported once per process, not on every reload.",
+            "\n".join(dead))
 
     def _get_or_create_loading_lock(self, model_id: str) -> threading.Lock:
         """Get or create a loading lock for a specific model."""
