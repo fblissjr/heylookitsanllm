@@ -64,8 +64,30 @@ than passed over. Provider code changed across sessions —
 `providers/base.py`, `mlx_provider.py`, `llama_server_provider.py`,
 `mlx_embedding_provider.py`, `providers/common/template_info.py`.
 
-**In flight 2026-09-08:** another session claimed this run rather than both of
-us paying for it, using a warm setup from an earlier full pass that morning.
+**DONE 2026-09-08 (`f2e5511`).** Green on all three engine arms against an
+isolated live server, contract-only green separately, and the three mechanisms
+reporting UNCOVERED are named in the changelog entry rather than passed over.
+Run and written up by another session; the result is theirs and is not
+duplicated here.
+
+Both teardown questions came back clean: the destructor warning added in
+`c8a4857` never fired, and evictions completed promptly.
+
+**The caveat on that is worth keeping, because it is how a negative result
+earns belief.** The server log carries no INFO at the default
+`observability_level=off`, so "evictions ran clean" could not be read from the
+log at all — there were no eviction lines, and their absence would have meant
+nothing. What makes the destructor result real is that the CHANNEL was shown
+live first: WARNING does reach that log (unrelated startup warnings are sitting
+in it), and the destructor warning is a plain `logging.warning`, not gated by
+the observability level. So its silence is evidence. The eviction half was
+established a different way instead — by residency, models loaded versus
+resident at the end. **An absence proves nothing until you have shown the thing
+that would have spoken is able to speak.**
+
+Original note, kept for the ordering argument: another session claimed this run
+rather than both of us paying for it, using a warm setup from an earlier full
+pass that morning.
 Note for whoever reads the result: `scripts/dev_server.sh` — the script step 1
 depends on — was itself changed by a THIRD session mid-flight (`929be2c`, how
 `stop` resolves its target). A server started before that commit is being
@@ -101,11 +123,11 @@ changelog entry.
 
 ## Phase 3 — make the changelog true
 
-**Precondition: the changelog must be settled first.** It was dirty in another
-session's tree when this phase was last checked, and auditing an artifact while
-someone is writing it produces findings about a draft. Wait for
-`git status --short` to show `CHANGELOG.md` clean, AND for Phase 2's smoke
-result to be written into it — that entry is part of what this phase audits.
+**Precondition met 2026-09-08.** `CHANGELOG.md` is clean and Phase 2's smoke
+result has landed in it (`f2e5511`), so this phase can start. The precondition
+is recorded because it nearly was not: the file was dirty in another session's
+tree, and auditing an artifact while someone writes it produces findings about
+a draft. If it goes dirty again, wait rather than audit.
 
 The day's version sections were written by three sessions, partly from a
 subagent's report, partly from measurements taken mid-session. It is the
