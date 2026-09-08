@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.19]
+
+### Added
+
+- **`scripts/build_llama.py` builds `llama-fit-params` beside the server and
+  the bench.** It is llama.cpp's own memory projector: given a GGUF it prints
+  each device's model / context / compute split from metadata, loading no
+  weights, and exits. On a large MoE it reproduced the numbers a full load
+  reports, in a fraction of the load's time. It is not reachable as a
+  llama-server flag -- upstream gates `--fit-print` to this tool's own example,
+  which is why it looks absent from the server's `--help` -- and it refuses
+  `--mmproj`, so a projector is costed separately.
+
+  It ships as an instrument, not as a code path. `ram_fit` still sizes a GGUF
+  entry by file bytes and still reads no placement field, so its
+  Metal-working-set line assumes every byte becomes GPU-resident; that is true
+  for most models here and false for an architecture holding large tables
+  host-side. Rewiring `ram_fit` to the projector was priced and declined
+  (owner): the reclaimable-RAM line is unaffected, over-working-set is a `warn`
+  for GGUF rather than a `fail` so nothing is wrongly refused, the residue is a
+  false thin-headroom warning and a too-narrow auto micro-batch, and a stored
+  `n_ubatch` already overrides that. Adopting it would also restate the
+  thin-headroom threshold in units its two calibrating spawns were never
+  measured in. The triggers to revisit are recorded in CLAUDE.md and the wiki.
+
 ## [2.0.18]
 
 ### Fixed

@@ -113,7 +113,30 @@ scans only APPEND new ids; `--fresh` = old wholesale rewrite) -- so a hand-writt
 `scripts/build_llama.py` (the only thing that clones/builds it; `uv sync` cannot -- it
 is C++, not a uv package; newest `b<N>` release tag by default, and llama.cpp's
 releases ARE those tags -- `--rev` for anything else; it never touches
-pyproject/uv.lock). llama.cpp is NOT vendored and NOT
+pyproject/uv.lock). It builds THREE targets, the other two being instruments the
+server never calls, from the same commit as the binary they explain: `llama-bench`
+and, from v2.0.19, `llama-fit-params` -- llama.cpp's OWN memory projector, which
+prints each device's model/context/compute split FROM METADATA, loading no weights.
+It is not a llama-server flag (upstream gates `--fit-print` to that tool's own
+example), which is why it looks absent from `--help`; output is one machine-readable
+line per device, and it REFUSES `--mmproj`, so a projector is costed separately.
+WHY IT EXISTS HERE: `ram_fit` sizes a gguf model by FILE BYTES and reads no
+placement field at all -- not `n_cpu_moe`/`cpu_moe`/`override_tensor`, not even
+`n_gpu_layers` -- so its Metal-working-set line assumes every byte lands on the GPU.
+That holds for most models and is FALSE for an architecture that keeps large tables
+host-side (measured on qwen4exp/Qwen3.8-Flash-Next: about a third of the file stays
+on the host as per-layer embedding tables, and fit-params reproduced a full load's
+numbers exactly, in under a second). Blast radius is bounded and worth knowing
+before chasing it: the reclaimable-RAM line is UNAFFECTED (host bytes are still
+RAM), and over-working-set is a `warn` for gguf, never a `fail`, so nothing is
+wrongly refused -- what you get is an overstated GPU need, a false thin-headroom
+warning, and `_auto_ubatch` picking the narrow micro-batch when the wide one would
+have been safe. OWNER DECISION 2026-09-08: the tool ships, `ram_fit` is NOT rewired
+to it. Priced and declined -- one model of twelve is affected, the workaround is one
+`n_ubatch` line, and adopting it would restate `THIN_HEADROOM_GB` in units its two
+calibrating spawns were never measured in. Revisit if expert offload starts being
+used (then the panel is wrong BY CONSTRUCTION, not by architecture) or the false
+warning grates; conditions in `internal/research/`. llama.cpp is NOT vendored and NOT
 a submodule: the clone + build tree live OUTSIDE the repo (fixed dir under the user's
 home; `dir`/`$HEYLOOK_LLAMA_CPP_DIR` relocate), so upstream source can never be
 committed or packaged and there is nothing to `submodule init`. Audio input

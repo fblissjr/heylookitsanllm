@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.12"
 # ///
-"""Clone and build llama-server (llama.cpp), plus llama-bench beside it.
+"""Clone and build llama-server (llama.cpp), plus its two measuring tools.
 
 `uv sync` cannot build C++, so this is the one explicit step behind the gguf
 provider. It never touches pyproject.toml or uv.lock -- it clones llama.cpp
@@ -54,11 +54,22 @@ from pathlib import Path
 from typing import NoReturn
 
 GIT_URL = "https://github.com/ggml-org/llama.cpp"
-# llama-bench rides along: it is the instrument every "is this flag a win"
-# question about the server gets answered with (controlled prompt/gen length,
-# repeats, std dev, one process), and it builds in seconds against the
-# server's objects. The server never calls it.
-TARGETS = ["llama-server", "llama-bench"]
+# Two instruments ride along. Neither is ever called by the server; both build
+# in seconds against its objects, and the point of building them HERE is that
+# they come from the same commit as the binary whose behaviour they explain --
+# a measurement taken with a differently-versioned tool is not a measurement.
+#
+#   llama-bench       what every "is this flag a win" question gets answered
+#                     with: controlled prompt/generation lengths, repeats, a
+#                     std dev, one process.
+#   llama-fit-params  llama.cpp's OWN memory projector. Prints the per-device
+#                     model/context/compute split it WOULD use, from metadata
+#                     alone -- no weights loaded. It is not reachable as a
+#                     llama-server flag (upstream gates `--fit-print` to this
+#                     tool's example), which is why it looks absent from the
+#                     server's --help. Read heylook's docs before trusting a
+#                     file-size estimate over it; see CLAUDE.md.
+TARGETS = ["llama-server", "llama-bench", "llama-fit-params"]
 HOME_SUBDIR = (".heylook", "llama.cpp")
 
 # ANSI helpers (skip when not a tty).

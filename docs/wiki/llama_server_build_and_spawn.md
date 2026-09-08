@@ -57,7 +57,7 @@ Setting `GGML_METAL_NDEBUG` compiles out load-time diagnostics, including the cr
 CMake caches `find_package` results as static filepaths. When Homebrew upgrades a dependency (e.g. OpenSSL 3.6.3 to 3.6.4), CMake's cache contains dangling paths. `build_llama.py` catches configure failures on reused build trees, automatically drops `CMakeCache.txt`, and retries configuration cleanly.
 
 ### 2.3. Build Manifest & Stamp Verification
-The script builds two targets (`llama-server` and `llama-bench`). Afterwards it writes a `heylook-build.json` manifest into the build directory, **then** runs `llama-server --version` and verifies the reported build number and Git SHA against the checked-out source. That order is deliberate and commented as such: the manifest must describe the binary that exists even when the stamp check refuses it, or `--status` starts lying.
+The script builds three targets -- `llama-server` plus the two instruments of §2.4. Afterwards it writes a `heylook-build.json` manifest into the build directory, **then** runs `llama-server --version` and verifies the reported build number and Git SHA against the checked-out source. That order is deliberate and commented as such: the manifest must describe the binary that exists even when the stamp check refuses it, or `--status` starts lying.
 
 The manifest records the requested `cmake_args` alongside an `effective` block of **resolved** values -- which is the point of it. Requested args are a statement of intent and CMake can silently downgrade one; the manifest has to describe the binary, not the wish. Shape:
 ```json
@@ -73,6 +73,60 @@ The manifest records the requested `cmake_args` alongside an `effective` block o
   "built_at": "<timestamp>"
 }
 ```
+
+### 2.4. Sibling Instruments Built From the Same Commit
+
+Two further binaries come out of the same build. Neither is ever invoked by the
+server, and both exist so that a question about llama-server can be answered by
+llama.cpp itself rather than by a model of it. Building them here is what makes
+them trustworthy: they carry the same commit as the binary whose behaviour they
+describe, and a measurement taken with a differently-versioned tool is not a
+measurement.
+
+**`llama-bench`** -- the instrument for any "is this flag a win" question:
+controlled prompt and generation lengths, repeats, a standard deviation, one
+process. Every micro-batch figure behind §4.1 came from it.
+
+**`llama-fit-params`** -- llama.cpp's own memory projector. It prints, per
+device, the model / context / compute memory it *would* use, computed from GGUF
+metadata with no weights loaded, and exits. Two things about it are worth
+knowing before reaching for it:
+
+- **It is not a llama-server flag.** Upstream registers `--fit-print` against
+  this tool's example only, so it does not appear in the server's `--help` and
+  passing it there is an argument error. The same projection *is* printed
+  during a normal verbose spawn, before tensor loading -- but only as a side
+  effect of a spawn that then goes on to load the model.
+- **It refuses `--mmproj`.** A multimodal projector has to be costed
+  separately; llama-server reports its own worst-case projector estimate at
+  spawn.
+
+**What it is for, and why the fit panel does not use it.** [`ram_fit`](../../src/heylook_llm/ram_fit.py)
+sizes a GGUF entry by summing **file bytes**, and reads no placement field at
+all -- not the expert-offload options, not the GPU-layer count. Its
+Metal-working-set line therefore assumes every byte becomes GPU-resident. That
+holds for most models here and is false for an architecture that keeps large
+tables host-side, where a substantial fraction of the file stays on the host
+and the panel overstates GPU need by that amount.
+
+The consequences are bounded, and knowing the bound is what keeps this from
+looking more alarming than it is. The reclaimable-RAM line is unaffected, since
+host-side bytes are still RAM. Exceeding the working set is a `warn` for GGUF
+and never a `fail`, so nothing is wrongly refused. What is left is an
+overstated GPU need, a false thin-headroom warning, and
+[`_auto_ubatch`](../../src/heylook_llm/providers/llama_server_provider.py)
+choosing the narrow micro-batch where the wide one would have been safe --
+recoverable by storing `n_ubatch` on that entry, which always wins.
+
+Wiring `ram_fit` to this tool was **considered and declined** (owner, 2026-09-08):
+one served model is affected, the workaround is a single config line, and
+adopting it would restate the thin-headroom threshold in units that the two
+spawns which calibrated it were never measured in. The tool ships so the true
+answer is one command away. The triggers to revisit are named: expert offload
+coming into use, which would make the panel wrong *by construction* rather than
+for one architecture, or the false warning becoming a nuisance. The verification
+and its conditions live in `internal/research/`, per the numbers rule in the
+[wiki README](./README.md).
 
 ---
 
@@ -185,7 +239,7 @@ Note that `--jinja` is **not** passed by heylook. It is on by default in the `ll
 `n_ubatch` is unset by default and resolves **at spawn** rather than to a constant, via `_auto_ubatch()`:
 - The provider sizes the model the way the admin fit panel does (`ram_fit.fit_for_config` -- weights plus sidecars against the live Metal working set) and reads the resulting `kv_headroom_gb`.
 - If that headroom clears the thin-headroom threshold, the spawn takes the wide micro-batch; otherwise it inherits llama-server's own default. Both values are constants -- the threshold in [`ram_fit.py`](../../src/heylook_llm/ram_fit.py), the wide value on the provider class.
-- A stored `n_ubatch` always wins over the auto answer, in both directions, and short-circuits the sizing entirely.
+- A stored `n_ubatch` always wins over the auto answer, in both directions, and short-circuits the sizing entirely -- which is also the escape hatch when the sizing is wrong for a model that keeps weights host-side (§2.4).
 - **The spawn log names the value it resolved**, because the answer moves with `iogpu.wired_limit_mb` and with whatever else sits in the model directory -- a spawn quietly taking the narrow default would otherwise be indistinguishable from one quietly taking the wide one. (A stored value bypasses that line; the full argv in the same log is what discloses it.)
 
 Why it is conditional rather than always-on: the wide micro-batch is a prefill win on both dense and MoE models at no generation cost, but it costs materially more compute buffer. A vision model with thin headroom *loaded* at the wide setting -- with `--fit` quietly trimming its context -- and then died in its first decode with a Metal OOM that llama.cpp's own pre-flight never saw. Raising the working set (`scripts/gpu_wired_limit.sh`; reading it needs no root, setting or persisting it does) flips the large models to the wide setting on its own.
