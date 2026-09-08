@@ -259,6 +259,10 @@ These are rules, not observations:
   the anomaly not occurring in operation. Splitting them is what let one
   session tighten a changelog entry rather than defend it.
 
+Postmortem for the session this plan came out of:
+`internal/postmortems/2026-09-08_session_test-suite-audit.md` (local, not
+tracked -- it records the mistakes made while executing these phases).
+
 ## Done means
 
 Working tree clean. Smoke run on every arm, with uncovered arms named in the
