@@ -4,8 +4,9 @@ last updated: 2026-09-08
 
 ## What this is
 
-A day of audit work and a parallel session left a lot of small, correct changes
-and no single moment where anyone confirmed the repo is coherent. This is the
+A day of audit work across three parallel sessions left a lot of small,
+correct changes and no single moment where anyone confirmed the repo is
+coherent. This is the
 sequence that gets it back to a state you could release from, and then stops.
 
 **It is explicitly not more auditing.** The two audits in
@@ -56,7 +57,7 @@ it is not yours, ask whose it is rather than working around it.
 CLAUDE.md sets the bar and today's work crossed it: a release touching
 **provider, loader, template or lifecycle** code runs `tests/smoke/` green on
 all three engine arms, and an uncovered arm is *named in the changelog* rather
-than passed over. Provider code changed across both sessions —
+than passed over. Provider code changed across sessions —
 `providers/base.py`, `mlx_provider.py`, `llama_server_provider.py`,
 `mlx_embedding_provider.py`, `providers/common/template_info.py`.
 
@@ -87,7 +88,7 @@ changelog entry.
 
 ## Phase 3 — make the changelog true
 
-Ten version sections were written by two sessions in one day, partly from a
+The day's version sections were written by three sessions, partly from a
 subagent's report, partly from measurements taken mid-session. It is the
 artifact most likely to be quietly wrong, and this repo has been burned by
 exactly that before.
