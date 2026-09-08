@@ -109,7 +109,17 @@ case "$CMD" in
       OWN_PIDS="$OWN $(pgrep -P "$OWN" || true)"
       echo "devserver RUNNING pid=$OWN port=$PORT models=$(probe)"
     else
-      echo "devserver NOT RUNNING on port $PORT"
+      # "no live pidfile" is NOT "nothing is running": the recorded pid is the
+      # `uv run` wrapper and it can exit while the server it spawned keeps the
+      # port. Saying NOT RUNNING on that evidence alone is how an orphan hides
+      # in plain sight (2026-09-08). Ask the port too.
+      HOLDER=$(lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | tr '\n' ' ' || true)
+      if [ -n "$HOLDER" ]; then
+        echo "devserver ORPHANED on port $PORT: pidfile is stale but pid(s)$HOLDER hold the port (models=$(probe))"
+        echo "  \`$0 stop --port $PORT\` resolves the target from the port and will clean it up"
+      else
+        echo "devserver NOT RUNNING on port $PORT"
+      fi
     fi
     OTHERS=$(pgrep -fl "heylookllm" | grep -v "grep" || true)
     for pid in $OWN_PIDS; do
@@ -197,15 +207,87 @@ PY
     ;;
 
   stop)
-    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-      PID=$(cat "$PIDFILE")
-      kill "$PID"
-      for _ in $(seq 1 30); do kill -0 "$PID" 2>/dev/null || break; sleep 1; done
-      kill -0 "$PID" 2>/dev/null && kill -9 "$PID" || true
-      echo "stopped pid $PID"
-    else
-      echo "nothing to stop on port $PORT (pidfile absent or stale)"
+    # THE PORT IS THE AUTHORITY, the pidfile only a hint. What gets recorded is
+    # the `uv run` WRAPPER pid, and that wrapper can exit while the python
+    # server it spawned keeps running and keeps the port. Observed 2026-09-08:
+    # `kill -0 $(cat pid)` failed on the dead wrapper, stop reported "nothing
+    # to stop", and a server was live on the port the whole time -- with its
+    # llama-server subprocess still resident. Worse, the old `rm -rf "$STATE"`
+    # ran OUTSIDE the if, so that miss deleted the pidfile and every later stop
+    # missed for the same reason. Self-perpetuating, and exactly the orphan
+    # class CLAUDE.md documents for the e2e harness.
+    TARGETS=""
+    add_target() {
+      case " $TARGETS " in *" $1 "*) ;; *) TARGETS="$TARGETS $1" ;; esac
+    }
+    if [ -f "$PIDFILE" ]; then
+      HINT=$(cat "$PIDFILE" 2>/dev/null || true)
+      if [ -n "$HINT" ] && kill -0 "$HINT" 2>/dev/null; then
+        add_target "$HINT"
+        for c in $(pgrep -P "$HINT" 2>/dev/null || true); do add_target "$c"; done
+      fi
     fi
+    for p in $(lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true); do
+      add_target "$p"
+    done
+
+    # Refuse to kill something that is not ours. `start` already declines to
+    # take a port a foreign server holds; stop must be equally careful, or a
+    # mistyped --port turns this into a process killer for unrelated software.
+    FOREIGN=""
+    for p in $TARGETS; do
+      case "$(ps -o args= -p "$p" 2>/dev/null || true)" in
+        *heylookllm*|*heylook_llm*|*llama-server*) ;;
+        *) FOREIGN="$FOREIGN $p" ;;
+      esac
+    done
+    if [ -n "$FOREIGN" ]; then
+      echo "refusing: port $PORT is held by a process that is not a heylook server:" >&2
+      for p in $FOREIGN; do ps -o pid=,args= -p "$p" 2>/dev/null | cut -c1-120 >&2; done
+      exit 2
+    fi
+
+    if [ -z "$TARGETS" ]; then
+      echo "nothing running on port $PORT"
+      rm -rf "$STATE"          # safe: the port is free, so no handle is lost
+      exit 0
+    fi
+
+    # Capture the llama-server subprocesses BEFORE killing their parent. A
+    # graceful shutdown reaps them itself (lifespan -> unload_all -> SIGTERM),
+    # but a SIGKILL escalation would orphan them, and they are the expensive
+    # thing to leave behind. Collected by parentage, so this can never reach
+    # another session's subprocess.
+    KIDS=""
+    for p in $TARGETS; do
+      for c in $(pgrep -P "$p" 2>/dev/null || true); do
+        case "$(ps -o args= -p "$c" 2>/dev/null || true)" in
+          *llama-server*) KIDS="$KIDS $c" ;;
+        esac
+      done
+    done
+
+    for p in $TARGETS; do kill "$p" 2>/dev/null || true; done
+    for _ in $(seq 1 30); do
+      [ -z "$(lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true)" ] && break
+      sleep 1
+    done
+    for p in $TARGETS $KIDS; do
+      kill -0 "$p" 2>/dev/null && kill -9 "$p" 2>/dev/null || true
+    done
+    sleep 1
+
+    STILL=$(lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true)
+    LEFT=""
+    for p in $KIDS; do kill -0 "$p" 2>/dev/null && LEFT="$LEFT $p"; done
+    if [ -n "$STILL" ] || [ -n "$LEFT" ]; then
+      # Say so and KEEP the state dir: its pidfile is the only handle a human
+      # has left, and deleting it is what made this unrecoverable last time.
+      echo "FAILED to fully stop port $PORT -- still listening:${STILL:- none}, llama-server left:${LEFT:- none}" >&2
+      echo "state kept at $STATE" >&2
+      exit 1
+    fi
+    echo "stopped$TARGETS${KIDS:+ (and llama-server$KIDS)}"
     rm -rf "$STATE"
     ;;
 
