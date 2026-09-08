@@ -112,6 +112,61 @@ class TestOverrideWins:
         assert vendor_file.read_bytes() == before
 
 
+class TestInstallTargetsTheProcessor:
+    """The override must reach the object the VISION path reads.
+
+    mlx-vlm's `get_chat_template` picks its template holder in order --
+    `processor` when `processor.chat_template` is set, only then
+    `processor.tokenizer` -- and transformers fills the processor's from a
+    `chat_template.json` in the model dir. Verified live against a real
+    Qwen3-VL processor (2026-09-08): with the tokenizer alone targeted the
+    rendered prompt came back as the VENDOR's template while the install
+    reported success; with the processor targeted it came back as ours.
+
+    That live check needs a multi-GB model, so what is pinned here is the
+    property it established -- force writes to the processor too -- which is
+    the half that can regress in this repo.
+    """
+
+    def _info(self):
+        from heylook_llm.providers.common.template_info import ModelTemplateInfo
+        return ModelTemplateInfo(chat_template=OVERRIDE, special_tokens=frozenset(),
+                                 template_source="heylook_override")
+
+    def test_force_writes_the_template_to_the_processor_too(self):
+        from heylook_llm.providers.common.template_info import install_chat_template
+
+        class Obj:
+            chat_template = "VENDOR"
+        processor, tokenizer = Obj(), Obj()
+
+        assert install_chat_template(tokenizer, self._info(), force=True,
+                                     processor=processor) is True
+        assert tokenizer.chat_template == OVERRIDE
+        assert processor.chat_template == OVERRIDE, (
+            "the processor kept the vendor template -- the vision path would "
+            "render with it while the install reported success"
+        )
+
+    def test_auto_leaves_the_processor_alone(self):
+        """Auto's contract is fill-a-missing-template, never stomp one.
+
+        A VLM whose processor holds the vendor template while its tokenizer
+        holds none is exactly the shape auto must not touch: extending auto to
+        the processor would rewrite the vendor template of every such model at
+        load.
+        """
+        from heylook_llm.providers.common.template_info import install_chat_template
+
+        class Obj:
+            chat_template: object = None
+        processor, tokenizer = Obj(), Obj()
+        processor.chat_template = "VENDOR"
+
+        install_chat_template(tokenizer, self._info(), force=False, processor=processor)
+        assert processor.chat_template == "VENDOR"
+
+
 class TestValidation:
     @pytest.mark.parametrize("body, why", [
         ("{% for m in messages %}{{ m.content }}", "unclosed block"),
@@ -139,3 +194,21 @@ class TestValidation:
         path = _gguf_dir(tmp_path)
         ctf.write_override(path, OVERRIDE, provider="gguf", config={})
         assert _view("gguf", path).template.startswith("OVERRIDE")
+
+    def test_refusing_one_conversation_shape_is_not_a_broken_template(self):
+        """Raising is how a template says "not that shape", not "I am broken".
+
+        Real ones do it: Qwen's official template raises on two leading system
+        messages, others refuse a trailing assistant turn. Refusing to SAVE
+        such a template would block valid work -- while a template that raises
+        on EVERY shape really would brick the model at its next load, so that
+        one has to be refused. The distinction is the whole reason validation
+        probes more than one shape.
+        """
+        picky = ("{% if messages[-1].role == 'user' and messages|length > 2 %}"
+                 "{{ raise_exception('no trailing user turn') }}{% endif %}"
+                 "{% for m in messages %}{{ m.content }}{% endfor %}")
+        ctf.validate(picky, provider="gguf", config={})  # must not raise
+
+        with pytest.raises(ctf.TemplateWriteRefused, match="every shape"):
+            ctf.validate("{{ raise_exception('always') }}", provider="gguf", config={})

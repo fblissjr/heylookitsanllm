@@ -72,6 +72,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   installed, reported successful, and not used -- with every text-model check
   still passing. The processor is now a target under force, which is what
   makes one mechanism cover both MLX paths instead of needing a second one.
+  Verified live against a real Qwen3-VL processor: with the tokenizer alone
+  targeted the rendered prompt came back as the vendor's template, and with
+  the processor targeted it came back as the override. Auto is unchanged and
+  still never touches the processor -- filling a missing template must not
+  become rewriting the vendor's.
 
 ### Changed
 
@@ -80,7 +85,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the SAME ladder a spawn would rather than a second implementation of it.
   `_is_media_served` moved with it for the same reason.
 - Validation runs before anything touches disk: a template that does not parse
-  or renders nothing is refused with a reason. On gguf a raised jinja
+  or produces no prompt for ANY ordinary conversation is refused with a
+  reason. It probes TWO conversation shapes, and needing two is the point:
+  templates legitimately raise to say "not that shape" (Qwen's official one
+  refuses two leading system messages), so refusing on a single raise would
+  block valid work -- while a template that raises on every shape really
+  would brick the model. On gguf a raised jinja
   exception comes back as a 500, so a bad template on disk breaks every
   request to that model at its next load. The probe environment mirrors what
   the engines provide (`raise_exception`, `strftime_now`, `tojson`) -- a bare

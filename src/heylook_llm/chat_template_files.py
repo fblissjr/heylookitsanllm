@@ -258,12 +258,26 @@ def remove_override(model_path: str) -> bool:
     return True
 
 
-# A conversation shaped like a real one: two turns, so a template that only
-# handles the first message fails here rather than at generation time.
-_PROBE_MESSAGES = (
-    {"role": "user", "content": "ping"},
-    {"role": "assistant", "content": "pong"},
-    {"role": "user", "content": "ping"},
+# TWO conversation shapes, and needing two is the point. Templates
+# legitimately refuse a shape -- Qwen's official template raises on two
+# leading system messages, several refuse a trailing assistant turn -- so a
+# raise on ONE shape cannot mean the template is broken. But a template that
+# raises on EVERY shape is broken, and passing it would brick the model at its
+# next load, which is the outcome this function exists to prevent. So: refuse
+# only when nothing renders.
+#
+# The shapes differ in the two dimensions templates actually branch on -- a
+# system message, and whether the last turn is the user's.
+_PROBE_SHAPES = (
+    (
+        {"role": "user", "content": "ping"},
+        {"role": "assistant", "content": "pong"},
+        {"role": "user", "content": "ping"},
+    ),
+    (
+        {"role": "system", "content": "be brief"},
+        {"role": "user", "content": "ping"},
+    ),
 )
 
 
@@ -304,29 +318,39 @@ def validate(body: str, *, provider: str, config: dict) -> None:
             f"template does not parse as jinja: {type(exc).__name__}: {exc}"
         ) from exc
 
-    try:
-        rendered = template.render(
-            messages=list(_PROBE_MESSAGES),
-            add_generation_prompt=True,
-            bos_token="", eos_token="",
-            enable_thinking=False,
-        )
-    except jinja2.exceptions.TemplateError as exc:
-        # A template that RAISES on this shape may be correct -- several
-        # refuse a trailing user turn, or demand a system message. Report it
-        # without refusing: the engine would raise the same way, and the
-        # operator is the one who knows whether that shape matters.
-        logger.info("[template] probe render raised (not refusing): %s", exc)
-        return
-    except Exception as exc:
-        raise TemplateWriteRefused(
-            f"template failed to render: {type(exc).__name__}: {exc}"
-        ) from exc
+    rendered = ""
+    refusals: list[str] = []
+    for shape in _PROBE_SHAPES:
+        try:
+            out = template.render(
+                messages=[dict(m) for m in shape],
+                add_generation_prompt=True,
+                bos_token="", eos_token="",
+                enable_thinking=False,
+            )
+        except jinja2.exceptions.TemplateError as exc:
+            # This shape is refused. That may well be correct -- record it and
+            # try the next one; only a template that refuses EVERY shape is
+            # broken.
+            refusals.append(f"{type(exc).__name__}: {exc}")
+            continue
+        except Exception as exc:
+            # Not a template-authored refusal: a bad filter, a call into
+            # something absent. That is broken on any shape.
+            raise TemplateWriteRefused(
+                f"template failed to render: {type(exc).__name__}: {exc}"
+            ) from exc
+        if out.strip():
+            rendered = out
+            break
 
-    if not rendered.strip():
+    if not rendered:
+        detail = (f" It raised on every shape tried: {'; '.join(refusals)}."
+                  if refusals else "")
         raise TemplateWriteRefused(
-            "template rendered nothing for a two-turn conversation -- the "
-            "model would receive an empty prompt."
+            "template produced no prompt for any ordinary conversation -- the "
+            "model would receive an empty prompt or fail at its next load."
+            + detail
         )
 
     if provider == "gguf" and _is_media_served(config):
