@@ -33,8 +33,8 @@ before any conversation exists, the conversation's own prompt, and the prompt a
 preset carries.
 
 **A blank sampler field shows the value it will actually use** (v2.0.21). Leaving
-Top-k empty on a gemma model shows a greyed `64`, because that is what the model's
-own config asks for — not the word "auto", which told you nothing. The moment you
+Top-k empty on a gemma model shows that model's own value in grey, because that is
+what its config asks for — not the word "auto", which told you nothing. The moment you
 type your own value, the field's name turns accent-coloured, its border matches, and
 a small reset control appears beside it that puts the field back to the model's
 value. Nothing appears next to fields you have not touched, so the panel stays quiet

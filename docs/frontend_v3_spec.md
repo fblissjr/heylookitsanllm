@@ -554,8 +554,8 @@ control is live and independent — reporting one state while the user has selec
 other would put a wrong number on screen, which is worse than the "auto" it replaces.
 Each engine's vendor layer is included exactly where that engine's provider includes it
 — MLX from `generation_config.json`, gguf from the GGUF header's `general.sampling.*` —
-so a gemma row reports its `top_k: 64` and a Qwen3.6 gguf its `20`, rather than the
-global floor's `0`. v3 uses it as the placeholder in every blank sampler field, so a
+so a gemma row and a Qwen3.6 gguf row each report their own top-k rather than the
+global floor's. v3 uses it as the placeholder in every blank sampler field, so a
 reader can see what an untouched control means without generating to find out. A field
 is rendered as OVERRIDDEN only when the key survives `samplerParams(caps)` — a `top_k`
 or `presence_penalty` of 0 is dropped at the wire, so marking it would claim a value the
@@ -709,10 +709,14 @@ as long as a scan takes; other requests keep flowing meanwhile.
 
 **Chat template** (v2.0.22). `GET /v1/admin/models/{id}/chat-template` →
 `{model_id, provider, supported, template, origin, override_present, override_path,
-writable, inert_reason, stale, notes}`. It reads FILES (and, for gguf, the GGUF header),
+writable, inert_reason, override_template, stale, notes}`. It reads FILES (and, for gguf, the GGUF header),
 never a running process, so it answers for models that are NOT resident — the prompt
 format a model will load with is the thing worth seeing before loading it.
 `origin` is the ladder rung that won, the same phrase the load log prints.
+`override_template` is the override file's OWN body, whether or not it won:
+`template` is what the model RENDERS with, and the two differ exactly when an
+override exists but lost the ladder. **An editor must show `override_template`**,
+or a rejected template is unreadable from the surface that wrote it.
 `inert_reason` is set when an override exists but something outranks it (an explicit
 `chat_template_path` / `chat_template_source`, or a guard refused it): an editor whose
 writes go nowhere is worse than no editor, so this is a field, not a note.

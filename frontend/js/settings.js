@@ -438,8 +438,8 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
     // Shown only while the key is overridden, so its presence IS the "you
     // changed this" signal and there is nothing extra on screen otherwise.
     // Not a hover reveal -- state, not pointer -- so DESIGN.md §7's
-    // touch-fallback rule does not apply; the hit area is padded to 44px
-    // under `hover:none` in app.css.
+    // touch-fallback rule does not apply; the hit area is padded to a real
+    // tap target under `hover:none` in app.css.
     // Hidden by VISIBILITY, not by the `hidden` attribute or `display`, and
     // the difference is layout: the button keeps its box either way, so a row
     // does not jog sideways the moment a key becomes overridden -- which it

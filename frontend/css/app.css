@@ -313,7 +313,7 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
    .settings-row is a two-child space-between flex and a third child re-spaces
    it (settings.js says the same at the build site). */
 /* The reset the codebase never had. `el.hidden` is how this app toggles
-   visibility in ~40 places, and the UA sheet's `[hidden]{display:none}` is
+   visibility throughout, and the UA sheet's `[hidden]{display:none}` is
    only a UA rule -- ANY author `display` on the same element beats it, with
    no warning and no test that reads `el.hidden` able to see it. That shipped
    twice: the sampler reset button, and `.chat__ctx`, whose own comment in
@@ -323,11 +323,6 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 [hidden] { display: none !important; }
 
 .settings-row__control { display: flex; align-items: center; gap: 0.35rem; }
-/* Reset-to-model-default. Visible only while the key is OVERRIDDEN, so its
-   presence is the override signal and an untouched panel stays quiet. That is
-   state-driven, not hover-driven, so DESIGN.md §7's touch-fallback rule is
-   satisfied by construction -- but the tap target still has to be real, hence
-   the 44px floor under a coarse pointer while the glyph stays small. */
 /* Reset-to-model-default. Present in every row and INERT until the key is
    overridden -- hidden by visibility, so the row never jogs sideways as you
    edit it and the tap target does not move. `visibility:hidden` also drops it
@@ -346,8 +341,8 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .settings-row__reset--on:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 @media (hover: none) {
   /* A real tap target on the phone. The box is reserved whether or not the
-     key is overridden, so growing it costs the input a fixed 44px once --
-     it never moves under the reader's finger. */
+     key is overridden, so growing it costs the input its width once and the
+     control never moves under the reader's finger. */
   .settings-row__reset { width: 44px; height: 44px; margin: -0.6rem 0; }
 }
 /* An overridden key reads as deliberate: the field's own border carries it

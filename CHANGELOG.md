@@ -52,9 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Every gguf row advertised the global sampler floor while generation used
   the GGUF header's values.** `sampler_defaults` (v2.0.21) gated its vendor
   layer on the provider being MLX; v2.0.22 gave gguf a vendor layer from the
-  header one commit later, and the gate was not widened. Measured: gemma-4
-  GGUFs ask for `top_k: 64` and Qwen3.6 for `20`, and the panel printed `0`
-  for both. The pairing of engine to vendor reader now lives in one function
+  header one commit later, and the gate was not widened. Measured on gemma-4
+  and Qwen3.6 GGUFs: each header asks for its own top-k and the panel printed
+  the global floor's instead. The pairing of engine to vendor reader now lives in one function
   and has a test rather than the comment that predicted this exact drift and
   did not prevent it.
 - **A sampler value of 0 was marked as an override the model never received.**
@@ -70,7 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to off.
 - **`[hidden]` did nothing wherever an author `display` rule existed**, which
   is the whole codebase: there was no global reset, and `el.hidden` is how
-  this app toggles ~40 elements. It had already shipped twice — the sampler
+  this app toggles visibility throughout. It had already shipped twice — the sampler
   reset button, and `.chat__ctx`, which its own code believes it hides for
   non-gguf models and which was visible on every model. One
   `[hidden]{display:none!important}` now covers all of them. The sampler
@@ -81,8 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fallback. `--accent-tint` is now a real token built like its siblings, the
   radius uses the design system's control token, and a sweep confirms no
   other undefined custom property is referenced anywhere in the stylesheet.
-- **GGUF header floats are rounded at the reader.** float32 widening made a
-  published `0.95` read back `0.949999988079071` — harmless to the sampler,
+- **GGUF header floats are rounded at the reader.** float32 widening gave a
+  publisher's short decimal a long expansion tail — harmless to the sampler,
   not harmless as the placeholder of a `step=0.01` field.
 
 ## [2.0.24]
@@ -235,9 +235,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cascade's own answer, run for real, exactly as the sibling
   `thinking_default()` already did for one key. It rides the admin row and
   every `/v1/models` entry as `{"off": {...}, "on": {...}}`, and v3 uses it as
-  the placeholder in each empty control. A gemma model now reads `64` under
-  Top-k rather than `auto`, because that is what its `generation_config.json`
-  asks for.
+  the placeholder in each empty control. A gemma model now shows its own
+  top-k under that field rather than `auto`, because that is what its
+  `generation_config.json` asks for.
 
   Keyed by the thinking switch on purpose: the anti-loop overlay sets
   `presence_penalty` off that switch, and the panel's thinking control is live
@@ -253,8 +253,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a small reset control beside it; an untouched key shows nothing extra, so the
   control's presence IS the override signal. It shares one wrapper with its
   input because `.settings-row` is a two-child space-between flex and a third
-  child re-spaces it. The hit area grows to 44px under a coarse pointer while
-  the glyph stays small, and because it is revealed by STATE rather than hover
+  child re-spaces it. The hit area grows to a real tap target under a coarse
+  pointer while the glyph stays small, and because it is revealed by STATE rather than hover
   it needs no §7 touch fallback.
 
   Its rule is `.settings-row__reset:not([hidden])`, and the `:not` is

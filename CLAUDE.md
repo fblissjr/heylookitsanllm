@@ -180,12 +180,12 @@ It takes each engine's VENDOR layer exactly where that engine's provider takes i
 MLX `load_vendor_sampling` (generation_config.json), gguf `gguf_metadata.vendor_sampling`
 (the header's `general.sampling.*`), cached per row. temperature/top_p/top_k ARE the vendor
 keys, so an engine present in its provider and ABSENT there reports the global floor while
-generation uses the vendor values -- gemma must report `top_k: 64` and Qwen3.6 `20`, not
-`0`. That drifted WITHIN ONE COMMIT (gguf gained its layer in v2.0.22, the gate still said
+generation uses the vendor values -- gemma and Qwen3.6 must each report their own header
+top-k, not the floor's. That drifted WITHIN ONE COMMIT (gguf gained its layer in v2.0.22, the gate still said
 mlx), which is why the pairing now has a test rather than a comment
 (`test_vendor_layer_reaches_the_report_on_every_engine`). Header floats are ROUNDED at the
-reader: float32 widening makes a published 0.95 read 0.949999988079071, harmless to the
-sampler and not harmless as the placeholder of a `step=0.01` field.
+reader: float32 widening gives a publisher's short decimal a long expansion tail,
+harmless to the sampler and not harmless as the placeholder of a `step=0.01` field.
 The panel marks an OVERRIDDEN key (accent label + border) and shows a per-field reset,
 where "overridden" is `key in samplerParams(caps)` and NOT `cache[key] != null` -- those
 disagree, because samplerParams drops a `top_k`/`presence_penalty` of 0 and every
@@ -656,6 +656,18 @@ in git history; a contract test pins that `/v2` stays 404.)
   ASYMMETRY: the `/v1/conversations` store accepts ONLY the nested `source`,
   so nested is the spelling that works on every surface.
 - Reasoning parsers (`reasoning_parser.py`): four ROUTING parsers (harmony/gemma channels, `<think>` markers, pass-through) that never strip anything themselves -- declared-specials stripping is ONE wrapper, `StripSpecials`, composed over the selected parser by `select_reasoning_parser` (and only when the model declares specials, so a bare parser is the no-strip case). Its rolling holdback is sized by the STRIP SET, not by any parser's own control tokens, and is prefix-set based because declared specials are not all `<`-shaped (Mistral's `[INST]` family). Behavior is pinned by PROPERTIES, not just examples (`TestParserInvariants`): output is invariant to how the stream was chunked, and text carrying no structural tokens survives intact. Both 2026-07-23 parser bugs were violations of those two properties. Design record: `docs/parser_strip_unification.md`.
+- ADDING A RUNG TO A LADDER INVALIDATES EVERY HAND-WRITTEN SUBSET OF IT. The
+  MLX stop-less fallback (`read_template_info`: a template rendering none of the
+  model's stop tokens is refused and the OTHER sources are walked) listed
+  `(TOKENIZER_CONFIG, CHAT_TEMPLATE_JSON)` -- correct only while `JINJA` was the
+  TOP auto rung, since omitting the winner was the point. v2.0.22 put the
+  operator override above it and silently made that omission a bug: a stop-less
+  override sent the model straight past the perfectly good vendor jinja in the
+  same directory and installed NOTHING, i.e. a rejected override cost the model
+  its only working template. It is now `_AUTO_LADDER` minus the source that
+  FAILED, which cannot rot when a rung is added. Same class as the reload set
+  and the import allowlist; the tell is a tuple that enumerates a subset of an
+  ordered list defined elsewhere in the same file.
 - THE OPERATOR'S TEMPLATE OVERRIDE (v2.0.22, `chat_template_files.py` +
   `GET/PUT/DELETE /v1/admin/models/{id}/chat-template`) is ONE file,
   `chat_template.heylook.jinja`, in the model's own folder, discovered at load by BOTH
