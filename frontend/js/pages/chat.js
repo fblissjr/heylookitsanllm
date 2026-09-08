@@ -1631,12 +1631,6 @@ function buildEditEl(ctx, msg) {
   // drop the reference and the GC would, correctly, delete the bytes. Editing
   // the text must not cost the picture; that risk is why Edit used to be
   // withheld from any row carrying media at all.
-  // NB buildContentBlocks emits media before text, so a row stored as
-  // [text, image] comes back as [image, text]. On gguf that moves the media
-  // marker within the rendered turn on a text-only edit; on MLX the marker
-  // order is re-derived per model and this cannot matter. Everything this app
-  // creates is already media-first, so it only shows on rows written by
-  // another client.
   const keptOf = (type) => (msg.content_blocks ?? [])
     .filter((b) => b.type === type).map((b) => ({ kept: b }));
   const editMedia = { image: keptOf('image'), audio: keptOf('audio') };
@@ -1716,7 +1710,7 @@ function buildEditEl(ctx, msg) {
     // "remove the image" means.
     if (next !== msg.content || mediaDirty) {
       changes.content = hasEditMedia()
-        ? await buildContentBlocks(next, editMedia.image, editMedia.audio)
+        ? await editedContentBlocks(msg.content_blocks, next, editMedia.image, editMedia.audio)
         : next;
     }
     // empty = clear: the PUT sends null so the row's thinking column clears
@@ -1799,7 +1793,8 @@ function buildEditEl(ctx, msg) {
       const edits = {
         message_id: msg.id,
         content: hasEditMedia()
-          ? await buildContentBlocks(textarea.value, editMedia.image, editMedia.audio)
+          ? await editedContentBlocks(msg.content_blocks, textarea.value,
+            editMedia.image, editMedia.audio)
           : textarea.value,
       };
       if (thinkArea) edits.thinking = thinkArea.value || null;
@@ -2666,25 +2661,64 @@ function blockSourceUrl(b) {
 // blocks, and the JSON string of the whole body -- for every attachment, at
 // full camera-roll resolution. Now the staged bytes are already capped and the
 // base64 lives only as long as the request.
+// One staged attachment as a content block. A KEPT entry (the message editor
+// round-tripping media the row already holds) is ALREADY a stored block and is
+// passed through byte-for-byte: re-encoding would mint a new blob and strand
+// the old one, which the store's media GC would then reclaim (see the media
+// note in buildEditEl).
+const encodeMediaEntry = (entry, type) => (entry.kept
+  ? Promise.resolve(entry.kept)
+  : blobToBase64(entry.blob).then((data) => ({
+    type, source: { type: 'base64', media_type: entry.mediaType, data },
+  })));
+
+// A NEW message: media first, then the text. This is the composer's own
+// convention and there is no prior order to respect.
 async function buildContentBlocks(text, images, audio) {
   // In PARALLEL: eight staged photos read one after another put eight full
   // FileReader round trips in series at exactly the moment the user is waiting
   // on the send. Promise.all costs the slowest read instead of their sum;
   // block order within each kind is all that has to hold, and it does.
-  // A KEPT entry (the message editor round-tripping media the row already
-  // holds) is already a stored block: pass it through byte-for-byte. Rebuilt
-  // bytes would be a new blob and would strand the old one -- see the media
-  // note in buildEditEl.
-  const encode = (entry, type) => (entry.kept
-    ? Promise.resolve(entry.kept)
-    : blobToBase64(entry.blob).then((data) => ({
-      type, source: { type: 'base64', media_type: entry.mediaType, data },
-    })));
   const blocks = await Promise.all([
-    ...images.map((img) => encode(img, 'image')),
-    ...audio.map((clip) => encode(clip, 'audio')),
+    ...images.map((img) => encodeMediaEntry(img, 'image')),
+    ...audio.map((clip) => encodeMediaEntry(clip, 'audio')),
   ]);
   if (text) blocks.push({ type: 'text', text });
+  return blocks;
+}
+
+// An EDIT of an existing row: preserve THAT ROW'S order, which the composer's
+// convention would otherwise rewrite. This is a separate assembler on purpose
+// -- the two answer different questions, and collapsing them would mean one of
+// them is wrong. A row stored [text, image] came back [image, text] under the
+// composer rule, and on gguf that is not cosmetic: llama-server rewrites an
+// image part into a POSITIONAL media marker, so a text-only edit silently
+// moved the picture relative to the caption in the rendered prompt. (On MLX it
+// cannot matter -- mlx-vlm re-derives marker order per model -- which is
+// exactly why this had to be reasoned about rather than observed.)
+//
+// The editor merges every text block into ONE box, so the edited text takes
+// the position of the FIRST text block and any others are dropped. Kept media
+// holds its stored position; newly attached media appends after it.
+async function editedContentBlocks(original, text, images, audio) {
+  const entries = [
+    ...images.map((e) => [e, 'image']),
+    ...audio.map((e) => [e, 'audio']),
+  ];
+  const keptBlocks = new Set(entries.filter(([e]) => e.kept).map(([e]) => e.kept));
+  const fresh = entries.filter(([e]) => !e.kept);
+  const blocks = [];
+  let textPlaced = false;
+  for (const b of original ?? []) {
+    if (b.type === 'text') {
+      if (!textPlaced && text) { blocks.push({ type: 'text', text }); }
+      textPlaced = true;  // later text blocks were merged into the same box
+      continue;
+    }
+    if (keptBlocks.has(b)) blocks.push(b);
+  }
+  blocks.push(...await Promise.all(fresh.map(([e, type]) => encodeMediaEntry(e, type))));
+  if (!textPlaced && text) blocks.push({ type: 'text', text });
   return blocks;
 }
 

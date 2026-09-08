@@ -73,14 +73,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known limits of this change
 
-- **Save & Continue from an assistant prefill carrying an image DUPLICATES
-  the prefill text on gguf.** `_continuation_echo_chars` cannot size the echo
-  strip for a trailing assistant message with non-text parts, so it strips
-  nothing and logs that it did not -- pre-existing (v1.60) behaviour, but
-  until now no client could construct that request. Sizing the strip needs a
-  live measurement of what llama-server echoes for a parts-list assistant
-  turn containing a media marker; the source does not settle it. Text-only
-  prefill is unaffected.
+- **Save & Continue from an assistant prefill carrying media is MODEL-
+  DEPENDENT, and now says so instead of failing opaquely.** Measured on
+  b10830, 2026-09-07: whether llama-server accepts it tracks exactly one
+  thing -- does the rendered template still contain a media marker for each
+  media part sent. gemma-4-E4B's template DROPS the marker from the turn
+  being continued (0 markers for 1 image) and the request is a flat 400
+  "Failed to tokenize prompt"; the same model, same image, on a NON-final
+  assistant turn renders the marker and answers 200, as does a user turn.
+  DeepSeek-V4-Flash-Vision keeps the marker and continues such a turn fine.
+  The provider now pre-checks the rendered marker count and refuses the
+  dropped case with a sentence naming the cause and the way out, while
+  leaving the working case alone. An unreachable template call fails OPEN.
+  (An earlier draft of this entry claimed the failure was a duplicated
+  prefill echo, and a first cut of the guard refused the case for every
+  model -- both were wrong, and both came from generalizing one model.)
+  Where the marker survives, the echo is still not stripped for a
+  parts-list prefill; sizing that needs a measurement on a model that
+  accepts the shape. Text-only prefill is unaffected.
 - **An image on a non-user turn is refused on MLX, not supported.** mlx-vlm's
   role gate is triple-layered and would need patching to emit a marker there.
   Owner decision 2026-09-07: NOT forking mlx-vlm for it -- assistant-turn

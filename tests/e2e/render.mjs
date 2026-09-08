@@ -182,6 +182,20 @@ function makeMessages({ unsaved = false, withMedia = false } = {}) {
         { type: 'text', text: 'look at this picture' },
       ],
     });
+    // TEXT FIRST. Nothing this app writes has this order (the composer emits
+    // media then text), but another client's row can, and an editor that
+    // rebuilt blocks by the composer's rule silently reordered it -- which on
+    // gguf moves a POSITIONAL media marker relative to the caption.
+    msgs.push({
+      id: 'mimgtext', role: 'user', content: 'caption before the picture',
+      position: msgs.length, thinking: null,
+      content_blocks: [
+        { type: 'text', text: 'caption before the picture' },
+        { type: 'image',
+          source: { type: 'url', url: `/v1/conversations/c1/media/${MEDIA_ID}`,
+            media_type: 'image/png', media_id: MEDIA_ID } },
+      ],
+    });
   }
   return msgs;
 }
@@ -1159,6 +1173,37 @@ async function main() {
       const stillThere = await med.page.evaluate(() =>
         Boolean(document.querySelector('.message-image')));
       assert(stillThere, 'the image vanished from the row after a text-only edit');
+    });
+
+    await suite.check('editing a row keeps ITS block order, not the composer\'s', async () => {
+      // The composer emits media-then-text; a row stored text-then-image must
+      // come back text-then-image. llama-server rewrites an image part into a
+      // positional media marker, so reordering moves the picture relative to
+      // its caption in the rendered prompt on a text-only edit.
+      const before = med.reqs.length;
+      await med.page.evaluate(() => {
+        const msg = [...document.querySelectorAll('.message')]
+          .find((m) => m.textContent.includes('caption before the picture'));
+        msg.scrollIntoView({ block: 'center' });
+        [...msg.querySelectorAll('.message__actions button')]
+          .find((b) => b.textContent === 'Edit').click();
+      });
+      await settle(med.page);
+      await med.page.evaluate(() => {
+        const ta = document.querySelector('.message-edit textarea');
+        ta.value = 'edited caption first';
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        [...document.querySelectorAll('.message-edit button')]
+          .find((b) => b.textContent === 'Save').click();
+      });
+      await waitFor(() => med.page.evaluate(() => !document.querySelector('.message-edit')),
+        { message: 'the text-first media row never closed its editor' });
+      const put = med.reqs.slice(before).find((r) => r.method === 'PUT' && r.url.includes('/messages/'));
+      assert(put, 'the edit never issued a PUT');
+      const types = JSON.parse(put.postData).content.map((b) => b.type);
+      assert(JSON.stringify(types) === JSON.stringify(['text', 'image']),
+        `a text-first row was rewritten as ${JSON.stringify(types)} -- the composer's `
+        + `order was applied to an existing row`);
     });
 
     await suite.check('MLX withholds the attach control on a non-user turn', async () => {

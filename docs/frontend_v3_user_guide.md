@@ -408,10 +408,12 @@ render an image marker on a user turn, and would otherwise move the picture to
 your latest message and describe it to the model as if it had arrived there.
 Switch to a gguf model to put an image on an assistant turn.
 
-**Save & Continue on an assistant message carrying an image repeats the text
-you were continuing from.** On gguf the server echoes the prefill back and the
-server-side strip cannot measure how much to remove once the turn contains a
-picture, so the echo is left in. Continuing a text-only message is unaffected.
+**Save & Continue on an assistant message carrying an image works on some
+models and not others.** It depends on whether the model's chat template keeps
+the image's place in the turn being continued. Where it does not, you get a
+clear refusal naming the reason -- remove the attachment to continue that
+message, or generate a fresh reply. Continuing a text-only message is
+unaffected, and so is regenerating.
 
 ### Closed
 

@@ -957,12 +957,76 @@ class LlamaServerProvider(BaseProvider):
             flattened = " ".join(getattr(p, "text", None) or "" for p in parts)
             payload["messages"][-1]["content"] = flattened
             return len(flattened), thinking_chars
+        # Media in the OPEN turn works on some templates and cannot work on
+        # others, so ASK rather than assume either way. Measured on b10830,
+        # 2026-09-07: whether the request succeeds tracks exactly one thing --
+        # does the rendered template still contain a media marker for each
+        # media part sent? gemma-4-E4B's template DROPS the marker when the
+        # final assistant turn is the one being continued (0 markers for 1
+        # image) and the request is a flat 400 "Failed to tokenize prompt";
+        # the same model with the same image on a NON-final assistant turn
+        # renders 1 marker and answers 200, as does a user turn. A template
+        # that keeps the marker is fine -- DeepSeek-V4-Flash-Vision continues
+        # such a turn in production here.
+        #
+        # So the check is the invariant, not a model list: a media part with
+        # no marker to bind to cannot be tokenized. Costs one /apply-template
+        # on a path that is already rare (continuation + media in the open
+        # turn), and turns an opaque tokenizer error into a sentence naming
+        # the cause and the way out.
+        if self._media_markers_dropped(payload):
+            raise InvalidGenerationRequest(
+                f"'{self.model_id}' cannot continue an assistant message that "
+                f"carries media: this model's chat template drops the media "
+                f"marker from the turn being continued, so llama-server has an "
+                f"image with nowhere to put it and fails to tokenize the "
+                f"prompt. Remove the attachment from this message to continue "
+                f"it, or generate a fresh reply instead. (Other models keep the "
+                f"marker and continue such a turn normally.)"
+            )
         logging.warning(
             f"[GGUF] '{self.model_id}': continuing a trailing assistant message "
-            f"with non-text parts -- prefill echo cannot be measured and is NOT "
-            f"stripped from the response"
+            f"with non-text parts -- the template keeps the media marker, so the "
+            f"request is valid, but the prefill echo cannot be measured and is "
+            f"NOT stripped from the response"
         )
         return 0, thinking_chars
+
+    # A media part llama-server holds must have a marker in the rendered
+    # prompt to bind to. Counting them is how the open-turn case above stays
+    # a PROPERTY rather than a list of model names that would rot.
+    _MEDIA_MARKER_RE = re.compile(r"<__media_[^>]*__>")
+
+    def _media_markers_dropped(self, payload: dict) -> bool:
+        """True when the template renders FEWER media markers than the
+        request carries media parts. Best-effort: any failure to ask answers
+        False, because refusing a request on a template call that did not
+        happen would be worse than the tokenizer error it is trying to
+        replace."""
+        sent = sum(
+            1
+            for m in payload.get("messages", [])
+            if isinstance(m.get("content"), list)
+            for part in m["content"]
+            if isinstance(part, dict) and part.get("type") in ("image_url", "input_audio")
+        )
+        if not sent or self._base_url is None:
+            return False
+        body = {k: payload[k] for k in ("messages", "chat_template_kwargs") if k in payload}
+        try:
+            req = urllib.request.Request(
+                self._base_url + "/apply-template",
+                data=json.dumps(body).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                rendered = json.load(resp).get("prompt") or ""
+        except Exception:
+            logging.debug(f"[GGUF] '{self.model_id}': media-marker precheck skipped",
+                          exc_info=True)
+            return False
+        return len(self._MEDIA_MARKER_RE.findall(rendered)) < sent
 
     # /apply-template renders media markers in place, so the preview string
     # shows where each image sits in the conversation.

@@ -17,6 +17,7 @@
 #   GenerationChunk fields -- telemetry goes dark or thinking is dropped.
 
 import io
+import json
 import signal
 import subprocess
 import sys
@@ -1171,3 +1172,74 @@ class TestPrefillProgress:
             '"prompt_progress":{"total":10,"cache":0,"processed":5,"time_ms":1}}',
         ]
         assert list(make_provider()._stream_chunks(_stream_bytes(*frames), abort_event=None)) == []
+
+
+class TestMediaInTheContinuedTurn:
+    """Continuing an assistant turn that carries media works on some chat
+    templates and cannot work on others, so the provider ASKS instead of
+    assuming either way.
+
+    Measured on b10830 with gemma-4-E4B + mmproj (2026-09-07): success tracks
+    exactly one thing -- does the rendered template still contain a media
+    marker for each media part sent? That model's template DROPS the marker
+    when the final assistant turn is the one being continued (0 markers for 1
+    image) and llama-server answers a flat 400 "Failed to tokenize prompt";
+    the SAME model with the SAME image on a non-final assistant turn renders
+    1 marker and answers 200, as does a user turn. DeepSeek-V4-Flash-Vision
+    keeps the marker and continues such a turn in production. So the check is
+    a property of the render, not a list of model names that would rot -- and
+    a first cut of this guard refused the case unconditionally, which would
+    have broken the model that works.
+    """
+
+    IMG = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA"}}
+
+    def _payload(self, msgs):
+        return {"messages": msgs}
+
+    def _answering(self, monkeypatch, rendered):
+        p = make_provider()
+        p._base_url = "http://127.0.0.1:1"
+        monkeypatch.setattr(
+            llama_mod.urllib.request, "urlopen",
+            lambda *a, **k: io.BytesIO(json.dumps({"prompt": rendered}).encode()))
+        return p
+
+    def test_a_dropped_marker_is_detected(self, monkeypatch):
+        p = self._answering(monkeypatch, "<|turn>model\nThe three colours are red,")
+        assert p._media_markers_dropped(self._payload(
+            [{"role": "assistant", "content": [self.IMG, {"type": "text", "text": "x"}]}])) is True
+
+    def test_a_kept_marker_is_allowed(self, monkeypatch):
+        p = self._answering(monkeypatch, "<|turn>model\n<__media_abc__>The three colours are red,")
+        assert p._media_markers_dropped(self._payload(
+            [{"role": "assistant", "content": [self.IMG, {"type": "text", "text": "x"}]}])) is False
+
+    def test_two_images_need_two_markers(self, monkeypatch):
+        # An undercount is the failure mode, so one marker for two images must
+        # read the same as none for one.
+        p = self._answering(monkeypatch, "<|turn>user\n<__media_a__>only one marker")
+        assert p._media_markers_dropped(self._payload(
+            [{"role": "user", "content": [self.IMG, self.IMG]}])) is True
+
+    def test_no_media_never_asks(self, monkeypatch):
+        # The precheck costs an HTTP round trip; it must not fire on the
+        # overwhelmingly common text-only path.
+        def explode(*a, **k):
+            raise AssertionError("/apply-template was called with no media in the request")
+        p = make_provider()
+        p._base_url = "http://127.0.0.1:1"
+        monkeypatch.setattr(llama_mod.urllib.request, "urlopen", explode)
+        assert p._media_markers_dropped(self._payload(
+            [{"role": "assistant", "content": [{"type": "text", "text": "x"}]}])) is False
+
+    def test_an_unreachable_template_call_does_not_refuse(self, monkeypatch):
+        # Fail OPEN: refusing on a question we could not ask would be worse
+        # than the tokenizer error this replaces.
+        def boom(*a, **k):
+            raise urllib.error.URLError("nope")
+        p = make_provider()
+        p._base_url = "http://127.0.0.1:1"
+        monkeypatch.setattr(llama_mod.urllib.request, "urlopen", boom)
+        assert p._media_markers_dropped(self._payload(
+            [{"role": "user", "content": [self.IMG]}])) is False
