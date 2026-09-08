@@ -680,16 +680,25 @@ export async function runPagesSuite({ suite, ctx, config }) {
       held = null;
       await releasing.continue();
     } finally {
+      // CONTINUE, where the PUT block below aborts. Opposite reasons: a PUT
+      // that completes writes a template beside the weights, while a GET left
+      // unanswered strands the panel unloaded and disabled, so every later
+      // check that types into it fails with its own unrelated message -- the
+      // masking this suite already guards against elsewhere.
+      if (held) await held.continue().catch(() => {});
       page.off('request', hold);
       await page.setRequestInterception(false);
     }
 
     await waitFor(async () => Boolean((await textOf(page, '.cfg-tmpl__origin') || '').trim()),
       { timeout: 10000, message: 'template panel never resolved an origin' });
-    // The other half of the same flag: a successful render re-enables it, or
-    // the panel is a read-only box for a model whose template IS writable.
+    // The other half of the same flag. This asserts the WRITABLE case, which
+    // is what the local modelzoo serves. A model whose directory is NOT
+    // writable stays disabled after render on purpose and would fail here for
+    // a legitimate reason -- worth knowing if E2E_MODEL ever points at a
+    // read-only snapshot.
     assert(!(await page.$eval('.cfg-tmpl__body', (el) => el.disabled)),
-      'the editor stayed disabled after a successful load of a writable model');
+      'the editor stayed disabled after a successful load (expected writable)');
     const origin = await textOf(page, '.cfg-tmpl__origin');
     assert(/In force:/.test(origin), `origin line reads ${JSON.stringify(origin)}`);
 
