@@ -4,7 +4,9 @@ last updated: 2026-09-08 (PROPOSED — nothing built; Phase 0 is the gate.
 Revised after two independent reviews: the template precedent does NOT
 generalise, read-only model directories are a functional cliff, the twin is the
 only mechanism available rather than a convenience, and the sidecar TRADES the
-discovery-is-load-bearing objection rather than answering it.)
+discovery-is-load-bearing objection rather than answering it. Third revision:
+Phase 0's signature is constrained by two verified hazards, and retiring the
+twin has a cost the smoke suite pays.)
 
 ## The decision
 
@@ -177,16 +179,31 @@ materialization, dead entry) become regression rows UNDER the property.
 testclaude): synthetic configs with invented paths. The real models.toml holds
 absolute home paths. The pure-function design makes this free if decided now.
 
-**A flagged concern, checked and cleared with a residue.** A reviewer found
-`effective_loader_for_config` returning mlx-lm for every mlx model in a static
-probe, disagreeing with the live admin row, and declined to report a number
-from it. Re-run here it differentiates correctly — most mlx models resolve to
-mlx-vlm. The residue is real though: the models it puts on mlx-lm include ones
-whose directories no longer exist, so the resolver DOES degrade to mlx-lm when
-it cannot read the model dir. Phase 0 leans on that resolver, so a diff
-computed over a config with unreadable directories will report loader changes
-that are artefacts of the unreadable directory, not of the edit. Same family as
-the risk below.
+**`served_diff` MUST take validated configs, and this is a signature
+constraint rather than a caution.** Verified here after testclaude traced it:
+`effective_loader_for_config` given a RAW merged dict returns mlx-lm for every
+mlx model — all of them — because the "auto" rule needs the model to DECLARE
+vision and that declaration is derived during pydantic validation, not by the
+merge. Through `AppConfig` the same computation matches the live listing. No
+exception, no warning: a confident wrong answer shaped exactly like a right
+one. A diff that accepted a raw dict on either side would report engine churn
+that did not happen, from the one tool whose entire value is being trusted
+about what an edit does. Take `AppConfig`, not dicts — an API that will not
+compile against a shape it cannot answer beats one that answers it wrongly.
+
+**Validation MUTATES the structure it validates.** Found while checking the
+above: `AppConfig(**merged)` replaces each entry's nested `config` dict with a
+model instance IN PLACE, so a later read of the same structure gets a model
+where a dict was. A diff that validates one snapshot and then reads the other
+from a shared structure is reading something the first call rewrote. Copy
+before validating, or build both sides from independent reads.
+
+**A residue on the resolver itself.** The models it puts on mlx-lm include the
+entries whose directories no longer exist, so it degrades to mlx-lm when it
+cannot read the model dir — a vision model whose directory has gone missing
+reports as text-only rather than as broken. The same silent-downgrade shape as
+the thin-materialization bug. Latent today (only the dead entries), owned by
+the session that maintains that resolver.
 
 **Risk to design against:** discovery is best-effort, so a scan that degrades
 between the before and after snapshots reports every discovered model as lost —
@@ -235,9 +252,11 @@ the migration.
 - **Materialization is deleted**, and with it the trap it caused twice. TWO
   call sites to re-home, not three: `update_config` and `toggle_enabled`. The
   third, `bulk_set_default_sampler`, exists only to stamp a bundled-sampler
-  name and is going away independently of this plan (that route has no frontend
-  caller and most of the bundled samplers have no consumer; reported by the
-  session removing them, 2026-09-08). Confirm it has gone rather than assume.
+  name and is going away independently of this plan — the owner approved a full
+  removal of the bundled-sampler system on 2026-09-08, which also takes
+  `stamp_default_sampler`, `available_samplers`, `get_samplers` and two
+  import-time stamp blocks out of the same module. **Write Phase 3 against that
+  file AFTER the cut lands, not against a sketch of it now.**
 - `heylookllm import` retires. Its derivation half MUST stay: `model_registry.discover`
   imports `ModelImporter`, so discovery and the importer are one derivation
   called from two places. What retires is the WRITE half — `generate_toml` has
@@ -262,6 +281,17 @@ override. Two of those are policy choices discovery cannot know (a
 speculative-decode carve-out, a context size), one is the derivation bug Phase
 1 removes, and one is the twin.
 
+## Converging evidence from another direction
+
+The owner also redirected `GLOBAL_SAMPLER_FLOOR` on 2026-09-08: it should
+become per-model, with a bare two-value fallback only where the model's own
+metadata is silent. That is this plan's argument arriving from a different
+problem — the model's own files as the primary source, central config as the
+last resort — and it is better evidence than the reasoning here because it was
+not reached by reasoning about the registry at all. It also reframes the vendor
+layer as the main event rather than a layer, which makes a per-model entry the
+leftover rather than the norm.
+
 ## Open, and not to be hand-waved
 
 - **The twin is the ONLY mechanism available, not a convenience, and the
@@ -271,6 +301,20 @@ speculative-decode carve-out, a context size), one is the derivation bug Phase
   config carries that loader. Under sidecars that leaves two options: a second
   directory with its own sidecar, or an explicit exception to "no per-model
   entries".
+  **Retiring it has a cost the smoke suite pays, and the plan should not
+  pretend otherwise.** Five served ids resolve to mlx-lm, but three are the
+  dead entries whose paths do not exist and cannot load, so the text arm has
+  exactly two real sources: the twin, and gpt-oss-120b. Remove the twin and the
+  cheap text arm becomes a 120B model, in a suite whose value is being cheap
+  enough to run before every release. Against that: gpt-oss-120b is the only
+  served MLX model advertising `reasoning_effort`, which is the standing
+  UNCOVERED gap on thinking depth named in the last two smoke reports, so
+  moving the arm there would close it. Expensive arm, one fewer permanent hole.
+  Decide it deliberately, not as a side effect of retiring an entry.
+  (testclaude, 2026-09-08.)
+  Note also that the dead entries are not merely log noise: they count as
+  mlx-lm arm sources to any static analysis that does not check whether the
+  path resolves.
   If the second directory is chosen, **sidecar identity must be the directory
   path AS GIVEN, never RESOLVED.** Two directories symlinking to one weights
   directory would collapse to one model under resolution, rebuilding the twin
