@@ -61,6 +61,59 @@ class TestThinkingDefaultOnModelRows:
             assert admin.get(mid) == value, mid
 
 
+class TestSamplerDefaultsOnModelRows:
+    """v2.0.21: every row carries `sampler_defaults`, what each sampler key
+    resolves to for a request that says nothing.
+
+    Through the ROUTE, deliberately. `sampler_defaults()` has unit tests, but
+    a unit test of the reporter passes whether or not any route binds it --
+    the exact shape this repo has shipped green twice (a guard on a model no
+    wire produces, a rename guard dead since v1.79.66). The settings panel
+    reads this off the response, so the response is what has to be pinned.
+    """
+
+    def test_present_and_keyed_by_thinking_on_every_entry(self, client):
+        data = client.get("/v1/models").json()["data"]
+        assert data
+        for entry in data:
+            bags = entry["sampler_defaults"]
+            assert set(bags) == {"off", "on"}, entry["id"]
+            # The panel prints these as placeholders; a non-scalar would
+            # render as "[object Object]" rather than a number.
+            for bag in bags.values():
+                assert bag, entry["id"]
+                for key, value in bag.items():
+                    assert isinstance(value, (int, float, bool, str)), (entry["id"], key)
+
+    def test_every_reported_key_is_one_a_request_accepts(self, client):
+        # A key here that no request takes would drive a control that cannot
+        # do anything. Derived from the shared tuple, never a second list.
+        from heylook_llm.samplers import REQUEST_SAMPLER_FIELDS
+
+        for entry in client.get("/v1/models").json()["data"]:
+            for bag in entry["sampler_defaults"].values():
+                assert set(bag) <= set(REQUEST_SAMPLER_FIELDS), entry["id"]
+
+    def test_the_thinking_switch_is_the_key_it_claims_to_be(self, client):
+        # The whole reason the field is keyed: each half must report its own
+        # side of the switch, or the panel labels a control with the other
+        # state's numbers.
+        for entry in client.get("/v1/models").json()["data"]:
+            bags = entry["sampler_defaults"]
+            assert bags["off"]["enable_thinking"] is False, entry["id"]
+            assert bags["on"]["enable_thinking"] is True, entry["id"]
+
+    def test_agrees_with_the_admin_row(self, client):
+        # Two row builders derived these separately once and drifted; one
+        # derivation feeds both, so equality is the assertion that keeps it.
+        listed = {m["id"]: m["sampler_defaults"]
+                  for m in client.get("/v1/models").json()["data"]}
+        admin = {m["id"]: m["sampler_defaults"]
+                 for m in client.get("/v1/admin/models").json()["models"]}
+        for mid, value in listed.items():
+            assert admin.get(mid) == value, mid
+
+
 class TestContextLengthOnModelRows:
     """v1.79.65: every /v1/models entry carries `context_length` from the ONE
     resolver the admin row and the provider's over-length guard read -- an

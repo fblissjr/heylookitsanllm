@@ -338,6 +338,16 @@ def derived_model_facts(model_config, router=None) -> ModelFacts:
     # labels a blank field with the value generation will really use. The
     # vendor layer is passed exactly where the provider passes it -- MLX
     # reads generation_config.json, gguf never does.
+    # PROVIDER-GATED, and the gate is a coupling: it must name every engine
+    # whose PROVIDER overlays a vendor layer at generation time. Today that is
+    # MLX alone (gguf passes None). The day another engine gains one -- gguf
+    # reading `general.sampling.*` out of the GGUF header is in flight as this
+    # is written -- adding it there and not here reports the global FLOOR for
+    # those models while generation uses the vendor values, which is the exact
+    # wrong-number failure this whole field exists to prevent, and it fails
+    # silently: the panel simply shows a plausible number that is not the one
+    # in force. There is no test that can derive this pairing, so it is a
+    # comment and a grep: `resolve_effective_sampling(... vendor=`.
     vendor = None
     if model_config.provider == "mlx" and resolved.get("model_path"):
         vendor = dict(_vendor_sampling_pairs(str(resolved["model_path"])))
