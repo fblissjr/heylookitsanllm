@@ -37,9 +37,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   introduced: **the new "garbage-collected with N active" warning did not fire
   once**, and teardown stayed prompt -- three model loads across three arms in
   22s wall, ending with one model resident, so at least two evictions ran to
-  completion. NB the server log carries no INFO at `observability_level=off`
-  (the default), so the warning's absence is the positive signal here; the
-  evictions were confirmed from residency, not from log lines.
+  completion.
+
+  What that evidence is and is not. The warning is a plain `logging.warning`
+  in `mlx_provider`, NOT observability-gated, and WARNING does reach that log
+  (three startup config warnings are in it), so the channel was live and its
+  silence is real. But the warning is guarded by `if active or waiting`, so
+  silence means EITHER no provider was collected believing it was generating
+  (the wanted answer) OR `__del__` never ran on a provider with work in flight.
+  This run cannot separate those. The evictions were confirmed from residency,
+  not from log lines, because at `observability_level=off` no INFO reaches the
+  log at all -- there were no eviction lines to be missing. Same silence, three
+  different reasons for it.
 
 ### Fixed
 
