@@ -38,6 +38,10 @@ on, and both of these found checks that could not.
   decisions block, and the 2026-07-28 re-plan re-cut Phases 1-5 into Waves 1-5)
 - [project/CURRENT.md](./project/CURRENT.md) -- graded done/left status
 - [project/TODO.md](./project/TODO.md) -- backlog
+- [project/plan_consolidation.md](./project/plan_consolidation.md) -- getting
+  back to a releasable state after a day of audit work and a parallel session:
+  the tree, the smoke standard the repo already sets, the changelog, and the
+  parallel-session protocol. Explicitly ends rather than becoming a programme.
 
 ## Research / design
 - [frontend_v3_user_guide.md](./frontend_v3_user_guide.md) -- how the UI behaves, for the person USING it
