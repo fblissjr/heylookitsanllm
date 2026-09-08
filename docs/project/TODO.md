@@ -5,7 +5,8 @@ Cross-session task backlog organized by priority.
 *Last reviewed: 2026-08-30 (caught up through v1.79.43 on frontend branch);
 docs-twins entry added 2026-08-31 without a full backlog pass; iOS keyboard
 entry added 2026-09-05 and corrected 2026-09-08 to match the harness's own
-header; frontend/backend state-boundary section added 2026-09-08*
+header; frontend/backend state-boundary section and the E2E chat-suite failure
+added 2026-09-08*
 
 ## Retire per-model entries from models.toml (2026-09-08) — START HERE
 
@@ -397,6 +398,50 @@ the rlm item remains open; the batch text is kept as record.
   v1.65-66, and the notebook preset bar is the same shared factory, so drift
   detection may be comparing against a seed the page already overwrote. Do not
   treat that as the cause without confirming it.
+
+## E2E chat suite: `send streams an assistant reply that persists` fails on a warm repeat run (2026-09-08)
+
+- [ ] **The suite's first generating check times out.** (P2) The failure line is
+  `never entered streaming timed out after 15000ms` -- kept on one line here
+  because that string is what someone hitting this will grep for. Reproducible
+  on the second and later runs against an already-warm server. It passed on the first run of the session against the
+  same server and the same commit, so the trigger is server/warmth state and
+  not code.
+
+  NOT from the v2.0.38 work: a control with `tests/e2e/suites/chat.mjs`
+  reverted to HEAD fails identically (48/49), which is what rules the session's
+  own harness and skip-conversion changes out. Two other explanations were
+  checked and ruled out too, so do not re-spend the time:
+
+  - **Not a model load.** `/v1/admin/models` reported the model `loaded: true`
+    at the time of failure, and `models.toml` configures no idle-unload
+    (`idle_unload_seconds` / `unload_after_idle_seconds` are unset;
+    `max_loaded_models = 1` is the only related key). There is no reload for
+    the 15s budget to be short for.
+  - **Not a stale assertion string** -- the failure class this repo hits most.
+    The check waits for the composer button to read exactly `'Stop'`
+    (`tests/e2e/suites/chat.mjs`, via `sendBtnLabel`), and
+    `frontend/js/pages/chat.js:3007` sets exactly that for a local stream. The
+    string is current.
+
+  WHAT IS LEFT, and the lead worth taking first: the check polls a TRANSIENT
+  state. `waitFor` runs every 100ms for 15s, and the composer's `'Stop'` label
+  exists only while the run is in flight -- so a generation short enough to
+  start and finish between two polls is never observed, and the suite caps
+  generations at `E2E_MAX_TOKENS` (24 by default) against a model measured here
+  at ~99 tok/s. Warm repeat runs replay an identical prompt, so a warm prompt
+  cache makes each run faster than the last, which fits "passed cold, fails
+  warm" without proving it. Confirm before acting: log the observed label
+  sequence, or assert on something non-transient (the assistant bubble
+  appearing, or the generate POST) instead.
+
+  Worth knowing before "just assert on something else": the label is not an
+  arbitrary handle. `frontend/js/pages/chat.js:2160` documents it as the only
+  user-visible thing separating the composer's two REST states, written from
+  one speller precisely because a drifting title once made "Stop" mean two
+  different things with nothing on screen distinguishing them. The check is
+  aimed at a real contract; the fragility is that it samples a transient
+  edge of it rather than that it reads a label.
 
 ## The busy 503 does not echo X-Request-ID (2026-08-31)
 
