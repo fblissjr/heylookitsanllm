@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.0.28]
 
+### Verified
+
+- **Release standard met: `tests/smoke/` green on all three engine arms**
+  (71/71, plus 11/11 contract-only), against an isolated live server. This is
+  the CLAUDE.md gate for a release touching provider, loader, template or
+  lifecycle code, and today's commits touched all four across three sessions --
+  the destructor split below, the chat-template ladder in 2.0.27, and the
+  contract-suite work. An earlier green run was NOT cited for this: it predates
+  the destructor change, and a stale lifecycle run is exactly what cannot speak
+  for a teardown edit.
+
+  Arms and models: mlx-lm `Qwen3.5-0.8B-MLX-8bit-textonly`, mlx-vlm
+  `google_gemma_4-E4B-it-bf16-mlx`, gguf `google_gemma-4-E4B-it-qat-q4_0-gguf`.
+
+  **Three mechanisms report UNCOVERED rather than passing**, named here because
+  the standard asks for that rather than passing over them:
+  - thinking DEPTH on **mlx-lm** -- no `reasoning_effort` on this arm's model.
+  - thinking DEPTH on **mlx-vlm** -- same. This is the standing gap: the only
+    served MLX model advertising it is gpt-oss-120b, so covering it means
+    pinning that model for the arm.
+  - the nested image-source row on **mlx-lm** -- a text-only model cannot cover
+    it, and that row is the one that regressed hardest in the Messages
+    conformance work.
+
+  (This morning's run reported four; the mlx-vlm thinking block is now covered.)
+
+- The destructor split below checked for the two failures it could have
+  introduced: **the new "garbage-collected with N active" warning did not fire
+  once**, and teardown stayed prompt -- three model loads across three arms in
+  22s wall, ending with one model resident, so at least two evictions ran to
+  completion. NB the server log carries no INFO at `observability_level=off`
+  (the default), so the warning's absence is the positive signal here; the
+  evictions were confirmed from residency, not from log lines.
+
 ### Fixed
 
 - **`BaseProvider.__del__` no longer waits, and no longer tears down live GPU
