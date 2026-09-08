@@ -113,9 +113,14 @@ Ranked by what the finding is worth, not by effort.
 2. **Most of the suite was never probed.** The largest unprobed files are `test_rlm.py`, `test_llama_server_provider.py`,
    `test_conversation_generate.py` and `test_template_info.py`. The kill rate
    above applies to the groups there was reason to suspect, not to the suite.
-3. **`test_mlx_provider.py` could not be mutated at all** — another session
-   held `mlx_provider.py` and `base.py` dirty for the whole audit, so its
-   tests are unclassified.
+3. **`test_mlx_provider.py` is now spot-verified, not fully probed.** It could
+   not be mutated during the original pass — another session held
+   `mlx_provider.py` and `base.py` dirty throughout. Re-run once the tree was
+   clean (2026-09-08, `c8a4857`), mutating the thread-local generation stream,
+   image detection, VLM strategy compilation and diffusion detection. **Every
+   one killed a test**, so the file's routing claims are load-bearing rather
+   than decorative. This is a spot check, not coverage: the load path, the
+   prompt cache and the sampler cascade in that file remain unprobed.
 4. ~~**Extend `test_mlxvlm_surface.py` to `vlm_inputs.py`.**~~ **Closed** in
    `c8a4857`; verified red against a renamed kwarg. Note the first version of
    that pin asserted a kwarg the call does not pass and failed on its first
