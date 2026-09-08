@@ -20,7 +20,10 @@ tool for doubt, not a step to institutionalise, and it must not become one.
 
 ## Where this starts
 
-Observed 2026-09-08, at `f3af1c4`:
+Observed 2026-09-08 at `f3af1c4`, re-derived at `7abced7`. Only `scripts/`
+and `docs/` changed between them, so the suite rows still hold without a
+re-run; the table says how each was established rather than asking you to
+trust it:
 
 | | |
 |---|---|
@@ -63,6 +66,10 @@ than passed over. Provider code changed across sessions —
 
 **In flight 2026-09-08:** another session claimed this run rather than both of
 us paying for it, using a warm setup from an earlier full pass that morning.
+Note for whoever reads the result: `scripts/dev_server.sh` — the script step 1
+depends on — was itself changed by a THIRD session mid-flight (`929be2c`, how
+`stop` resolves its target). A server started before that commit is being
+managed by a different script than the one now on disk.
 That earlier pass is stale by exactly the argument this phase makes — it
 predates the provider-teardown change — which is why it is being re-run rather
 than cited.
@@ -93,6 +100,12 @@ checks pin the decision; only a live run exercises the real teardown.
 changelog entry.
 
 ## Phase 3 — make the changelog true
+
+**Precondition: the changelog must be settled first.** It was dirty in another
+session's tree when this phase was last checked, and auditing an artifact while
+someone is writing it produces findings about a draft. Wait for
+`git status --short` to show `CHANGELOG.md` clean, AND for Phase 2's smoke
+result to be written into it — that entry is part of what this phase audits.
 
 The day's version sections were written by three sessions, partly from a
 subagent's report, partly from measurements taken mid-session. It is the
