@@ -36,6 +36,20 @@ JINJA = "jinja"
 TOKENIZER_CONFIG = "tokenizer_config"
 CHAT_TEMPLATE_JSON = "chat_template_json"
 
+# The operator's own template, written by the admin route. A DISTINCT filename
+# from the vendor's `chat_template.jinja`, and that is the whole point: on MLX
+# the vendor file is usually the ONLY copy of the template (measured 2026-09-08:
+# of 17 model dirs here, 17 had no embedded tokenizer_config template and 16 had
+# chat_template.jinja as the sole source), so editing it in place destroys the
+# original with nothing to revert to. A separate name makes the override purely
+# additive: the vendor file stays untouched, and revert is deleting one file.
+#
+# It also survives a re-download. `huggingface_hub`'s snapshot_download prunes
+# nothing (verified 1.30.0), so a file that is not in the repo manifest is left
+# alone -- while `chat_template.jinja`, which IS in the manifest, gets refreshed.
+HEYLOOK_TEMPLATE_FILENAME = "chat_template.heylook.jinja"
+HEYLOOK_OVERRIDE = "heylook_override"
+
 def _template_can_stop(body: str, eos_tokens: "frozenset[str]") -> bool:
     """True unless we're CONFIDENT the template can't signal the model to stop.
 
@@ -244,7 +258,16 @@ def _read_template(model_dir: Path, source: Optional[str]) -> tuple[str, str]:
             source,
         )
 
-    # Auto: jinja wins when both present.
+    # Auto: the operator's own override wins over everything the vendor
+    # shipped. Deliberately only on the AUTO path -- an explicit `jinja` /
+    # `tokenizer_config` / absolute-path source is someone naming a specific
+    # file, and silently serving a different one would be the exact failure
+    # this ladder exists to prevent.
+    body = _read_file(model_dir / HEYLOOK_TEMPLATE_FILENAME)
+    if body is not None:
+        return body, HEYLOOK_OVERRIDE
+
+    # Then jinja wins over the embedded template when both are present.
     body = _read_file(jinja_path)
     if body is not None:
         return body, JINJA
@@ -323,16 +346,46 @@ def missing_template_error(tokenizer, model_id: Optional[str] = None) -> Optiona
     )
 
 
-def install_chat_template(tokenizer, info: ModelTemplateInfo, *, force: bool) -> bool:
-    """Attach the resolved template to a live tokenizer (and its inner
-    ``_tokenizer`` for mlx-lm's TokenizerWrapper).
+def should_force_install(info: ModelTemplateInfo, source: Optional[str]) -> bool:
+    """Whether the resolved template must OVERWRITE what the loader installed.
 
-    ``force=True`` (explicit ``chat_template_source``): always overwrite --
-    the registry entry is authoritative.
+    Two cases, one rule: an explicit ``chat_template_source`` (the registry
+    entry is authoritative) and the operator's own override file (the whole
+    point of writing it). Kept here rather than at the call site so the
+    provider cannot drift from the ladder that produced ``info``.
+    """
+    return is_explicit_source(source) or info.template_source == HEYLOOK_OVERRIDE
+
+
+def install_chat_template(tokenizer, info: ModelTemplateInfo, *, force: bool,
+                          processor=None) -> bool:
+    """Attach the resolved template to a live tokenizer (and its inner
+    ``_tokenizer`` for mlx-lm's TokenizerWrapper), plus the PROCESSOR.
+
+    ``force=True`` (explicit ``chat_template_source``, or our own override
+    file): always overwrite -- the registry entry is authoritative.
     ``force=False`` (auto): only fill in a MISSING tokenizer template.
     Covers models whose template lives somewhere AutoTokenizer doesn't look
     (e.g. only ``chat_template.json``) without stomping on what transformers
     loaded natively.
+
+    THE PROCESSOR IS A TARGET BECAUSE THE VISION PATH READS IT FIRST.
+    mlx-vlm's ``get_chat_template`` picks its template holder in order --
+    ``processor`` when ``processor.chat_template`` is set, only then
+    ``processor.tokenizer`` -- and transformers populates
+    ``processor.chat_template`` from a ``chat_template.json`` in the model dir
+    ("a legacy file used by the processor class", processing_utils). Two of
+    the VL dirs here ship one. Installing on the tokenizer alone therefore
+    lands on the object the VISION render does not consult: the override is
+    read, installed, reported successful, and silently not used -- and every
+    text-model check still passes. Targeting both is what makes one mechanism
+    cover both MLX paths instead of needing a second one.
+
+    The processor is targeted ONLY under force. Auto's contract is "fill a
+    MISSING template, never stomp what the loader chose", and a VLM whose
+    processor holds the vendor template while its tokenizer holds none is
+    exactly the shape auto must leave alone -- extending auto to the processor
+    would rewrite the vendor template of every such model at load.
 
     Returns True if a template was installed. Never raises.
     """
@@ -340,8 +393,17 @@ def install_chat_template(tokenizer, info: ModelTemplateInfo, *, force: bool) ->
         return False
     if not force and getattr(tokenizer, "chat_template", None):
         return False
-    inner = getattr(tokenizer, "_tokenizer", None)
-    targets = [tokenizer] if inner is None or inner is tokenizer else [tokenizer, inner]
+    candidates = [tokenizer, getattr(tokenizer, "_tokenizer", None)]
+    if force:
+        candidates.append(processor)
+    targets: list = []
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        # identity, not equality: tokenizers define __eq__ in surprising ways
+        if any(candidate is seen for seen in targets):
+            continue
+        targets.append(candidate)
     installed = False
     for target in targets:
         try:

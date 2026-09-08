@@ -704,6 +704,30 @@ one re-runs the `[scan]` discovery walk (twice, counting the reload), so an `asy
 handler would freeze in-flight SSE streams for its duration. Expect these calls to take
 as long as a scan takes; other requests keep flowing meanwhile.
 
+**Chat template** (v2.0.22). `GET /v1/admin/models/{id}/chat-template` →
+`{model_id, provider, supported, template, origin, override_present, override_path,
+writable, inert_reason, stale, notes}`. It reads FILES (and, for gguf, the GGUF header),
+never a running process, so it answers for models that are NOT resident — the prompt
+format a model will load with is the thing worth seeing before loading it.
+`origin` is the ladder rung that won, the same phrase the load log prints.
+`inert_reason` is set when an override exists but something outranks it (an explicit
+`chat_template_path` / `chat_template_source`, or a guard refused it): an editor whose
+writes go nowhere is worse than no editor, so this is a field, not a note.
+`stale` is `true` when the LOADED model renders with something other than what is on
+disk now (edited since load — reload to apply), and **`null` when the model is not
+loaded, which is NOT the same as `false`** — render the two differently.
+
+`PUT .../chat-template` body `{template}` writes `chat_template.heylook.jinja` beside
+the weights and touches NO config; `DELETE` removes it (**404** when there is none, so a
+no-op cannot read as a success). Both answer with the same resolved view the GET does,
+so a client never re-fetches to learn what its write resolved to. A template that does
+not parse or renders nothing is **400 with the reason** and nothing reaches disk — on
+gguf a raised jinja exception is a 500 from llama-server, so a bad template on disk
+breaks every request to that model at its next load. Both engines bind the template at
+LOAD, so a successful write still needs a reload; that is what `stale` says.
+Harnesses: this writes a real file into the model directory, so an E2E check must point
+the model at a temp dir or intercept the PUT.
+
 `POST /v1/admin/models/scan` results carry `served` (v1.70.0) alongside
 `already_configured`: the former means the router serves that file already (matched on
 the resolved path), the latter that it has an entry. Since v1.69.0 those differ, and the

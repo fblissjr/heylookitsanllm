@@ -111,6 +111,17 @@ class BaseProvider(ABC):
     # for itself instead of defaulting into a wrong claim.
     render_prompt_represents_media: bool = False
 
+    # The chat template body this provider actually LOADED WITH, set at load
+    # and never after. Both engines bind the template at load (MLX installs it
+    # on the tokenizer, gguf passes a file at spawn), so editing the file on
+    # disk changes nothing until a reload -- and the config-level
+    # `stale_reload_fields` cannot see it, because no config field moved.
+    # This is the file-backed equivalent of that signal, and it is what lets
+    # the template editor say "saved, reload to apply" instead of leaving the
+    # reader to wonder why nothing changed. None means "not known", which is
+    # every unloaded model.
+    loaded_chat_template: Optional[str] = None
+
     def __init__(self, model_id: str, config: Dict, verbose: bool):
         self.model_id = model_id
         self.config = config

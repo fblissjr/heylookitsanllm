@@ -205,6 +205,128 @@ function sectionEl(title, note, rows) {
 
 const gib = (v) => `${v.toFixed(1)} GiB`;
 
+// The chat template in force, and an editor for overriding it.
+//
+// NOT a schema-driven field: this is a FILE BODY, not a models.toml value, so
+// it sits beside the fit meter rather than in the generated form. Saving
+// writes one file next to the weights and touches no config at all.
+//
+// Lazy: the body is fetched when the section is first opened, never on the
+// models list paint. A template is kilobytes and there is one per model, so
+// eager loading would fetch the lot to show a collapsed heading.
+//
+// The server is the authority on all of it -- which rung won, whether an edit
+// would be inert, whether a reload is owed. This panel renders those answers
+// and re-derives none of them; the ladder lives in two providers and a
+// client-side second opinion would disagree with them the first time either
+// one changed.
+function buildChatTemplatePanel({ model }) {
+  const statusEl = createEl('div', { class: 'cfg-tmpl__status', role: 'status' });
+  const originEl = createEl('div', { class: 'cfg-tmpl__origin muted small' });
+  const areaId = `cfg-tmpl-${model.id}`.replace(/[^a-zA-Z0-9_-]/g, '-');
+  const area = createEl('textarea', {
+    class: 'cfg-tmpl__body', id: areaId, spellcheck: 'false', rows: '16',
+  });
+  const label = createEl('label', { class: 'cfg-tmpl__label', for: areaId },
+    ['Template body']);
+  const saveBtn = createEl('button', { class: 'btn btn--sm', disabled: true }, ['Save template']);
+  const revertBtn = createEl('button', { class: 'btn btn--sm', hidden: true }, ['Revert to model default']);
+  const actions = createEl('div', { class: 'cfg-actions' }, [saveBtn, revertBtn]);
+  const body = createEl('div', { class: 'cfg-tmpl__inner' },
+    [originEl, label, area, actions, statusEl]);
+
+  const el = createEl('details', { class: 'cfg-section cfg-tmpl' }, [
+    createEl('summary', { class: 'cfg-section__title' }, ['Chat template']),
+    body,
+  ]);
+
+  let loaded = false;
+  let serverText = '';
+  let busy = false;
+
+  const say = (text, kind = '') => {
+    statusEl.textContent = text || '';
+    statusEl.className = `cfg-tmpl__status${kind ? ` cfg-tmpl__status--${kind}` : ''}`;
+  };
+
+  const syncDirty = () => {
+    saveBtn.disabled = busy || area.value === serverText || !area.value.trim();
+  };
+
+  function render(view) {
+    serverText = view.template || '';
+    area.value = serverText;
+    area.disabled = !view.supported || !view.writable;
+    revertBtn.hidden = !view.override_present;
+
+    const bits = [];
+    if (view.supported) bits.push(`In force: ${view.origin}`);
+    if (view.override_present) bits.push('your override is on disk');
+    originEl.textContent = bits.join(' · ');
+
+    // Ordered worst-first: an edit that cannot land at all matters more than
+    // one that has landed but needs a reload.
+    if (!view.supported) {
+      say(view.notes[0] || 'This provider does not use a chat template.');
+    } else if (view.inert_reason) {
+      say(view.inert_reason, 'warn');
+    } else if (!view.writable) {
+      say(view.notes[0] || 'This model folder is not writable.', 'warn');
+    } else if (view.stale) {
+      // stale is null for an unloaded model, which is NOT "up to date" --
+      // only an explicit true means the running process differs from disk.
+      say('Edited since this model loaded. Reload it to apply.', 'warn');
+    } else {
+      say('');
+    }
+    syncDirty();
+  }
+
+  async function load() {
+    if (loaded) return;
+    loaded = true;
+    say('Loading…');
+    try {
+      render(await api.adminChatTemplate(model.id));
+    } catch (e) {
+      loaded = false; // let the next open retry
+      say(`Could not read the template: ${e.message}`, 'error');
+    }
+  }
+
+  async function commit(fn, working) {
+    if (busy) return;
+    busy = true;
+    syncDirty();
+    say(working);
+    try {
+      render(await fn());
+    } catch (e) {
+      // The server's refusal message names what would have broken -- it is
+      // the entire value of validating before the write, so show it verbatim
+      // rather than a generic failure.
+      say(e.message, 'error');
+    } finally {
+      busy = false;
+      syncDirty();
+    }
+  }
+
+  el.addEventListener('toggle', () => { if (el.open) load(); });
+  area.addEventListener('input', syncDirty);
+  saveBtn.addEventListener('click', () =>
+    commit(() => api.adminSetChatTemplate(model.id, { template: area.value }),
+           'Saving…'));
+  // Armed: reverting discards an override that may be the only copy of work
+  // typed here. (What it CANNOT lose is the model's own template -- the
+  // override is a separate file and the vendor's was never written.)
+  armedConfirm(revertBtn,
+    () => commit(() => api.adminDelChatTemplate(model.id), 'Reverting…'),
+    'Discard your override?');
+
+  return { el };
+}
+
 function buildFitMeter({ model, overrides, onGate }) {
   const rowsEl = createEl('div', { class: 'cfg-fit__rows' });
   // The observed line (design §5's closing loop): once the model is LOADED,
@@ -435,6 +557,7 @@ export function createModelConfigEditor({ model, fields: allFields, draft, initi
     return overrides;
   };
   const fitMeter = buildFitMeter({ model, overrides: fitOverrides, onGate: onFitGate });
+  const chatTemplate = buildChatTemplatePanel({ model });
 
   const onEdit = (name, rawValue) => {
     draft[name] = rawValue;
@@ -535,6 +658,10 @@ export function createModelConfigEditor({ model, fields: allFields, draft, initi
     children.push(createEl('div', { class: 'muted small' },
       [`No editable options for provider "${model.provider}".`]));
   }
+  // Appended after the emptiness check on purpose: it is not an "editable
+  // option" in the schema sense, and counting it would suppress the
+  // no-options message for every provider that has none.
+  children.push(chatTemplate.el);
 
   children.push(createEl('div', { class: 'cfg-actions' }, [saveBtn, resetBtn, reloadBtn, noteEl]));
 

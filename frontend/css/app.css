@@ -1264,6 +1264,42 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
 }
 .cfg-fit__sysctl code { font-family: var(--mono); user-select: all; }
 
+/* Chat template editor. A monospace body box plus one status line, reusing
+   the fit meter's warn/error register so "this will not take effect" reads
+   the same way "this will not fit" does. The body scrolls INSIDE its box --
+   templates run to hundreds of lines and the panel must not grow the page. */
+.cfg-tmpl__inner { display: flex; flex-direction: column; gap: 0.5rem; }
+.cfg-tmpl__origin { font-family: var(--mono); }
+.cfg-tmpl__label { font-size: var(--text-sm); color: var(--ink-muted); }
+.cfg-tmpl__body {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  white-space: pre;
+  overflow: auto;
+  resize: vertical;
+  padding: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r-ctl);
+  background: var(--surface);
+  color: var(--ink);
+}
+.cfg-tmpl__body:disabled { opacity: 0.6; }
+.cfg-tmpl__status { min-height: 1.2rem; font-size: var(--text-sm); color: var(--ink-muted); }
+.cfg-tmpl__status--warn {
+  color: var(--warn);
+  background: var(--warn-tint);
+  border-radius: var(--r-ctl);
+  padding: 0.35rem 0.5rem;
+}
+.cfg-tmpl__status--error {
+  color: var(--danger);
+  background: var(--danger-tint);
+  border-radius: var(--r-ctl);
+  padding: 0.35rem 0.5rem;
+}
+
 .cfg-actions {
   display: flex;
   align-items: center;

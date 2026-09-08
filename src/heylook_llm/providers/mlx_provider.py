@@ -35,9 +35,9 @@ from .common.loader_routing import resolve_effective_loader, read_model_type
 from .common.generation_gate import GenerationGate, GenerationCancelled, get_process_gate
 from .common.template_info import (
     install_chat_template,
-    is_explicit_source,
     missing_template_error,
     read_template_info,
+    should_force_install,
 )
 
 # -- transformers 5.x compatibility patches (no torchvision) --
@@ -1005,8 +1005,18 @@ class MLXProvider(BaseProvider):
             tok = self.get_tokenizer()
             installed = install_chat_template(
                 tok, self._template_info,
-                force=is_explicit_source(self.config.get("chat_template_source")),
+                force=should_force_install(
+                    self._template_info,
+                    self.config.get("chat_template_source"),
+                ),
+                # The vision render reads the PROCESSOR's template first --
+                # see install_chat_template. Passing it is what makes an
+                # override apply on the mlx-vlm path, not just mlx-lm's.
+                processor=self.processor,
             )
+            # What this process is actually rendering with, for the admin
+            # template view's "edited on disk, reload to apply" signal.
+            self.loaded_chat_template = self._template_info.chat_template or None
             # Warn only when NOTHING can render: no install happened, the
             # tokenizer has no HF template, and there's no wrapper-level
             # python template (mlx-lm chat_template_type sets

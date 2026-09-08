@@ -208,6 +208,21 @@ _SPEC_TYPE_BY_PREFIX = (
 _CHAT_TEMPLATE_KEY = "tokenizer.chat_template"
 
 
+def chat_template(primary: Path) -> Optional[str]:
+    """The chat template EMBEDDED in the GGUF header, or None if it has none.
+
+    This is the bottom rung of the gguf template ladder and the thing an
+    override is an override OF, so a reader has to be able to see it without
+    loading the model -- which is also why it goes through the header reader
+    rather than llama-server's ``/props`` (that needs a running process, and a
+    preview must never load one).
+
+    None is a real answer: an MTP/drafter head legitimately carries no
+    template.
+    """
+    return safe_read_metadata(primary, {_CHAT_TEMPLATE_KEY}).get(_CHAT_TEMPLATE_KEY) or None
+
+
 def supports_thinking(primary: Path) -> Optional[bool]:
     """Whether the GGUF's embedded chat template references ``enable_thinking``.
 

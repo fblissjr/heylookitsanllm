@@ -32,7 +32,8 @@ engine-PRE-SPLIT reasoning, e.g. llama-server's reasoning_content; errors RAISE
 GenerationFailed/InvalidGenerationRequest, never chunks). gguf gotchas: llama-server
 runs `--jinja` + reasoning pre-split by default (provider template_info()=None routes
 heylook's parsers to pass-through -- never re-parse another engine's split output);
-the template is resolved as a THREE-WAY LADDER at spawn (v1.79.43) and every spawn logs
+the template is resolved as a FOUR-RUNG LADDER at spawn (v1.79.43, +the operator
+override v2.0.22) and every spawn logs
 which rung won: explicit `chat_template_path` (v1.68.0, `--chat-template-file`) beats a
 `chat_template.jinja` DISCOVERED beside the .gguf, which beats the one EMBEDDED IN THE
 GGUF. Sidecar-beats-embedded is the default because the embedded template is whatever
@@ -643,6 +644,37 @@ in git history; a contract test pins that `/v2` stays 404.)
   ASYMMETRY: the `/v1/conversations` store accepts ONLY the nested `source`,
   so nested is the spelling that works on every surface.
 - Reasoning parsers (`reasoning_parser.py`): four ROUTING parsers (harmony/gemma channels, `<think>` markers, pass-through) that never strip anything themselves -- declared-specials stripping is ONE wrapper, `StripSpecials`, composed over the selected parser by `select_reasoning_parser` (and only when the model declares specials, so a bare parser is the no-strip case). Its rolling holdback is sized by the STRIP SET, not by any parser's own control tokens, and is prefix-set based because declared specials are not all `<`-shaped (Mistral's `[INST]` family). Behavior is pinned by PROPERTIES, not just examples (`TestParserInvariants`): output is invariant to how the stream was chunked, and text carrying no structural tokens survives intact. Both 2026-07-23 parser bugs were violations of those two properties. Design record: `docs/parser_strip_unification.md`.
+- THE OPERATOR'S TEMPLATE OVERRIDE (v2.0.22, `chat_template_files.py` +
+  `GET/PUT/DELETE /v1/admin/models/{id}/chat-template`) is ONE file,
+  `chat_template.heylook.jinja`, in the model's own folder, discovered at load by BOTH
+  ladders and beaten only by an explicit `chat_template_path`/`chat_template_source`.
+  It writes NO config -- nothing calls `update_config`, so editing a template cannot
+  materialize a discovered entry and revert is deleting one file. THE FILENAME DIFFERS
+  FROM THE VENDOR'S ON PURPOSE: on MLX `chat_template.jinja` is usually the ONLY copy of
+  the template (checked 2026-09-08: of the model dirs here NONE had an embedded
+  `tokenizer_config` template and all but one had the sidecar as the sole source), so
+  writing through to it destroys the original with nothing to revert to -- and a distinct
+  name survives a re-download, since `huggingface_hub` prunes nothing while
+  `chat_template.jinja` IS in the manifest and gets refreshed. Three rules that are each
+  a bug if forgotten: `use_sidecar_chat_template=false` must NOT suppress it (that flag
+  chooses between the PUBLISHER's sidecar and the embedded template; applying it here
+  makes the editor write a file nothing reads); the gguf origin phrase IS the constant
+  `HEYLOOK_OVERRIDE`, not a prettier spelling, because the admin view decides "is this
+  actually in force" by comparing against it and a second spelling is a comparison that
+  never matches (it shipped that way for an hour and a test caught it); and the routes
+  must be declared ABOVE admin_api's bare `/{model_id:path}`, whose greedy converter
+  otherwise eats `<id>/chat-template` and 404s a model that exists. The MLX half needs
+  `install_chat_template` to target the PROCESSOR as well as the tokenizer under force --
+  mlx-vlm's `get_chat_template` reads `processor.chat_template` FIRST (transformers fills
+  it from a `chat_template.json`), so a tokenizer-only install is read, installed,
+  reported successful and never used on the vision path, with every text-model check
+  green. Validation runs BEFORE the write (a jinja exception is a 500 from llama-server,
+  so a bad file breaks the model at its next load) in an environment mirroring the
+  engines' -- `raise_exception`/`strftime_now`/`tojson` -- because a bare jinja2
+  environment rejects most real templates and would refuse valid work. Both engines bind
+  at LOAD, so a write is not live until a reload; `stale` on the response is the
+  file-backed equivalent of `stale_reload_fields` (which cannot see it -- no config field
+  moved), and it is NULL for an unloaded model, which is not the same as false.
 - Chat-template resolution: `providers/common/template_info.py` is the single source of truth (per-model `chat_template_source` in models.toml; auto = `chat_template.jinja` > embedded `tokenizer_config.json` > `chat_template.json`; explicit source force-installs on the tokenizer at load, auto only fills a missing one). Traps: mlx-lm `chat_template_type` python templates live on the TokenizerWrapper -- the inner tokenizer's `chat_template` attr stays None, so never gate "has a template" on that attr alone; HF's legacy list-form `chat_template` isn't parsed (string-only); import-time jinja detection is the shared `detect_chat_template_source()` (used by BOTH the CLI wizard and the `/v1/admin` import route -- don't re-inline it). An MTP/spec-decode head registered as a model legitimately has NO chat template -- the load warning is expected there.
 - mlx-lm's `TokenizerWrapper.apply_chat_template` silently injects `enable_thinking=True` when the kwarg is ABSENT -- always pass an explicit bool. The kwarg is the cross-model thinking control: transformers forwards extra apply_chat_template kwargs as template variables (Qwen3 renders `<think>`, gemma-4 renders thought channels; others ignore it), and "template references enable_thinking" is the thinking-capability signal.
 - Upstream posture (details: `docs/architecture/ecosystem_strategy.md`): mlx-lm is release-starved -- SHA-pin rather than wait for PyPI, check its open-PR backlog BEFORE writing any workaround, expect new capabilities via sidecar packages.

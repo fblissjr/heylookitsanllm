@@ -5,6 +5,63 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.22]
+
+### Added
+
+- **The chat template is visible, and overridable, per model.** Until now the
+  ladder that picks a model's template was documented and logged at load and
+  invisible from every surface -- you could set `chat_template_path` but never
+  see what it changed. `GET/PUT/DELETE /v1/admin/models/{id}/chat-template`
+  and a "Chat template" panel on the models page now show the resolved
+  template, which rung produced it, and whether an edit would reach it.
+  Reads files only, so it answers for models that are NOT loaded: the prompt
+  format a model will load with is exactly what is worth seeing before
+  loading it.
+
+- **An override is one file beside the weights, `chat_template.heylook.jinja`,
+  discovered at load by both engines.** It outranks everything the vendor
+  shipped and is beaten only by an explicit `chat_template_path` /
+  `chat_template_source`. Writing it touches NO config: nothing calls
+  `update_config`, so editing a template cannot materialize a discovered
+  entry, nothing can drift between a stored path and a file, and reverting is
+  deleting one file.
+
+  The filename differs from the vendor's `chat_template.jinja` deliberately.
+  On MLX that file is usually the ONLY copy of a model's template -- of the
+  model directories checked here, none carried an embedded `tokenizer_config`
+  template and all but one had the sidecar as the sole source -- so editing it
+  in place would destroy the original with nothing to fall back to. A separate
+  name also survives a re-download: `huggingface_hub` prunes nothing, so a
+  file outside the repo manifest is left alone while `chat_template.jinja` is
+  refreshed.
+
+### Fixed
+
+- **An override would have been silently ignored on the MLX VISION path.**
+  `install_chat_template` targeted the tokenizer, but mlx-vlm's
+  `get_chat_template` reads `processor.chat_template` FIRST and only then
+  `processor.tokenizer`, and transformers populates the processor's from a
+  `chat_template.json` in the model dir. The override would have been read,
+  installed, reported successful, and not used -- with every text-model check
+  still passing. The processor is now a target under force, which is what
+  makes one mechanism cover both MLX paths instead of needing a second one.
+
+### Changed
+
+- `LlamaServerProvider.resolve_chat_template` takes a CONFIG instead of a live
+  provider (the instance method remains as a wrapper), so the admin view walks
+  the SAME ladder a spawn would rather than a second implementation of it.
+  `_is_media_served` moved with it for the same reason.
+- Validation runs before anything touches disk: a template that does not parse
+  or renders nothing is refused with a reason. On gguf a raised jinja
+  exception comes back as a 500, so a bad template on disk breaks every
+  request to that model at its next load. The probe environment mirrors what
+  the engines provide (`raise_exception`, `strftime_now`, `tojson`) -- a bare
+  jinja2 environment would reject most real templates and refuse valid work.
+- `gguf_metadata.chat_template()` reads the header-embedded template, so the
+  bottom rung of the gguf ladder is readable without loading the model.
+
 ## [2.0.21]
 
 ### Added

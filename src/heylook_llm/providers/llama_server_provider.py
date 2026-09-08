@@ -49,6 +49,11 @@ from .. import observability, ram_fit
 from ..config import ChatRequest
 from ..samplers import GLOBAL_SAMPLER_FLOOR, SamplerNotFound, resolve_effective_sampling
 from .common.generation_gate import get_process_gate
+# ONE filename for both engines, imported rather than re-spelled -- a second
+# copy of a literal filename is a second place for the editor to write
+# somewhere the loader does not look. template_info is stdlib+orjson only, so
+# this keeps the gguf provider's no-MLX-import property.
+from .common.template_info import HEYLOOK_OVERRIDE, HEYLOOK_TEMPLATE_FILENAME
 from .base import BaseProvider, GenerationChunk, GenerationFailed, InvalidGenerationRequest
 
 # Every live llama-server we spawned, so no exit path can leak one.
@@ -266,19 +271,30 @@ class LlamaServerProvider(BaseProvider):
         return bool(cls._MEDIA_BRANCH.search(text)) or any(
             marker in text.lower() for marker in cls._MEDIA_MARKERS)
 
-    def _is_media_served(self) -> bool:
-        """Whether THIS entry is served with a projector attached.
+    @staticmethod
+    def _is_media_served(cfg: Dict) -> bool:
+        """Whether an entry is served with a projector attached.
 
         `mmproj_path` is the operative half -- it is what makes llama-server
         load a vision tower -- and `modalities` is checked too so an entry
         declaring vision without a projector still gets the guard.
+
+        Takes the CONFIG rather than reading self: the ladder below has to
+        answer for models that are not resident, so the admin template view
+        can show what a spawn WOULD resolve without spawning one.
         """
-        cfg = self.config
         return bool(cfg.get("mmproj_path")) or "vision" in (cfg.get("modalities") or [])
 
     @staticmethod
-    def _sidecar_chat_template(model_path: str) -> Optional[Path]:
-        """``chat_template.jinja`` sitting beside the .gguf, or None.
+    def _sidecar_chat_template(model_path: str,
+                               filename: str = "chat_template.jinja") -> Optional[Path]:
+        """``filename`` sitting beside the .gguf, or None.
+
+        Parameterized so the publisher's ``chat_template.jinja`` and the
+        operator's own override file are found by ONE routine -- the gate
+        below (weights must exist, so a bare path cannot make the process CWD
+        a model directory) has to hold for both, and a second copy of it is a
+        second place for it to be wrong.
 
         The GGUF's own embedded template is whatever the quantizer baked in,
         and the same weights reach us from different publishers with different
@@ -309,7 +325,7 @@ class LlamaServerProvider(BaseProvider):
             # which get a clean None instead of whatever sits beside them.
             if not weights.is_file():
                 return None
-            candidate = weights.parent / "chat_template.jinja"
+            candidate = weights.parent / filename
             return candidate if candidate.is_file() else None
         except (OSError, ValueError):
             return None
@@ -330,7 +346,20 @@ class LlamaServerProvider(BaseProvider):
         return bool(GGUFModelConfig.model_fields["use_sidecar_chat_template"].default)
 
     def _resolve_chat_template(self) -> tuple[Optional[str], str]:
+        """This provider's own view of the ladder -- see resolve_chat_template."""
+        return self.resolve_chat_template(
+            self.config, getattr(self, "model_id", None))
+
+    @classmethod
+    def resolve_chat_template(cls, cfg: Dict, model_id: Optional[str] = None
+                              ) -> tuple[Optional[str], str]:
         """The template file to spawn with, and a phrase for WHERE it came from.
+
+        Takes a CONFIG, not a live provider, so the admin template view
+        answers for models that are not resident and answers with the SAME
+        ladder a spawn would walk. A second implementation for previewing is
+        the defect this repo keeps naming: it agrees on the day it is written
+        and silently diverges after.
 
         The caller logs the phrase: a template is the single biggest
         determinant of what the model actually sees, and switching it silently
@@ -348,22 +377,39 @@ class LlamaServerProvider(BaseProvider):
         template, so the guard resolves that collision toward the embedded one
         and says so loudly.
         """
-        cfg = self.config
         explicit = cfg.get("chat_template_path")
         if explicit:
             return str(Path(explicit).expanduser()), "configured"
 
-        use_sidecar = cfg.get("use_sidecar_chat_template")
-        if use_sidecar is None:
-            use_sidecar = self._sidecar_default()
-        if not use_sidecar:
-            return None, "embedded in the GGUF"
-
-        sidecar = self._sidecar_chat_template(cfg.get("model_path", ""))
+        # The operator's OWN override, discovered beside the weights the same
+        # way a publisher's sidecar is -- but deliberately NOT gated on
+        # `use_sidecar_chat_template`. That flag chooses between the
+        # PUBLISHER's sidecar and the quantizer's embedded template, and
+        # neither of those is a file the operator wrote. Letting it suppress
+        # the override would mean the template editor writes a file that
+        # nothing reads, with no error anywhere -- the one failure an editor
+        # must not have.
+        sidecar = cls._sidecar_chat_template(
+            cfg.get("model_path", ""), HEYLOOK_TEMPLATE_FILENAME)
+        # The CONSTANT, not a prettier phrase for the log. The origin is
+        # compared against it (the admin view decides "is this override
+        # actually in force" that way), and a human-readable second spelling
+        # is a comparison that silently never matches -- which is exactly what
+        # "heylook override" vs HEYLOOK_OVERRIDE did until a test caught it.
+        origin = HEYLOOK_OVERRIDE
         if sidecar is None:
-            return None, "embedded in the GGUF"
+            origin = "sidecar"
+            use_sidecar = cfg.get("use_sidecar_chat_template")
+            if use_sidecar is None:
+                use_sidecar = cls._sidecar_default()
+            if not use_sidecar:
+                return None, "embedded in the GGUF"
 
-        if self._is_media_served():
+            sidecar = cls._sidecar_chat_template(cfg.get("model_path", ""))
+            if sidecar is None:
+                return None, "embedded in the GGUF"
+
+        if cls._is_media_served(cfg):
             try:
                 text = sidecar.read_text(errors="replace")
             except OSError:
@@ -371,14 +417,14 @@ class LlamaServerProvider(BaseProvider):
                 # direction as an unrecognised marker -- decline the promotion
                 # rather than spawn against a file we could not inspect.
                 text = ""
-            if not self._template_handles_media(text):
-                # getattr: the provider is also constructed via __new__ in the
-                # argv/metadata drift test, which never runs BaseProvider's
-                # __init__, so model_id may not exist. A log line must not be
-                # the thing that raises.
+            if not cls._template_handles_media(text):
+                # model_id is optional: the provider is also constructed
+                # via __new__ in the argv/metadata drift test, which never runs
+                # BaseProvider's __init__, and the admin view calls this with
+                # a config alone. A log line must not be the thing that raises.
                 logging.warning(
-                    f"[GGUF] {getattr(self, 'model_id', '<unconstructed>')}: "
-                    f"IGNORING the sidecar chat template "
+                    f"[GGUF] {model_id or '<unconstructed>'}: "
+                    f"IGNORING the {origin} chat template "
                     f"{sidecar} -- this model is served with a projector "
                     f"(mmproj/vision) and that template contains no media "
                     f"markers, so using it would load the vision tower and then "
@@ -386,9 +432,9 @@ class LlamaServerProvider(BaseProvider):
                     f"the GGUF's embedded template instead. Set "
                     f"chat_template_path explicitly to override this refusal."
                 )
-                return None, "embedded in the GGUF (sidecar skipped: no media handling)"
+                return None, f"embedded in the GGUF ({origin} skipped: no media handling)"
 
-        return str(sidecar), "sidecar"
+        return str(sidecar), origin
 
     # The micro-batch AUTO resolves to when the working set allows it. Why
     # 2048 and why not always: GGUFModelConfig.n_ubatch.
@@ -600,6 +646,22 @@ class LlamaServerProvider(BaseProvider):
             f"[GGUF] {self.model_id}: chat template {template_origin}"
             + (f" ({resolved_template})" if resolved_template else "")
         )
+
+        # Snapshot the BODY this process spawned with, so the admin template
+        # view can tell an edited-on-disk file from the one llama-server is
+        # running. Read here rather than lazily: the file can change under us
+        # at any time, and the whole value of the field is that it does NOT.
+        # Best-effort -- a template we cannot re-read must never block a spawn.
+        if resolved_template:
+            try:
+                self.loaded_chat_template = Path(
+                    resolved_template).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                self.loaded_chat_template = None
+        else:
+            from .. import gguf_metadata
+            self.loaded_chat_template = gguf_metadata.chat_template(
+                Path(str(self.config.get("model_path") or "")))
 
         # Subprocess output honors the file-logging master switch: at
         # observability_level=off (the default) NOTHING is written under

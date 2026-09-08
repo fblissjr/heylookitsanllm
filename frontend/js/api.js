@@ -131,6 +131,16 @@ const ROUTES = {
   // edits. Read-only; the meter renders the response verbatim and NEVER
   // computes fit client-side (design doc §5).
   adminModelFit:     ['POST', (id) => `/v1/admin/models/${encodeURIComponent(id)}/fit`, true],
+  // The chat template in force + which rung of the ladder produced it. Reads
+  // files server-side, so it answers for models that are NOT loaded -- the
+  // prompt format a model will load with is exactly what you want to see
+  // before loading it. PUT writes an override file beside the weights (no
+  // models.toml write at all); DELETE removes it and the model falls back to
+  // its own template. Both bind at LOAD, so the response's `stale` is what
+  // says a reload is owed.
+  adminChatTemplate:    ['GET', (id) => `/v1/admin/models/${encodeURIComponent(id)}/chat-template`],
+  adminSetChatTemplate: ['PUT', (id) => `/v1/admin/models/${encodeURIComponent(id)}/chat-template`, true],
+  adminDelChatTemplate: ['DELETE', (id) => `/v1/admin/models/${encodeURIComponent(id)}/chat-template`],
 };
 
 function makeCall(method, buildPath, hasBody) {
