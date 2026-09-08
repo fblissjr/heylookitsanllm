@@ -237,7 +237,21 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
         const msgId = url.match(/\/messages\/([^/?]+)/)?.[1];
         const row = messages.find((m) => m.id === msgId);
         if (!row) return {};
-        if ('content' in body) row.content = body.content;
+        if ('content' in body) {
+          // The real store answers with BOTH: `content` flattened to text and
+          // `content_blocks` carrying the full list (db.py). A stub that
+          // echoed a block list back as `content` would have the page adopt
+          // an array as its text, so every media check would be measuring the
+          // stub's shape rather than the store's.
+          if (Array.isArray(body.content)) {
+            row.content_blocks = body.content;
+            row.content = body.content.filter((b) => b.type === 'text')
+              .map((b) => b.text ?? '').join('\n');
+          } else {
+            row.content_blocks = null;
+            row.content = body.content;
+          }
+        }
         if ('thinking' in body) row.thinking = body.thinking;
         return { ...row };
       }
@@ -1080,6 +1094,103 @@ async function main() {
       });
       assert(row.text, 'the media row lost its text block');
       assert(!row.dropNote, 'a vision-capable model shows a drop disclosure it should not');
+    });
+
+    await suite.check('a row carrying media can be edited at all', async () => {
+      // Edit was withheld from any media row until v2.0.15 (the editor sent
+      // content as a bare string, which would have replaced the blocks and
+      // let the store's media GC reclaim the orphaned blob). Copy and Delete
+      // were the only actions.
+      const labels = await med.page.evaluate(() => {
+        const img = document.querySelector('.message-image');
+        const msg = img.closest('.message');
+        return [...msg.querySelectorAll('.message__actions button')].map((b) => b.textContent);
+      });
+      assert(labels.includes('Edit'),
+        `a media row still has no Edit (actions: ${JSON.stringify(labels)})`);
+    });
+
+    await suite.check('editing a media row sends the STORED block back verbatim', async () => {
+      // The data-loss check. db.update_message re-runs _externalize_media and
+      // then _gc_media, and a url source's media_id is honoured only while a
+      // message still references that blob -- so a PUT that carried anything
+      // but the stored block (a plain string, or a rebuilt source) would drop
+      // the reference and the GC would correctly delete the bytes. "Fix a
+      // typo" would cost the picture.
+      const before = med.reqs.length;
+      await med.page.evaluate(() => {
+        const msg = document.querySelector('.message-image').closest('.message');
+        msg.scrollIntoView({ block: 'center' });
+        [...msg.querySelectorAll('.message__actions button')]
+          .find((b) => b.textContent === 'Edit').click();
+      });
+      await settle(med.page);
+      await med.page.evaluate(() => {
+        const ta = document.querySelector('.message-edit textarea');
+        ta.value = 'edited caption';
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        [...document.querySelectorAll('.message-edit button')]
+          .find((b) => b.textContent === 'Save').click();
+      });
+      await waitFor(() => med.page.evaluate(() =>
+        !document.querySelector('.message-edit')
+        && [...document.querySelectorAll('.message')].some((m) => m.textContent.includes('edited caption'))),
+      { message: 'the edited media row never re-rendered with the saved text' });
+
+      const put = med.reqs.slice(before).find((r) => r.method === 'PUT' && r.url.includes('/messages/'));
+      assert(put, 'the edit never issued a PUT');
+      const body = JSON.parse(put.postData);
+      assert(Array.isArray(body.content),
+        `the PUT sent content as ${typeof body.content}, not a block list -- `
+        + `this is the shape that strands the blob: ${JSON.stringify(body.content).slice(0, 120)}`);
+      const image = body.content.find((b) => b.type === 'image');
+      assert(image, `the PUT dropped the image block (sent ${JSON.stringify(body.content.map((b) => b.type))})`);
+      // Verbatim: the media_id marker is what _externalize_media honours, and
+      // the url must be the stored one, not a re-minted base64 source.
+      assert(image.source?.media_id === MEDIA_ID,
+        `the image block lost its media_id marker (source: ${JSON.stringify(image.source)})`);
+      assert(image.source?.type === 'url',
+        `the image was re-encoded as ${image.source?.type} instead of round-tripping the url source`);
+      const text = body.content.find((b) => b.type === 'text');
+      assert(text?.text === 'edited caption',
+        `the edited text never reached the PUT (got ${JSON.stringify(text)})`);
+
+      // And it survives on screen: the row still shows its picture.
+      const stillThere = await med.page.evaluate(() =>
+        Boolean(document.querySelector('.message-image')));
+      assert(stillThere, 'the image vanished from the row after a text-only edit');
+    });
+
+    await suite.check('MLX withholds the attach control on a non-user turn', async () => {
+      // mlx-vlm places media markers on USER turns only (the role is gated
+      // three times in its prompt_utils), so an image attached to an
+      // assistant message is not refused there -- it is MOVED to the latest
+      // user turn. The provider raises on it; the editor must not offer the
+      // control that would stage it. The stub's model is provider 'mlx'.
+      const has = await med.page.evaluate(() => {
+        const open = (pred) => {
+          const msg = [...document.querySelectorAll('.message')].find(pred);
+          if (!msg) return null;
+          const btn = [...msg.querySelectorAll('.message__actions button')]
+            .find((b) => b.textContent === 'Edit');
+          if (!btn) return null;
+          btn.click();
+          const attach = [...document.querySelectorAll('.message-edit button')]
+            .some((b) => b.textContent === 'Attach');
+          [...document.querySelectorAll('.message-edit button')]
+            .find((b) => b.textContent === 'Cancel').click();
+          return attach;
+        };
+        return {
+          assistant: open((m) => m.classList.contains('message--assistant')),
+          user: open((m) => m.classList.contains('message--user')),
+        };
+      });
+      assert(has.assistant === false,
+        'the editor offered Attach on an assistant row under MLX -- the image would be '
+        + 'silently moved to the latest user turn');
+      assert(has.user === true,
+        `the editor withheld Attach on a USER row under a vision model (got ${has.user})`);
     });
 
     await suite.check('no uncaught page errors (media rows)', () => {
