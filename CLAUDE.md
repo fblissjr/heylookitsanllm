@@ -513,6 +513,33 @@ in git history; a contract test pins that `/v2` stays 404.)
 - All text+vision generation routes through `generation_core.run_generation()` -> `mlx_lm.generate.stream_generate`. Vision uses a pre-filled-cache pattern: the VLM forward pass fills the KV cache, then `run_generation()` continues.
 - A VLM's forward returns a `LanguageModelOutput`, not raw logits, and caches `_position_ids`/`_rope_deltas` on its language model. Wrap it with `wrap_language_model()` (model_wrappers.py) before driving it with mlx-lm; position state is reset in `run_generation` via `_reset_vlm_positions()`.
 - VLM prompt formatting: `mlx_vlm.prompt_utils.apply_chat_template`; inputs: `mlx_vlm.utils.prepare_inputs`. `prepare_vlm_inputs_parallel()` returns a 4-tuple `(images, formatted_prompt, has_images, image_urls)`.
+- MEDIA PLACEMENT IS PER MESSAGE AND MLX PUTS IT ON USER TURNS ONLY (v2.0.18).
+  mlx-vlm attributes media by counting explicit `{"type":"image"}` markers in
+  BLOCK-form content (`_content_media_count`) and dumps whatever it cannot
+  attribute onto the LAST USER TURN, so passing flattened strings plus a bare
+  `num_images=` total -- what `vlm_inputs` did until v2.0.18 -- attributed
+  nothing and moved every image to the final user message. Text-only messages
+  still travel as a plain string, so that is the blast radius. The marker is
+  BARE because mlx-vlm re-derives each message's content from text + count in
+  the model's own order (llava appends, qwen prepends): never hand-build the
+  per-model shape. Verified at the RENDERED PROMPT on gemma4 + qwen3_vl --
+  identical token multiset before/after, only the marker's turn moves.
+  The ROLE gate is upstream and triple-layered (`_content_media_count` skips
+  non-user, the surplus reallocates, and `_format_list_with_image` re-tests
+  `role == "user"`), so an assistant-turn image does not error there -- it
+  MOVES, silently. `_non_user_image_roles` in mlx_provider refuses it instead,
+  naming gguf, whose server rewrites an image part into a positional media
+  marker at any role. OWNER DECISION 2026-09-07: NOT forking mlx-vlm for this
+  -- assistant-turn media is gguf-only and that is the answer, not a backlog
+  item. Do not re-open it without a new reason.
+- A PREVIEW THAT CANNOT SHOW MEDIA MUST SAY SO. `render_prompt` on MLX goes
+  through the TEXT strategy (images stripped), so the preview is the text
+  template alone. `PromptPreviewResponse.unrendered_media` (sent, not shown)
+  is a DIFFERENT field from `dropped_media` (not sent) and both are painted:
+  a panel headed "what the model will see" that quietly omits the picture
+  reads as the image having been lost, which is the opposite of the truth.
+  Providers answer `render_prompt_represents_media` themselves (gguf True)
+  rather than the route switching on a provider name.
 - Vision feature cache (`providers/common/vision_feature_cache.py`): models with `encode_image()` accept `cached_image_features` to skip the vision tower; LRU keyed by image URL (pixel-hash fallback for base64).
 - Load-library selection is `MLXProvider.effective_loader` (`providers/common/loader_routing.py`), derived from the config's `modalities` + `loader` fields -- NOT the raw `vision` bool, which is now a derived mirror of `"vision" in modalities`. `is_vlm = (effective_loader == "mlx-vlm")`. `loader="auto"` routes vision->mlx-vlm iff mlx-vlm registers the `model_type`, else mlx-lm (degrades only on POSITIVE non-support; an explicit `loader` forces the engine). Modality DESCRIPTION (`model_importer.detect_modalities`: config `*_config` blocks + `image_token_id`/`image_token_index`/`audio_token_id`...) is deliberately separate from this library-aware routing. The REPORTED `vision` capability derives from it too (v1.79.43, capabilities.py): the provider's image guard reads `is_vlm`, so reading the checkpoint's DECLARATION instead let `/v1/models` advertise images a 400 then refused -- one resolver for both surfaces is what makes them agree by construction. `modalities` still carries the declaration; description and served capability are different fields on purpose. It is ON THE WIRE as `effective_loader` on the `/v1/admin/models` row (v1.79.31), derived via `effective_loader_for_config` so it answers for UNLOADED models -- the provider ATTRIBUTE is null unless the model is resident, which is the opposite of what a live harness picking engine arms needs. Null for every non-mlx provider (gguf is one engine, named by `provider`). Because it reads each model dir's `config.json`, the two admin READ routes that build a model response are plain `def` (threadpool), not `async def`.
 - Embedding backbone: `mlx_lm.utils._get_classes(config_dict)` (private API, takes a dict) -> extract `.model`. Gemma needs `sqrt(hidden_size)` embedding scaling (gated on `model_type.startswith("gemma")`).

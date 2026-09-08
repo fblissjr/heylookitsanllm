@@ -81,9 +81,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   live measurement of what llama-server echoes for a parts-list assistant
   turn containing a media marker; the source does not settle it. Text-only
   prefill is unaffected.
-- **An image on a non-user turn is refused on MLX, not supported.** mlx-vlm
-  would need patching to emit a marker there. Assistant-turn media works on
-  gguf only.
+- **An image on a non-user turn is refused on MLX, not supported.** mlx-vlm's
+  role gate is triple-layered and would need patching to emit a marker there.
+  Owner decision 2026-09-07: NOT forking mlx-vlm for it -- assistant-turn
+  media is gguf-only, and that is the answer rather than a backlog item.
 - **What was verified.** The placement fix is checked at the message list
   mlx-vlm builds -- by probe, by `TestMediaAttribution` and against the real
   upstream allocator. It has NOT been checked against a rendered prompt
