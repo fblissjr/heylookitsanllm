@@ -388,7 +388,12 @@ def validate(body: str, *, provider: str, config: dict) -> list[str]:
         from jinja2.sandbox import ImmutableSandboxedEnvironment
     except ImportError:  # pragma: no cover -- jinja2 ships with transformers
         logger.warning("[template] jinja2 unavailable; skipping validation")
-        return
+        # `[]`, not a bare return: this is annotated `-> list[str]` and the
+        # value reaches `PUT .../chat-template`'s `refused_shapes: List[str]`.
+        # Pydantic does not validate on assignment, so None stuck and FastAPI
+        # raised at RESPONSE SERIALIZATION -- turning a write that SUCCEEDED
+        # into a 500, on the one path where validation was already skipped.
+        return []
 
     def _raise_exception(message):
         raise jinja2.exceptions.TemplateError(message)
@@ -425,11 +430,21 @@ def validate(body: str, *, provider: str, config: dict) -> list[str]:
             refusals.append(f"{label}: {type(exc).__name__}: {exc}")
             continue
         except Exception as exc:
-            # Not a template-authored refusal: a bad filter, a call into
-            # something absent. That is broken on any shape.
-            raise TemplateWriteRefused(
-                f"template failed to render: {type(exc).__name__}: {exc}"
-            ) from exc
+            # ALSO a refusal, not an immediate hard failure -- and that changed
+            # when the `break` below went away. While the loop stopped at the
+            # first shape that rendered, only the plainest shape could reach
+            # here, so "broken on any shape" was a safe reading. Now every shape
+            # is tried, and the added ones are exactly the ones publishers
+            # differ on: a template that renders user/assistant/user perfectly
+            # can hit a TypeError only on two leading system messages (indexing
+            # content as a list, say). Hard-refusing there would reject a
+            # template that works for every request the operator actually makes.
+            # A template broken on EVERY shape still fails, via `if not
+            # rendered` below, with these strings as the detail. Labelled so a
+            # bug in our own probe shapes is still distinguishable from a
+            # template-authored raise.
+            refusals.append(f"{label}: {type(exc).__name__}: {exc} (not a jinja raise)")
+            continue
         if out.strip() and not rendered:
             # No `break`. Stopping here made every later shape a FALLBACK
             # rather than a check, and the plainest shape is first -- so the

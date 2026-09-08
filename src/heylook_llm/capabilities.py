@@ -50,12 +50,14 @@ def config_dict(config, *, exclude_unset: bool = False) -> dict:
 # `chat_template.heylook.jinja` is the operator override and is WRITTEN AT
 # RUNTIME by PUT/DELETE /v1/admin/models/{id}/chat-template, which is what
 # makes a plain per-path cache wrong here rather than merely stale-ish.
-_TEMPLATE_SOURCE_FILES = (
-    "chat_template.heylook.jinja",
-    "chat_template.jinja",
-    "tokenizer_config.json",
-    "chat_template.json",
-)
+# DERIVED, never re-listed: template_info owns what it reads. This was a
+# hand-written tuple of the four template sources and silently omitted
+# tokenizer.json + generation_config.json, which the stop-token check reads and
+# which can change WHICH template wins -- so the cache key was already
+# incomplete, not merely rot-prone.
+from heylook_llm.providers.common.template_info import TEMPLATE_INPUT_FILES
+
+_TEMPLATE_SOURCE_FILES = TEMPLATE_INPUT_FILES
 
 
 def _template_stamp(model_path: str) -> tuple:

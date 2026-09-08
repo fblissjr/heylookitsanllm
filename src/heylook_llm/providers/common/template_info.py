@@ -56,6 +56,30 @@ HEYLOOK_OVERRIDE = "heylook_override"
 # a rung was inserted above the one it omitted.
 _AUTO_LADDER = (HEYLOOK_OVERRIDE, JINJA, TOKENIZER_CONFIG, CHAT_TEMPLATE_JSON)
 
+# EVERY file `read_template_info()` opens. Exported because `capabilities.py`
+# stamps these to key its cached template probes, and the hand-written subset it
+# carried had already drifted: it listed the four TEMPLATE sources and omitted
+# `tokenizer.json` and `generation_config.json`, which the stop-token check
+# reads -- and a template rendering none of the model's stop tokens is REFUSED,
+# sending the resolver down the rest of the ladder to a different template with
+# possibly different capabilities. So replacing tokenizer.json (a re-download,
+# an added terminator like gemma-4's `<turn|>` that lives only there) left the
+# stamp identical and `/v1/models` publishing a stale answer until restart --
+# the same bug the stamp was introduced to fix, one file over.
+#
+# This is CLAUDE.md's named defect ("adding a rung to a ladder invalidates every
+# hand-written subset of it") in its other form: a subset of what a function
+# READS rather than of an ordered list. Adding a read above means adding it
+# HERE, and consumers derive.
+TEMPLATE_INPUT_FILES = (
+    HEYLOOK_TEMPLATE_FILENAME,
+    "chat_template.jinja",
+    "tokenizer_config.json",
+    "chat_template.json",
+    "tokenizer.json",
+    "generation_config.json",
+)
+
 def _template_can_stop(body: str, eos_tokens: "frozenset[str]") -> bool:
     """True unless we're CONFIDENT the template can't signal the model to stop.
 

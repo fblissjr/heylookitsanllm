@@ -253,7 +253,11 @@ class ModelRouter:
         for entry in entries:
             value = (entry.get("config") or {}).get("model_path")
             if value:
-                claimed[_identity(value)] = claimed.get(_identity(value), 0) + 1
+                # Bound once: _identity() calls resolve(), which walks symlinks
+                # on the filesystem, and this ran it twice for every entry on
+                # every startup AND every reload_config.
+                key = _identity(value)
+                claimed[key] = claimed.get(key, 0) + 1
 
         dead: list[str] = []
         for entry in entries:

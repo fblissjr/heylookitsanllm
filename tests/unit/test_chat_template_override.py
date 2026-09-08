@@ -268,3 +268,50 @@ class TestValidation:
 
         with pytest.raises(ctf.TemplateWriteRefused, match="every shape"):
             ctf.validate("{{ raise_exception('always') }}", provider="gguf", config={})
+
+
+class TestStampCoversEveryFileTheProbeReads:
+    """The capability cache key must stamp every file `read_template_info` opens.
+
+    A comment did not hold this: `_TEMPLATE_SOURCE_FILES` was hand-written as
+    the four TEMPLATE sources and omitted `tokenizer.json`, which the stop-token
+    check reads -- and a template rendering none of the model's stop tokens is
+    REFUSED, sending the resolver down the ladder to a different template with
+    possibly different capabilities. Replacing that file therefore left the
+    stamp identical and `/v1/models` publishing a stale answer until restart.
+
+    This asserts the DERIVATION rather than a list, so it cannot be satisfied by
+    updating a second copy: adding a read to template_info without adding it to
+    TEMPLATE_INPUT_FILES is what has to fail, and it does, here.
+    """
+
+    def test_the_stamp_is_template_infos_own_list(self):
+        from heylook_llm.capabilities import _TEMPLATE_SOURCE_FILES
+        from heylook_llm.providers.common.template_info import TEMPLATE_INPUT_FILES
+
+        assert _TEMPLATE_SOURCE_FILES is TEMPLATE_INPUT_FILES, (
+            "capabilities re-listed the stamped files instead of deriving them; "
+            "that copy has already drifted once"
+        )
+
+    def test_every_filename_template_info_opens_is_declared(self):
+        """Read the module's SOURCE for `model_dir / "<name>"` and require each.
+
+        Deliberately a source scan and not a list of examples: the failure being
+        guarded is someone adding a read, and only something that looks at all
+        the reads can see that.
+        """
+        import re
+        from pathlib import Path
+        import heylook_llm.providers.common.template_info as ti
+
+        src = Path(ti.__file__).read_text()
+        opened = set(re.findall(r'model_dir\s*/\s*"([^"]+)"', src))
+        # The override filename is referenced through its constant, not a literal.
+        opened.add(ti.HEYLOOK_TEMPLATE_FILENAME)
+        undeclared = sorted(opened - set(ti.TEMPLATE_INPUT_FILES))
+        assert not undeclared, (
+            f"template_info opens {undeclared} but does not declare them in "
+            "TEMPLATE_INPUT_FILES, so capabilities' cache will not notice them "
+            "changing"
+        )

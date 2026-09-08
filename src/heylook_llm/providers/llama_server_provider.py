@@ -41,6 +41,7 @@ import re
 import signal
 import socket
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -69,6 +70,16 @@ from .base import BaseProvider, GenerationChunk, GenerationFailed, InvalidGenera
 # startup, a second Ctrl-C forcing uvicorn to quit). SIGKILL of the parent
 # remains uncoverable -- nothing runs in that case.
 _ACTIVE_PROCS: "set" = set()
+# _ACTIVE_PROCS is touched from ARBITRARY THREADS and needs this lock. Its
+# mutators are `_register_proc` (a spawn, on a request thread), `unload` (a
+# router eviction or the idle-unload tick), `__del__` -> unload (whatever
+# thread the GC fired on), and `_kill_orphans` (atexit). The sweep in
+# `_register_proc` used to build its dead list by calling `poll()` INSIDE a
+# comprehension over the set -- and poll() is a syscall, so the GIL is released
+# mid-iteration and a concurrent discard raises "Set changed size during
+# iteration" out of the spawn path, failing a model load for a reason nothing
+# in the traceback connects to a different model being collected.
+_ACTIVE_PROCS_LOCK = threading.Lock()
 
 
 def _kill_orphans() -> None:
@@ -77,8 +88,11 @@ def _kill_orphans() -> None:
     Best-effort and silent: this runs during shutdown, where logging handlers
     may already be torn down and raising would be pointless.
     """
-    while _ACTIVE_PROCS:
-        proc = _ACTIVE_PROCS.pop()
+    while True:
+        with _ACTIVE_PROCS_LOCK:
+            if not _ACTIVE_PROCS:
+                return
+            proc = _ACTIVE_PROCS.pop()
         try:
             if proc.poll() is not None:
                 continue  # already exited; its pid may be recycled by now
@@ -848,9 +862,15 @@ class LlamaServerProvider(BaseProvider):
         an entry whose process has exited is exactly what `_kill_orphans`
         would skip anyway.
         """
-        for dead in [p for p in _ACTIVE_PROCS if p.poll() is not None]:
-            _ACTIVE_PROCS.discard(dead)
-        _ACTIVE_PROCS.add(proc)
+        # Snapshot under the lock, poll OUTSIDE it (poll() is a syscall and the
+        # lock guards a set, not a subprocess), then apply under it again.
+        with _ACTIVE_PROCS_LOCK:
+            snapshot = list(_ACTIVE_PROCS)
+        dead = [p for p in snapshot if p.poll() is not None]
+        with _ACTIVE_PROCS_LOCK:
+            for p in dead:
+                _ACTIVE_PROCS.discard(p)
+            _ACTIVE_PROCS.add(proc)
 
     def unload(self, *, drain: bool = True):
         """Stop this model's llama-server.
@@ -873,7 +893,8 @@ class LlamaServerProvider(BaseProvider):
         self._base_url = None
         self.running_ctx = None
         if proc is None or proc.poll() is not None:
-            _ACTIVE_PROCS.discard(proc)
+            with _ACTIVE_PROCS_LOCK:
+                _ACTIVE_PROCS.discard(proc)
             self._cleanup_handles()
             return
         if not drain:
@@ -910,7 +931,8 @@ class LlamaServerProvider(BaseProvider):
         # Deregister FIRST: once we've decided to stop it AND to wait, the exit
         # hook must never signal this pid again -- once reaped it may belong to
         # something else.
-        _ACTIVE_PROCS.discard(proc)
+        with _ACTIVE_PROCS_LOCK:
+            _ACTIVE_PROCS.discard(proc)
         try:
             pgid = os.getpgid(proc.pid)
             os.killpg(pgid, signal.SIGTERM)  # llama-server handles SIGTERM gracefully

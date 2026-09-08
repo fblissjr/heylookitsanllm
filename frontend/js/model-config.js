@@ -264,6 +264,17 @@ export const hasUnsavedTemplate = (draft) =>
 // differs from disk only in line endings.
 const eol = (t) => String(t ?? '').replace(/\r\n?/g, '\n');
 
+// Message shapes this template REFUSES, as the server measured them at write
+// time. Refusing some shapes is legal -- publishers differ on, say, two leading
+// system messages -- so it is a disclosure, not an error: the point is that the
+// operator learns it now rather than from a 500 on their next real request.
+function refusalNote(view) {
+  const shapes = view?.refused_shapes ?? [];
+  if (!shapes.length) return '';
+  return ` This template refuses ${shapes.length === 1 ? 'a message shape' : 'some message shapes'}`
+    + ` — requests of that shape will fail: ${shapes.join('; ')}`;
+}
+
 function buildChatTemplatePanel({ model, draft, onDraftChange }) {
   const statusEl = createEl('div', { class: 'cfg-tmpl__status', role: 'status' });
   const originEl = createEl('div', { class: 'cfg-tmpl__origin muted small' });
@@ -349,7 +360,15 @@ function buildChatTemplatePanel({ model, draft, onDraftChange }) {
     } else if (view.stale) {
       // stale is null for an unloaded model, which is NOT "up to date" --
       // only an explicit true means the running process differs from disk.
-      say('Edited since this model loaded. Reload it to apply.', 'warn');
+      say(`Edited since this model loaded. Reload it to apply.${refusalNote(view)}`, 'warn');
+    } else if (refusalNote(view)) {
+      // A write that SUCCEEDED can still have installed a template that raises
+      // on shapes this app sends. The server validated and told us which; if
+      // nothing paints that, the operator sees "saved", reloads, and every
+      // conversation carrying a system prompt 500s from llama-server turning a
+      // raised jinja exception into one. This was computed, returned, and
+      // rendered nowhere.
+      say(`Saved.${refusalNote(view)}`, 'warn');
     } else {
       say('');
     }
