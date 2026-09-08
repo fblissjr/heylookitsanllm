@@ -59,7 +59,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The prompt preview carries the editor's media.** `edits.content` accepts
   a block list; the overlay used to coerce it to one text block, so a row
   whose generation would carry a picture previewed as if it carried none.
-  A malformed block list is a 400 rather than a corrupt render.
+  A malformed block list is a 400 rather than a corrupt render. (On MLX the
+  preview still renders text-only -- the vision path has no text-only render,
+  a standing rough edge this does not change.)
+
+### Known limits of this change
+
+- **Save & Continue from an assistant prefill carrying an image DUPLICATES
+  the prefill text on gguf.** `_continuation_echo_chars` cannot size the echo
+  strip for a trailing assistant message with non-text parts, so it strips
+  nothing and logs that it did not -- pre-existing (v1.60) behaviour, but
+  until now no client could construct that request. Sizing the strip needs a
+  live measurement of what llama-server echoes for a parts-list assistant
+  turn containing a media marker; the source does not settle it. Text-only
+  prefill is unaffected.
+- **An image on a non-user turn is refused on MLX, not supported.** mlx-vlm
+  would need patching to emit a marker there. Assistant-turn media works on
+  gguf only.
+- **What was verified.** The placement fix is checked at the message list
+  mlx-vlm builds -- by probe, by `TestMediaAttribution` and against the real
+  upstream allocator. It has NOT been checked against a rendered prompt
+  string from a live processor, so the marker-dict-to-image-token step is
+  reasoned rather than measured. The editor is covered by the browser render
+  suite against a stubbed `/v1`, not against a real model.
 
 ### Changed
 

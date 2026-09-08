@@ -1631,6 +1631,12 @@ function buildEditEl(ctx, msg) {
   // drop the reference and the GC would, correctly, delete the bytes. Editing
   // the text must not cost the picture; that risk is why Edit used to be
   // withheld from any row carrying media at all.
+  // NB buildContentBlocks emits media before text, so a row stored as
+  // [text, image] comes back as [image, text]. On gguf that moves the media
+  // marker within the rendered turn on a text-only edit; on MLX the marker
+  // order is re-derived per model and this cannot matter. Everything this app
+  // creates is already media-first, so it only shows on rows written by
+  // another client.
   const keptOf = (type) => (msg.content_blocks ?? [])
     .filter((b) => b.type === type).map((b) => ({ kept: b }));
   const editMedia = { image: keptOf('image'), audio: keptOf('audio') };

@@ -189,8 +189,12 @@ def prepare_vlm_inputs_parallel(
     # bugs with non-string content) without touching block-form content: a
     # blanket str() here would hand the template a Python repr of the block
     # list, image markers and all, which is how the media placement above
-    # would silently stop working. Keys thinking_for_template may have set
-    # (reasoning_content) ride along rather than being rebuilt away.
+    # would silently stop working. Rebuilding each dict from role+content
+    # (what this did before) also DROPPED any key thinking_for_template had
+    # set; they survive this function now, but note that mlx-vlm rebuilds the
+    # message itself for every model_type in its MODEL_CONFIG, so
+    # reasoning_content still does not reach those templates. Fixing that is
+    # an upstream change, not one available here.
     safe_messages = []
     for msg in text_messages:
         safe = dict(msg)
