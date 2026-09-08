@@ -11,10 +11,10 @@
 //   single page-wide flag -- unrelated rows must stay interactive.
 
 import { createPage } from '../page.js';
-import { createEl, armedConfirm, formatTokens } from '../utils.js';
+import { createEl, armedConfirm, createUnloadGuard, formatTokens } from '../utils.js';
 import { api } from '../api.js';
 import * as drawer from '../settings-drawer.js';
-import { createModelConfigEditor, configSummary } from '../model-config.js';
+import { createModelConfigEditor, configSummary, hasUnsavedTemplate } from '../model-config.js';
 
 export default createPage({
   async setup(ctx) {
@@ -29,6 +29,15 @@ export default createPage({
     s.optionsPromise = null;    // in-flight fetch of the above
     s.configOpenId = null;      // model id with the config editor expanded (single panel)
     s.configDrafts = new Map(); // model id -> {field: rawValue} unsaved edits; survives re-renders
+    // Unsaved work on this page is a chat-template body typed into a panel:
+    // the one thing here that only a button press can commit, and the one
+    // worth thousands of characters. Owned at PAGE level because the draft
+    // outlives every panel that shows it -- collapse the panel, or save a
+    // config field and watch renderModelList rebuild it, and the text is
+    // still unsaved. Schema fields are deliberately NOT counted: their draft
+    // keys are written even when the value matches saved, so presence does
+    // not mean dirty there, and the loss is a number retyped in seconds.
+    s.setUnloadGuard = createUnloadGuard(ctx);
     // model id -> reason string while the fit meter says FAIL (server
     // verdict; see onFitGate below). Only ever set for unloaded models.
     s.fitGates = new Map();
@@ -483,6 +492,13 @@ async function toggleConfig(ctx, model) {
   renderModelList(ctx);
 }
 
+// Asks every draft on the page, never just the open panel's: the answer has
+// to stay right for a model whose panel was closed with text still in it.
+function syncUnsavedGuard(ctx) {
+  const s = ctx.state;
+  s.setUnloadGuard([...s.configDrafts.values()].some(hasUnsavedTemplate));
+}
+
 function buildConfigPanel(ctx, model) {
   const s = ctx.state;
   const fields = s.optionsSchema?.providers?.[model.provider]?.fields ?? [];
@@ -515,6 +531,7 @@ function buildConfigPanel(ctx, model) {
       s.configSaveNote = { id: model.id, text: noteText };
       renderModelList(ctx);
     },
+    onDraftChange: () => syncUnsavedGuard(ctx),
     onReload: () => reloadModel(ctx, model),
     onReset: () => renderModelList(ctx),
     // The fit meter's Load gate (design §5: MLX FAIL disables Load with the

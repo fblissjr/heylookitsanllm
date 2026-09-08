@@ -189,8 +189,10 @@ backend):**
   gemma-4 buckets 70/140/280/560/1120, qwen continuous pixel budget; null = processor default).
 
 ### 3f. utils / markdown — keep
-- `utils.js`: `createEl`, `beforeUnloadGuard`, `throttleToFrame`, `statCard`, `formatBytes`. (v3 folds
-  beforeUnloadGuard + throttle handling into `createPage`, but keep the primitives.)
+- `utils.js`: `createEl`, `createUnloadGuard`, `throttleToFrame`, `statCard`, `formatBytes`. (v3 folds
+  beforeunload + throttle handling into `createPage`, but keep the primitives.) The refcounted
+  `beforeUnloadGuard` behind it is module-private: a page takes `createUnloadGuard(ctx)` and sets a
+  boolean, so the refcount stays balanced and teardown disarms without a hand-written exit.
 - `markdown.js`: `renderMarkdown(text)` = `marked.parse` → `DOMPurify.sanitize`, falls back to
   `escapeHtml` on parse error. **The only sanctioned path for model/user text → HTML.** Never double-sanitize.
   `marked.use()` (not `setOptions`, removed in marked v5+). `ensureMarked()` is now a no-op — drop it.

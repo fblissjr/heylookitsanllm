@@ -704,6 +704,49 @@ export async function runPagesSuite({ suite, ctx, config }) {
     }
   });
 
+  await suite.check('an unsaved template body arms the unload guard', async () => {
+    // Runs on what the PREVIOUS check left: typed text that has already
+    // survived a models-list rebuild, which is the whole point of the
+    // ordering. The guard underneath is refcounted process-wide, and a
+    // rebuild constructs a NEW editor over the SAME draft object with no
+    // destroy hook -- so a per-panel enable() leaks one count per rebuild and
+    // the first disarm below could never reach zero.
+    // The probe dispatches at `window`, which is where the handler is
+    // registered and where the browser fires the real one -- not a convenient
+    // node that happened to be in scope. What it cannot see is whether Chrome
+    // paints the dialog; chat.mjs's mid-stream reload observes that end for
+    // real, by having to accept it.
+    const armed = () => page.evaluate(() =>
+      !window.dispatchEvent(new Event('beforeunload', { cancelable: true })));
+
+    // Assert the precondition rather than assuming it: the text typed in the
+    // previous check must ALREADY have the guard armed here, which is also
+    // the only proof that a rebuilt panel re-arms through render()/syncDirty
+    // rather than only on a keystroke. Without this the disarm below could
+    // pass on a guard that was never armed at all.
+    assert(await armed(),
+      'the draft left by the rebuild check did not arm the guard -- everything below would pass vacuously');
+
+    const clearBody = async () => {
+      await page.$eval('.cfg-tmpl__body', (el) => { el.focus(); el.select(); });
+      await page.keyboard.press('Backspace');
+      await waitFor(async () => (await page.$eval('.cfg-tmpl__body', (el) => el.value)) === '',
+        { timeout: 5000, message: 'the template body never cleared' });
+    };
+
+    await clearBody();
+    assert(!(await armed()),
+      'the guard stayed armed after the draft was cleared -- a refcount leaked on the rebuild, and the dialog now fires on every page');
+
+    await page.type('.cfg-tmpl__body', '{# E2E-GUARD-MARKER #}');
+    assert(await armed(), 'unsaved template text did not arm the unload guard');
+
+    // A blank box is not pending work -- Save refuses it -- so the guard must
+    // agree with the button rather than warn about losing nothing.
+    await clearBody();
+    assert(!(await armed()), 'the guard stayed armed with nothing left to save');
+  });
+
   await suite.check('open config panel fits a phone viewport', async () => {
     await ctx.setViewport(390, 780);
     assert(await noHorizontalOverflow(page), 'horizontal overflow at 390px with the config panel open');
@@ -735,6 +778,44 @@ export async function runPagesSuite({ suite, ctx, config }) {
     await waitFor(async () => (await count(page, '.model-row')) > 0, { message: 'rows' });
     assert(await noHorizontalOverflow(page), 'horizontal overflow at 390px on models page');
     await ctx.setViewport(1280, 900);
+  });
+
+  await suite.check('leaving the models page disarms the unload guard', async () => {
+    // The exit that hurts: page teardown. An enable() with no matching
+    // disable() leaves the dialog armed over chat, notebook and perf, which
+    // own no unsaved work at all and would never clear it. createUnloadGuard
+    // registers that disarm itself; this checks the page routes through it.
+    // The probe dispatches at `window`, which is where the handler is
+    // registered and where the browser fires the real one -- not a convenient
+    // node that happened to be in scope. What it cannot see is whether Chrome
+    // paints the dialog; chat.mjs's mid-stream reload observes that end for
+    // real, by having to accept it.
+    const armed = () => page.evaluate(() =>
+      !window.dispatchEvent(new Event('beforeunload', { cancelable: true })));
+
+    await ctx.open('#/models');
+    await page.waitForSelector('.models');
+    await waitFor(async () => (await count(page, '.model-row')) > 0, { message: 'no model rows' });
+    const row = await findModelRow(page, config.model);
+    const btn = await row.evaluateHandle((r) =>
+      [...r.querySelectorAll('.model-row__actions button')].find((b) => b.textContent.trim() === 'Configure'));
+    await btn.asElement().click();
+    await btn.dispose();
+    await page.waitForSelector('.model-config', { timeout: 10000 });
+    await page.$eval('.cfg-tmpl > summary', (el) => el.click());
+    await waitFor(async () => Boolean((await textOf(page, '.cfg-tmpl__origin') || '').trim()),
+      { timeout: 10000, message: 'template panel never resolved an origin' });
+
+    await page.type('.cfg-tmpl__body', '{# E2E-TEARDOWN-MARKER #}');
+    assert(await armed(), 'typed template text did not arm the guard');
+
+    // Hash nav, not a reload: the path beforeunload cannot see, and the one
+    // that discards the draft. The draft dying here is by design; the dialog
+    // outliving the page that raised it is not.
+    await ctx.goHash('#/chat');
+    await page.waitForSelector('.chat', { timeout: 15000 });
+    assert(!(await armed()),
+      'the guard survived the models page teardown -- the dialog is armed on every other page now');
   });
 
   await suite.check('no uncaught page errors during the suite', async () => {

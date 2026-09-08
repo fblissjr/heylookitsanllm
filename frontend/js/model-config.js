@@ -243,13 +243,22 @@ const gib = (v) => `${v.toFixed(1)} GiB`;
 const TMPL_DRAFT = '__chat_template_body';
 const TMPL_OPEN = '__chat_template_open';
 
+// "Does this draft hold unsaved template text", for a page that owns the
+// draft but not the panel. Presence is the whole test because syncDirty
+// DELETES the key the moment the body matches the server's -- but a blank
+// body is not pending work: Save refuses it, so a warning about losing it
+// would fire where no button could have saved anything. The guard and the
+// Save button answer the same question.
+export const hasUnsavedTemplate = (draft) =>
+  Boolean(draft && String(draft[TMPL_DRAFT] ?? '').trim());
+
 // A textarea's value getter normalizes CRLF to LF, so comparing it against a
 // raw server string makes a Windows-authored template read as edited the
 // instant it is painted -- Save enabled, nothing typed, and a PUT that
 // differs from disk only in line endings.
 const eol = (t) => String(t ?? '').replace(/\r\n?/g, '\n');
 
-function buildChatTemplatePanel({ model, draft }) {
+function buildChatTemplatePanel({ model, draft, onDraftChange }) {
   const statusEl = createEl('div', { class: 'cfg-tmpl__status', role: 'status' });
   const originEl = createEl('div', { class: 'cfg-tmpl__origin muted small' });
   const areaId = `cfg-tmpl-${model.id}`.replace(/[^a-zA-Z0-9_-]/g, '-');
@@ -285,6 +294,9 @@ function buildChatTemplatePanel({ model, draft }) {
     // a stale body over a template someone changed elsewhere.
     if (body === eol(serverText)) delete draft[TMPL_DRAFT];
     else draft[TMPL_DRAFT] = area.value;
+    // The draft outlives this panel, so whoever owns it hears every change --
+    // including the ones that come from render() and commit(), not just typing.
+    onDraftChange?.();
   };
 
   function render(view) {
@@ -553,7 +565,7 @@ function buildFitMeter({ model, overrides, onGate }) {
 //           reclaimable RAM on either provider) and the page should disable
 //           its Load affordance with that reason; null lifts the gate
 //           (including on fit-unavailable -- never block on missing info).
-export function createModelConfigEditor({ model, fields: allFields, draft, initialNote, onError, onSaved, onReload, onReset, onFitGate }) {
+export function createModelConfigEditor({ model, fields: allFields, draft, initialNote, onError, onSaved, onReload, onReset, onFitGate, onDraftChange }) {
   const fields = allFields.filter((f) => !isHidden(f));
   const idPrefix = `mcfg-${model.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
   // Editor-local baseline (what dirty is measured against). A copy, updated
@@ -617,7 +629,7 @@ export function createModelConfigEditor({ model, fields: allFields, draft, initi
     return overrides;
   };
   const fitMeter = buildFitMeter({ model, overrides: fitOverrides, onGate: onFitGate });
-  const chatTemplate = buildChatTemplatePanel({ model, draft });
+  const chatTemplate = buildChatTemplatePanel({ model, draft, onDraftChange });
 
   const onEdit = (name, rawValue) => {
     draft[name] = rawValue;

@@ -85,9 +85,11 @@ const beforeUnloadHandler = (e) => {
   e.returnValue = '';
 };
 
-// One global guard; refcounted so overlapping users don't fight.
+// One global guard; refcounted so overlapping users don't fight. NOT exported:
+// every consumer goes through createUnloadGuard below, so the refcount cannot
+// be unbalanced from a call site that has no teardown to disarm in.
 let unloadGuards = 0;
-export const beforeUnloadGuard = {
+const beforeUnloadGuard = {
   enable() {
     if (++unloadGuards === 1) window.addEventListener('beforeunload', beforeUnloadHandler);
   },
@@ -97,6 +99,34 @@ export const beforeUnloadGuard = {
     }
   },
 };
+
+// Page-level ownership of that guard: one boolean per page, so a caller can
+// answer "do I have unsaved work" as often as it likes and the refcount stays
+// balanced by construction. Every real consumer has its enable() and its
+// disable() structurally far apart -- a models config draft outlives the panel
+// showing it (rebuilt on every save), a chat stream outlives the click that
+// started it -- so a per-widget enable() leaks a refcount on each rebuild and
+// leaves the dialog armed over the whole app, including pages that own no
+// unsaved work at all. Teardown disarms, which is the exit hand-written
+// bookkeeping forgets.
+//
+// This is for work only the USER can commit (a button they have not pressed).
+// Where a page owns a debounced writer with a server home -- notebook's
+// scheduleSave, the prompt sections, bindDocumentParams -- the flush-on-hide
+// path is the better answer and a dialog would be a regression: it asks a
+// question the app can just answer by saving.
+export function createUnloadGuard(ctx) {
+  let armed = false;
+  const set = (unsaved) => {
+    const want = Boolean(unsaved);
+    if (want === armed) return;
+    armed = want;
+    if (want) beforeUnloadGuard.enable();
+    else beforeUnloadGuard.disable();
+  };
+  ctx.onTeardown(() => set(false));
+  return set;
+}
 
 // Page status line: plain text, danger color when it's an error.
 export function setStatus(el, text, isError = false) {

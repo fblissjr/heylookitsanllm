@@ -24,7 +24,7 @@
 //   controller.abort() -- the server's disconnect path persists instead.
 
 import { createPage } from '../page.js';
-import { createEl, autoGrow, armedConfirm, beforeUnloadGuard, formatBytes, formatTokens, setStatus, dismissPaneOnOutsideClick } from '../utils.js';
+import { createEl, autoGrow, armedConfirm, createUnloadGuard, formatBytes, formatTokens, setStatus, dismissPaneOnOutsideClick } from '../utils.js';
 import { api } from '../api.js';
 import { streamGenerate, stopGenerate } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
@@ -114,9 +114,10 @@ export default createPage({
       onError: (msg) => showStatus(ctx, msg, true),
     });
     s.paint = ctx.throttleTime(() => paintStream(ctx), PAINT_INTERVAL_MS);
-    ctx.onTeardown(() => {
-      if (s.stream) beforeUnloadGuard.disable();
-    });
+    // A run in flight is the same kind of at-risk work as an uncommitted
+    // draft: leaving the page kills it. Shared with the models page; the
+    // teardown disarm this used to do by hand is inside the guard now.
+    s.setUnloadGuard = createUnloadGuard(ctx);
 
     // Chat's shared-drawer contribution: the preset bar + per-conversation
     // system-prompt editor lead the panel; full sampler controls; caps track
@@ -2085,10 +2086,14 @@ function adoptConversationMeta(ctx, conv, { keepPrompt = false } = {}) {
 // entirely, which is the line the scenario the check is FOR actually
 // produces. A hand-copied constant is a defect with a delay; this repo
 // already derives rather than copies everywhere else it can.
+// The ARRAY is the export, and isGeneratingNote iterates it. Exporting the
+// two names individually only moved the hand-enumeration: this file still
+// listed them twice and the check still named them one by one, so a THIRD
+// status wording would reach neither.
 export const GENERATING_PREFIX = 'Still generating on the server';
 export const MODEL_SWITCH_PREFIX = 'The reply in flight keeps generating';
-const isGeneratingNote = (text) =>
-  text.startsWith(GENERATING_PREFIX) || text.startsWith(MODEL_SWITCH_PREFIX);
+export const GENERATING_PREFIXES = [GENERATING_PREFIX, MODEL_SWITCH_PREFIX];
+const isGeneratingNote = (text) => GENERATING_PREFIXES.some((p) => text.startsWith(p));
 
 // The composer button has exactly two REST states and they are written from
 // two places (a remote flag changing, and a local stream releasing). One
@@ -2931,7 +2936,7 @@ function startStream(ctx, opts = {}) {
   s.remoteGenerating = false;  // the local stream owns the button now
   s.sendBtn.textContent = 'Stop';
   s.sendBtn.title = 'Stop this run and keep what has been generated so far';
-  beforeUnloadGuard.enable();
+  s.setUnloadGuard(true);
 
   // The dead air before the first token is the one moment the user cannot
   // tell a slow model from a hung one -- and on a cold target it is a
@@ -3183,7 +3188,7 @@ function releaseStream(ctx, stream) {
   stream.controller.abort();
   if (s.stream !== stream) return;
   s.stream = null;
-  beforeUnloadGuard.disable();
+  s.setUnloadGuard(false);
   if (!ctx.alive) return;
   // Restore from the CONVERSATION's state, not from a literal. This stream is
   // over, but the document on screen may be one the server is still generating
