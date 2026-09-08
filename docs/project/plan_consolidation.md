@@ -209,6 +209,20 @@ These are rules, not observations:
 - **Say what you are about to run, before running it.** The expensive shared
   step is a smoke run; two sessions doing it independently is pure waste, and
   one session assuming the other did it is worse.
+- **Knowing about oracles that cannot fail does not make you immune to
+  writing one.** Two were written today, hours apart, by the two sessions most
+  focused on the problem: a browser check that polled the pre-rebuild DOM and
+  passed with its own fix deleted, and a `models.toml` check that read
+  `model_path` off the wrong nesting level and returned a confident "none".
+  Neither errored. Both produced a clean answer to a question that was never
+  asked, and clean reads exactly like pass. The defence is not vigilance —
+  it is running the check once against a state where it MUST fail.
+- **Name what a silence can and cannot mean, per claim.** A guarded warning
+  that never fires is consistent with "the guard held" AND with "the branch
+  was never reached", and those need different evidence. Today the branch was
+  pinned by a unit test that forces it, while the live silence spoke only to
+  the anomaly not occurring in operation. Splitting them is what let one
+  session tighten a changelog entry rather than defend it.
 
 ## Done means
 
