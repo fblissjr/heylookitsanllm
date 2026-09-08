@@ -6,6 +6,31 @@ Cross-session task backlog organized by priority.
 docs-twins entry added 2026-08-31 without a full backlog pass; iOS keyboard
 entry added 2026-09-05*
 
+## Retire per-model entries from models.toml (2026-09-08) — START HERE
+
+Owner decision, planned but NOT started. The plan is
+[`plan_registry_sidecars.md`](./plan_registry_sidecars.md); read it before
+touching `models.toml`, `model_registry.py`, `model_service.py` or the admin
+config editor, because the obvious edits in all four are the ones it warns
+about.
+
+- [ ] **Phase 0: `served_diff`, and nothing else starts first.** A pure
+  function over two configs reporting gained / lost / effective-config-changed
+  per id. Two constraints are non-negotiable and both were verified the hard
+  way: it takes `AppConfig`, never raw dicts (an unvalidated config resolves
+  EVERY model to the text loader — now a hard error, `45a03d1`), and
+  validation MUTATES the structure it validates, so the two sides cannot share
+  one. Test shape is a property, not a table of cases. Fixtures synthetic, no
+  machine paths.
+- [ ] **Decide the two open questions before Phase 2.** Read-only model
+  directories (a model that cannot be configured at all — may be the reason
+  per-model entries survive), and the twin (one directory is one model, and
+  the smoke text arm has no other cheap source).
+- [ ] **Phase 1 is independent and worth doing regardless**: the
+  always-reasoning thinking probe, and sidecar pairing in subdirectories.
+- [ ] Three dead entries warn at every startup and are safe to remove once
+  Phase 0 can show what removing them does.
+
 ## Frontend coverage gaps found mapping chat.js (2026-09-06)
 
 Surfaced by a full structural map of `frontend/js/pages/chat.js` (3078 lines).
