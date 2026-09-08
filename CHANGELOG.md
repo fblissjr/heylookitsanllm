@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.16]
+
+### Fixed
+
+- **`gpu_wired_limit.sh install` could abort in its worst state, silently,
+  and its success check verified nothing.** Both found reviewing v2.0.13's
+  fix to the same command.
+  - `install` does two independent things -- raise the value for THIS boot,
+    and register a LaunchDaemon for every boot after -- but did them in the
+    order that couples them. `launchctl bootstrap` sat under `set -e` with
+    the direct `sysctl -w` after it, so a bootstrap failure aborted the run
+    with the old job booted out, the new plist written, the value never
+    applied, and not even the trailing `echo` reached. The sysctl now goes
+    FIRST, where no launchd outcome can cost you it, and a `bootstrap`
+    failure is caught explicitly and says which half survived.
+  - The readback that reported success was `sysctl iogpu.wired_limit_mb`
+    AFTER the direct apply, so it read this script's own write: a plist
+    launchd never ran printed exactly the same reassuring line. The daemon
+    is now verified by asking launchd (`launchctl print`, no root needed),
+    which reports `runs` and `last exit code` -- and because `bootstrap`
+    returns before the job has run, the check WAITS for the run instead of
+    racing it, which is the race the old readback lost.
+
+### Changed
+
+- **`status` distinguishes the states that matter** instead of testing for
+  the plist file: not installed, plist on disk but not loaded (the silent
+  one -- it will not survive a reboot), loaded but its last run failed,
+  loaded and working, and loaded with a value that no longer matches the
+  edited plist. Each names the command that fixes it.
+- `set` and `install` now share one `apply_mb`; they carried two copies of
+  the same apply-and-advise step and the advice had already diverged.
+
 ## [2.0.15]
 
 ### Fixed
