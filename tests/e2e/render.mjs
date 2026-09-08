@@ -517,7 +517,34 @@ async function openChat(browser, base, {
   });
 
   await page.goto(`${base}/#/chat`, { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('.chat__messages .message', { timeout: 15000 });
+  // This wait cannot, on its own, tell apart the two ways a run fails before
+  // any check runs -- and both surface identically as a bare selector timeout
+  // here, which cost one session two rounds of chasing the wrong thing
+  // (2026-09-08):
+  //
+  //   1. E2E_V3_ROOT points one level off, so index.html 404s and nothing
+  //      mounts. `cp -R frontend DIR` is the usual cause: macOS copies AT DIR
+  //      when DIR does not exist and INSIDE it when it does.
+  //   2. E2E_V3_ROOT points at a frontend that does not BOOT (a module-load
+  //      error, e.g. a half-reverted tree). The variable faithfully serves
+  //      whatever it is handed, so this is the harness working correctly and
+  //      reporting a real defect -- it must not read as "the harness broke".
+  //
+  // One is a setup mistake, the other is a finding. Say which.
+  try {
+    await page.waitForSelector('.chat__messages .message', { timeout: 15000 });
+  } catch (err) {
+    const mounted = await page.$('#app').catch(() => null);
+    const why = !mounted
+      ? 'index.html never loaded (#app absent). E2E_V3_ROOT must point AT the '
+        + 'frontend directory -- the one CONTAINING index.html -- not its parent.'
+      : pageErrors.length
+        ? `the frontend loaded but threw at startup: ${pageErrors.join(' | ')}`
+        : '#app mounted but no message rendered -- the app booted and the stub '
+          + 'or the chat page is the suspect, not the root.';
+    err.message = `${err.message}\n      ${why}`;
+    throw err;
+  }
   // EVERY context is registered, so one check at the end can speak for all of
   // them. Eighteen separate `no uncaught page errors (...)` checks used to do
   // this one context at a time, and between them they caught none of the
