@@ -61,6 +61,12 @@ than passed over. Provider code changed across sessions —
 `providers/base.py`, `mlx_provider.py`, `llama_server_provider.py`,
 `mlx_embedding_provider.py`, `providers/common/template_info.py`.
 
+**In flight 2026-09-08:** another session claimed this run rather than both of
+us paying for it, using a warm setup from an earlier full pass that morning.
+That earlier pass is stale by exactly the argument this phase makes — it
+predates the provider-teardown change — which is why it is being re-run rather
+than cited.
+
 This phase exists because the destructor change is the one thing today that
 alters runtime behaviour on a path no unit test can see: `unload()` now takes
 `drain`, and `__del__` refuses to tear down when work is in flight. The unit
@@ -153,12 +159,21 @@ These are rules, not observations:
   carry it. When it is not yours, **ask whose it is** — three sessions each
   assumed `uv.lock` belonged to one of the others and nobody asked for a day.
   See Phase 1.
-- **Attribute by asking, not by inferring.** Two separate misattributions
-  happened today, in both directions: a fix credited to a session that did not
-  make it, and a `cp -R` diagnosis that was confidently wrong about another
-  session's setup. With three sessions on one branch, `git log` is the only
-  reliable record of who did what, and a guess offered as a finding wastes the
-  other session's time correcting it.
+- **Attribute by asking, not by inferring — and `git log` cannot answer it.**
+  Two separate misattributions happened today, in both directions: a fix
+  credited to a session that did not make it, and a `cp -R` diagnosis that was
+  confidently wrong about another session's setup. The first version of this
+  rule said to consult `git log`; that is wrong here and was corrected by the
+  session it would have misled. **Every commit today carries the same author**,
+  because the author is git config, not the session — so the log settles the
+  order and content of commits and says nothing about which session made them.
+  The only record of WHAT a session did is that session's own. So: ask, and
+  keep a record worth asking for. Append your own commit hashes to the day's
+  `internal/log/log_YYYY-MM-DD.md` as you go, which is the one place three
+  sessions can reconcile after the fact.
+- **Say what you are about to run, before running it.** The expensive shared
+  step is a smoke run; two sessions doing it independently is pure waste, and
+  one session assuming the other did it is worse.
 
 ## Done means
 
