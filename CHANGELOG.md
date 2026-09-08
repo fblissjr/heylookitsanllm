@@ -5,6 +5,95 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.36]
+
+### Fixed
+
+- **A chat-template override written at runtime never reached the capability
+  report.** `template_supports_thinking` and `template_supports_reasoning_effort`
+  are memoized, each justified by a comment saying templates change only with a
+  restart. The operator override (v2.0.22) made that false: the admin routes
+  write `chat_template.heylook.jinja` into the model's own directory at runtime
+  and it is the ladder's top rung, while nothing invalidated either cache and a
+  model reload did not either. An override that enables thinking was honoured by
+  generation while `/v1/models` kept reporting the model unable to think and the
+  panel kept hiding the toggle, until the process restarted. The key is now the
+  template files' identity, the shape `gguf_metadata`'s context-length cache
+  already used. Scoped deliberately: `_mlx_context_length` and
+  `_vendor_sampling_pairs` are memoized the same way and are correct, because
+  their inputs are not route-writable and the `context_length` override is
+  applied outside the cache. The new check was run red against the old key.
+
+- **Template validation probed one conversation shape.** It stopped at the first
+  shape that rendered, and the plainest is first, so the shape carrying a system
+  message was a fallback rather than a check. A template that renders
+  user/assistant/user and raises on any system message saved with a clean 200
+  and then failed at generation -- llama-server turns a raised jinja exception
+  into a 500 -- for every conversation with a system prompt, which is the
+  default. Every shape is tried now, and a trailing assistant turn and two
+  leading system messages were added. Declining a shape is still legal and still
+  does not block the write, but it is now DISCLOSED: `validate` returns the
+  refused shapes, `write_override` logs and returns them, and the PUT response
+  carries `refused_shapes`. Silence was what made the earlier version feel safe.
+
+- **`memory.py` appended a field removed in v2.0.30.** `sampler` was appended to
+  a list otherwise DERIVED from `REQUEST_SAMPLER_FIELDS`, so the getattr was
+  permanently null -- and the comment above it narrates that exact defect for
+  the retired `preset` before committing it for `sampler`.
+
+- **The startup path audit went quiet on changes, not just repeats.** Reporting
+  once per process also silenced a warning that CHANGED, so a bad path written
+  by an admin edit after startup was never reported again for the life of the
+  process. It now keys on the report text. Its "would deleting this disturb
+  anything else" answer also matched on `expanduser()` while the merge it
+  predicts matches on `resolve()`, so two spellings of one directory read as
+  unrelated.
+
+- **Nothing guarded the gguf vendor sampling layer on the generation path.**
+  Deleting the provider's `vendor=` argument left the whole suite green: the
+  covering test asserted the floor against a provider whose `model_path` does
+  not exist, so the vendor dict was empty and the assertion held either way, and
+  its second half exercised `samplers.py` rather than the provider. Replaced
+  with checks through `_build_payload` against a real header, both verified red
+  against that deletion. The reporting side already had a guard; generation,
+  which is where the original bug was, had none.
+
+### Changed
+
+- **Vendored `marked` updated.** These libraries have no lockfile entry, so
+  `scripts/vendor_frontend.py --check` is the only thing that reports drift, and
+  it was named in none of the recent releases -- which is how they sat a major
+  behind once before. Verified rather than assumed, since the URL scheme guard
+  in `markdown.js` exists precisely because marked does not filter schemes.
+
+- **Documentation corrected where the removals left it wrong**, including two
+  self-contradictions inside CLAUDE.md, a user-facing guide describing an
+  overlay deleted in v2.0.32, five stale items in the `frontend_v3_spec.md` §4
+  contract (among them a response field the backend sends and the contract did
+  not list), live-tense references to the removed sampler system in five modules
+  and the example config, and the wiki's chat-template ladder, which was a rung
+  short and wrong in shape. Counts removed rather than corrected, per the
+  standing rule.
+
+- **The registry-sidecars plan is implementable.** Its `served_diff` signature
+  was specified three incompatible ways, one of which cannot be written at all;
+  the discovery list is now injected, which makes the function pure and its
+  fixtures synthetic. Phase 4's inventory is deleted rather than corrected --
+  it rests on a gitignored file, so no figure in it is verifiable.
+
+### Release standard
+
+- `tests/smoke/` green on all three engine arms against an isolated live server
+  (mlx-lm, mlx-vlm, gguf), plus the contract-only rows. This covers v2.0.32,
+  which changed generation output for every thinking request on both engines and
+  had shipped without one.
+- Three rows report UNCOVERED rather than passing, and none is new: thinking
+  DEPTH on both MLX arms (no served MLX model on those arms advertises
+  `reasoning_effort`), and the nested-image conformance row on mlx-lm, which is
+  text-only by construction.
+- `scripts/vendor_frontend.py --check` clean after the update above.
+- Backend suite green; the model-free render suite green against the new marked.
+
 ## [2.0.35]
 
 ### Added
