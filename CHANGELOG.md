@@ -5,6 +5,84 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.35]
+
+### Added
+
+- **An unsaved chat template now warns before it is thrown away.** A template
+  body typed into the models page config panel lives in that page's per-model
+  draft object, which is built fresh on every mount -- so a reload discarded
+  it with no warning. The page now arms the browser's beforeunload guard while
+  any draft on it holds unsaved text.
+
+  SCOPE, and it is narrower than "unsaved work is safe now": this covers
+  reload, close and external navigation ON A DESKTOP BROWSER. An in-app HASH
+  navigation still discards the draft and `beforeunload` structurally cannot
+  see one -- clicking Chat in the nav bar tears the page down with no event to
+  raise. iOS Safari does not fire `beforeunload` reliably at all, so the phone
+  this frontend explicitly targets gets nothing; the draft is written down as a
+  rough edge in the user guide rather than papered over here. It is deliberately
+  NOT persisted: it has a home from the first keystroke (Save), and a stored
+  body would win over a template refetched from disk, including one another
+  session wrote.
+
+  Armed exactly when Save is enabled, so a cleared editor disarms rather than
+  warning about losing nothing. Schema config fields are not counted: their
+  draft keys are written even when the value matches saved, so presence does
+  not mean dirty there, and the loss is a number retyped in seconds.
+
+- **An edit carrying an image has a check now, on the arm where it can fail.**
+  `editedContentBlocks` preserves the edited row's block ORDER because
+  llama-server rewrites an image part into a POSITIONAL media marker -- and
+  chat.js says outright that this was REASONED about rather than observed,
+  since on MLX it cannot matter (mlx-vlm re-derives marker order per model).
+  Nothing had observed it. The check edits a message carrying an image and
+  asserts the image survives, the stored block order is unchanged, and the
+  editor shows what it is keeping.
+
+### Changed
+
+- **One way to hold the beforeunload guard: `createUnloadGuard(ctx)`.** The
+  refcounted primitive is now module-private in `utils.js`; a page takes a
+  setter and passes it a boolean. The refcount cannot be unbalanced from a
+  call site, and teardown disarms without a hand-written exit. `chat.js` --
+  the guard's only previous consumer, for a live generation -- adopts it and
+  loses its own teardown bookkeeping.
+
+  That is what makes page-level ownership safe on the models page: a config
+  panel is REBUILT on every save, over the same draft object and with no
+  destroy hook, so a per-panel `enable()` would leak a refcount per rebuild
+  and leave the dialog armed over pages that own no unsaved work at all.
+  It also refuses to re-arm after its page is torn down, which is not
+  hypothetical: the template panel's GET carries no abort signal, and a failing
+  PUT re-writes the draft key it optimistically cleared, so either landing late
+  would have enabled a guard with no owner -- no teardown left to disarm it,
+  and the next mount's guard is a different closure. That is a leave-site
+  dialog stuck on every page for the session, and it is refused in the
+  primitive so the next consumer inherits the refusal.
+
+  Checked in `tests/e2e/suites/pages.mjs`: clearing a draft after a rebuild
+  disarms, leaving the page disarms, a save rejecting after teardown cannot
+  re-arm, and a draft whose panel is no longer on screen still holds the
+  guard.
+
+### Verified
+
+- Both engines, not one. `bun run e2e:pages` green on an MLX text arm
+  (`Qwen3.5-0.8B-MLX-8bit`) and on a gguf vision+thinking arm
+  (`google_gemma-4-E4B-it-qat-q4_0-gguf`); `bun run e2e:chat` green on that
+  gguf arm, on `unsloth_Qwen3.8-27B-UD-Q8_K_XL` (gguf vision+thinking) and on
+  the MLX arm. The chat runs are what exercise the guard's OTHER consumer, a
+  live generation. The image-edit check ran on the MLX vision arm too and is
+  green there; the gguf arms are where its ORDER assertion can fail at all.
+
+- UNCOVERED, named rather than passed over:
+  `unsloth_DeepSeek-V4-Flash-Vision-Exp-GGUF-UD-Q4_K_XL` was asked for and did
+  not run. `scripts/ram_report.py` refused it on reclaimable RAM at the time,
+  with unrelated processes holding the difference. Nothing about the model or
+  the change -- the machine was busy, and forcing a barely-fitting load is the
+  configuration that produced this model's known first-decode Metal OOM.
+
 ## [2.0.34]
 
 ### Verified
