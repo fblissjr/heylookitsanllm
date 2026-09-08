@@ -207,16 +207,18 @@ def metal_ceilings() -> Optional[dict]:
 # Model sizing
 # ---------------------------------------------------------------------------
 
-def _shard_set_bytes(f: Path) -> int:
-    """Bytes of the whole split set ``f`` belongs to, else ``f``'s own size."""
+def _shard_set_members(f: Path) -> list[Path]:
+    """Every file in the split set ``f`` belongs to, else ``f`` alone."""
     m = _SHARD_RE.search(f.name)
     if m is None:
-        return f.stat().st_size
+        return [f]
     prefix = f.name[: m.start()]
-    return sum(
-        s.stat().st_size
-        for s in f.parent.glob(f"{_glob.escape(prefix)}-*-of-*.gguf")
-    )
+    return sorted(f.parent.glob(f"{_glob.escape(prefix)}-*-of-*.gguf"))
+
+
+def _shard_set_bytes(f: Path) -> int:
+    """Bytes of the whole split set ``f`` belongs to, else ``f``'s own size."""
+    return sum(s.stat().st_size for s in _shard_set_members(f))
 
 
 def is_mlx_config(config: dict) -> bool:
@@ -228,6 +230,44 @@ def is_mlx_config(config: dict) -> bool:
     ``provider`` instead and passes it explicitly.
     """
     return not str(config.get("model_path") or "").lower().endswith(".gguf")
+
+
+def largest_alloc_gb(config: dict) -> float:
+    """Upper bound on the LARGEST SINGLE allocation this model needs, in GiB.
+
+    The Metal per-allocation cap is a limit on ONE buffer, so the summed weight
+    of a model is the wrong thing to compare against it: a sharded set never
+    becomes one allocation, which is why the old comparison warned that a model
+    "needs a sharded/split layout" while reading a model that already had one.
+
+    The largest single FILE is the honest upper bound. llama.cpp maps roughly a
+    buffer per shard, so for gguf this is close to exact; MLX allocates
+    per-tensor, well below its file, so for MLX it is conservative -- it can
+    still warn early, never late. 0.0 when nothing is readable, which callers
+    treat as "cannot answer" rather than as "fits".
+    """
+    biggest = 0
+    seen: set[Path] = set()
+    primary = Path(config.get("model_path") or "")
+    candidates: list[Path] = []
+    if primary.is_dir():
+        candidates += [f for pattern in ("*.safetensors", "*.gguf")
+                       for f in primary.rglob(pattern)]
+    elif primary.is_file():
+        candidates += _shard_set_members(primary)
+    for key in ("mmproj_path", "draft_model_path"):
+        sidecar = Path(config.get(key) or "")
+        if sidecar.is_file():
+            candidates += _shard_set_members(sidecar)
+    for f in candidates:
+        if f in seen:
+            continue
+        seen.add(f)
+        try:
+            biggest = max(biggest, f.stat().st_size)
+        except OSError:
+            continue
+    return biggest / GB
 
 
 def size_config_gb(config: dict) -> tuple[float, list[str]]:
@@ -343,7 +383,8 @@ def unsizeable_reason(report: FitReport) -> Optional[str]:
 
 
 def evaluate_fit(size_gb: float, headroom_gb: float, hard_working_set: bool,
-                 sizing_notes: Optional[list[str]] = None) -> FitReport:
+                 sizing_notes: Optional[list[str]] = None,
+                 largest_alloc_gb: Optional[float] = None) -> FitReport:
     """Check ``size_gb`` + ``headroom_gb`` against every ceiling that can
     refuse (or degrade) a load. Pure of I/O except the ceiling reads."""
     need = size_gb + headroom_gb
@@ -381,12 +422,17 @@ def evaluate_fit(size_gb: float, headroom_gb: float, hard_working_set: bool,
         # its first decode (DeepSeek V4 Flash Vision, 2026-09-07).
         if sysctl_wired_mb == 0 and (not ws_ok or headroom_thin):
             sysctl_suggest_mb = suggest_wired_limit_mb(size_gb, need)
-        if size_gb > max_buffer_gb:
+        # ONE allocation against a ONE-allocation cap. Comparing the summed
+        # weight here warned that a sharded model "needs a sharded layout" --
+        # advice it had already taken. None = the caller could not size a
+        # single file, and no verdict is better than a wrong one.
+        if largest_alloc_gb is not None and largest_alloc_gb > max_buffer_gb:
             lines.append(FitLine(
                 ceiling="metal_max_buffer",
                 verdict="warn",
-                need_gb=size_gb, have_gb=max_buffer_gb,
-                note="per-allocation cap -- needs a sharded/split layout, not more RAM",
+                need_gb=largest_alloc_gb, have_gb=max_buffer_gb,
+                note="per-allocation cap -- the largest single file exceeds it; "
+                     "needs a more finely split layout, not more RAM",
             ))
 
     verdict = "pass"
@@ -423,4 +469,6 @@ def fit_for_config(config: dict, headroom_gb: float = 8.0,
     if hard_working_set is None:
         hard_working_set = is_mlx_config(config)
     size_gb, notes = size_config_gb(config)
-    return evaluate_fit(size_gb, headroom_gb, hard_working_set, sizing_notes=notes)
+    largest = largest_alloc_gb(config) or None
+    return evaluate_fit(size_gb, headroom_gb, hard_working_set, sizing_notes=notes,
+                        largest_alloc_gb=largest)

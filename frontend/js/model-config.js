@@ -424,8 +424,21 @@ function buildFitMeter({ model, overrides, onGate }) {
     const ram = r.lines.find((l) => l.ceiling === 'reclaimable_ram');
     const buf = r.lines.find((l) => l.ceiling === 'metal_max_buffer');
     if (ram?.verdict === 'fail') {
-      pieces.push(`Won't fit: needs ${gib(ram.need_gb)} (weights + headroom), `
-        + `~${gib(ram.have_gb)} reclaimable.`);
+      // A LOADED model is itself holding the memory this line measures
+      // against, so the counterfactual "could this be loaded" is depressed by
+      // exactly the model asking the question -- and the panel said "Won't
+      // fit" about a model that was running at the time. Reclaimable is
+      // total minus anonymous minus wired, and Metal wires a resident model's
+      // working set, so its own bytes are subtracted from the figure. Say
+      // what is true instead; the other ceilings are unaffected and still
+      // render. (The Load gate below already ignores the verdict when loaded,
+      // so nothing downstream changes.)
+      pieces.push(model.loaded
+        ? `Loaded now, so this model's own memory is excluded from the `
+          + `~${gib(ram.have_gb)} reclaimable figure — unload it to see what a `
+          + `fresh load would find.`
+        : `Won't fit: needs ${gib(ram.need_gb)} (weights + headroom), `
+          + `~${gib(ram.have_gb)} reclaimable.`);
     }
     if (ws && ws.verdict !== 'pass') {
       const over = gib(ws.need_gb - ws.have_gb);

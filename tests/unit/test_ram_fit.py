@@ -103,15 +103,36 @@ class TestReportFields:
         report = evaluate_fit(155.0, 8.0, hard_working_set=False)
         assert report.sysctl_suggest_mb == int((192.0 - ram_fit.OS_RESERVE_GB) * 1024)
 
-    def test_max_buffer_warn_is_weights_only(self, monkeypatch):
-        # The per-allocation cap compares WEIGHTS (one allocation's worth),
-        # not weights+headroom, and never fails the fit by itself.
+    def test_max_buffer_compares_ONE_allocation_not_the_sum(self, monkeypatch):
+        # The cap limits a single buffer, so the summed weight is the wrong
+        # thing to compare against it. The old check used the sum and therefore
+        # told a SHARDED model it "needs a sharded/split layout" -- advice it
+        # had already taken. Never fails the fit by itself either way.
         _patch_ceilings(monkeypatch, usable=200.0, working_set=200.0, max_buffer=50.0)
-        report = evaluate_fit(60.0, 8.0, hard_working_set=True)
-        buf = next(l for l in report.lines if l.ceiling == "metal_max_buffer")
-        assert buf.verdict == "warn"
-        assert buf.need_gb == 60.0
-        assert report.verdict == "warn"
+
+        # sum over the cap, no single file near it -> NO warning
+        sharded = evaluate_fit(60.0, 8.0, hard_working_set=True, largest_alloc_gb=20.0)
+        assert not [l for l in sharded.lines if l.ceiling == "metal_max_buffer"]
+        assert sharded.verdict == "pass"
+
+        # one file over the cap -> warning, reporting THAT file, not the sum
+        monolith = evaluate_fit(60.0, 8.0, hard_working_set=True, largest_alloc_gb=55.0)
+        buf = next(l for l in monolith.lines if l.ceiling == "metal_max_buffer")
+        assert buf.verdict == "warn" and buf.need_gb == 55.0
+        assert monolith.verdict == "warn"
+
+        # unsizeable -> no verdict at all, rather than a wrong one
+        unknown = evaluate_fit(60.0, 8.0, hard_working_set=True)
+        assert not [l for l in unknown.lines if l.ceiling == "metal_max_buffer"]
+
+    def test_largest_alloc_reads_the_biggest_shard_not_the_set(self, tmp_path):
+        from heylook_llm.ram_fit import largest_alloc_gb, size_config_gb
+        for i, mb in ((1, 30), (2, 40), (3, 20)):
+            (tmp_path / f"m-0000{i}-of-00003.gguf").write_bytes(b"\0" * (mb << 20))
+        cfg = {"model_path": str(tmp_path / "m-00001-of-00003.gguf")}
+        total, _ = size_config_gb(cfg)
+        assert total == pytest.approx(90 / 1024, rel=0.01)      # the whole set
+        assert largest_alloc_gb(cfg) == pytest.approx(40 / 1024, rel=0.01)  # one shard
 
     def test_no_metal_reports_ram_only(self, monkeypatch):
         _patch_ceilings(monkeypatch, usable=100.0, working_set=None)
