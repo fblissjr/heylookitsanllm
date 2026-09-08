@@ -267,6 +267,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gap), the nested-image row on mlx-lm (a text-only model cannot cover it),
   and the thinking block on mlx-vlm (that model returned none for the probe
   prompt).
+- The PANEL driven in a real browser (`bun run e2e:pages`, two new checks):
+  lazy fetch, the origin line, Save gated on a real edit, and unsaved text
+  surviving a models-list rebuild. The rebuild check was VACUOUS on its first
+  draft and passed with the fix deleted -- it waited for the config PATCH to be
+  SENT, which happens before `renderModelList` runs, so it caught the old
+  textarea still holding the typed text. It now stamps the live panel and waits
+  for the stamp to be gone; verified red against the draft restore removed.
 - The override itself checked end to end on a live server, on BOTH engines:
   a written override reaches the REAL rendered prompt (`POST
   /v1/conversations/{id}/prompt`, which is llama-server's `/apply-template` on
