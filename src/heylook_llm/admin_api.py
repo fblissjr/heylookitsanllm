@@ -591,6 +591,15 @@ def delete_chat_template(model_id: str, request: Request):
     if model is None:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
     config = config_dict(model.config)
+    if model.provider not in chat_template_files.TEMPLATE_PROVIDERS:
+        # The same 400 PUT gives. Without it this answered 404 "no override to
+        # remove", which reads as "you have none" when the real answer is
+        # "this provider has no chat template at all" -- two different stories
+        # about one model to a client that mirrors PUT's error handling.
+        raise HTTPException(
+            status_code=400,
+            detail=f"The {model.provider} provider does not render a chat template.",
+        )
     try:
         removed = chat_template_files.remove_override(
             str(config.get("model_path") or ""))

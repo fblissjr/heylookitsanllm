@@ -68,6 +68,10 @@ class TestChatTemplateRoutes:
         assert written["override_present"] is True
         assert written["origin"] == HEYLOOK_OVERRIDE
         assert written["inert_reason"] is None
+        # The override's OWN body rides alongside what is in force. They agree
+        # here because it won; they diverge when it loses, and that is the
+        # case where the editor must still be able to show what you wrote.
+        assert written["override_template"] == OVERRIDE
 
         assert client.get(URL).json()["template"].startswith("OVERRIDE")
 
@@ -111,10 +115,28 @@ class TestChatTemplateRoutes:
         """mlx_embedding renders no chat template.
 
         `supported: false` is what stops the UI drawing an empty editor over a
-        model that has nothing to edit.
+        model that has nothing to edit, and PUT/DELETE must give the SAME
+        answer rather than one of them 404ing as though an override were
+        merely absent.
+
+        This asserts the false branch against a real embeddings row. The first
+        version asserted `supported is True` on an mlx model -- the opposite of
+        its own name -- and the false branch was unreachable through any route,
+        so deleting it from `view()` left this green.
         """
-        # The mlx row stands in for "has templates"; the contract asserted here
-        # is that `supported` is a real field the route populates per provider.
-        got = client.get("/v1/admin/models/test-mlx-model/chat-template")
+        got = client.get("/v1/admin/models/test-embedding-model/chat-template")
         assert got.status_code == 200, got.text
-        assert got.json()["supported"] is True
+        body = got.json()
+        assert body["supported"] is False
+        assert body["template"] is None
+        assert body["notes"], "supported:false with no explanation"
+
+        for res in (client.put("/v1/admin/models/test-embedding-model/chat-template",
+                               json={"template": OVERRIDE}),
+                    client.delete("/v1/admin/models/test-embedding-model/chat-template")):
+            assert res.status_code == 400, res.text
+            assert "does not render a chat template" in res.json()["detail"]
+
+        # and the templated providers still say true
+        assert client.get(
+            "/v1/admin/models/test-mlx-model/chat-template").json()["supported"] is True

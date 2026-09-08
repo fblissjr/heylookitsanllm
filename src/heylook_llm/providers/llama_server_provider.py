@@ -359,13 +359,17 @@ class LlamaServerProvider(BaseProvider):
             self.config, getattr(self, "model_id", None))
 
     @classmethod
-    def resolve_chat_template(cls, cfg: Dict, model_id: Optional[str] = None
-                              ) -> tuple[Optional[str], str]:
+    def resolve_chat_template(cls, cfg: Dict, model_id: Optional[str] = None,
+                              *, log: bool = True) -> tuple[Optional[str], str]:
         """The template file to spawn with, and a phrase for WHERE it came from.
 
         Takes a CONFIG, not a live provider, so the admin template view
         answers for models that are not resident and answers with the SAME
-        ladder a spawn would walk. A second implementation for previewing is
+        ladder a spawn would walk. ``log=False`` for that caller: the media
+        refusal below is a SPAWN warning, and emitting it from a read-only
+        route made merely opening the template panel log as though a load had
+        been refused -- three times per save-and-confirm cycle, which makes
+        the real one indistinguishable from the noise. A second implementation for previewing is
         the defect this repo keeps naming: it agrees on the day it is written
         and silently diverges after.
 
@@ -430,16 +434,17 @@ class LlamaServerProvider(BaseProvider):
                 # via __new__ in the argv/metadata drift test, which never runs
                 # BaseProvider's __init__, and the admin view calls this with
                 # a config alone. A log line must not be the thing that raises.
-                logging.warning(
-                    f"[GGUF] {model_id or '<unconstructed>'}: "
-                    f"IGNORING the {origin} chat template "
-                    f"{sidecar} -- this model is served with a projector "
-                    f"(mmproj/vision) and that template contains no media "
-                    f"markers, so using it would load the vision tower and then "
-                    f"render prompts that can never reference an image. Using "
-                    f"the GGUF's embedded template instead. Set "
-                    f"chat_template_path explicitly to override this refusal."
-                )
+                if log:
+                    logging.warning(
+                        f"[GGUF] {model_id or '<unconstructed>'}: "
+                        f"IGNORING the {origin} chat template "
+                        f"{sidecar} -- this model is served with a projector "
+                        f"(mmproj/vision) and that template contains no media "
+                        f"markers, so using it would load the vision tower and "
+                        f"then render prompts that can never reference an image. "
+                        f"Using the GGUF's embedded template instead. Set "
+                        f"chat_template_path explicitly to override this refusal."
+                    )
                 return None, f"embedded in the GGUF ({origin} skipped: no media handling)"
 
         return str(sidecar), origin
@@ -827,7 +832,11 @@ class LlamaServerProvider(BaseProvider):
         """Track a spawned llama-server for the exit backstop (see _ACTIVE_PROCS)."""
         _ACTIVE_PROCS.add(proc)
 
-    def unload(self):
+    def unload(self, *, drain: bool = True):
+        # `drain` is accepted for the BaseProvider contract and ignored:
+        # unloading gguf is a SIGTERM to a subprocess, which has never
+        # waited for in-flight requests (the wait below is the process
+        # exiting, not its traffic draining).
         proc = getattr(self, "_proc", None)
         self._proc = None
         self._base_url = None

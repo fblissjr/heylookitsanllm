@@ -5,6 +5,73 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.27]
+
+### Fixed
+
+- **A rejected chat-template override cost the model its working template.**
+  `read_template_info` refuses a template that renders none of the model's stop
+  tokens and walks the other sources for a usable one; that fallback list was
+  hand-written as `(tokenizer_config, chat_template_json)`, which was correct
+  only while `chat_template.jinja` was the TOP auto rung -- omitting the winner
+  was the point. v2.0.22 inserted the operator override above it and thereby
+  made the omission a bug: the vendor jinja in the same directory was never
+  retried, so a stop-less override installed NOTHING. The fallback is now the
+  ladder minus the source that failed, and cannot rot when a rung is added.
+- **The editor painted an empty box over the operator's own file.** When an
+  override lost the ladder the view returned the WINNER's body, so a rejected
+  template showed as blank with Save disabled and no way to repair it. The
+  override's own body now rides as `override_template` and the panel edits
+  that.
+- **`loaded_chat_template` asserted a body the process might not be using.** It
+  was assigned from the ladder, ignoring whether `install_chat_template`
+  actually installed anything -- under auto it returns early when the tokenizer
+  already has a template, so `stale` could report "up to date" about a template
+  the model is not rendering with. It is now read back off the object the
+  renderer reads, chosen the way mlx-vlm chooses it.
+- **The template write was not atomic.** A plain `write_text` truncates then
+  fills, so a load racing the write could read a half-written template -- on
+  gguf a jinja parse error inside llama-server, i.e. the exact bricking the
+  validation above it exists to prevent. Now a sibling temp file plus
+  `os.replace`.
+- **Validation skipped the MLX stop-token guard**, so the editor accepted with
+  a 200 a template the next load would throw away. The gguf media guard was
+  enforced from the start; its MLX counterpart was implemented next door and
+  never called.
+- **Opening the template panel logged fake spawn refusals.** The read-only view
+  reuses the gguf spawn ladder, which warns when the media guard rejects a
+  template -- from a route that never spawns anything, three times per
+  save-and-confirm cycle, making the real warning indistinguishable. The
+  preview caller now passes `log=False`.
+- `DELETE .../chat-template` on a provider that renders no template answered
+  404 ("you have no override") where PUT answers 400 ("this provider has no
+  chat template") -- two stories about one model. Same guard on both now.
+- `inert_reason` named a specific cause it had not verified, by elimination: a
+  gguf entry whose `model_path` names a directory loses the override with the
+  media guard never having run, and the panel blamed media markers anyway. It
+  now states what is known and points at the load log.
+
+### Changed
+
+- `TEMPLATE_PROVIDERS` derives from `PROVIDER_CONFIG_CLASSES` instead of
+  hand-listing `{"mlx", "gguf"}`.
+- The contract roster gained an `mlx_embedding` row, so the "this provider
+  renders no chat template" branch is REACHABLE through a route -- it was not,
+  and the test claiming to cover it asserted `supported is True` on an mlx
+  model, the opposite of its own name. Model-count assertions in three contract
+  tests now derive from the roster rather than hardcoding it.
+
+### Not changed
+
+- The review also reported that `4f6824e` bumped `__version__` to 2.0.23 while
+  its changelog entry read 2.0.22. Not reproduced: at that commit both are
+  2.0.22, and they match at every commit in the series.
+- `_mlx_view` parses `tokenizer.json` per request, which the review flagged as
+  avoidable by calling `_read_template` directly. Declined: the stop-token
+  verdict is what makes the view agree with what LOADS, and dropping it would
+  buy speed by letting the panel report an override as winning when the next
+  load will reject it.
+
 ## [2.0.26]
 
 ### Changed

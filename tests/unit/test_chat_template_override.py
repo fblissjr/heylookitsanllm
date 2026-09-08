@@ -1,7 +1,7 @@
 """The operator's chat-template override: does it win, and is it safe to undo.
 
-Four claims, one test each. They are the ones that decide whether the template
-editor is usable or actively harmful:
+The claims that decide whether the template editor is usable or actively
+harmful:
 
 1. The override outranks what the vendor shipped -- on BOTH engines. A rung
    added to one ladder and not the other is the shape this repo keeps getting
@@ -15,6 +15,9 @@ editor is usable or actively harmful:
    identical. This is the whole reason the override has its own filename: on
    MLX the vendor `chat_template.jinja` is usually the only copy in existence.
 4. Validation refuses a template that would brick a model, BEFORE writing.
+5. A rejected override does not cost the model its working template -- the
+   stop-less fallback must skip the source that FAILED, not a fixed list.
+6. The install reaches the object the vision path actually reads.
 """
 
 import pytest
@@ -165,6 +168,59 @@ class TestInstallTargetsTheProcessor:
 
         install_chat_template(tokenizer, self._info(), force=False, processor=processor)
         assert processor.chat_template == "VENDOR"
+
+
+class TestStopLessFallback:
+    """A rejected override must not cost the model its working template.
+
+    `read_template_info` refuses a template that renders none of the model's
+    stop tokens and walks the OTHER sources for a usable one. That fallback
+    list was hand-written as (tokenizer_config, chat_template_json), which was
+    correct only while `chat_template.jinja` was the TOP auto rung -- omitting
+    the winner was the point. Inserting the override above it turned the
+    omission into a bug: the vendor jinja sitting in the same directory was
+    never retried, so a stop-less override left NOTHING installed.
+    """
+
+    def test_a_stopless_override_falls_back_to_the_vendor_template(self, tmp_path):
+        from heylook_llm.providers.common.template_info import read_template_info
+
+        d = tmp_path / "mlx"
+        d.mkdir()
+        (d / "chat_template.jinja").write_text(VENDOR)  # carries <end_of_turn>
+        (d / "tokenizer_config.json").write_text(
+            '{"eos_token": "<end_of_turn>", "added_tokens_decoder": '
+            '{"1": {"content": "<end_of_turn>", "special": true}}}')
+        # renders text but never a stop token -> the loader must refuse it
+        (d / HEYLOOK_TEMPLATE_FILENAME).write_text(
+            "OVERRIDE{% for m in messages %}{{ m.content }}{% endfor %}")
+
+        info = read_template_info(d, None)
+
+        assert info.chat_template.startswith("VENDOR"), (
+            f"the vendor template was not recovered (source={info.template_source}) "
+            "-- a rejected override cost the model its only working template"
+        )
+
+    def test_a_stopless_vendor_template_still_falls_back_past_itself(self, tmp_path):
+        """The fallback skips the source that FAILED, not a fixed list.
+
+        Guards the derivation rather than the one case above: whichever rung
+        loses must be the one excluded, so adding a rung cannot strand it.
+        """
+        from heylook_llm.providers.common.template_info import read_template_info
+
+        d = tmp_path / "mlx"
+        d.mkdir()
+        (d / "chat_template.jinja").write_text(
+            "VENDOR{% for m in messages %}{{ m.content }}{% endfor %}")  # stop-less
+        (d / "tokenizer_config.json").write_text(
+            '{"eos_token": "<end_of_turn>", "chat_token": null, '
+            '"chat_template": "EMBEDDED{{ messages[0].content }}<end_of_turn>", '
+            '"added_tokens_decoder": {"1": {"content": "<end_of_turn>", "special": true}}}')
+
+        info = read_template_info(d, None)
+        assert info.chat_template.startswith("EMBEDDED"), info.template_source
 
 
 class TestValidation:

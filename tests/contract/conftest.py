@@ -54,6 +54,18 @@ TEST_MODELS_DATA = {
             "config": {"model_path": "/fake/mlx-model", "vision": False},
         },
         {
+            # An embeddings row, so the "this provider renders no chat
+            # template" branch is REACHABLE through a route. Without one, the
+            # chat-template route's `supported: false` path could be deleted
+            # wholesale with the suite still green.
+            "id": "test-embedding-model",
+            "provider": "mlx_embedding",
+            "description": "Test embedding model for contract tests",
+            "tags": ["test"],
+            "enabled": True,
+            "config": {"model_path": "/fake/embedding-model"},
+        },
+        {
             # A gguf row, so routes with a provider branch (context fields on
             # the admin row, ctx_size on /reload) have both arms reachable.
             # FakeProvider serves it like any other id; its path does not
@@ -69,6 +81,11 @@ TEST_MODELS_DATA = {
     "default_model": "test-mlx-model",
     "max_loaded_models": 2,
 }
+
+# Derived so a roster change updates every count and id assertion at once. The
+# hardcoded `== 2` these replace broke in three places the moment a third row
+# was added, which is the hand-copied constant list this repo derives away.
+TEST_MODEL_IDS = frozenset(m["id"] for m in TEST_MODELS_DATA["models"])
 
 
 # ---------------------------------------------------------------------------

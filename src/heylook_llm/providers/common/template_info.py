@@ -50,6 +50,12 @@ CHAT_TEMPLATE_JSON = "chat_template_json"
 HEYLOOK_TEMPLATE_FILENAME = "chat_template.heylook.jinja"
 HEYLOOK_OVERRIDE = "heylook_override"
 
+# The AUTO ladder in preference order. One list, read by the auto resolution
+# below AND by the stop-less fallback, so adding a rung updates both at once --
+# the fallback carried a hand-written subset of this and went stale the moment
+# a rung was inserted above the one it omitted.
+_AUTO_LADDER = (HEYLOOK_OVERRIDE, JINJA, TOKENIZER_CONFIG, CHAT_TEMPLATE_JSON)
+
 def _template_can_stop(body: str, eos_tokens: "frozenset[str]") -> bool:
     """True unless we're CONFIDENT the template can't signal the model to stop.
 
@@ -163,8 +169,19 @@ def read_template_info(
             "tokens %s -- it would generate until the max_tokens cap. Trying other sources.",
             model_dir.name, template_source, sorted(eos_tokens),
         )
+        rejected = template_source
         template, template_source = "", "none(stopless)"
-        for alt in (TOKENIZER_CONFIG, CHAT_TEMPLATE_JSON):
+        # DERIVED from the ladder, never a hand-written subset. This list used
+        # to be (TOKENIZER_CONFIG, CHAT_TEMPLATE_JSON), which was correct only
+        # while JINJA was the TOP auto rung -- omitting the winner was the
+        # point. v2.0.22 put HEYLOOK_OVERRIDE above it and thereby made the
+        # omission a bug: a stop-less override sent the model past the
+        # perfectly good vendor jinja sitting in the same directory and
+        # installed NOTHING. Skipping the source that just failed, rather than
+        # naming the survivors, cannot rot the same way when a rung is added.
+        for alt in _AUTO_LADDER:
+            if alt == rejected:
+                continue
             alt_body, alt_source = _read_template(model_dir, alt)
             if alt_body and _template_can_stop(alt_body, eos_tokens):
                 template, template_source = alt_body, alt_source
@@ -215,6 +232,15 @@ def _read_template(model_dir: Path, source: Optional[str]) -> tuple[str, str]:
 
     jinja_path = model_dir / "chat_template.jinja"
     config_path = model_dir / "tokenizer_config.json"
+
+    # Readable by NAME as well as by winning the auto ladder, so the stop-less
+    # fallback can try it like any other rung. Not reachable from models.toml:
+    # `is_explicit_source` treats any non-auto string as explicit, but the
+    # config field is documented as auto/jinja/tokenizer_config/
+    # chat_template_json/path -- this spelling exists for the fallback loop.
+    if normalized == HEYLOOK_OVERRIDE:
+        body = _read_file(model_dir / HEYLOOK_TEMPLATE_FILENAME)
+        return (body, HEYLOOK_OVERRIDE) if body is not None else ("", HEYLOOK_OVERRIDE)
 
     if normalized == JINJA:
         body = _read_file(jinja_path)

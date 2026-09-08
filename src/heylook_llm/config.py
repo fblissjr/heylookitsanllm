@@ -1464,6 +1464,13 @@ class ChatTemplateResponse(BaseModel):
         description=("Set when an override exists but something outranks it. An "
                      "editor whose writes go nowhere is worse than no editor, so "
                      "this is a field rather than a note."))
+    override_template: Optional[str] = Field(
+        default=None,
+        description=("The override file's OWN body, whether or not it won. "
+                     "`template` is what the model RENDERS with; these differ "
+                     "exactly when an override exists but lost the ladder, and "
+                     "an editor must show this one -- otherwise a rejected "
+                     "template is unreadable from the surface that wrote it."))
     stale: Optional[bool] = Field(
         default=None,
         description=("True when the LOADED model renders with something other than "

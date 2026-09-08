@@ -220,7 +220,22 @@ const gib = (v) => `${v.toFixed(1)} GiB`;
 // and re-derives none of them; the ladder lives in two providers and a
 // client-side second opinion would disagree with them the first time either
 // one changed.
-function buildChatTemplatePanel({ model }) {
+// `draft` is the caller's per-model scratch object, the same one the schema
+// fields use. Reserved keys (not schema field names, so save()'s dirtyFields
+// never sees them) carry the panel's unsaved state across a models-list
+// rebuild -- this file's own header states that is what `draft` is for, and
+// keeping the textarea in closure state meant clicking Load after typing a
+// 300-line template silently discarded it and re-collapsed the section.
+const TMPL_DRAFT = '__chat_template_body';
+const TMPL_OPEN = '__chat_template_open';
+
+// A textarea's value getter normalizes CRLF to LF, so comparing it against a
+// raw server string makes a Windows-authored template read as edited the
+// instant it is painted -- Save enabled, nothing typed, and a PUT that
+// differs from disk only in line endings.
+const eol = (t) => String(t ?? '').replace(/\r\n?/g, '\n');
+
+function buildChatTemplatePanel({ model, draft }) {
   const statusEl = createEl('div', { class: 'cfg-tmpl__status', role: 'status' });
   const originEl = createEl('div', { class: 'cfg-tmpl__origin muted small' });
   const areaId = `cfg-tmpl-${model.id}`.replace(/[^a-zA-Z0-9_-]/g, '-');
@@ -250,12 +265,22 @@ function buildChatTemplatePanel({ model }) {
   };
 
   const syncDirty = () => {
-    saveBtn.disabled = busy || area.value === serverText || !area.value.trim();
+    const body = eol(area.value);
+    saveBtn.disabled = busy || body === eol(serverText) || !body.trim();
+    // Keep only genuinely unsaved text; a pristine panel must not resurrect
+    // a stale body over a template someone changed elsewhere.
+    if (body === eol(serverText)) delete draft[TMPL_DRAFT];
+    else draft[TMPL_DRAFT] = area.value;
   };
 
   function render(view) {
-    serverText = view.template || '';
-    area.value = serverText;
+    // EDIT the override's own body, not the winner's. They differ exactly
+    // when an override exists but lost the ladder -- and painting the
+    // winner's body there made the operator's own file unreadable from the
+    // surface that wrote it: a rejected template showed as an empty box with
+    // Save disabled and no way to repair it.
+    serverText = (view.override_present ? view.override_template : view.template) || '';
+    area.value = draft[TMPL_DRAFT] ?? serverText;
     area.disabled = !view.supported || !view.writable;
     revertBtn.hidden = !view.override_present;
 
@@ -300,6 +325,7 @@ function buildChatTemplatePanel({ model }) {
     syncDirty();
     say(working);
     try {
+      delete draft[TMPL_DRAFT];
       render(await fn());
     } catch (e) {
       // The server's refusal message names what would have broken -- it is
@@ -312,7 +338,14 @@ function buildChatTemplatePanel({ model }) {
     }
   }
 
-  el.addEventListener('toggle', () => { if (el.open) load(); });
+  el.addEventListener('toggle', () => {
+    draft[TMPL_OPEN] = el.open;
+    if (el.open) load();
+  });
+  // Restore the open section AFTER the listener exists, and fetch explicitly:
+  // assigning `el.open` programmatically does not fire `toggle`, so setting it
+  // earlier reopened the panel onto a blank box that never loaded.
+  if (draft[TMPL_OPEN]) { el.open = true; load(); }
   area.addEventListener('input', syncDirty);
   saveBtn.addEventListener('click', () =>
     commit(() => api.adminSetChatTemplate(model.id, { template: area.value }),
@@ -557,7 +590,7 @@ export function createModelConfigEditor({ model, fields: allFields, draft, initi
     return overrides;
   };
   const fitMeter = buildFitMeter({ model, overrides: fitOverrides, onGate: onFitGate });
-  const chatTemplate = buildChatTemplatePanel({ model });
+  const chatTemplate = buildChatTemplatePanel({ model, draft });
 
   const onEdit = (name, rawValue) => {
     draft[name] = rawValue;

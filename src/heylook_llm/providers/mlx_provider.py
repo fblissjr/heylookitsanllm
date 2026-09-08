@@ -1014,9 +1014,20 @@ class MLXProvider(BaseProvider):
                 # override apply on the mlx-vlm path, not just mlx-lm's.
                 processor=self.processor,
             )
-            # What this process is actually rendering with, for the admin
-            # template view's "edited on disk, reload to apply" signal.
-            self.loaded_chat_template = self._template_info.chat_template or None
+            # What this process is actually rendering with, READ BACK off the
+            # object rather than assumed from the ladder. Under auto,
+            # install_chat_template returns early when the tokenizer already
+            # has a template, so the ladder's answer can be a body this
+            # process never installed -- asserting it would make `stale` say
+            # "up to date" about a template the model is not using, which is
+            # the same read-it/report-it/never-use-it failure the processor
+            # targeting fixed for the override case. Holder chosen the way
+            # mlx-vlm's get_chat_template chooses it: the processor when it
+            # carries one, else the tokenizer.
+            holder = (self.processor
+                      if getattr(self.processor, "chat_template", None)
+                      else tok)
+            self.loaded_chat_template = getattr(holder, "chat_template", None) or None
             # Warn only when NOTHING can render: no install happened, the
             # tokenizer has no HF template, and there's no wrapper-level
             # python template (mlx-lm chat_template_type sets
@@ -1745,7 +1756,7 @@ class MLXProvider(BaseProvider):
             logging.warning(f"Failed to clear cache for {self.model_id}: {e}")
             return False
 
-    def unload(self):
+    def unload(self, *, drain: bool = True):
         """Cleanup with cache clearing and performance logging.
 
         Waits for generation traffic to drain before releasing model
@@ -1761,12 +1772,35 @@ class MLXProvider(BaseProvider):
         also waits out OTHER models' traffic: accepted conservatism,
         bounded by the same 30s force-unload cap as before.
         """
+        if not drain:
+            # Called from __del__, which must neither block nor tear down live
+            # GPU state. Both halves matter: the loop below polls for up to 30s
+            # (a stall on whatever thread the GC fired on), and skipping the
+            # loop to free weights anyway would release them mid-decode, which
+            # is the Metal fault the loop exists to prevent. So: if anything is
+            # in flight, keep the resources and say so. Nothing should reach
+            # this branch with traffic -- a running generation holds a
+            # reference to its provider -- so the warning is a real signal, not
+            # noise to tune out.
+            with self._active_lock:
+                active = self._active_generations
+            waiting = (self.generation_queue_stats() or {}).get("waiting", 0)
+            if active or waiting:
+                logging.warning(
+                    f"{self.model_id} was garbage-collected with {active} active / "
+                    f"{waiting} waiting generation(s); leaving it loaded rather than "
+                    "tearing down mid-decode. A provider should not be collectable "
+                    "while it believes it is generating -- treat this as a leaked "
+                    "counter or a dropped reference, not as a teardown to tune."
+                )
+                return
+
         logging.info(f"Unloading MLX model: {self.model_id}")
 
         # Wait for active generations AND queued waiters to drain.
         max_wait = 30  # seconds
         start = time.time()
-        while True:
+        while drain:
             with self._active_lock:
                 active = self._active_generations
             stats = self.generation_queue_stats() or {}

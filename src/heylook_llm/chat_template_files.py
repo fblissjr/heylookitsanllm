@@ -26,6 +26,7 @@ after, which is the failure this repo keeps naming.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -39,9 +40,18 @@ from .providers.common.template_info import (
 
 logger = logging.getLogger(__name__)
 
-# Providers that render a chat template at all. mlx_embedding has no chat
-# surface, so the route answers "not applicable" rather than an empty editor.
-TEMPLATE_PROVIDERS = frozenset({"mlx", "gguf"})
+# Providers that render a chat template at all: DERIVED from the provider
+# roster, not hand-listed. `PROVIDER_CONFIG_CLASSES` is this repo's single
+# source of truth for the provider Literal, and a hand-copied sibling list is
+# what the reload set, the import allowlist and /v1/admin/model-options were
+# all changed to stop being. Only embeddings are excluded, and that exclusion
+# is the thing worth stating: they generate nothing, so no template applies.
+def _template_providers() -> frozenset:
+    from .config import PROVIDER_CONFIG_CLASSES
+    return frozenset(PROVIDER_CONFIG_CLASSES) - {"mlx_embedding"}
+
+
+TEMPLATE_PROVIDERS = _template_providers()
 
 
 class TemplateWriteRefused(ValueError):
@@ -64,6 +74,13 @@ class TemplateView:
     # template did NOT come from it. An editor whose writes go nowhere is
     # worse than no editor, so this is a first-class field rather than a note.
     inert_reason: Optional[str] = None
+    # The override file's OWN body, independent of whether it won. `template`
+    # is what the model will RENDER with; this is what the editor must show,
+    # and they differ exactly when an override exists but lost the ladder.
+    # Painting the winner's body into the editor made the operator's own file
+    # unreadable from the surface that wrote it -- a rejected template showed
+    # as an empty box with Save disabled and no way to repair it.
+    override_template: Optional[str] = None
     # True when the model is RESIDENT and rendering with something other than
     # what is on disk now -- i.e. someone edited the template since it loaded.
     # None when the model is not loaded, which is not the same as False and
@@ -128,6 +145,11 @@ def view(model_id: str, provider: str, config: dict,
     else:
         template, origin, inert = _mlx_view(config, present)
 
+    # Read straight off disk rather than from the ladder: the ladder answers
+    # "what wins", and when the override lost, its body is precisely what the
+    # ladder did not return.
+    override_body = _read(path) if (path and present) else None
+
     notes: list[str] = []
     if directory is None:
         notes.append(
@@ -144,6 +166,7 @@ def view(model_id: str, provider: str, config: dict,
         override_path=str(path) if path else None,
         writable=writable,
         inert_reason=inert,
+        override_template=override_body,
         stale=None if loaded_template is None else loaded_template != template,
         notes=notes,
     )
@@ -154,7 +177,8 @@ def _gguf_view(model_id: str, config: dict,
     """Resolve through the gguf provider's OWN ladder, then read the winner."""
     from .providers.llama_server_provider import LlamaServerProvider
 
-    resolved, origin = LlamaServerProvider.resolve_chat_template(config, model_id)
+    resolved, origin = LlamaServerProvider.resolve_chat_template(
+        config, model_id, log=False)
     if resolved:
         body = _read(Path(resolved))
     else:
@@ -165,18 +189,23 @@ def _gguf_view(model_id: str, config: dict,
     inert = None
     if present and origin != HEYLOOK_OVERRIDE:
         if config.get("chat_template_path"):
+            # VERIFIED cause: the field is right there in the config.
             inert = (
                 "chat_template_path names an explicit file, which outranks the "
                 "override. Clear that field for edits here to take effect."
             )
         else:
-            # The remaining way a present override loses: the media guard
-            # refused it (a template with no media markers on a model served
-            # with a projector). The ladder says so in its own phrase.
+            # NOT verified, so NOT asserted. The earlier version named the
+            # media guard here by elimination and was confidently wrong
+            # whenever an override lost for any third reason -- a model_path
+            # naming a directory, for instance, makes the sidecar probe return
+            # None with the media guard never having run. State what is known
+            # (it lost, and to what) and point at the log for why.
             inert = (
-                f"The override is present but not in force ({origin}). "
-                "A template with no media markers is refused on a model served "
-                "with a projector."
+                f"The override is on disk but not in force -- the model "
+                f"resolves to its {origin} template instead. The load log "
+                f"names the reason; a template with no media markers is "
+                f"refused on a model served with a projector."
             )
     return body, origin, inert
 
@@ -199,14 +228,21 @@ def _mlx_view(config: dict, present: bool) -> tuple[Optional[str], str, Optional
                 "override. Clear it for edits here to take effect."
             )
         else:
-            # The other way a present override loses: read_template_info
-            # rejected it for rendering none of the model's stop tokens and
-            # walked on to another source, which it logs loudly at load.
-            inert = (
-                f"The override is present but not in force ({origin}). A "
-                "template that renders none of the model's stop tokens is "
-                "refused, because it would generate to the token cap."
-            )
+            # Same rule as gguf: report what is KNOWN, name the likely cause
+            # without asserting it. `none(stopless)` is the one origin that
+            # does state its own cause, so it gets the specific message.
+            if origin.startswith("none("):
+                inert = (
+                    "The override renders none of the model's stop tokens, so "
+                    "it was refused -- it would generate to the token cap. No "
+                    "file template was usable; the loader's built-in one stands."
+                )
+            else:
+                inert = (
+                    f"The override is on disk but not in force -- the model "
+                    f"resolves to its {origin} template instead. The load log "
+                    f"names the reason."
+                )
     return (info.chat_template or None), origin, inert
 
 
@@ -231,9 +267,23 @@ def write_override(model_path: str, body: str, *, provider: str,
             "own template, delete the override instead."
         )
     validate(body, provider=provider, config=config)
+    # ATOMIC: write a temp file beside it, then rename. A plain write_text
+    # truncates and then fills, so a load racing the write can read a
+    # zero-length or half-written template -- on gguf that is a jinja parse
+    # error inside llama-server, i.e. a 500 on every request with nothing
+    # naming the cause. That is the exact bricking validate() exists to
+    # prevent, and doing the write non-atomically would reintroduce it below
+    # the guard. os.replace is atomic within a filesystem, which a sibling
+    # temp file guarantees.
+    tmp = path.with_name(path.name + f".tmp.{os.getpid()}")
     try:
-        path.write_text(body, encoding="utf-8")
+        tmp.write_text(body, encoding="utf-8")
+        os.replace(tmp, path)
     except OSError as exc:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
         raise TemplateWriteRefused(f"could not write {path}: {exc}") from exc
     logger.info("[template] wrote chat template override %s (%d chars)",
                 path, len(body))
@@ -353,20 +403,38 @@ def validate(body: str, *, provider: str, config: dict) -> None:
             + detail
         )
 
-    if provider == "gguf" and _is_media_served(config):
+    # The MLX half of the same promise. `read_template_info` REFUSES a
+    # template that renders none of the model's stop tokens (it would generate
+    # to the cap) and walks on to another source -- so without this check the
+    # editor accepts, with a 200, a template the next load will throw away.
+    # The gguf media guard below was enforced here from the start; this one
+    # was implemented right next door and never called.
+    if provider == "mlx":
+        directory = model_directory(str(config.get("model_path") or ""))
+        if directory is not None:
+            from .providers.common.template_info import (
+                _read_eos_tokens, _read_json, _template_can_stop)
+            eos = _read_eos_tokens(directory, _read_json(directory / "tokenizer.json"),
+                                   _read_json(directory / "tokenizer_config.json"))
+            if not _template_can_stop(body, eos):
+                raise TemplateWriteRefused(
+                    "this template renders none of the model's stop tokens "
+                    f"({', '.join(sorted(eos))}), so the model would generate "
+                    "until the max_tokens cap. The loader refuses such a "
+                    "template at load and falls back, so saving it would cost "
+                    "the model its working template."
+                )
+
+    if provider == "gguf":
         from .providers.llama_server_provider import LlamaServerProvider
-        if not LlamaServerProvider._template_handles_media(body):
+        if LlamaServerProvider._is_media_served(config) \
+                and not LlamaServerProvider._template_handles_media(body):
             raise TemplateWriteRefused(
                 "this model is served with a projector (mmproj/vision) but the "
                 "template has no media markers, so saving it would load the "
                 "vision tower and then render prompts that can never reference "
                 "an image. The spawn-time guard would refuse it too."
             )
-
-
-def _is_media_served(config: dict) -> bool:
-    from .providers.llama_server_provider import LlamaServerProvider
-    return LlamaServerProvider._is_media_served(config)
 
 
 def _read(path: Path) -> Optional[str]:

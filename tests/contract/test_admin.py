@@ -2,6 +2,8 @@
 #
 # Contract tests for /v1/admin/models/ endpoints.
 
+from .conftest import TEST_MODEL_IDS
+
 
 class TestAdminListModels:
     """Tests for GET /v1/admin/models (list all configs)."""
@@ -14,9 +16,10 @@ class TestAdminListModels:
         data = resp.json()
         assert "models" in data
         assert "total" in data
-        # One mlx + one gguf row (conftest TEST_MODELS_DATA): the gguf row
-        # exists so provider-branching routes have both arms under test.
-        assert data["total"] == 2
+        # Derived from the conftest roster, not counted by hand: the roster
+        # carries one row per provider so provider-branching routes have every
+        # arm under test, and it grows when a provider gains one.
+        assert data["total"] == len(TEST_MODEL_IDS)
 
     def test_model_entries_have_full_config(self, client):
         """Admin model entries include config dict and enabled status."""
