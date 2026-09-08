@@ -904,9 +904,12 @@ class LlamaServerProvider(BaseProvider):
 
     def _build_payload(self, request: ChatRequest) -> dict:
         # The shared cascade (samplers.resolve_effective_sampling) -- ONE
-        # implementation with MLX, not a mirror. No vendor layer: GGUF dirs
-        # ship no generation_config.json. Keys llama-server doesn't take
-        # (vision_tokens etc.) are dropped below by _PAYLOAD_KEY_MAP.
+        # implementation with MLX, not a mirror. The vendor layer comes from
+        # the GGUF HEADER (v2.0.23): a gguf dir ships no generation_config.json,
+        # which used to be read as "no vendor layer here" and was the wrong
+        # conclusion -- the converter writes those very values into
+        # `general.sampling.*`. Keys llama-server doesn't take (vision_tokens
+        # etc.) are dropped below by _PAYLOAD_KEY_MAP.
         merged = resolve_effective_sampling(
             request, self.config, vendor=self._vendor_defaults(),
             thinking_capable=self.thinking_capable)

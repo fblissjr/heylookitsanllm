@@ -605,6 +605,105 @@ export async function runPagesSuite({ suite, ctx, config }) {
     }
   });
 
+  await suite.check('the chat template panel shows what the model resolves to', async () => {
+    // Read-only: a GET cannot touch the model directory. The WRITE half is
+    // intercepted in the next check for the same reason the config PATCH is --
+    // the E2E server runs on the REAL models.toml and real model folders, and
+    // a landed PUT would drop a chat_template.heylook.jinja beside the weights.
+    const details = await page.$('.cfg-tmpl');
+    assert(details, 'no chat template panel in the open config panel');
+
+    // Lazy by design: nothing is fetched until the section is opened.
+    assert(await details.evaluate((el) => !el.open), 'template panel starts open');
+    await page.$eval('.cfg-tmpl > summary', (el) => el.click());
+
+    await waitFor(async () => Boolean((await textOf(page, '.cfg-tmpl__origin') || '').trim()),
+      { timeout: 10000, message: 'template panel never resolved an origin' });
+    const origin = await textOf(page, '.cfg-tmpl__origin');
+    assert(/In force:/.test(origin), `origin line reads ${JSON.stringify(origin)}`);
+
+    const body = await page.$eval('.cfg-tmpl__body', (el) => el.value);
+    assert(body && body.trim().length > 0,
+      'the resolved template came back empty -- the panel would paint a blank editor');
+
+    // Save is disabled until something is actually edited. This is also the
+    // CRLF guard: a template with \r\n used to read as edited the instant it
+    // was painted, because a textarea's value getter normalizes line endings
+    // while the compared server string does not.
+    const disabled = await page.$eval('.cfg-tmpl .cfg-actions button', (el) => el.disabled);
+    assert(disabled, 'Save was enabled on a freshly loaded, unedited template');
+  });
+
+  await suite.check('unsaved template text survives a models-list rebuild', async () => {
+    // The regression this exists for: the textarea was panel-local state, so
+    // any renderModelList rebuild (Load, unload, a config save, a reload)
+    // silently discarded typed text and re-collapsed the section. This file's
+    // own header states unsaved edits live in the caller's `draft` object for
+    // exactly this reason; the template panel did not honour it.
+    //
+    // A config save is the cheapest rebuild trigger, and it is intercepted so
+    // nothing reaches models.toml.
+    const TYPED = '{# E2E-DRAFT-MARKER #}';
+    await page.$eval('.cfg-tmpl__body', (el) => { el.focus(); });
+    await page.type('.cfg-tmpl__body', TYPED);
+
+    const bodies = [];
+    await page.setRequestInterception(true);
+    const fake = (req) => {
+      if (req.method() === 'PATCH' && req.url().includes('/v1/admin/models/')) {
+        bodies.push(1);
+        req.respond({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            model: { config: { max_tokens: 512 }, stale_reload_fields: [] },
+            reload_required_fields: [],
+          }),
+        });
+      } else if (req.method() === 'PUT' && req.url().includes('/chat-template')) {
+        // Never let a template write land on a real model folder.
+        assert(false, 'the template panel PUT during a rebuild check');
+      } else {
+        req.continue();
+      }
+    };
+    page.on('request', fake);
+    try {
+      // STAMP the live panel first. Waiting on "the PATCH was sent" is not
+      // enough and made this check vacuous: the request fires before
+      // renderModelList runs, so the poll caught the OLD textarea still
+      // holding the typed text and passed even with the draft restore
+      // deleted. The stamp is gone the moment a fresh node replaces it, so
+      // its absence is the rebuild actually having happened.
+      await page.$eval('.cfg-tmpl', (el) => { el.dataset.e2eStamp = '1'; });
+
+      const input = await page.$('.model-config input[id$="-max_tokens"]');
+      await input.click();
+      await input.evaluate((el) => el.select());
+      await input.type('512');
+      await clickByText(page, '.model-config .cfg-actions button', 'Save');
+      await waitFor(async () => bodies.length === 1,
+        { timeout: 10000, message: 'PATCH never sent' });
+
+      await waitFor(async () => {
+        const el = await page.$('.cfg-tmpl');
+        if (!el) return false;
+        return !(await el.evaluate((n) => n.dataset.e2eStamp === '1'));
+      }, { timeout: 10000, message: 'the models list never rebuilt the template panel' });
+
+      const stillOpen = await page.$eval('.cfg-tmpl', (el) => el.open);
+      assert(stillOpen, 'the rebuild re-collapsed the template section');
+
+      await waitFor(async () => {
+        const v = await page.$eval('.cfg-tmpl__body', (el) => el.value).catch(() => '');
+        return v.includes(TYPED);
+      }, { timeout: 10000, message: 'typed template text was discarded by the rebuild' });
+    } finally {
+      page.off('request', fake);
+      await page.setRequestInterception(false);
+    }
+  });
+
   await suite.check('open config panel fits a phone viewport', async () => {
     await ctx.setViewport(390, 780);
     assert(await noHorizontalOverflow(page), 'horizontal overflow at 390px with the config panel open');
