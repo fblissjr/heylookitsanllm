@@ -1,6 +1,10 @@
 # Plan: retire per-model entries from models.toml
 
-last updated: 2026-09-08 (PROPOSED — nothing built; Phase 0 is the gate)
+last updated: 2026-09-08 (PROPOSED — nothing built; Phase 0 is the gate.
+Revised after two independent reviews: the template precedent does NOT
+generalise, read-only model directories are a functional cliff, the twin is the
+only mechanism available rather than a convenience, and the sidecar TRADES the
+discovery-is-load-bearing objection rather than answering it.)
 
 ## The decision
 
@@ -8,12 +12,10 @@ last updated: 2026-09-08 (PROPOSED — nothing built; Phase 0 is the gate)
 A model's own settings belong with the model; the central file keeps only what
 is genuinely not per-model.
 
-This is not a new idea in this repo, it is the general case of one already
-taken. The chat-template override (v2.0.22) is deliberately ONE file in the
-model's own folder rather than a models.toml value, and its stated reasoning is
-the whole of this plan: nothing writes central config, so there is no path to
-materialize an entry, nothing can drift between a stored path and a file, and
-revert is deleting one file. That argument does not stop at templates.
+The case for this rests on the failures below, which have happened, and NOT on
+the chat-template override that inspired it. That precedent was quoted as the
+plan's foundation in the first draft and its author refused the generalisation
+— correctly. See "The precedent does not generalise" below before citing it.
 
 ## Why the current shape keeps producing bugs
 
@@ -58,6 +60,30 @@ not prevent the failure the rule describes.
 So the defence belongs at the decision point. Documentation is the explanation
 of what the tool shows, never the guard.
 
+## The precedent does not generalise
+
+The chat-template override (v2.0.22) is one file in the model's own folder, and
+its reasoning reads like this plan's. It is not. Its author names three
+premises, all template-specific (2026-09-08):
+
+- the vendor already ships a file of exactly that kind in that directory, so a
+  sidecar beside it is in-idiom;
+- both engines already DISCOVERED files in that directory, so it added one rung
+  to two existing ladders and built no discovery mechanism;
+- the thing overridden IS a file, so overriding it with a file is like-for-like
+  and revert is deleting one, the vendor's copy never having been touched.
+
+None hold for arbitrary per-model config. There is no vendor file to override,
+no existing per-field discovery to extend, and the thing overridden is a TYPED
+value carrying an `effect` class — which the reload set, the import allowlist
+and `/v1/admin/model-options` are all derived from. A file body carries none of
+that.
+
+So generalising means BUILDING a discovery mechanism and a format. The force of
+the original argument was "use the ladder already there and add nothing", and
+that is exactly the part that does not survive. Cite it as a narrower instance
+of the same shape, never as evidence that this is cheap.
+
 ## What replaces an entry
 
 A **per-model sidecar in the model's own directory**, discovered by the same
@@ -68,15 +94,31 @@ models.toml keeps only what is not per-model: scan folders, the default model,
 the load limit. Once it lists no models, it should stop being named as if it
 does.
 
-This also dissolves the objection that killed an earlier proposal. Making
-entries per-field OVERLAYS was considered and rejected on 2026-09-08, mainly
-because overlay makes discovery load-bearing: a scan that degrades would
+### The trade this makes, which the first draft called an answer
+
+Making entries per-field OVERLAYS was considered and rejected on 2026-09-08,
+mainly because overlay makes discovery load-bearing: a degraded scan would
 silently strip an entry's fields, and discovery is best-effort by construction.
-A sidecar in the model's own directory has no such split — if the directory is
-unreadable the model is not served at all, so the failure modes move together
-instead of apart. The other rejections (a config migration, a suppression gap,
-determinism loss, an inverted rule in several docs) are answered by this shape
-too, except the migration, which Phase 0 exists to make safe.
+The first draft claimed the sidecar DISSOLVED that, because an unreadable
+directory means the model is not served anyway, so the failure modes move
+together.
+
+They do move together — toward BOTH being lost, where today one survives
+(testclaude, 2026-09-08). Discovery is best-effort in more ways than an
+unreadable directory: a failing scan is logged and DROPPED, never fatal. Today
+an explicit entry is a durable statement that this model should be served, and
+it outlives a scan that degrades. Under sidecars, a dropped scan takes the
+model and its settings together.
+
+That bites hardest on exactly what discovery cannot derive. A
+speculative-decode carve-out and a context size are POLICY, and under sidecars
+a model on an unmounted volume takes its policy with it silently instead of
+erroring. This is a TRADE, not a refutation, and the plan states it as one.
+Whether it is acceptable is the owner's call, and it should be made knowingly.
+
+The other rejections (a config migration, a suppression gap, determinism loss,
+an inverted rule in several docs) are answered by this shape, except the
+migration, which Phase 0 exists to make safe.
 
 ## Phases
 
@@ -86,8 +128,25 @@ doing it.
 
 ### Phase 0 — the served-set diff (GATE)
 
-Nothing else starts until this exists. It is the instrument that makes the rest
-safe, and it is the piece a prune is blocked on.
+Nothing else starts until this exists.
+
+**The argument that actually buys the gate is not the one the first draft made.**
+"Every phase changes the served set" argues for a migration TOOL, which could
+be a throwaway script. The load-bearing fact is that **models.toml is
+gitignored** (verified: `.gitignore` names it). Phase 4 is an irreversible bulk
+edit to an UNVERSIONED file, and the reasoning it would rest on — "the great
+majority are byte-identical to what discovery derives" — is word for word the
+reasoning that produced the twin bug. Same sentence, same confidence, wrong,
+and with no history to recover from. That alone buys the gate. (testclaude,
+2026-09-08.)
+
+**Permanent surface, or scaffolding?** Deliberately deferred, and named here so
+the ambiguity does not survive into the code. If sidecars genuinely remove
+prediction, the diff's job ends with the migration and a script suffices. If
+they do not, it is a maintained API and must be designed as one. That is not
+knowable until sidecars exist. So: build Phase 0 as a LIBRARY FUNCTION usable
+either way, and decide the wired-in API after Phase 2, when there is evidence
+rather than a guess.
 
 - `served_diff(before, after)` → gained / lost / effective-config-changed, per
   id. It CALLS `merge_discovered`; a second implementation of the matching
@@ -118,11 +177,29 @@ materialization, dead entry) become regression rows UNDER the property.
 testclaude): synthetic configs with invented paths. The real models.toml holds
 absolute home paths. The pure-function design makes this free if decided now.
 
+**A flagged concern, checked and cleared with a residue.** A reviewer found
+`effective_loader_for_config` returning mlx-lm for every mlx model in a static
+probe, disagreeing with the live admin row, and declined to report a number
+from it. Re-run here it differentiates correctly — most mlx models resolve to
+mlx-vlm. The residue is real though: the models it puts on mlx-lm include ones
+whose directories no longer exist, so the resolver DOES degrade to mlx-lm when
+it cannot read the model dir. Phase 0 leans on that resolver, so a diff
+computed over a config with unreadable directories will report loader changes
+that are artefacts of the unreadable directory, not of the edit. Same family as
+the risk below.
+
 **Risk to design against:** discovery is best-effort, so a scan that degrades
 between the before and after snapshots reports every discovered model as lost —
-a catastrophic-looking lie from the one feature whose whole value is trust. If
-the after-scan finds materially less than the before, report the comparison as
-unavailable rather than report a catastrophe.
+a catastrophic-looking lie from the one feature whose whole value is trust.
+
+The first draft proposed detecting this by magnitude (an after-scan finding
+materially less than the before). That is the same absence-based reasoning this
+repo keeps getting caught by: a degraded scan and a real mass deletion are
+indistinguishable by count, so the threshold is a heuristic dressed as a check.
+Do it directly instead — `model_registry.discover` ALREADY catches its failures
+per source and logs them, it just does not return them. Have it report them,
+and let the diff say "the scan of this folder failed, so this comparison is
+unreliable" instead of inferring trouble from a number.
 
 ### Phase 1 — close the derivation gaps
 
@@ -134,7 +211,12 @@ the migration.
   model always reasons and has no such variable, so the probe asks a question
   that family cannot answer and reports a model that always thinks as unable
   to. This is why one entry hand-writes the flag. Fix the probe, delete the
-  entry.
+  entry. OWNED by the session that added the other header readers, and
+  sequenced after its sampler-registry removal so two threads are not in
+  `gguf_metadata` at once. Likely shape: probe for EITHER thinking variable,
+  since harmony reads `reasoning_effort` unconditionally and has no
+  `enable_thinking` at all — but check that against a real harmony template
+  rather than assert it.
 - **Sidecars in subdirectories.** Discovery pairs mmproj / MTP / dspark files
   sitting BESIDE the weights, verified working for all three kinds. A drafter
   in an `MTP/` subdirectory is missed. A rule, not a design limit.
@@ -150,13 +232,24 @@ the migration.
 ### Phase 3 — move the writers
 
 - The admin config editor writes the sidecar instead of materializing an entry.
-- **Materialization is deleted**, and with it the trap it caused twice.
+- **Materialization is deleted**, and with it the trap it caused twice. TWO
+  call sites to re-home, not three: `update_config` and `toggle_enabled`. The
+  third, `bulk_set_default_sampler`, exists only to stamp a bundled-sampler
+  name and is going away independently of this plan (that route has no frontend
+  caller and most of the bundled samplers have no consumer; reported by the
+  session removing them, 2026-09-08). Confirm it has gone rather than assume.
 - `heylookllm import` retires. Its derivation half MUST stay: `model_registry.discover`
   imports `ModelImporter`, so discovery and the importer are one derivation
   called from two places. What retires is the WRITE half — `generate_toml` has
   exactly one production caller, the CLI entry point — along with the
   merge-with-existing semantics, the append-only-new-ids rule and `--fresh`.
   Comment preservation (`toml_comments`) stays; admin writes use it.
+- **Re-home the property that dies with it.** `generate_toml` also has test
+  callers, and one is not incidental: it pins that the writer never emits a
+  field `GGUFModelConfig` forbids — a real guard against the writer and the
+  schema drifting apart. The sidecar writer has the identical failure mode and
+  must inherit it, or this is coverage lost in a refactor rather than a guard
+  retired with its subject. (testclaude, 2026-09-08.)
 
 ### Phase 4 — migrate and prune
 
@@ -171,17 +264,34 @@ speculative-decode carve-out, a context size), one is the derivation bug Phase
 
 ## Open, and not to be hand-waved
 
-- **The twin has no home in this design.** One directory is one model; a
-  per-directory sidecar cannot produce two served ids from one file. The twin
-  exists only so `tests/smoke/` has a text-arm model on weights that would
-  otherwise route to the vision library. Preference: fix it in the harness
-  (pass the loader explicitly) rather than invent a variants mechanism to
-  preserve a test need in the serving config. Not yet decided.
-- **Read-only or shared model directories break the sidecar.** Not live —
-  `watch_hf_cache` is off and nothing is currently disabled — but writing into
-  an HF cache snapshot is wrong, and the obvious fallback (a heylook-owned file
-  keyed by resolved path) reintroduces exactly the stored-path drift the
-  sidecar exists to avoid. Know the boundary before turning cache scanning on.
+- **The twin is the ONLY mechanism available, not a convenience, and the
+  first draft's preferred fix does not work.** `loader` is a model-config field
+  and appears nowhere on the request or sampler surface (verified), so a
+  harness cannot force an engine per request — it needs a SERVED ID whose
+  config carries that loader. Under sidecars that leaves two options: a second
+  directory with its own sidecar, or an explicit exception to "no per-model
+  entries".
+  If the second directory is chosen, **sidecar identity must be the directory
+  path AS GIVEN, never RESOLVED.** Two directories symlinking to one weights
+  directory would collapse to one model under resolution, rebuilding the twin
+  bug in a new coordinate system — and this repo already carries that scar in
+  the duplicate-by-symlink entry. The shape that works is a real directory
+  holding symlinked FILES plus its own sidecar. (testclaude, 2026-09-08.)
+- **Read-only or shared model directories are a FUNCTIONAL CLIFF, and may be
+  the reason models.toml keeps per-model entries after all.** The asymmetry
+  with the template case is the whole point (raised by its author,
+  2026-09-08): there, a read-only directory costs you the ability to override
+  and leaves you the ability to SEE — the write is gated, the resolved template
+  still renders, and the panel says why saving is unavailable. Here, a
+  read-only directory means the model cannot be configured AT ALL, and the
+  fallback anyone would reach for is the central file this plan removes.
+  Not live today (`watch_hf_cache` is off, nothing is disabled), so this can be
+  decided rather than discovered — but it must be decided BEFORE Phase 2, and
+  "models.toml stays for exactly this case" is a legitimate answer.
+  One datum in the design's favour, verified 2026-09-08: `huggingface_hub`
+  prunes nothing on re-download — no `unlink`, no `rmtree` in the snapshot path
+  — so a sidecar survives, provided its name never collides with something the
+  vendor ships.
 - **Disabling a model** currently needs an entry. Nothing is disabled today, so
   the case is theoretical, but the sidecar has to answer it.
 - **Docs invert in several places.** CLAUDE.md's registry section, the wiki's
