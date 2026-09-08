@@ -1441,6 +1441,15 @@ class ChatTemplateResponse(BaseModel):
         description=("True when the LOADED model renders with something other than "
                      "what is on disk now (edited since load -- reload to apply). "
                      "null when the model is not loaded, which is NOT the same as false."))
+    refused_shapes: List[str] = Field(
+        default_factory=list,
+        description=("Conversation shapes the template just written REFUSES to render. "
+                     "Empty on every read path -- only a write validates, and an empty "
+                     "list there means it rendered them all. A refused shape is legal "
+                     "and does not block the write, but it is the thing worth seeing: "
+                     "a template that raises on a system message saves cleanly and then "
+                     "fails at generation for every conversation that has a system "
+                     "prompt, which is the default."))
     notes: List[str] = Field(default_factory=list)
 
 

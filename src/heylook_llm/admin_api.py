@@ -561,7 +561,7 @@ def set_chat_template(model_id: str, request: Request,
             detail=f"The {model.provider} provider does not render a chat template.",
         )
     try:
-        chat_template_files.write_override(
+        _path, refused_shapes = chat_template_files.write_override(
             str(config.get("model_path") or ""), body.template,
             provider=model.provider, config=config,
         )
@@ -569,7 +569,13 @@ def set_chat_template(model_id: str, request: Request,
         # 400, not 500: every refusal here is about the SUBMITTED template, and
         # the message is the whole point -- it names what would have broken.
         raise HTTPException(status_code=400, detail=str(e))
-    return _template_view(request, model_id)
+    # Disclosed on the WRITE response only, because only a write validates.
+    # The write succeeded -- a template may legally decline a shape -- but a
+    # shape the server actually sends will fail at generation instead of here,
+    # and this is the one moment the operator can act on that.
+    view = _template_view(request, model_id)
+    view.refused_shapes = refused_shapes
+    return view
 
 
 @admin_router.delete(

@@ -247,8 +247,13 @@ def _mlx_view(config: dict, present: bool) -> tuple[Optional[str], str, Optional
 
 
 def write_override(model_path: str, body: str, *, provider: str,
-                   config: dict) -> Path:
+                   config: dict) -> "tuple[Path, list[str]]":
     """Validate ``body``, then write it as this model's override.
+
+    Returns the path written and the conversation shapes the template REFUSES,
+    for the caller to disclose. A refused shape is not an error -- see
+    ``validate`` -- but it is what the operator needs to know before the
+    model's next load.
 
     Validation happens BEFORE anything touches disk. This is the one place a
     bad write bricks a model: llama-server turns a raised jinja exception into
@@ -266,7 +271,10 @@ def write_override(model_path: str, body: str, *, provider: str,
             "Refusing to write an empty template. To go back to the model's "
             "own template, delete the override instead."
         )
-    validate(body, provider=provider, config=config)
+    # The shapes this template refuses. NOT grounds to refuse the write --
+    # a template legitimately declining a shape is normal -- but the caller
+    # must be able to say so, or the operator learns about it from a 500.
+    refused_shapes = validate(body, provider=provider, config=config)
     # ATOMIC: write a temp file beside it, then rename. A plain write_text
     # truncates and then fills, so a load racing the write can read a
     # zero-length or half-written template -- on gguf that is a jinja parse
@@ -285,9 +293,14 @@ def write_override(model_path: str, body: str, *, provider: str,
         except OSError:
             pass
         raise TemplateWriteRefused(f"could not write {path}: {exc}") from exc
-    logger.info("[template] wrote chat template override %s (%d chars)",
-                path, len(body))
-    return path
+    logger.info("[template] wrote chat template override %s", path)
+    if refused_shapes:
+        logger.warning(
+            "[template] the override written to %s refuses these conversation "
+            "shapes: %s. That is legal, but a shape the server actually sends "
+            "will fail at generation rather than here.", path,
+            "; ".join(refused_shapes))
+    return path, refused_shapes
 
 
 def remove_override(model_path: str) -> bool:
@@ -308,16 +321,23 @@ def remove_override(model_path: str) -> bool:
     return True
 
 
-# TWO conversation shapes, and needing two is the point. Templates
-# legitimately refuse a shape -- Qwen's official template raises on two
-# leading system messages, several refuse a trailing assistant turn -- so a
+# Templates legitimately refuse a shape -- Qwen's official template raises on
+# two leading system messages, several refuse a trailing assistant turn -- so a
 # raise on ONE shape cannot mean the template is broken. But a template that
 # raises on EVERY shape is broken, and passing it would brick the model at its
 # next load, which is the outcome this function exists to prevent. So: refuse
 # only when nothing renders.
 #
-# The shapes differ in the two dimensions templates actually branch on -- a
-# system message, and whether the last turn is the user's.
+# EVERY SHAPE IS TRIED, and that is the fix rather than the design. The loop
+# used to stop at the first shape that rendered, which made every shape after
+# the first a FALLBACK rather than a check -- and the plain user/assistant/user
+# exchange is first. So a template that renders that and raises on any system
+# message saved with a clean 200 and then failed at generation, since
+# llama-server turns a raised jinja exception into a 500. That is not an exotic
+# shape: `conversation_generate_api` prepends a system message whenever the
+# document has a system prompt, which is the default in v3. The shapes below
+# cover a system message, a trailing assistant turn (the continuation path) and
+# two leading system messages (the case the publishers actually differ on).
 _PROBE_SHAPES = (
     (
         {"role": "user", "content": "ping"},
@@ -328,11 +348,30 @@ _PROBE_SHAPES = (
         {"role": "system", "content": "be brief"},
         {"role": "user", "content": "ping"},
     ),
+    (
+        {"role": "user", "content": "ping"},
+        {"role": "assistant", "content": "pong"},
+    ),
+    (
+        {"role": "system", "content": "be brief"},
+        {"role": "system", "content": "and kind"},
+        {"role": "user", "content": "ping"},
+    ),
 )
 
 
-def validate(body: str, *, provider: str, config: dict) -> None:
+def validate(body: str, *, provider: str, config: dict) -> list[str]:
     """Raise TemplateWriteRefused unless ``body`` compiles AND renders.
+
+    Returns the shapes this template REFUSES, as human-readable strings, for
+    a caller to disclose. An empty list means it rendered every shape.
+
+    Refusing some shapes is legal and not grounds to reject the write, but it
+    is the single most useful thing to tell the operator: a template that
+    raises on a system message saves cleanly and then makes every request from
+    a document with a system prompt fail, since llama-server turns a raised
+    jinja exception into a 500. Silence about that is what made the earlier
+    version of this function feel safe while it was not.
 
     Compiling alone is not enough -- the errors that matter (an undefined
     variable, a bad filter, a call into something that is not there) only
@@ -371,6 +410,7 @@ def validate(body: str, *, provider: str, config: dict) -> None:
     rendered = ""
     refusals: list[str] = []
     for shape in _PROBE_SHAPES:
+        label = "+".join(m["role"] for m in shape)
         try:
             out = template.render(
                 messages=[dict(m) for m in shape],
@@ -382,7 +422,7 @@ def validate(body: str, *, provider: str, config: dict) -> None:
             # This shape is refused. That may well be correct -- record it and
             # try the next one; only a template that refuses EVERY shape is
             # broken.
-            refusals.append(f"{type(exc).__name__}: {exc}")
+            refusals.append(f"{label}: {type(exc).__name__}: {exc}")
             continue
         except Exception as exc:
             # Not a template-authored refusal: a bad filter, a call into
@@ -390,9 +430,12 @@ def validate(body: str, *, provider: str, config: dict) -> None:
             raise TemplateWriteRefused(
                 f"template failed to render: {type(exc).__name__}: {exc}"
             ) from exc
-        if out.strip():
+        if out.strip() and not rendered:
+            # No `break`. Stopping here made every later shape a FALLBACK
+            # rather than a check, and the plainest shape is first -- so the
+            # shapes that actually differ between publishers were never
+            # reached for any template that rendered the plain one.
             rendered = out
-            break
 
     if not rendered:
         detail = (f" It raised on every shape tried: {'; '.join(refusals)}."
@@ -435,6 +478,8 @@ def validate(body: str, *, provider: str, config: dict) -> None:
                 "vision tower and then render prompts that can never reference "
                 "an image. The spawn-time guard would refuse it too."
             )
+
+    return refusals
 
 
 def _read(path: Path) -> Optional[str]:

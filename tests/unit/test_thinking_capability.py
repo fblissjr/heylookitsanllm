@@ -241,20 +241,40 @@ class TestVlmTemplateThinkingForwarding:
 
 
 class TestTemplateProbeCaching:
-    """Both template probes MUST be memoized per path. The reasoning_effort
-    probe shipped uncached (v1.71.0) while its sibling was cached -- on a
-    29-model registry that made EVERY /v1/models call re-read and re-parse
-    every MLX model's template files (~1.65s per call, measured live
-    2026-08-18), delaying every page's first paint. This pins the property
-    behaviorally: repeated calls for one path hit the file system once.
+    """Both template probes MUST be memoized, and MUST still see a write.
+
+    Cached: the reasoning_effort probe shipped uncached (v1.71.0) while its
+    sibling was cached, so every /v1/models call re-read and re-parsed every
+    MLX model's template files, delaying every page's first paint.
+
+    Invalidated: the caches were keyed on the PATH alone, each justified by a
+    comment saying templates only change with a restart. The operator override
+    (v2.0.22) made that false -- the admin routes write
+    `chat_template.heylook.jinja` into the model's own directory at runtime and
+    it is the top rung of the ladder -- so an override enabling thinking was
+    honoured by generation while /v1/models kept reporting the model unable to
+    think, until the process restarted. Nothing invalidated them; a model
+    reload did not either.
+
+    Both halves are pinned here because they pull against each other: the
+    obvious fix for one breaks the other.
     """
 
-    def _probe_read_count(self, probe, tmp_path):
+    def _probe_read_count(self, probe, tmp_path, times=3):
+        """How many template reads `times` calls to the PUBLIC probe cost.
+
+        Cleared through the private memoized function, since the public name
+        is the stamping wrapper -- but CALLED through the public one, which is
+        the only thing production uses. A test that called the inner function
+        directly would pass with the stamp wired to nothing.
+        """
         from unittest.mock import patch as mock_patch
 
+        import heylook_llm.capabilities as caps
         import heylook_llm.providers.common.template_info as ti
 
-        probe.cache_clear()
+        caps._template_supports_thinking.cache_clear()
+        caps._template_supports_reasoning_effort.cache_clear()
         real = ti.read_template_info
         calls = {"n": 0}
 
@@ -263,7 +283,7 @@ class TestTemplateProbeCaching:
             return real(*args, **kwargs)
 
         with mock_patch.object(ti, "read_template_info", counting):
-            for _ in range(3):
+            for _ in range(times):
                 probe(str(tmp_path))
         return calls["n"]
 
@@ -278,3 +298,28 @@ class TestTemplateProbeCaching:
 
         (tmp_path / "chat_template.jinja").write_text(_GEMMA_JINJA)
         assert self._probe_read_count(template_supports_thinking, tmp_path) == 1
+
+    def test_an_override_written_at_runtime_is_seen(self, tmp_path):
+        """The admin route's write must change the answer without a restart.
+
+        Asserted on the reported CAPABILITY, not on a cache statistic: the
+        capability is what /v1/models publishes and what v3 gates the thinking
+        toggle on, and it is the thing that was wrong.
+        """
+        import heylook_llm.capabilities as caps
+
+        caps._template_supports_thinking.cache_clear()
+        (tmp_path / "chat_template.jinja").write_text(
+            "{% for m in messages %}{{ m.content }}{% endfor %}")
+        assert caps.template_supports_thinking(str(tmp_path)) is False
+
+        # What PUT /v1/admin/models/{id}/chat-template writes, at runtime.
+        override = tmp_path / "chat_template.heylook.jinja"
+        override.write_text("{% if enable_thinking %}<think>{% endif %}")
+        assert caps.template_supports_thinking(str(tmp_path)) is True, \
+            "the override was written but the reported capability did not move"
+
+        # And DELETE must take it back.
+        override.unlink()
+        assert caps.template_supports_thinking(str(tmp_path)) is False, \
+            "the override was deleted but the reported capability did not move"

@@ -46,8 +46,48 @@ def config_dict(config, *, exclude_unset: bool = False) -> dict:
     return {}
 
 
+# The chat-template files a probe below depends on, in the model's own dir.
+# `chat_template.heylook.jinja` is the operator override and is WRITTEN AT
+# RUNTIME by PUT/DELETE /v1/admin/models/{id}/chat-template, which is what
+# makes a plain per-path cache wrong here rather than merely stale-ish.
+_TEMPLATE_SOURCE_FILES = (
+    "chat_template.heylook.jinja",
+    "chat_template.jinja",
+    "tokenizer_config.json",
+    "chat_template.json",
+)
+
+
+def _template_stamp(model_path: str) -> tuple:
+    """File identity for every chat-template source in a model directory.
+
+    The cache key for the two template probes, and NOT a per-path key. Those
+    probes were keyed on the path alone, each justified by a comment saying
+    templates only change with a restart. The operator template override
+    (v2.0.22) made that false: the admin routes write
+    `chat_template.heylook.jinja` into the model's own directory at runtime,
+    and it is the TOP rung of the auto ladder. Nothing invalidated the caches
+    -- a model reload did not either -- so an override that enables thinking
+    was honoured by generation while /v1/models kept reporting the model as
+    unable to think and v3 kept hiding the toggle, until the process restarted.
+
+    Same shape as `gguf_metadata`'s context-length cache: the FILE's identity
+    is the key, so a write is seen and an unchanged file is never re-read. A
+    missing file stamps as absent, so creating or deleting the override both
+    count as a change.
+    """
+    stamp = []
+    for name in _TEMPLATE_SOURCE_FILES:
+        try:
+            st = (Path(model_path) / name).stat()
+            stamp.append((name, st.st_mtime_ns, st.st_size))
+        except OSError:
+            stamp.append((name, None, None))
+    return tuple(stamp)
+
+
 @lru_cache(maxsize=64)
-def template_supports_thinking(model_path: str) -> bool:
+def _template_supports_thinking(model_path: str, _stamp: tuple) -> bool:
     """Whether the model's own chat template references ``enable_thinking``.
 
     The template kwarg is the cross-model thinking mechanism (Qwen3 renders
@@ -66,7 +106,7 @@ def template_supports_thinking(model_path: str) -> bool:
 
 
 @lru_cache(maxsize=64)
-def template_supports_reasoning_effort(model_path: str) -> bool:
+def _template_supports_reasoning_effort(model_path: str, _stamp: tuple) -> bool:
     """Whether the model's template reads ``reasoning_effort``.
 
     Separate from the thinking capability on purpose: harmony models read
@@ -75,18 +115,36 @@ def template_supports_reasoning_effort(model_path: str) -> bool:
 
     Cached like its sibling above -- and not as an optimization nicety: this
     probe shipped UNCACHED (v1.71.0) and read+parsed every MLX model's
-    template files on every /v1/models call. Measured live 2026-08-18 on a
-    29-model registry: ~1.65s PER CALL, every call, which delayed every
-    page's first paint-to-usable window (and every generation start paid the
-    single-model slice via effective_capabilities). Same invalidation
-    tradeoff as the sibling: templates change only with a restart in
-    practice.
+    template files on every /v1/models call, which delayed every page's first
+    paint-to-usable window (and every generation start paid the single-model
+    slice via effective_capabilities). Keyed on the template files' identity,
+    not on the path -- see `_template_stamp`.
     """
     try:
         from heylook_llm.providers.common.template_info import read_template_info
         return read_template_info(Path(model_path), None).supports_reasoning_effort
     except Exception:
         return False
+
+
+def template_supports_thinking(model_path: str) -> bool:
+    """Public probe: cached, but re-read when a template file changes.
+
+    Stamping is one `stat` per candidate filename, which is what buys the
+    correctness the plain per-path cache did not have. Cheap next to the
+    read-and-parse it guards, and unavoidable: the alternative is a
+    `cache_clear` call at every site that can write a template, which is the
+    hand-maintained second copy this repo derives away everywhere else.
+    """
+    return _template_supports_thinking(model_path, _template_stamp(model_path))
+
+
+def template_supports_reasoning_effort(model_path: str) -> bool:
+    """Public probe: cached, but re-read when a template file changes.
+
+    Same shape and same reason as its sibling above.
+    """
+    return _template_supports_reasoning_effort(model_path, _template_stamp(model_path))
 
 
 def _mlx_serves_vision(model_config, effective_loader: str | None = None) -> bool:
