@@ -23,10 +23,10 @@ Observed 2026-09-08, at `f3af1c4`:
 
 | | |
 |---|---|
-| Unpushed commits on `main` | 11, from two sessions in one day |
+| Unpushed commits on `main` | a day's worth, from THREE sessions |
 | Versions written today | 2.0.19 through 2.0.28, sequential, no gaps |
 | `__version__` vs top changelog section | agree |
-| Working tree | clean except `uv.lock` |
+| Working tree | clean except `uv.lock`, which the owner has claimed |
 | `uv lock --check` | resolves clean |
 | Backend + render suites | green |
 | `tests/smoke/` since provider code changed | **not run** |
@@ -35,24 +35,21 @@ The last row is the one that matters. Everything else is tidy-up.
 
 ## Phase 1 — settle the working tree
 
-`uv.lock` has been modified since before the session and was carried, unread,
-through every commit. That is how it stayed invisible: a permanently dirty file
-stops being information and starts being noise, and it hides the next real
-change underneath it.
+**Resolved 2026-09-08: `uv.lock` is the owner's and is intended.** It moves
+`anyio` and `numpy` by a patch each, and `uv lock --check` resolves clean. No
+action; land it whenever the rest lands.
 
-1. Read what actually moved: `git diff uv.lock | grep -E '^[+-](name|version) '`.
-   At the time of writing it is two transitive patch bumps and nothing else.
-2. Confirm the manifest still agrees: `uv lock --check`.
-3. Decide, and act on the decision rather than deferring it again:
-   - **Keep** — commit it alone, and record the change in
-     `internal/log/log_YYYY-MM-DD.md` using the dependency table from the
-     doc-conventions skill. That log entry is the only place dependency
-     changes are written outside the manifest and lock.
-   - **Discard** — `git checkout uv.lock`, and expect it back on the next
-     `uv run` if something in the environment is regenerating it. If it comes
-     back, that recurrence is itself the finding and belongs in the log.
+The reason it earned a phase is worth keeping even though the answer was
+mundane. It sat dirty across three sessions for a day. Two of them looked at
+it, each concluded it belonged to somebody else, and neither asked — so a file
+nobody had read was carried through every commit of the day. **A permanently
+dirty file stops being information and becomes noise, and it hides the next
+real change underneath it.** The cost here was zero. The next one will not be.
 
-**Done when** `git status --short` is empty.
+Standing rule, in Phase 5: resolve it or commit it, but do not carry it. When
+it is not yours, ask whose it is rather than working around it.
+
+**Done when** `git status --short` shows nothing you cannot account for.
 
 ## Phase 2 — run the release standard this repo already has
 
@@ -152,7 +149,15 @@ These are rules, not observations:
   went red in one tree and green in another for exactly this reason, and it
   exists because the previous pin stayed put when the code moved.
 - **A permanently dirty file is a blind spot.** Resolve it or commit it; do not
-  carry it. See Phase 1.
+  carry it. When it is not yours, **ask whose it is** — three sessions each
+  assumed `uv.lock` belonged to one of the others and nobody asked for a day.
+  See Phase 1.
+- **Attribute by asking, not by inferring.** Two separate misattributions
+  happened today, in both directions: a fix credited to a session that did not
+  make it, and a `cp -R` diagnosis that was confidently wrong about another
+  session's setup. With three sessions on one branch, `git log` is the only
+  reliable record of who did what, and a guess offered as a finding wastes the
+  other session's time correcting it.
 
 ## Done means
 
