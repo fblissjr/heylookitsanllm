@@ -6,7 +6,8 @@ generalise, read-only model directories are a functional cliff, the twin is the
 only mechanism available rather than a convenience, and the sidecar TRADES the
 discovery-is-load-bearing objection rather than answering it. Third revision:
 Phase 0's signature is constrained by two verified hazards, and retiring the
-twin has a cost the smoke suite pays.)
+twin has a cost the smoke suite pays. Fourth: a resolver claim corrected, and a
+"why do this at all" section added ahead of the bug list.)
 
 ## The decision
 
@@ -18,6 +19,58 @@ The case for this rests on the failures below, which have happened, and NOT on
 the chat-template override that inspired it. That precedent was quoted as the
 plan's foundation in the first draft and its author refused the generalisation
 — correctly. See "The precedent does not generalise" below before citing it.
+
+## Why do this at all
+
+The bug list below says what goes wrong. It does not say why the work is worth
+its cost, and the cost is real: a new config surface, a migration of an
+unversioned file, the admin editor rewritten, a CLI command retired, and a
+documented model inverted in several places. Nobody is blocked today. Every
+incident so far was individually survivable. So the case has to be better than
+"these were annoying", and it is.
+
+**The principle, which is the owner's and not derived from anything here:** a
+model's own settings belong with the model. Everything below is the engineering
+case for it, but the principle stands on its own and would be a sufficient
+reason even if the case were weaker.
+
+**The compounding argument, which is the strongest one.** Materialization
+freezes a snapshot of every derived value the moment a model is first edited.
+That was tolerable while derivation was static. It is not any more, and the
+day this was written is the proof: derivation gained an automatic micro-batch
+sized against the live Metal working set, and a vendor sampling layer read from
+the GGUF header. **Both silently skip any model somebody once configured.** A
+context-size edit made months ago now costs that model a decode setting its own
+file asks for, and nothing anywhere says so.
+
+That cost is not fixed, it grows. Every future improvement to derivation
+inherits the same hole, and it widens with each one, for models nobody touches
+again. A design where a single past edit permanently opts a model out of all
+future improvement is the thing to fix — not the individual bugs it produces.
+
+**What the change actually buys, concretely.** Settings travel with the model:
+move or copy the directory and they come along; delete the model and its
+configuration goes with it, so dead entries cannot exist by construction.
+Reverting is deleting a file. There is no central file to prune, no rename to
+keep in sync, no path stored in one place that can drift from a file in
+another. And derivation improvements reach every model, permanently, because
+nothing has frozen a copy of the old answer.
+
+**The cheaper alternative, and why it loses.** Fix the derivation gaps in Phase
+1, prune the file once carefully, and keep the current design. That is a
+fraction of the work and it fixes today's symptoms. It loses on two counts.
+Materialization immediately starts re-creating the problem for any model
+anyone edits, so the pruned file drifts back. And the prune itself is the
+dangerous operation — it is an irreversible bulk edit to a gitignored file,
+resting on exactly the reasoning that produced the twin bug. If that
+alternative is chosen, Phase 0 is still required, which is a good sign that
+Phase 0 is the right first step under either plan.
+
+**What would make this not worth doing.** If the read-only-directory question
+below resolves badly, per-model entries have to survive for that case, and the
+plan degrades from "retire them" to "retire most of them" — still worth
+something, but much less. That question should be answered before Phase 2, not
+discovered during it.
 
 ## Why the current shape keeps producing bugs
 
