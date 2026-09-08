@@ -210,13 +210,17 @@ These are rules, not observations:
   step is a smoke run; two sessions doing it independently is pure waste, and
   one session assuming the other did it is worse.
 - **Knowing about oracles that cannot fail does not make you immune to
-  writing one.** Two were written today, hours apart, by the two sessions most
-  focused on the problem: a browser check that polled the pre-rebuild DOM and
-  passed with its own fix deleted, and a `models.toml` check that read
-  `model_path` off the wrong nesting level and returned a confident "none".
-  Neither errored. Both produced a clean answer to a question that was never
-  asked, and clean reads exactly like pass. The defence is not vigilance —
-  it is running the check once against a state where it MUST fail.
+  writing one.** Every instance found today was also WRITTEN today, by the two
+  sessions actively hunting the pattern — none were legacy. A browser check
+  polled the pre-rebuild DOM and passed with its own fix deleted. A
+  `models.toml` check read `model_path` off the wrong nesting level and
+  returned a confident "none". A destructor check asserted on `_strategies`,
+  which is empty on a provider that never loaded, so it passed whether or not
+  anything had been torn down. None of them errored; each produced a clean
+  answer to a question never asked, and clean reads exactly like pass. So the
+  defence is not vigilance and not familiarity — it is running the check once
+  against a state where it MUST fail. All three were caught that way, and only
+  that way.
 - **Name what a silence can and cannot mean, per claim.** A guarded warning
   that never fires is consistent with "the guard held" AND with "the branch
   was never reached", and those need different evidence. Today the branch was
