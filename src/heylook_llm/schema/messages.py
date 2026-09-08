@@ -91,13 +91,7 @@ class MessageCreateRequest(BaseModel):
 
     # heylook extensions (Phase 3b namespace) -- same semantics and bounds as
     # the internal ChatRequest, so no sampler knob exists that this wire cannot
-    # reach. `sampler` is the SamplerRegistry bundle name (never a /v1/presets
-    # id); `vision_tokens` is the per-image visual token budget.
-    sampler: Optional[str] = Field(
-        default=None,
-        description="Named sampler bundle (e.g. 'balanced', 'thinking'). "
-                    "Resolved against the server's SamplerRegistry.",
-    )
+    # reach. `vision_tokens` is the per-image visual token budget.
     vision_tokens: Optional[int] = Field(
         default=None, ge=16, le=16384,
         description="Target visual tokens per image; snapped to what the "
@@ -167,10 +161,12 @@ class MessageCreateRequest(BaseModel):
                 "with the token explorer (the only surface that read them) and the "
                 "heylook_logprobs SSE extension is gone with them"
             )
-        if "preset" in data:
+        if "preset" in data or "sampler" in data:
             raise ValueError(
-                "'preset' was renamed to 'sampler' (named sampler configs); "
-                "/v1/presets user presets are a separate system"
+                "named sampler bundles were removed in v2.0.30 -- send the "
+                "sampler fields themselves (temperature, top_p, ...). "
+                "/v1/presets user presets are a separate, still-supported "
+                "system, and the client expands one into those same fields"
             )
         return data
 

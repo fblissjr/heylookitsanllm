@@ -50,7 +50,7 @@ from typing import Dict, Generator, Optional
 
 from .. import observability, ram_fit
 from ..config import ChatRequest
-from ..samplers import GLOBAL_SAMPLER_FLOOR, SamplerNotFound, resolve_effective_sampling
+from ..samplers import GLOBAL_SAMPLER_FLOOR, resolve_effective_sampling
 from .common.generation_gate import get_process_gate
 # ONE filename for both engines, imported rather than re-spelled -- a second
 # copy of a literal filename is a second place for the editor to write
@@ -1138,10 +1138,7 @@ class LlamaServerProvider(BaseProvider):
         not a task, so it neither queues behind nor blocks a generation."""
         if self._base_url is None:
             raise GenerationFailed(f"Model '{self.model_id}' is not loaded")
-        try:
-            payload = self._build_payload(request)
-        except SamplerNotFound as e:
-            raise InvalidGenerationRequest(str(e))
+        payload = self._build_payload(request)
         self._continuation_echo_chars(request, payload)  # validates + normalizes
         body = {k: payload[k] for k in ("messages", "chat_template_kwargs") if k in payload}
         http_request = urllib.request.Request(
@@ -1168,10 +1165,7 @@ class LlamaServerProvider(BaseProvider):
     def create_chat_completion(self, request: ChatRequest, abort_event=None) -> Generator:
         if self._base_url is None:
             raise GenerationFailed(f"Model '{self.model_id}' is not loaded")
-        try:
-            payload = self._build_payload(request)
-        except SamplerNotFound as e:
-            raise InvalidGenerationRequest(str(e))
+        payload = self._build_payload(request)
         echo_chars, echo_thinking_chars = self._continuation_echo_chars(request, payload)
 
         http_request = urllib.request.Request(

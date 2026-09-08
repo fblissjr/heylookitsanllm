@@ -184,7 +184,7 @@ async def _subscribe(run: _Run):
 # reasoning_effort landed in the cascade and NOT here, so v3 chat -- the only
 # surface that generates server-side -- accepted the setting, stored it on the
 # conversation, sent it, and silently dropped it (2026-08-17).
-_SAMPLER_KEYS = REQUEST_SAMPLER_FIELDS + ("sampler",)
+_SAMPLER_KEYS = REQUEST_SAMPLER_FIELDS
 # Cap-gated keys (the server-side twin of v3's PARAM_META requiresCap).
 _CAP_GATED = {"enable_thinking": "thinking", "vision_tokens": "vision",
               "reasoning_effort": "reasoning_effort"}
@@ -553,9 +553,6 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
                 continuing=continue_row is not None, dropped=dropped, media=media)
         except ValueError as e:  # referenced blob missing = store corruption
             raise HTTPException(status_code=500, detail=str(e))
-
-        from heylook_llm.request_guards import validate_request_sampler
-        validate_request_sampler(chat_request.sampler)
 
         # -- provider + generator (same error mapping as /v1/messages) -----
         provider = None

@@ -230,11 +230,6 @@ class MockModelService:
     def get_config(self, model_id):
         return self.app_config.get_model_config(model_id)
 
-    def get_samplers(self):
-        from heylook_llm.samplers import get_sampler_registry
-
-        return {info["name"]: info for info in get_sampler_registry().list_info()}
-
     def scan_paths(self, paths=None, scan_hf=True):
         return []  # No real scanning in tests
 

@@ -99,45 +99,6 @@ class TestAdminEffectiveLoader:
             mock_service.update_calls.clear()
 
 
-class TestAdminSamplers:
-    """Tests for GET /v1/admin/models/samplers (list named samplers).
-
-    Terminology note (2026-07-20): the import/admin paths used to call these
-    'profiles'; they are the same registry as ChatRequest.preset and are now
-    named samplers everywhere. Distinct from /v1/presets (saved user
-    prompt+sampler bundles in the DuckDB store).
-    """
-
-    def test_returns_preset_list(self, client):
-        """GET /v1/admin/models/samplers returns exactly the bundled presets.
-
-        Derive the expectation from the preset registry (the source of truth)
-        rather than a hardcoded count, so adding/removing a preset doesn't
-        silently rot this contract test.
-        """
-        from heylook_llm.samplers import get_sampler_registry
-
-        expected = set(get_sampler_registry().list_names())
-        assert expected, "preset registry is empty -- bundled presets missing?"
-
-        resp = client.get("/v1/admin/models/samplers")
-        assert resp.status_code == 200
-
-        data = resp.json()
-        assert "samplers" in data
-        returned = {p["name"] for p in data["samplers"]}
-        assert returned == expected
-
-    def test_samplers_have_name_and_description(self, client):
-        """Each named-sampler entry has name and description."""
-        resp = client.get("/v1/admin/models/samplers")
-        for entry in resp.json()["samplers"]:
-            assert "name" in entry
-            assert "description" in entry
-            assert len(entry["name"]) > 0
-            assert len(entry["description"]) > 0
-
-
 class TestAdminScan:
     """Tests for POST /v1/admin/models/scan."""
 

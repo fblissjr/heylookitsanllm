@@ -126,20 +126,6 @@ def main():
         default="models.toml",
         help="Output file for generated configuration (default: models.toml)",
     )
-    from heylook_llm.model_service import available_samplers
-
-    sampler_names = available_samplers()
-    import_parser.add_argument(
-        "--sampler",
-        "--preset",
-        "--profile",
-        dest="sampler",
-        choices=sampler_names,
-        help="Record a named sampler as the model's default_sampler "
-             "(applied at request time). --preset/--profile are accepted as "
-             "aliases. See src/heylook_llm/data/samplers/*.toml for the "
-             "canonical set.",
-    )
     import_parser.add_argument(
         "--override",
         action="append",

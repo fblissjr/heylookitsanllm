@@ -3,11 +3,9 @@
 Service layer for model discovery, validation, and configuration management.
 
 Provides CRUD operations on models.toml, filesystem scanning for importable models,
-smart defaults, and sampler-preset stamping (default_sampler). Thread-safe for
-concurrent API access.
+and smart defaults. Thread-safe for concurrent API access.
 
 This module is the single source of truth for:
-- Sampler-preset stamping (stamp_default_sampler, available_samplers) over the SamplerRegistry
 - Smart defaults (get_smart_defaults)
 - HuggingFace cache paths (get_hf_cache_paths)
 - Config CRUD, scanning, import, validation
@@ -68,31 +66,6 @@ def get_hf_cache_paths() -> list[str]:
 # Sampler presets (terminology note: the import/admin paths called these
 # "profiles" until 2026-07-20; same registry as ChatRequest.preset)
 # =============================================================================
-
-
-def stamp_default_sampler(
-    config: dict[str, Any], preset_name: str, provider: str
-) -> dict[str, Any]:
-    """Record a sampler-preset name as ``default_sampler`` on a model config.
-
-    The request-time cascade (``MLXProvider._apply_model_defaults``) picks up
-    ``default_sampler`` and applies the preset fields when no per-request
-    preset is specified -- no sampler-field baking. ``gguf`` also samples
-    (``GGUFModelConfig.default_sampler`` feeds the llama-server payload
-    cascade) so it gets the stamp too; embeddings don't sample, so the stamp
-    is skipped for those.
-    """
-    result = dict(config)
-    if provider in ("mlx", "gguf"):
-        result["default_sampler"] = preset_name
-    return result
-
-
-def available_samplers() -> list[str]:
-    """Return sorted list of available preset names (for argparse choices)."""
-    from heylook_llm.samplers import get_sampler_registry
-
-    return get_sampler_registry().list_names()
 
 
 # =============================================================================
@@ -576,12 +549,6 @@ class ModelService:
         """Generate smart defaults based on model characteristics."""
         return get_smart_defaults(model_info)
 
-    def get_samplers(self) -> dict[str, dict]:
-        """Get available sampler presets with descriptions (registry view)."""
-        from heylook_llm.samplers import get_sampler_registry
-
-        return {info["name"]: info for info in get_sampler_registry().list_info()}
-
     # --- Config CRUD ---
 
     def list_configs(self) -> list[ModelConfig]:
@@ -880,54 +847,13 @@ class ModelService:
 
             raise ValueError(f"Model '{model_id}' not found")
 
-    def bulk_set_default_sampler(
-        self, model_ids: list[str], preset_name: str
-    ) -> list[ModelConfig]:
-        """Set ``default_sampler`` on multiple models at once.
-
-        Records the name on each target model's config so the request-time
-        cascade picks it up. No sampler-field baking.
-        """
-        from heylook_llm.samplers import get_sampler_registry
-        registry = get_sampler_registry()
-        if preset_name not in registry:
-            raise ValueError(
-                f"Unknown preset: {preset_name}. Available: {registry.list_names()}"
-            )
-
-        with self._lock:
-            data = self._read_toml()
-            models = data.get("models", [])
-            # This loop SKIPS unknown ids rather than raising, so without
-            # materializing first a discovered model would silently not get
-            # the sampler -- a bulk edit that reports success and changed
-            # nothing.
-            known = {m.get("id") for m in models}
-            for missing in [i for i in model_ids if i not in known]:
-                if self._materialize_discovered(data, missing):
-                    models = data["models"]
-            updated = []
-
-            for model in models:
-                if model.get("id") in model_ids:
-                    config = model.get("config", {}) or {}
-                    if model.get("provider") in ("mlx", "gguf"):
-                        config["default_sampler"] = preset_name
-                        model["config"] = config
-                    updated.append(ModelConfig(**model))
-
-            data["models"] = models
-            self._write_toml(data)
-            return updated
-
     # --- Import ---
 
     def import_models(
         self,
         models_to_import: list[dict],
-        default_sampler: str | None = "balanced",
     ) -> list[ModelConfig]:
-        """Import scanned models into config with an optional default sampler preset."""
+        """Import scanned models into config."""
         with self._lock:
             data = self._read_toml()
             existing_models = data.get("models", [])
@@ -973,12 +899,6 @@ class ModelService:
                         if key in config and config[key] is not None:
                             entry_config[key] = config[key]
 
-                    if default_sampler:
-                        from heylook_llm.samplers import get_sampler_registry
-                        if default_sampler in get_sampler_registry():
-                            entry_config = stamp_default_sampler(
-                                entry_config, default_sampler, provider
-                            )
                 else:
                     # Derive-at-load (6a, 2026-07-28): thin entry, matching
                     # the CLI wizard. vision/modalities are detected at
@@ -986,14 +906,6 @@ class ModelService:
                     # (cache_type=None = auto), the chat-template source is
                     # auto-resolved at load. Only operator intent is stored.
                     entry_config = {"model_path": model_path}
-
-                    # Stamp default_sampler if specified and known
-                    if default_sampler:
-                        from heylook_llm.samplers import get_sampler_registry
-                        if default_sampler in get_sampler_registry():
-                            entry_config = stamp_default_sampler(
-                                entry_config, default_sampler, provider
-                            )
 
                 # Apply any overrides from the import request
                 overrides = model_data.get("overrides", {})

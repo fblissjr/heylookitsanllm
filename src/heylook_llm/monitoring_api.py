@@ -117,7 +117,6 @@ async def get_capabilities(request: Request):
     """Get server capabilities and optimization options."""
     from heylook_llm import __version__ as server_version
     from heylook_llm.optimizations.status import get_optimization_summary
-    from heylook_llm.samplers import get_sampler_registry
 
     # Get optimization status
     optimizations = get_optimization_summary()
@@ -142,16 +141,6 @@ async def get_capabilities(request: Request):
         "server_version": server_version,
         "optimizations": optimizations,
         "metal": metal_info,
-        # Named-sampler discovery (2026-07-20): the bundled SamplerRegistry
-        # names, resolvable per-request via ChatRequest.sampler or per-model
-        # via models.toml default_sampler. Distinct from /v1/presets (saved
-        # user prompt+sampler bundles in the app DB).
-        "samplers": {
-            "available": get_sampler_registry().list_info(),
-            "request_field": "sampler",
-            "model_default_field": "default_sampler",
-            "distinct_from": "/v1/presets (saved user prompt+sampler bundles)",
-        },
         "endpoints": {
             # ONE inference wire (v1.79.66). Images ride it as content blocks;
             # there is no server-side resize anywhere any more.

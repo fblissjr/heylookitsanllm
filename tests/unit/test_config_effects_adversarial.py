@@ -261,10 +261,11 @@ def test_allowlist_widening_added_exactly_the_dropped_fields():
         f"the derived allowlist DROPPED {sorted(previously_allowed - now)} -- "
         f"a field that used to import silently stopped importing"
     )
-    # The five fields the derivation FIXED, plus default_sampler. These are the
-    # regression -- each one used to be silently dropped on import.
+    # The five fields the derivation FIXED. These are the regression -- each
+    # one used to be silently dropped on import. (`default_sampler` was a
+    # sixth until v2.0.30 removed the named-sampler system entirely.)
     for field in ("cache_ram_mb", "enable_thinking", "load_mode",
-                  "n_gpu_layers_draft", "sleep_idle_seconds", "default_sampler"):
+                  "n_gpu_layers_draft", "sleep_idle_seconds"):
         assert field in now, f"`{field}` was dropped on import before; it must stay settable"
 
     # Deliberately NOT an exact frozen list of the difference. The original

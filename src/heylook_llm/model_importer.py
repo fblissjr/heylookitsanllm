@@ -34,21 +34,11 @@ class ModelImporter:
 
     def __init__(
         self,
-        sampler: Optional[str] = None,
         overrides: Optional[dict[str, Any]] = None,
         chat_template_override: Optional[str] = None,
     ):
         self.models: list[dict] = []
         self.existing_ids: set[str] = set()
-        self.sampler_name: Optional[str] = None
-        if sampler:
-            from heylook_llm.samplers import get_sampler_registry
-            registry = get_sampler_registry()
-            if sampler not in registry:
-                raise ValueError(
-                    f"Unknown sampler: {sampler}. Available: {registry.list_names()}"
-                )
-            self.sampler_name = sampler
         self.overrides = overrides or {}
         # CLI `--chat-template` override. When set, recorded on every
         # imported model regardless of what's in its folder. Users point at
@@ -527,8 +517,6 @@ class ModelImporter:
                     f"must be set by hand"
                 )
 
-        if self.sampler_name:
-            config["default_sampler"] = self.sampler_name
         config.update(self.overrides)
 
         return {
@@ -571,8 +559,6 @@ class ModelImporter:
         if self.chat_template_override:
             config["chat_template_source"] = self.chat_template_override
 
-        if self.sampler_name:
-            config["default_sampler"] = self.sampler_name
         config.update(self.overrides)
 
         return {
@@ -680,7 +666,7 @@ class ModelImporter:
         Existing entries and top-level keys round-trip VERBATIM (values via
         tomli_w; comments re-injected by merge_comments, the same machinery
         as admin writes) -- a reimport must never eat a hand-tuned
-        server_binary, sampler, or top-level setting. Refreshing one entry
+        server_binary or top-level setting. Refreshing one entry
         from a rescan is the admin PUT flow, deliberately not this path.
         """
         from heylook_llm.toml_comments import merge_comments
@@ -752,14 +738,13 @@ def import_models(args: Any) -> None:
             overrides[key] = value
 
     importer = ModelImporter(
-        sampler=getattr(args, 'sampler', None),
         overrides=overrides,
         chat_template_override=getattr(args, 'chat_template', None),
     )
 
     # Merge-preserve by default: whatever the existing output file says goes
     # right back out -- hand-tuned entries (server_binary, draft_model_path,
-    # samplers) and top-level settings must survive a reimport; the scan only
+    # server_binary) and top-level settings must survive a reimport; the scan only
     # ADDS. Seeding existing_ids here is what makes the scanners skip
     # already-configured models. --fresh restores the old wholesale rewrite.
     output_file = args.output or "models.toml"
@@ -852,16 +837,7 @@ def import_models(args: Any) -> None:
 
     # (Interactive per-model customization retired 2026-07-28 with config_tui:
     # dead under derive-at-load thin entries. Operator intent at import =
-    # --sampler / --override flags; richer editing is the Wave 4 admin CRUD.)
-
-    # Print sampler details before writing
-    if getattr(args, 'sampler', None):
-        from heylook_llm.samplers import get_sampler_registry
-        registry = get_sampler_registry()
-        if args.sampler in registry:
-            print(f"\nSampler: {args.sampler}")
-            for key, value in registry.get(args.sampler).items():
-                print(f"  {key:<25} = {value}")
+    # --override flag; richer editing is the Wave 4 admin CRUD.)
 
     if existing_models or existing_top:
         importer.write_merged(existing_top, existing_models, models,
@@ -873,8 +849,6 @@ def import_models(args: Any) -> None:
     for model in models:
         print(f"  - {model['id']} ({model['provider']})")
 
-    if getattr(args, 'sampler', None):
-        print(f"\nApplied sampler (recorded as default_sampler): {args.sampler}")
     if overrides:
         print(f"\nApplied overrides: {overrides}")
 
@@ -883,9 +857,3 @@ def import_models(args: Any) -> None:
     if existing_models:
         print(f"\nKept {len(existing_models)} existing entries and top-level "
               f"settings as-is (--fresh regenerates from scratch).")
-
-    if not getattr(args, 'sampler', None):
-        from heylook_llm.samplers import get_sampler_registry
-        print("\nAvailable samplers:")
-        for info in get_sampler_registry().list_info():
-            print(f"  --sampler {info['name']:<20} {info['description']}")

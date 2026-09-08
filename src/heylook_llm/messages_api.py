@@ -33,7 +33,6 @@ from heylook_llm.schema.converters import (
     to_stop_reason,
 )
 from heylook_llm.schema.messages import MessageCreateRequest
-from heylook_llm.request_guards import validate_request_sampler
 from heylook_llm.schema.responses import MessageResponse
 from heylook_llm.perf_collector import (
     ChunkTelemetry,
@@ -321,10 +320,6 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
 
     # Convert to internal ChatRequest
     chat_request = to_chat_request(msg_request)
-
-    # Route-boundary guard: the deep
-    # SamplerNotFound fires on first generator advance and escapes as a 500.
-    validate_request_sampler(getattr(chat_request, "sampler", None))
 
     provider_get_ms = 0.0
     provider = None

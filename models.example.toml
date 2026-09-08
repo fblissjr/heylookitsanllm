@@ -38,7 +38,6 @@ enabled = true
   temperature = 0.6
   max_tokens = 8192
   # named sampler applied when a request doesn't pick one
-  default_sampler = "balanced"
   # force the KV cache instead of the RAM-relative auto default
   cache_type = "quantized"
   kv_bits = 8

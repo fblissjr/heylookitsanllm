@@ -24,7 +24,6 @@ from heylook_llm.config import (
     AdminModelListResponse,
     AdminModelResponse,
     AdminValidationResult,
-    BulkDefaultSamplerRequest,
     ChatTemplateResponse,
     ChatTemplateUpdateRequest,
     configurable_fields,
@@ -35,8 +34,6 @@ from heylook_llm.config import (
     ModelStatusResponse,
     ModelUpdateRequest,
     ModelValidateRequest,
-    SamplerInfo,
-    SamplerListResponse,
     ScanConfigRequest,
     ScanConfigResponse,
     ScannedModelListResponse,
@@ -776,7 +773,6 @@ def _import_models(request: Request, import_request: ModelImportRequest):
     try:
         imported = service.import_models(
             models_to_import=import_request.models,
-            default_sampler=import_request.default_sampler,
         )
         warning = _safe_reload_config(request)
         loaded_ids = _get_loaded_model_ids(request)
@@ -802,36 +798,6 @@ async def _validate_config(request: Request, validate_request: ModelValidateRequ
         errors=result.errors,
         warnings=result.warnings,
     )
-
-
-# --- Samplers (named sampler configs; called "profiles", then briefly
-# "sampler presets", until the 2026-07-20 naming unification) ---
-
-async def _list_samplers(request: Request):
-    """List available named samplers (the bundled SamplerRegistry)."""
-    service = _get_service(request)
-    samplers_dict = service.get_samplers()
-    samplers = [SamplerInfo(name=k, description=v["description"]) for k, v in samplers_dict.items()]
-    return SamplerListResponse(samplers=samplers)
-
-
-def _bulk_set_default_sampler(request: Request, body: BulkDefaultSamplerRequest):
-    """Record a named sampler as default_sampler on multiple models."""
-    service = _get_service(request)
-    router = request.app.state.router_instance
-    try:
-        updated = service.bulk_set_default_sampler(body.model_ids, body.sampler)
-        warning = _safe_reload_config(request)
-        loaded_ids = _get_loaded_model_ids(request)
-        result: dict = {
-            "updated": [_model_config_to_response(c, loaded_ids, router).model_dump() for c in updated],
-            "total": len(updated),
-        }
-        if warning:
-            result["warning"] = warning
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
 
 def _get_scan_config(request: Request):
@@ -954,30 +920,6 @@ scan_import_router.add_api_route(
     summary="Validate Config",
     description="Validate a model config without saving.",
 )
-
-scan_import_router.add_api_route(
-    "/samplers",
-    _list_samplers,
-    methods=["GET"],
-    summary="List Samplers",
-    description=(
-        "List available named samplers (bundled SamplerRegistry -- same names "
-        "ChatRequest.sampler accepts). Distinct from /v1/presets, the saved "
-        "user prompt+sampler bundles. Renamed from /profiles 2026-07-20."
-    ),
-)
-
-scan_import_router.add_api_route(
-    "/bulk-default-sampler",
-    _bulk_set_default_sampler,
-    methods=["POST"],
-    summary="Bulk Set Default Sampler",
-    description=(
-        "Record a named sampler as default_sampler on multiple models at once. "
-        "Renamed from /bulk-profile 2026-07-20."
-    ),
-)
-
 
 # =============================================================================
 # Server-level admin operations (prefix: /v1/admin, NOT /v1/admin/models)

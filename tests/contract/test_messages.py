@@ -325,7 +325,11 @@ def test_retired_request_fields_are_refused_not_ignored(client):
     binds the model it tests; only this shape can tell the difference.
     """
     body = {"model": "m", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 8}
-    for field, value in (("logprobs", True), ("top_logprobs", 5), ("preset", "x")):
+    # `sampler` joined this list in v2.0.30: named sampler bundles were
+    # removed, so a client still sending one must be told rather than have
+    # it silently ignored -- the same failure `preset` is here for.
+    for field, value in (("logprobs", True), ("top_logprobs", 5),
+                         ("preset", "x"), ("sampler", "balanced")):
         r = client.post("/v1/messages", json={**body, field: value})
         assert r.status_code == 422, f"{field} was accepted: {r.status_code}"
         assert field.split("_")[-1] in r.text or field in r.text, \

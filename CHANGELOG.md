@@ -5,6 +5,79 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.30]
+
+### Removed
+
+- **The bundled sampler registry, entirely.** `data/samplers/*.toml`, the
+  `SamplerRegistry` that loaded them, `ChatRequest.sampler`,
+  `MessageCreateRequest.sampler`, models.toml `default_sampler`,
+  `GET /v1/admin/models/samplers`, `POST /v1/admin/models/bulk-default-sampler`,
+  the `/v1/capabilities` samplers block, `request_guards.py`, and the
+  `--sampler` / `--preset` / `--profile` CLI arguments. About 460 production
+  lines, two of the cascade's six layers, and two admin routes.
+
+  It shipped five generic bundles that applied the same numbers to every
+  model, which is the opposite of what the vendor layer does. Of the five,
+  **three had no consumer anywhere** in the repo. `thinking` was provably a
+  no-op: the cascade hardcoded the same constant as a fallback, so deleting
+  the file changed nothing (verified by emptying the registry and diffing the
+  result). And `balanced` -- the name stamped on every imported model --
+  carried `temperature = 0.7`, the exact value overturned in `20bdb45` as "a
+  chat-sane guess rather than a measurement" when the floor was raised to 1.0.
+  So the import default was a live path back to a setting that had been
+  deliberately reversed.
+
+  **The frontend never touched any of it**: no JS ever sent `sampler`, no JS
+  read either roster endpoint, and `tests/e2e/suites/chat.mjs` asserts the
+  generate wire stays sampler-free. Named bundles that a USER wants still
+  exist as `/v1/presets`, which is editable and client-expanded -- a preset
+  reaches the wire as explicit sampler fields, so it needs no server layer.
+
+  A request still sending `sampler` or `preset` gets a **422 naming the
+  removal**, not a silent drop. Pinned through the ROUTE (`test_messages.py`)
+  and verified red against a weakened guard, because a model-level test would
+  pass whether or not any route binds the model it tests.
+
+### Changed
+
+- **The floor is now three kinds of value, kept apart.** It read as one
+  undifferentiated dict of seven numbers; only two of them were ever an
+  opinion. `FALLBACK_TEMPERATURE` / `FALLBACK_TOP_P` are the judgement, and
+  they apply only where the model's own metadata is silent. `DEFAULT_MAX_TOKENS`
+  is a safety stop, not taste -- llama-server's `n_predict` default is
+  UNLIMITED. `KNOBS_OFF` are four identity values that exist to neutralise the
+  ENGINES' defaults, which are not neutral: llama.cpp ships `top_k = 40` and
+  applies it to any request omitting the key, so dropping them would hand each
+  engine its taste back and let the two diverge on identical input.
+
+- **The vendor layer is now the main event rather than a layer.** With the two
+  named-sampler layers gone the cascade is four deep, and the shape of the
+  answer is: the model's own published settings, then this model's overrides,
+  then what the request said -- with a hardcoded fallback only where all three
+  are silent.
+
+- `THINKING_PRESENCE_PENALTY = 1.5` is named rather than buried, with its
+  provenance attached. **It remains UNMEASURED**: it came from a "Qwen3-style"
+  bundle in July 2026, became automatic in the same commit that slimmed that
+  bundle away, on the strength of one gemma MoE loop, and survived only
+  because no vendor ships a `presence_penalty` (it is not an HF
+  generation_config field at all). Qwen's published guidance for a THINKING
+  model is 0.0; 1.5 is their non-thinking value. Removing the registry did not
+  settle this and was never going to -- it moved the constant to one home so
+  there is a single place to change when it is.
+
+- `ModelService.import_models` no longer takes or stamps a sampler name, and
+  `models.example.toml` no longer tells users to write one.
+
+### Note
+
+`apps/batch-labeler` hardcodes `vlm-extract` / `vlm-describe` in four built-in
+tasks and sends a `sampler` field. It already could not work: it posts to
+`/v1/chat/completions`, removed in v1.79.66, and CLAUDE.md lists it as pending
+port. Whoever ports it should inline those two field sets rather than look for
+the names.
+
 ## [2.0.29]
 
 ### Changed

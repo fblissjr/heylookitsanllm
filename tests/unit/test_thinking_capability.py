@@ -172,17 +172,6 @@ class TestThinkingFlagAgreesAcrossSurfaces:
                     f"thinking={prompt_side} but parser armed with {parser_side}"
                 )
 
-    def test_a_sampler_that_turns_thinking_on_reaches_the_parser(self):
-        """The specific combination that was broken, pinned on its own so a
-        regression names itself instead of surfacing as one row of a matrix."""
-        from heylook_llm.config import ChatMessage, ChatRequest
-
-        msg = [ChatMessage(role="user", content="hi")]
-        assert self._provider({}).effective_thinking(
-            ChatRequest(messages=msg, sampler="thinking")) is True
-        assert self._provider({"default_sampler": "thinking"}).effective_thinking(
-            ChatRequest(messages=msg)) is True
-
     def test_a_gguf_entry_can_still_ask_for_thinking_by_default(self):
         """Claim: `enable_thinking` is settable on a gguf models.toml entry.
 

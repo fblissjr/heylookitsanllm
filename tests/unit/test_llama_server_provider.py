@@ -572,38 +572,19 @@ class TestPayload:
         payload = p._build_payload(req(enable_thinking=True, presence_penalty=0.3))
         assert payload["presence_penalty"] == 0.3
 
-    def test_unknown_default_sampler_skips_not_raises(self):
-        """Shared-resolver semantics: a default_sampler missing from the
-        registry logs and skips (models validate at startup; a miss here is
-        post-startup registry drift) -- it must not 400 every request."""
-        p = make_provider(default_sampler="gone-from-registry")
+    def test_the_vendor_layer_overlays_the_floor(self):
+        """What replaced the named-sampler layers: the model's OWN published
+        settings. The floor is only reached where the model says nothing, so
+        this is the layer that has to actually reach the wire."""
+        p = make_provider()
         payload = p._build_payload(req())
         assert payload["temperature"] == GLOBAL_SAMPLER_FLOOR["temperature"]
 
-    def test_request_sampler_suppresses_default_sampler(self):
-        """Shared-resolver semantics: naming a request sampler replaces the
-        default_sampler layer; fields only the default set revert to floor."""
-        p = make_provider(default_sampler="thinking")
-        payload = p._build_payload(req(sampler="deterministic"))
-        assert payload["presence_penalty"] == 0.0
-
-    def test_default_sampler_overlays_floor(self):
-        from heylook_llm.samplers import get_sampler_registry
-
-        det_temp = get_sampler_registry()._presets["deterministic"]["temperature"]
-        assert det_temp != GLOBAL_SAMPLER_FLOOR["temperature"]  # must differ from the floor for this to prove anything
-        p = make_provider(default_sampler="deterministic")
-        payload = p._build_payload(req())
-        assert payload["temperature"] == det_temp
-
-    def test_named_request_sampler_beats_default_sampler(self):
-        from heylook_llm.samplers import get_sampler_registry
-
-        reg = get_sampler_registry()._presets
-        assert reg["balanced"]["temperature"] != reg["deterministic"]["temperature"]
-        p = make_provider(default_sampler="deterministic")
-        payload = p._build_payload(req(sampler="balanced"))
-        assert payload["temperature"] == reg["balanced"]["temperature"]
+        from heylook_llm.samplers import resolve_effective_sampling
+        merged = resolve_effective_sampling(
+            req(), {"model_path": "x"}, vendor={"temperature": 0.31, "top_k": 64})
+        assert merged["temperature"] == 0.31, "vendor did not beat the floor"
+        assert merged["top_k"] == 64
 
     def test_enable_thinking_maps_to_chat_template_kwargs(self):
         p = make_provider()

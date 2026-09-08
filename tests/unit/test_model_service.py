@@ -3,7 +3,6 @@
 Historical context: the v1.19.0 profile system baked sampler fields into
 ``models.toml`` at import time. C4 deleted that behavior -- sampler fields
 now live in the runtime preset registry and are applied at request time
-via the cascade. ``stamp_default_sampler()`` just records ``default_sampler``
 on the model's config; ``get_smart_defaults()`` emits only load-time
 fields (cache type, KV quantization, draft tokens). (The intermediate
 ``SamplerPreset``/``load_sampler_presets`` adapter layer was collapsed
@@ -11,7 +10,6 @@ onto ``SamplerRegistry`` 2026-07-20 -- code-review finding.)
 
 Preset-registry semantics are covered by ``test_preset_registry.py``.
 This file focuses on:
-  - ``stamp_default_sampler`` set-``default_sampler`` behavior
   - ``get_smart_defaults`` returning only load-time fields
   - ``ModelImporter`` model-size regex and embedding detection (unchanged)
 """
@@ -20,44 +18,8 @@ import json
 
 import pytest
 
-from heylook_llm.model_service import (
-    get_smart_defaults,
-    stamp_default_sampler,
-)
+from heylook_llm.model_service import get_smart_defaults
 from heylook_llm.model_importer import ModelImporter
-
-
-class TestStampDefaultPreset:
-    """``stamp_default_sampler`` sets ``default_sampler`` only -- no baking."""
-
-    def test_stamps_on_mlx(self):
-        config = {"model_path": "/p", "vision": False, "cache_type": "standard"}
-
-        result = stamp_default_sampler(config, "thinking", "mlx")
-
-        assert result["default_sampler"] == "thinking"
-        # Load-time fields preserved.
-        assert result["model_path"] == "/p"
-        assert result["cache_type"] == "standard"
-        # No sampler-field baking.
-        assert "temperature" not in result
-        assert "top_k" not in result
-
-    def test_skips_non_mlx_provider(self):
-        """Embedding provider doesn't use sampler presets; no default_sampler."""
-        config = {"model_path": "/p", "max_length": 2048}
-
-        result = stamp_default_sampler(config, "balanced", "mlx_embedding")
-
-        assert "default_sampler" not in result
-        assert result["max_length"] == 2048
-
-    def test_does_not_mutate_input(self):
-        config = {"model_path": "/p"}
-
-        stamp_default_sampler(config, "thinking", "mlx")
-
-        assert "default_sampler" not in config
 
 
 class TestSmartDefaultsLoadTimeOnly:

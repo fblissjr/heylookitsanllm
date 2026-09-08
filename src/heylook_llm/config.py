@@ -110,8 +110,6 @@ class ChatRequest(BaseModel):
     # Streaming options (OpenAI-compatible)
     stream_options: Optional[Dict] = Field(default=None, description="Options for streaming: {include_usage: true} to get usage stats")
 
-    # Named sampler (resolved against the SamplerRegistry at generation
-    # time). Overlays the sampler's fields on top of model-level defaults;
     # Continuation ("prefill"): finish the FINAL message instead of opening a
     # new assistant turn. None = auto -- a trailing assistant message is
     # continued (the long-standing prefill convention, resolve_add_generation_
@@ -129,28 +127,6 @@ class ChatRequest(BaseModel):
                     "continued). true = continue any role's final message (user-role "
                     "is MLX-only); false = never continue."
     )
-
-    # explicit request fields still win. Unknown name -> 400.
-    # NOT the /v1/presets user presets (v3's saved prompt+sampler bundles).
-    sampler: Optional[str] = Field(
-        default=None,
-        description="Named sampler (e.g. 'balanced', 'thinking', 'vlm-extract'). "
-                    "Fields from the sampler overlay model defaults; explicit request "
-                    "fields override both. Distinct from /v1/presets user presets."
-    )
-
-    @model_validator(mode='before')
-    @classmethod
-    def reject_renamed_preset_field(cls, data):
-        # 2026-07-20 rename: 'preset' -> 'sampler'. ChatRequest ignores
-        # unknown keys, so without this guard an old client's preset would
-        # be silently dropped -- fail loudly with the migration hint instead.
-        if isinstance(data, dict) and 'preset' in data:
-            raise ValueError(
-                "'preset' was renamed to 'sampler' (named sampler configs); "
-                "/v1/presets user presets are a separate system"
-            )
-        return data
 
     @field_validator('messages', mode='before')
     @classmethod
@@ -469,14 +445,6 @@ class MLXModelConfig(BaseModel):
     # which no reload of THIS model can change.
     unload_after_idle_seconds: Optional[int] = Field(
         default=None, ge=0, json_schema_extra={"effect": EFFECT_APPLIES_LIVE})
-    # Default sampler applied when a request doesn't specify ``sampler`` (C4).
-    # Resolved against the SamplerRegistry at request time; an unknown name
-    # falls back to "skip this layer" rather than raising -- the model config
-    # is validated at server startup, so an unknown name here indicates a
-    # post-startup registry rebuild drift and should log at the layer, not
-    # kill inference.
-    default_sampler: Optional[str] = Field(
-        default=None, json_schema_extra={"effect": EFFECT_PER_REQUEST})
     # Chat-template source policy (C4.5):
     # - "auto": trust HF AutoTokenizer.from_pretrained (jinja wins if present);
     #   if the tokenizer ends up template-less, the provider installs whatever
@@ -901,9 +869,6 @@ class GGUFModelConfig(BaseModel):
         default_factory=list,
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "advanced"},
     )
-    # named sampler (SamplerRegistry)
-    default_sampler: Optional[str] = Field(
-        default=None, json_schema_extra={"effect": EFFECT_PER_REQUEST})
     # model-level default cap
     max_tokens: Optional[int] = Field(
         default=None, gt=0, json_schema_extra={"effect": EFFECT_PER_REQUEST})
@@ -922,8 +887,8 @@ class GGUFModelConfig(BaseModel):
     # that, a gguf model inherited its template's own default -- thinking-ON
     # for gemma-4/Qwen3.6/DeepSeek-V4 -- and with extra="forbid" and no field
     # here there was then NO way to ask for that back. The only remaining
-    # route was `default_sampler = "thinking"`, which drags a presence_penalty
-    # change in with it. None = unset = off.
+    # route was a named sampler, which dragged a presence_penalty change in
+    # with it -- and named samplers are gone (v2.0.30). None = unset = off.
     enable_thinking: Optional[bool] = Field(
         default=None, json_schema_extra={"effect": EFFECT_PER_REQUEST})
     # Model-level default thinking DEPTH, mirroring the MLX config's field of
@@ -1295,15 +1260,13 @@ class ModelScanRequest(BaseModel):
 class ModelImportRequest(BaseModel):
     """Import one or more scanned models.
 
-    extra="forbid": the 2026-07-20 rename (profile -> default_sampler) must
-    fail loudly for old clients -- with Pydantic's default extra=ignore, a
-    stale {"profile": ...} body would be silently dropped and every import
-    stamped with the "balanced" default.
+    extra="forbid": a stale {"profile": ...} or {"default_sampler": ...} body
+    from an old client must fail loudly rather than be silently dropped --
+    both named the bundled-sampler system removed in v2.0.30.
     """
     model_config = ConfigDict(extra="forbid")
 
     models: List[Dict] = Field(..., description="Models to import (id, path, provider, overrides)")
-    default_sampler: Optional[str] = Field(default="balanced", description="Named sampler recorded as default_sampler on all imported models")
 
 
 class ModelUpdateRequest(BaseModel):
@@ -1339,12 +1302,6 @@ class AdminValidationResult(BaseModel):
     valid: bool
     errors: List[str] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
-
-
-class BulkDefaultSamplerRequest(BaseModel):
-    """Set default_sampler (a named-sampler name) on multiple models."""
-    model_ids: List[str] = Field(..., description="Model IDs to update")
-    sampler: str = Field(..., description="Named sampler to record as default_sampler")
 
 
 class ModelStatusResponse(BaseModel):
@@ -1422,9 +1379,8 @@ class AdminModelResponse(BaseModel):
         default=False,
         description="What thinking resolves to for this model when a request "
                     "says nothing about it: the sampling cascade's own answer "
-                    "for an empty request (`config.enable_thinking`, else a "
-                    "`default_sampler` that turns it on, else whether the "
-                    "model can think at all). DERIVED -- answered for unloaded "
+                    "for an empty request (`config.enable_thinking`, else "
+                    "whether the model can think at all). DERIVED -- answered for unloaded "
                     "models -- and the value a UI's 'model default' choice "
                     "actually means. False for a model without the thinking "
                     "capability.",
@@ -1539,16 +1495,3 @@ class FitResponse(BaseModel):
     # Flips when a component becomes an approximation (e.g. offload deltas);
     # the UI must render estimates in a different visual register.
     estimated: bool = False
-
-
-class SamplerInfo(BaseModel):
-    """Named-sampler metadata (bundled registry entry)."""
-    name: str
-    description: str
-
-
-class SamplerListResponse(BaseModel):
-    """Response for listing available named samplers."""
-    samplers: List[SamplerInfo] = Field(default_factory=list)
-
-

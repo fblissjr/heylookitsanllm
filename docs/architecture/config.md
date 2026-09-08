@@ -152,7 +152,6 @@ Do not put it in `models.toml`.)
 | `enable_thinking` | bool | `false` | Thinking-mode default for this model (any thinking-capable template, not Qwen3-specific -- see "Sampler Defaults" below for the request-time cascade) |
 | `vision_tokens` | int | none | Per-model default visual token budget per image (16-16384). A request's own `vision_tokens` overrides; `none` leaves the image processor's own default. Mapped per model family by `providers/common/vision_budget.py` (gemma-4: discrete `max_soft_tokens` bucket; qwen2/3-VL: `max_pixels`) |
 | ~~`supports_thinking`~~ | -- | -- | REMOVED v1.46.0 (MLX only; the GGUF config keeps its flag). MLX thinking capability is derived: `enable_thinking`, else template probe, else the explicit `ModelConfig.capabilities` override. |
-| `default_sampler` | string | none | Named-sampler name applied when a request doesn't specify one -- see "Sampler Defaults and the Effective-Request Cascade" below |
 | `draft_model_path` | string | none | Path to draft model for speculative decoding |
 | `num_draft_tokens` | int | `3` | Draft tokens for speculative decoding. The importer no longer stamps this on every import (v1.32.0) -- it's inert without `draft_model_path`, so writing it on every model was dead config. The field and its default of 3 remain; only the automatic import-time write was removed. |
 | `default_hidden_layer` | int | `-2` | Layer for hidden state extraction |
@@ -180,61 +179,73 @@ model_path = "modelzoo/qwen-2.5-custom"
 ### Sampler Defaults and the Effective-Request Cascade
 
 A chat request's actual sampler values are resolved by the shared
-`resolve_effective_sampling` (`src/heylook_llm/samplers.py`, v1.46.0) --
-ONE implementation used by BOTH providers (`MLXProvider._apply_model_defaults`
+`resolve_effective_sampling` (`src/heylook_llm/samplers.py`) -- ONE
+implementation used by BOTH providers (`MLXProvider._apply_model_defaults`
 wraps it to add the cached vendor-layer read and MLX runtime-default fields;
-`LlamaServerProvider._build_payload` calls it directly, passing no vendor
-layer). Layers, each overriding only the fields it sets:
+`LlamaServerProvider._build_payload` calls it directly).
 
-1. **Global hardcoded floor** -- `GLOBAL_SAMPLER_FLOOR` (samplers.py):
-   `temperature 1.0`, `top_p 0.95`, `top_k 0`, `min_p 0.0`,
-   `max_tokens 4096`, `repetition_penalty 1.0`, `presence_penalty 0.0`
-   (v1.79.60, owner ruling: low temperature flattens generative prose;
-   0.7/1.0 before that).
-   This is a true fallback: it only survives for models that ship no
-   `generation_config.json` (next layer).
-   1. **Vendor layer** (v1.45.0) -- `load_vendor_sampling` (samplers.py)
-      reads `temperature`/`top_p`/`top_k` from the model dir's own
-      `generation_config.json` (read once at first request, cached on the
-      provider). Every model gets its vendor's decode tuning without
-      models.toml churn: gemma-4 runs 1.0/64/0.95, Qwen3 thinking models
-      0.6/20/0.95, each from its own file. Best-effort: a missing or
-      malformed file yields nothing and never blocks a load.
-2. **Thinking anti-loop overlay**, keyed on the *effective* thinking
-   switch: the request's `enable_thinking` when present, else the model
-   config's. Sourced from the `thinking` sampler, which is deliberately
-   slimmed (v1.45.0) to loop control (`presence_penalty 1.5` +
-   `enable_thinking`): per-model decode tuning is the vendor layer's job,
-   and the sampler's old Qwen-tuned `temperature 0.6 / top_k 20` was
-   wrong for every other family whenever thinking was on. (Before
-   v1.45.0 this layer was keyed on model config alone, which nothing
-   sets -- request-toggled thinking ran with zero repetition control,
-   the 2026-07-28 gemma thinking repetition loop.)
+**Four layers** since v2.0.30, each overriding only the fields it sets. The
+shape of the answer is: *the model's own settings, then this model's overrides,
+then what the request said outright* -- with a hardcoded fallback only where
+all three are silent.
+
+1. **Floor** -- deliberately small, and three different KINDS of value that
+   are kept apart in `samplers.py` because they rot differently:
+   - `FALLBACK_TEMPERATURE = 1.0` / `FALLBACK_TOP_P = 0.95` -- the only two
+     that are an OPINION about sampling (v1.79.60 owner ruling: low
+     temperature flattens generative prose; 0.7/1.0 before that, 0.1/512
+     before that). They apply ONLY where the model's metadata is silent.
+   - `DEFAULT_MAX_TOKENS = 4096` -- not taste. llama-server's `n_predict`
+     default is UNLIMITED, so a request naming no cap runs to the end of the
+     context. A stop, not a preference.
+   - `KNOBS_OFF` (`top_k 0`, `min_p 0.0`, `repetition_penalty 1.0`,
+     `presence_penalty 0.0`) -- each means "this knob is OFF", not "we prefer
+     this". Load-bearing anyway, because the ENGINES' own defaults are not
+     neutral: llama.cpp ships `top_k = 40` and applies it to any request that
+     omits the key, so dropping these would hand each engine its taste back
+     and let the two diverge on identical input.
+   1. **Vendor layer** -- the model's OWN published settings, and the layer
+      that should normally decide. MLX reads `temperature`/`top_p`/`top_k`
+      from the model dir's `generation_config.json` (`load_vendor_sampling`);
+      gguf reads the same three from the GGUF header's `general.sampling.*`
+      (`gguf_metadata.vendor_sampling`, v2.0.23), which converters write FROM
+      that same generation_config.json. gemma-4 runs 1.0/64/0.95, Qwen3.6
+      1.0/20/0.95, each from its own file. Best-effort: a missing or malformed
+      source yields nothing and never blocks a load.
+2. **Thinking anti-loop overlay** (`THINKING_PRESENCE_PENALTY = 1.5`), keyed
+   on the *effective* thinking switch: the request's `enable_thinking` when
+   present, else the model config's, else the capability.
+   **UNMEASURED.** The value came from a "Qwen3-style" bundle in July 2026 and
+   became automatic in the same commit that slimmed that bundle away, on the
+   strength of one gemma MoE repetition loop. It is the sole survivor of a set
+   whose other values the vendor layer replaced, and it survived only because
+   no vendor ships a `presence_penalty` -- it is not an HF generation_config
+   field at all. Qwen's own published guidance for a THINKING model is 0.0;
+   1.5 is what they recommend for the non-thinking variant.
 3. **Model sampler fields** from `models.toml` (per-model overrides in the
    table above).
-   1. **Model `default_sampler`** -- applied only when the request has no
-      explicit sampler. Unknown sampler name logs and skips the layer
-      rather than failing (models are validated at server startup; an
-      unknown name here means the sampler registry changed post-startup).
-4. **Request sampler** (`ChatRequest.sampler`). Overrides the model's
-   `default_sampler`. Unknown name raises `SamplerNotFound`, translated to
-   HTTP 400 by the route handler.
-5. **Request-level explicit field values** -- always win.
+4. **Request-level explicit field values** -- always win.
 
-Before v1.32.0, the global floor was `temperature 0.1, max_tokens 512` --
-near-greedy sampling and 512-token truncation for every model with no
-default sampler set, which in practice meant every CLI-imported model
-(the 512 cap also existed independently in `moderate.toml` and the batch
-processor's fallback). This was silently truncating and flattening output
-for models the user had never explicitly tuned. `GLOBAL_SAMPLER_FLOOR` is
-now `0.7 / 4096`, and the batch fallback paths (`mlx_provider.py` lines
-854, 919) reference the same constant instead of a third hardcoded `512`.
+**Removed in v2.0.30: the bundled sampler registry.** Layers 3b (models.toml
+`default_sampler`) and 4 (`ChatRequest.sampler`) named entries in a
+`SamplerRegistry` loaded from five TOMLs under `data/samplers/`. All of it is
+gone -- the TOMLs, the registry, both wire fields, `/v1/admin/models/samplers`,
+`/v1/capabilities.samplers`, `bulk-default-sampler`, `request_guards.py` and
+the `--sampler`/`--preset`/`--profile` CLI arguments.
 
-Admin/CLI import also used to stamp the "moderate" name at import --
-`moderate.toml` (removed 2026-07-20) described itself as "the deprecated
-back-compat alias for the pre-preset-split default; new users should
-prefer 'balanced'." `ModelService.import_models` now takes
-`default_sampler: str | None = "balanced"` instead.
+It shipped generic guesses applied to every model, which is the opposite of
+what the vendor layer does. Three of the five had no consumer anywhere; the
+`thinking` entry was provably a no-op because the cascade hardcoded the same
+constant as a fallback; and `balanced` -- stamped on every imported model --
+carried `temperature = 0.7`, the value the owner had explicitly overturned
+when raising the floor to 1.0. No frontend code ever sent `sampler` or read
+either roster endpoint, and the e2e suite asserts the generate wire stays
+sampler-free. A request still sending `sampler` or `preset` now gets a 422
+naming the removal.
+
+Named bundles that a USER wants still exist as the `/v1/presets` DuckDB
+system, which is editable and client-expanded -- a preset reaches the wire as
+explicit sampler fields, so it arrives at layer 4 and needs no layer of its own.
 
 ### Smart Defaults at Import
 
@@ -355,88 +366,11 @@ The `config` field is discriminated on `provider`: `"mlx"` parses as `MLXModelCo
 
 ## Model Profiles
 
-> **This section describes the current (post-"C4") preset system.** It
-> supersedes an older load-time "profiles" design that baked sampler
-> fields directly into `models.toml` at import; that design, and the
-> `src/heylook_llm/data/profiles/` directory this doc used to point at,
-> no longer exist. This drift predates and is unrelated to the
-> 2026-07-05/06 work in this document's other sections -- noted here
-> because it was found while verifying this file against the code.
-
-**Samplers** are named sampler-setting bundles resolved at **request
-time**, not baked into `models.toml` at import. They live under
-`src/heylook_llm/data/samplers/` as TOML files, loaded by the
-`SamplerRegistry` (`src/heylook_llm/samplers.py`). Current samplers:
-`balanced` (import default), `deterministic` (repro/eval), `thinking`
-(anti-loop overlay, auto-applied by the cascade whenever thinking is
-effectively on -- request field or model config),
-`vlm-describe` / `vlm-extract` (VLM-safe field subsets -- mlx-vlm's
-`stream_generate` ignores top_k/min_p/repetition_penalty; used by
-batch-labeler's tasks).
-
-The flavor entries `moderate` (back-compat alias for the pre-registry
-default), `code`, and `creative` were removed 2026-07-20: they had no
-consumer anywhere in the stack (the v3 frontend's user-preset system owns
-interactive sampler preferences), and their only references were tests
-asserting their own existence. The registry keeps only entries that encode
-mechanism (model-family or library knowledge) or are wired as defaults.
-`test_sampler_registry.py` pins the exact roster -- adding one means
-naming its consumer there.
-
-**Discovery** (2026-07-20): `GET /v1/capabilities` advertises the registry
-(`samplers: {available, request_field, model_default_field}`) so scripted
-clients can enumerate names without admin access. The admin list lives at
-`GET /v1/admin/models/samplers`.
-
-**Naming** (settled 2026-07-20, two steps in one day): this registry was
-"presets" (and "profiles" on the import/admin side) until both names
-proved traps -- "profile" collides with `/v1/performance/profile`, and
-"preset" collides with `/v1/presets`, the DuckDB **user presets** (v3's
-saved prompt+sampler bundles, client-expanded; `preset_api.py`; a fully
-separate system this registry never touches). Final vocabulary: this
-registry is **samplers** everywhere -- `ChatRequest.sampler` (a request
-sending the old `preset` key gets an explicit 400 with a migration hint,
-not a silent drop), models.toml `default_sampler`, admin routes
-`/v1/admin/models/samplers` + `/bulk-default-sampler`,
-`ModelImportRequest.default_sampler` (extra="forbid" so the old field
-name fails loudly), module `samplers.py` (`SamplerRegistry`,
-`SamplerNotFound`, `get_sampler_registry`), `model_service.py`
-(`stamp_default_sampler`, `get_samplers`, `bulk_set_default_sampler`,
-`available_samplers`). The import CLI accepts `--sampler` with
-`--preset`/`--profile` as legacy aliases. Do not reintroduce "preset" or
-"profile" for this concept; "preset" now means ONLY the v3 user-preset
-system.
-
-Each sampler has `[meta]` and `[defaults]` tables:
-
-```toml
-[meta]
-name = "balanced"
-description = "Middle-ground sampling for everyday chat. Works for most non-specialized workloads."
-
-[defaults]
-temperature = 0.7
-top_p = 0.9
-top_k = 40
-min_p = 0.05
-max_tokens = 1024
-repetition_penalty = 1.05
-```
-
-`ModelService.import_models` (or `heylookllm import --sampler NAME`)
-records the sampler name on the model as `default_sampler` -- it does not
-copy the sampler's fields into `models.toml`. See "Sampler Defaults and
-the Effective-Request Cascade" above for where `default_sampler` sits in
-the resolution order, and how it interacts with a request's own
-`ChatRequest.sampler`.
-
-Apply a sampler at import via CLI (`--preset`/`--profile` are accepted as
-legacy aliases):
-```bash
-heylookllm import --hf-cache --sampler balanced
-```
-
----
+> **The bundled sampler registry this section described was REMOVED in
+> v2.0.30.** See "Sampler Defaults and the Effective-Request Cascade"
+> above for what replaced it: the model's own published settings as the
+> primary source, a two-value fallback beneath, and `/v1/presets` as the
+> one remaining named-bundle system.
 
 ## Field-effect metadata (v1.52+, design record)
 

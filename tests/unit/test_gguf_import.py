@@ -584,17 +584,6 @@ class TestModelServiceGGUFNoCrash:
         assert len(imported) == 1, "gguf import was silently dropped (validation failure)"
         assert imported[0].provider == "gguf"
 
-    def test_bulk_set_default_sampler_skips_gguf_gracefully(self, tmp_path):
-        service = self._service(tmp_path)
-        gguf_file = tmp_path / "model.gguf"
-        _write_bytes(gguf_file, 1000)
-        service.import_models(
-            [{"id": "gguf-model", "provider": "gguf", "config": {"model_path": str(gguf_file)}}]
-        )
-        # Must not raise even though this provider isn't "mlx".
-        updated = service.bulk_set_default_sampler(["gguf-model"], "balanced")
-        assert len(updated) == 1
-
 
 def test_mmproj_suffix_naming_detected(tmp_path):
     # Deleting this re-breaks google-style projector names (<model>-mmproj.gguf,

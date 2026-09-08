@@ -24,9 +24,10 @@ is prose, and prose rots — the shapes are derived, the story around them is
 not. Treat the schema as the field reference and this document as the map.
 
 **`GET /v1/capabilities`** — what this server build can do: `server_version`,
-active `optimizations`, Metal device info, and the `samplers.available`
-roster (named bundles you can pass as `sampler`). Query it once at
-integration time.
+active `optimizations`, and Metal device info. Query it once at
+integration time. (It carried a `samplers.available` roster of named bundles
+until v2.0.30, when that system was removed -- send the sampler fields
+themselves.)
 
 **`GET /v1/models`** — what this server is currently serving. Each row:
 
@@ -405,7 +406,7 @@ more direct lever.
 
 `max_tokens`, `temperature`, `top_p`, `top_k`, `min_p`, `repetition_penalty`,
 `repetition_context_size`, `presence_penalty`, `seed`,
-`sampler`, `vision_tokens`, `thinking`, `reasoning_effort`,
+`vision_tokens`, `thinking`, `reasoning_effort`,
 `stream`, `stream_options`, `metadata`.
 
 Every one is optional and **absent means the server's cascade decides**.
@@ -428,10 +429,6 @@ because "omit it and the server decides" is the wrong mental model for it.
 wire in v1.79.49 because it controlled nothing: Messages returns telemetry
 unconditionally in both modes. Sending it is harmless — unknown fields are
 ignored, not rejected — but it does nothing, and it never did.)
-
-`sampler` takes a named bundle from `/v1/capabilities` → `samplers.available`
-(this is the `SamplerRegistry`, not a `/v1/presets` id — different system,
-same English word).
 
 `reasoning_effort` values are **model-specific** and the schema accepts the
 union of every model's set, so a wrong-for-this-model value reaches the
@@ -700,7 +697,7 @@ rather than a guarantee, for reasons the closing note gives:
 - **Extensions**: twelve request fields have no Anthropic equivalent —
   the sampling knobs (`min_p`, `repetition_penalty`,
   `repetition_context_size`, `presence_penalty`, `seed`), the inspection
-  ones (`show_special_tokens`), and `sampler`,
+  ones (`show_special_tokens`), and
   `vision_tokens`, `reasoning_effort`, `stream_options`. All are listed
   under [Knobs](#knobs) and enumerated authoritatively in `/openapi.json`;
   this bullet named four of them until v1.79.41, and thirteen until

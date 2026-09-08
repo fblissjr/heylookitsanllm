@@ -113,7 +113,6 @@ def to_chat_request(request: MessageCreateRequest) -> ChatRequest:
         seed=request.seed,
         enable_thinking=request.thinking,
         reasoning_effort=request.reasoning_effort,
-        sampler=request.sampler,
         vision_tokens=request.vision_tokens,
         stream_options=stream_options,
     )

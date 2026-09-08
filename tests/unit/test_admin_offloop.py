@@ -143,9 +143,6 @@ def _case(app, name):
                   {"json": {"config": {"chat_template_path": blob}}}),
         "toggle": ("POST", "/v1/admin/models/found/toggle", {}),
         "delete": ("DELETE", "/v1/admin/models/written-off", {}),
-        "bulk_sampler": ("POST", "/v1/admin/models/bulk-default-sampler",
-                         {"json": {"model_ids": ["found"],
-                                   "sampler": "balanced"}}),
         "scan": ("POST", "/v1/admin/models/scan",
                  {"json": {"paths": [store], "scan_hf_cache": False}}),
         "reload": ("POST", "/v1/admin/reload", {}),
@@ -183,7 +180,7 @@ class TestMutatingAdminRoutesStayOffTheEventLoop:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("case", [
-        "patch", "toggle", "delete", "bulk_sampler", "scan", "reload",
+        "patch", "toggle", "delete", "scan", "reload",
     ])
     async def test_route_does_not_freeze_the_loop(self, admin_app, case):
         method, url, kwargs = _case(admin_app, case)

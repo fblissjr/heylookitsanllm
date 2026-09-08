@@ -120,7 +120,7 @@ model's own files at load time and never goes stale; a stored field always
 wins as an override. See `models.example.toml` for the format.
 
 Three routes: the Models page in the UI (scan, select, import), the CLI
-(`heylookllm import --folder ... [--sampler balanced]`), or the admin API
+(`heylookllm import --folder ...`), or the admin API
 (`POST /v1/admin/models/scan` then `POST /v1/admin/models/import`). The scan
 understands MLX/safetensors dirs, embedding models, and GGUF dirs (mmproj
 projectors and `mtp-*` drafter sidecars auto-paired).

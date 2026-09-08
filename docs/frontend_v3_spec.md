@@ -170,7 +170,7 @@ backend):**
   opt-in flag.
 
 ### 3e. Settings (`settings.js` + panel, ~200 lines) — keep contract, data-drive the panel
-- 10 sampler keys, all default `null` = "use backend cascade" (global → thinking → models.toml → request).
+- 10 sampler keys, all default `null` = "use backend cascade" (floor → vendor → thinking → models.toml → request).
   `samplerParams()` copies only non-null keys (extra: `top_k` requires `>0`, `presence_penalty` requires
   `>0`), so omitted keys respect the backend cascade. **Preserve this exactly** — it's a real integration
   contract, not cosmetics.
@@ -255,9 +255,12 @@ documented on that route that are about the ENGINES rather than the wire still h
 - **Startup loads nothing (v1.44.4)**: the server no longer pre-warms `default_model` at boot (only an
   explicit `--model-id` does), so the first request to any model pays the load. v3 must not assume a
   model is resident — the models page reflects real state.
-- **Server-side defaults (v1.32.0)**: when the request, its preset, and the model config are all silent,
-  the effective sampler floor is `temperature 0.7, max_tokens 4096` (was 0.1/512), and imported models
-  carry `default_sampler = "balanced"`. The UI's null-means-cascade settings contract is unchanged.
+- **Server-side defaults**: when the request and the model config are both silent, the cascade
+  answers with the model's OWN published settings (generation_config.json on MLX, the GGUF header's
+  `general.sampling.*` on gguf), and only where those are silent too with a two-value fallback
+  (`temperature 1.0, top_p 0.95`) plus a `max_tokens 4096` stop. Named sampler bundles and
+  `default_sampler` were removed in v2.0.30. The UI's null-means-cascade settings contract is
+  unchanged -- and `sampler_defaults` on the admin row is what a blank field should PRINT.
 - **Thinking default.** Since v1.79.62 an omitted `thinking` resolves through the cascade
   request > models.toml `enable_thinking` > the model's thinking capability, and the admin row's
   `thinking_default` is that cascade's own answer. History of the previous rule: **omitting
@@ -279,12 +282,13 @@ Phase 3b; chat uses its conversation-scoped sibling below; the OpenAI-compatible
 - Body: `{model?, messages:[{role:"user"|"assistant", content}], system?,
   max_tokens?, temperature?, top_p?, top_k?, min_p?, repetition_penalty?,
   repetition_context_size?, presence_penalty?, seed?, thinking?,
-  reasoning_effort?, sampler?, vision_tokens?,
+  reasoning_effort?, vision_tokens?,
   show_special_tokens?, stream?}`. `system` is TOP-LEVEL (no system role in the array); `thinking`
   is the Messages spelling of `enable_thinking` (same tri-state — v3 derives
   the rename in `messagesParams()`, settings.js, never a second bag);
-  `sampler`/`vision_tokens` are heylook extensions with ChatRequest
-  semantics. `max_tokens` is deliberately OPTIONAL unlike Anthropic's:
+  `vision_tokens` is a heylook extension with ChatRequest semantics; a
+  request still sending `sampler` (or `preset`) gets a 422 naming the v2.0.30
+  removal rather than a silent drop. `max_tokens` is deliberately OPTIONAL unlike Anthropic's:
   absent = the server-side sampler cascade's default (a hard schema default
   here silently overrode the cascade for every client that omitted it).
   `show_special_tokens` (v1.79.6) is the one field here that is NOT a

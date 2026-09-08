@@ -1,254 +1,83 @@
-"""Named sampler registry ("samplers": bundled sampler-setting configs).
+"""The sampler cascade: what decode settings a request actually runs with.
 
-Terminology (2026-07-20): these were called "presets" until the name collided
-with the /v1/presets user-preset system (v3's saved prompt+sampler bundles,
-DuckDB-backed, client-expanded). A "sampler" here is a named, versioned
-sampler-settings bundle shipped with the server.
+ONE function does the work -- ``resolve_effective_sampling`` -- and its whole
+job is to answer "the request said nothing, so what?" in a defined order.
 
-Presets are bundles of sampler knobs (``temperature``, ``top_p``, ``top_k``,
-``min_p``, ``max_tokens``, ``repetition_penalty``, ``repetition_context_size``,
-``presence_penalty``, ``seed``, ``enable_thinking``) that get resolved at
-request time, not baked into ``models.toml`` at import time.
+The answer is, in order: the model's OWN published settings, then anything
+models.toml says about that model, then whatever the request states outright.
+Only where all three are silent does a hardcoded fallback apply, and that
+fallback is two numbers.
 
-Each preset lives as its own TOML file under
-``src/heylook_llm/data/samplers/`` with the shape::
-
-    [meta]
-    name = "balanced"
-    description = "Middle ground on temperature and output length"
-
-    [defaults]
-    temperature = 0.7
-    top_k = 40
-    min_p = 0.05
-    max_tokens = 512
-    repetition_penalty = 1.05
-
-The registry loads every ``.toml`` under the presets directory on startup
-(malformed files are logged and skipped, never fatal). Callers look up a
-preset by name and overlay its fields onto a cascade dict via
-``apply_sampler`` — unset keys pass through from previous layers.
-
-Cascade order in ``MLXProvider._apply_model_defaults``::
-
-    1. Global hardcoded floor
-    2. Model sampler fields (``models.toml`` per-model overrides)
-    3. Request's sampler (if ``ChatRequest.sampler`` is set)  <- this module
-    4. Request-level explicit field values
-
-Keeping per-model sampler fields in the cascade (layer 2) is intentional --
-some models genuinely want non-standard defaults, and a request can still
-override them. The preset layer is the new surface for "users choose how
-verbose / creative / deterministic this turn is" without editing
-``models.toml``.
+The bundled sampler REGISTRY that used to sit here -- five TOMLs under
+``data/samplers/`` loaded by a ``SamplerRegistry``, reachable as
+``ChatRequest.sampler`` and models.toml ``default_sampler`` -- was removed in
+v2.0.30. It shipped generic guesses that applied the same values to every
+model, which is the opposite of what the vendor layer does; three of its five
+entries had no consumer at all, and the frontend never touched any of it.
+Named bundles that a USER wants still exist, as the DuckDB ``/v1/presets``
+system, which is editable and is what v3's preset bar drives.
 """
 
 from __future__ import annotations
 
 import json
-import logging
-import threading
-import tomllib
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 
-_BUNDLED_DIR = Path(__file__).resolve().parent / "data" / "samplers"
+# THE FLOOR IS TWO OPINIONS, A SAFETY STOP, AND FOUR OFF-SWITCHES -- kept
+# apart because they are not the same kind of thing and rot differently.
+#
+# Only these two are a judgement about how to sample, and they apply ONLY
+# where the model's own metadata is silent. The vendor layer below overlays a
+# model's published values, and that is the answer that should normally win:
+# a per-model number the author chose beats a global number we chose.
+# Owner ruling 2026-09-01 (v1.79.60) -- a narrowed distribution flattens
+# generative prose, and low temperature was judged worse on real output. The
+# 0.7/1.0 before it was a chat-sane guess; the 0.1/512 before that made freshly
+# imported models near-greedy and truncated long answers mid-sentence.
+FALLBACK_TEMPERATURE = 1.0
+FALLBACK_TOP_P = 0.95
 
+# NOT taste. llama-server's own `n_predict` default is UNLIMITED, so a request
+# naming no cap generates until the context runs out. A stop, not a preference.
+DEFAULT_MAX_TOKENS = 4096
 
-class SamplerNotFound(KeyError):
-    """Raised when a preset name is not registered."""
-
-
-class SamplerRegistry:
-    """In-memory map of preset name -> defaults dict + descriptions.
-
-    Instances are cheap; the module-level ``get_sampler_registry()`` returns
-    a memoized singleton that loads the bundled presets directory once.
-    """
-
-    def __init__(
-        self,
-        presets: dict[str, dict[str, Any]],
-        descriptions: dict[str, str] | None = None,
-    ):
-        self._presets = dict(presets)
-        self._descriptions = dict(descriptions or {})
-
-    # ---- constructors ----
-
-    @classmethod
-    def from_directory(cls, directory: Path | str) -> "SamplerRegistry":
-        """Load every ``*.toml`` under ``directory``. Malformed files are
-        logged and skipped."""
-        path = Path(directory)
-        presets: dict[str, dict[str, Any]] = {}
-        descriptions: dict[str, str] = {}
-        if not path.is_dir():
-            return cls(presets, descriptions)
-
-        for toml_path in sorted(path.glob("*.toml")):
-            parsed = cls._parse_one(toml_path)
-            if parsed is None:
-                continue
-            name, defaults, description = parsed
-            if name in presets:
-                logging.warning(
-                    "preset name collision: %r from %s already registered; "
-                    "skipping duplicate",
-                    name,
-                    toml_path,
-                )
-                continue
-            presets[name] = defaults
-            if description:
-                descriptions[name] = description
-        return cls(presets, descriptions)
-
-    @classmethod
-    def from_bundled(cls) -> "SamplerRegistry":
-        """Load the presets shipped with the package."""
-        return cls.from_directory(_BUNDLED_DIR)
-
-    # ---- query ----
-
-    def __contains__(self, name: str) -> bool:
-        return name in self._presets
-
-    def list_names(self) -> list[str]:
-        return sorted(self._presets.keys())
-
-    def describe(self, name: str) -> str:
-        """Return the preset's [meta].description, or '' if unset/unknown."""
-        return self._descriptions.get(name, "")
-
-    def list_info(self) -> list[dict[str, str]]:
-        """Return ``[{name, description}, ...]`` for API surfaces."""
-        return [
-            {"name": name, "description": self._descriptions.get(name, "")}
-            for name in self.list_names()
-        ]
-
-    def get(self, name: str) -> dict[str, Any]:
-        if name not in self._presets:
-            raise SamplerNotFound(
-                f"preset {name!r} not found; known: {self.list_names()}"
-            )
-        return dict(self._presets[name])
-
-    # ---- cascade helper ----
-
-    def apply_sampler(
-        self, merged_config: dict[str, Any], name: str | None
-    ) -> None:
-        """Overlay preset fields onto ``merged_config`` in place.
-
-        ``name=None`` is a no-op so the cascade can call this unconditionally
-        without an if/else at every call site. An unknown preset name raises
-        ``SamplerNotFound`` -- silent fallback would mask typos.
-        """
-        if name is None:
-            return
-        if name not in self._presets:
-            raise SamplerNotFound(
-                f"preset {name!r} not found; known: {self.list_names()}"
-            )
-        merged_config.update(self._presets[name])
-
-    # ---- internals ----
-
-    @staticmethod
-    def _parse_one(toml_path: Path) -> tuple[str, dict[str, Any], str] | None:
-        try:
-            with toml_path.open("rb") as fh:
-                data = tomllib.load(fh)
-        except tomllib.TOMLDecodeError as exc:
-            logging.warning("skipping malformed preset %s: %s", toml_path, exc)
-            return None
-        except OSError as exc:
-            logging.warning("skipping unreadable preset %s: %s", toml_path, exc)
-            return None
-
-        meta = data.get("meta") or {}
-        name = meta.get("name") or toml_path.stem
-        description = meta.get("description") or ""
-        defaults = data.get("defaults") or {}
-        if not isinstance(defaults, dict):
-            logging.warning(
-                "preset %s: [defaults] is not a table; treating as empty",
-                toml_path,
-            )
-            defaults = {}
-        cleaned = {k: v for k, v in defaults.items() if v is not None}
-        return name, cleaned, description
-
-
-_LOCK = threading.Lock()
-_SINGLETON: SamplerRegistry | None = None
-
-
-def get_sampler_registry() -> SamplerRegistry:
-    """Memoized accessor for the process-wide preset registry.
-
-    First call loads the bundled presets directory. Subsequent calls return
-    the same instance -- presets are read-only after startup, so caching is
-    safe and avoids re-parsing TOML on every request.
-    """
-    global _SINGLETON
-    if _SINGLETON is not None:
-        return _SINGLETON
-    with _LOCK:
-        if _SINGLETON is None:
-            _SINGLETON = SamplerRegistry.from_bundled()
-    return _SINGLETON
-
-
-def reset_sampler_registry_for_test(replacement: SamplerRegistry | None = None) -> None:
-    """Test hook: replace or clear the memoized singleton.
-
-    Production code should never call this; it exists so tests can swap in
-    a registry built from a ``tmp_path`` directory.
-    """
-    global _SINGLETON
-    with _LOCK:
-        _SINGLETON = replacement
-
-
-def known_preset_names() -> Iterable[str]:
-    """Convenience for diagnostics / API surfaces that want the list."""
-    return get_sampler_registry().list_names()
-
-
-# Layer-1 sampler floor: what a request gets when neither the request, a
-# named sampler, nor the model config says anything. Shared by ALL providers
-# -- MLX overlays it in _apply_model_defaults, the llama-server provider in
-# _build_payload. Owner ruling 2026-09-01 (v1.79.60): temperature 1.0 and
-# top_p 0.95, because a narrowed distribution flattens generative prose and
-# low temperature was judged worse on real output; the 0.7/1.0 before it was
-# a chat-sane guess, and the 0.1/512 before that made freshly imported models
-# near-greedy and truncated long answers mid-sentence. The vendor layer below
-# still overlays a model's own generation_config.json where one ships.
-GLOBAL_SAMPLER_FLOOR = {
-    'temperature': 1.0,
-    'top_p': 0.95,
+# Each of these means "this knob is OFF", not "we prefer this value" -- and
+# they are load-bearing for a reason that is easy to miss: the ENGINE's own
+# defaults are not neutral. llama.cpp ships `top_k = 40` (common/common.h) and
+# applies it to any request that omits the key. Dropping these would hand each
+# engine its own taste back and let the two diverge on identical input.
+KNOBS_OFF = {
     'top_k': 0,
     'min_p': 0.0,
-    'max_tokens': 4096,
     'repetition_penalty': 1.0,
     'presence_penalty': 0.0,
 }
 
-# Vendor layer: the model's OWN recommended decode settings, overlaid directly
-# above the floor so models.toml fields, samplers and request fields all still
-# override it. Each engine reads the same values from where its models keep
-# them: MLX from the model dir's generation_config.json (`load_vendor_sampling`
-# below), gguf from the `general.sampling.*` block in the GGUF header
-# (`gguf_metadata.vendor_sampling`), which converters write FROM that same
-# generation_config.json. One concept, two spellings on disk -- gguf went
-# without it until v2.0.22 on the reasoning that a gguf dir ships no
-# generation_config.json, which is true and was the wrong conclusion: the
-# values had moved into the header, and heylook was sending top_k 0 at models
-# whose own files asked for 20 (Qwen3.6) and 64 (gemma-4).
+GLOBAL_SAMPLER_FLOOR = {
+    'temperature': FALLBACK_TEMPERATURE,
+    'top_p': FALLBACK_TOP_P,
+    'max_tokens': DEFAULT_MAX_TOKENS,
+    **KNOBS_OFF,
+}
+
+# Anti-loop overlay applied whenever thinking is ON, both engines, every
+# thinking-capable model.
+#
+# UNMEASURED, and worth knowing before trusting it: the value came from a
+# "Qwen3-style" bundle in July 2026 and became automatic in the same commit
+# that slimmed that bundle away, on the strength of one gemma MoE repetition
+# loop. It is the one survivor of a set whose other values were replaced by
+# the vendor layer, and it survived only because no vendor ships a
+# `presence_penalty` -- it is not an HF generation_config field at all.
+# Qwen's own published guidance for a THINKING model is 0.0; 1.5 is what they
+# recommend for the non-thinking variant. Nothing here has been measured on
+# this hardware. See CLAUDE.md on why an unmeasured sampling default is the
+# kind of thing this repo otherwise refuses to generalise.
+THINKING_PRESENCE_PENALTY = 1.5
+
+
 VENDOR_SAMPLING_KEYS = ('temperature', 'top_p', 'top_k')
 
 
@@ -281,23 +110,21 @@ def resolve_effective_sampling(request: Any, model_config: dict,
           passed by the caller: MLX from generation_config.json
           (``load_vendor_sampling``), gguf from the GGUF header's
           ``general.sampling.*`` (``gguf_metadata.vendor_sampling``, v2.0.22).
-      2.  Thinking anti-loop overlay (the slimmed 'thinking' sampler),
-          keyed on the EFFECTIVE switch: request.enable_thinking when
-          present, else the model config flag. Hardcoded fallback mirrors
-          thinking.toml so inference survives the file's removal.
+      2.  Thinking anti-loop overlay (``THINKING_PRESENCE_PENALTY``), keyed
+          on the EFFECTIVE switch: request.enable_thinking when present,
+          else the model config flag, else the capability.
       3.  Model sampler fields from models.toml.
-      3b. Model default_sampler -- only when the request names no sampler;
-          unknown name logs-and-skips (models validate at startup, so a
-          miss here is post-startup registry drift, not a request error).
-      4.  Request sampler -- unknown name raises SamplerNotFound (route
-          handlers translate to HTTP 400).
-      5.  Request explicit fields -- always win.
+      4.  Request explicit fields -- always win.
+
+    Four layers, not the six this had until v2.0.30: the two named-sampler
+    layers (models.toml ``default_sampler`` and ``ChatRequest.sampler``) are
+    gone with the bundled registry. A user who wants a named bundle uses the
+    ``/v1/presets`` system, which the client expands into explicit fields --
+    so those arrive at layer 4 and need no layer of their own.
     """
     merged = dict(GLOBAL_SAMPLER_FLOOR)
     if vendor:
         merged.update(vendor)
-
-    registry = get_sampler_registry()
 
     # The thinking switch, resolved in ONE order: the request's explicit
     # value, else the model's models.toml `enable_thinking`, else whether the
@@ -325,26 +152,10 @@ def resolve_effective_sampling(request: Any, model_config: dict,
     )
     merged['enable_thinking'] = thinking_active
     if thinking_active:
-        if 'thinking' in registry:
-            registry.apply_sampler(merged, 'thinking')
-        else:
-            merged.update({'presence_penalty': 1.5, 'enable_thinking': True})
+        merged['presence_penalty'] = THINKING_PRESENCE_PENALTY
 
     merged.update({k: v for k, v in model_config.items()
                    if k in EFFECTIVE_SAMPLER_KEYS and v is not None})
-
-    request_sampler = getattr(request, 'sampler', None)
-    if not request_sampler:
-        default_sampler = model_config.get('default_sampler')
-        if default_sampler:
-            if default_sampler in registry:
-                registry.apply_sampler(merged, default_sampler)
-            else:
-                logging.warning(
-                    "model default_sampler %r not in registry; skipping layer",
-                    default_sampler,
-                )
-    registry.apply_sampler(merged, request_sampler)
 
     for field in REQUEST_SAMPLER_FIELDS:
         value = getattr(request, field, None)
