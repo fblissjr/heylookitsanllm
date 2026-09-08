@@ -118,3 +118,45 @@ class TestEffectiveLoaderForConfig:
         assert effective_loader_for_config(
             "mlx", {"loader": "auto", "model_path": None,
                     "modalities": ["text"]}) == "mlx-lm"
+
+
+@pytest.mark.unit
+class TestUnresolvedDescriptionIsRefused:
+    """A config with no capability declaration gets a refusal, not an answer.
+
+    `auto` routing reads the declaration. `merge_discovered` returns RAW dicts
+    and the declaration is derived at validation, so a config taken straight
+    from the merge declares nothing -- and answering from that absence returns
+    the text loader for every model, vision ones included, with no exception
+    and no log line. Two sessions were caught by exactly that on 2026-09-08.
+
+    It matters past a wrong count: anything comparing a served set before and
+    after a config edit calls this per model, so an unvalidated snapshot on
+    either side reports engine changes that never happened.
+    """
+
+    def _f(self):
+        from heylook_llm.providers.common.loader_routing import effective_loader_for_config
+        return effective_loader_for_config
+
+    def test_a_config_declaring_nothing_is_refused(self):
+        with pytest.raises(ValueError, match="modalities"):
+            self._f()("mlx", {"loader": "auto", "model_path": "/synthetic/x"})
+
+    def test_an_explicit_loader_needs_no_declaration(self):
+        # The explicit loader wins outright, so the declaration is never read
+        # and its absence cannot mislead. Refusing here would be a false alarm.
+        assert self._f()("mlx", {"loader": "mlx-lm"}) == "mlx-lm"
+
+    def test_the_legacy_vision_bool_counts_as_a_declaration(self):
+        # `_modalities_of` still honours the old `vision` key, so a config
+        # carrying it HAS declared -- and must be answered, not refused.
+        assert self._f()("mlx", {"loader": "auto", "vision": True,
+                                 "model_path": ""}) == "mlx-vlm"
+        assert self._f()("mlx", {"loader": "auto", "vision": False}) == "mlx-lm"
+
+    def test_a_non_mlx_provider_short_circuits_before_the_guard(self):
+        # The question is WHICH MLX LIBRARY; gguf has no answer and must not
+        # be refused on its way to None.
+        assert self._f()("gguf", {"loader": "auto"}) is None
+        assert self._f()("mlx_embedding", {"loader": "auto"}) is None

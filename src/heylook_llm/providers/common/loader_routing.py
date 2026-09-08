@@ -138,8 +138,50 @@ def effective_loader_for_config(provider: str, config: dict) -> Optional[str]:
     ``config.json`` -- no import of the model, no MLX. It agrees with the loaded
     provider by CONSTRUCTION: both call :func:`resolve_effective_loader` with the
     same two inputs.
+
+    THAT AGREEMENT HAS A PRECONDITION, and it used to go unsaid: the config must
+    carry a capability declaration. Validation always supplies one, but
+    ``merge_discovered`` returns raw dicts and derivation happens later, so a
+    config taken straight from the merge declares nothing -- and the ``auto``
+    rule reads the declaration. Answering from its absence returns the text
+    loader for every model, silently. That is now refused rather than answered;
+    see the guard below.
     """
     if provider != "mlx":
         return None
+    # REFUSE AN UNRESOLVED DESCRIPTION rather than answer from its absence.
+    #
+    # The "auto" rule reads `modalities`, and `MLXModelConfig._resolve_modalities`
+    # always populates it -- so `None` here does not mean "text-only", it means
+    # this config never went through validation. Answering anyway returns
+    # "mlx-lm" for EVERY model including vision ones, with no exception and no
+    # log line: a confident wrong answer indistinguishable from a real one.
+    #
+    # Two sessions hit exactly that on 2026-09-08 by passing `merge_discovered`
+    # output straight in (it returns raw dicts; derivation happens at
+    # validation). It matters beyond a bad count: anything comparing a served
+    # set before and after an edit calls this per model, so an unvalidated
+    # snapshot on either side reports engine changes that never happened.
+    #
+    # Only when the answer would actually DEPEND on it: an explicit `loader`
+    # wins outright, so an absent description is harmless there. Raise rather
+    # than warn -- this runs per row of GET /v1/admin/models, where a warning
+    # is either noise or filtered, and no legitimate caller reaches it (the
+    # production caller passes a validated config, and every existing test
+    # states `modalities` explicitly).
+    # NOT `_modalities_of(config) is None` -- that helper never returns None, it
+    # falls back to the legacy `vision` bool and yields ["text"]. Writing the
+    # check that way would have made this guard dead code that reads as a
+    # guard, which is the failure this whole change is about. The honest test
+    # is that NEITHER declaration is present: no `modalities`, no `vision`.
+    declared = config.get("modalities") is not None or "vision" in config
+    if config.get("loader", "auto") in (None, "auto") and not declared:
+        raise ValueError(
+            "effective_loader_for_config was given a config whose `modalities` "
+            "is unresolved, which happens when the config has not been through "
+            "MLXModelConfig validation (merge_discovered returns raw dicts). "
+            "Answering would report every model as mlx-lm. Validate first -- "
+            "AppConfig(**merged) -- and pass that config."
+        )
     return resolve_effective_loader(
         config, lambda: read_model_type(config.get("model_path", "") or ""))
