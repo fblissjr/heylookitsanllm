@@ -247,15 +247,17 @@ class TestApplyChatTemplate:
         forwarding it to the template -- remains unpinned by anything here.
         """
         src = _vlm_inputs_source()
-        # Whitespace-tolerant: an exact-substring pin breaks on a reformat and
-        # then reports that the call MOVED, which sends a reader after a change
-        # nobody made. The claim is "this kwarg is still passed", so the check
-        # is aimed at that and not at the formatting around it.
-        assert re.search(r"num_images\s*=\s*len\(images\)", src), (
+        # Plain substrings, matching the sibling pin above. A regex pass was
+        # tried and reverted: it tolerated only spacing a formatter would never
+        # emit for a kwarg, still failed the realistic reformat (a line wrap),
+        # and left two adjacent pins of the same shape written differently.
+        # Source-text pins ARE reformat-fragile; the message says so rather
+        # than the check pretending otherwise.
+        assert "num_images=len(images)" in src, (
             "vlm_inputs.py no longer passes num_images to the chat-template call "
-            "-- if media attribution moved again, move this pin with it"
+            "as written -- a reformat here is a false alarm, a moved call is not"
         )
-        assert re.search(r"reasoning_effort\s*=\s*reasoning_effort", src), (
+        assert "reasoning_effort=reasoning_effort" in src, (
             "vlm_inputs.py stopped forwarding reasoning_effort to the template"
         )
 

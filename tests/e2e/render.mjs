@@ -41,7 +41,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { launchBrowser } from './lib/browser.mjs';
-import { Suite, printSummary, assert, waitFor, sleep } from './lib/harness.mjs';
+import { Suite, printSummary, assert, waitFor, sleep, skip } from './lib/harness.mjs';
 import { openDrawer, closeDrawer, clickByText } from './lib/dom.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -421,19 +421,25 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
 // Every page context openChat has handed out, for the one error check at the
 // foot of the run. Pages close; these arrays outlive them.
 const PAGE_CONTEXTS = [];
-// How many times openChat was ENTERED, so the vacuity guard has a number it
-// derives instead of one somebody maintains by hand.
-let OPEN_CHAT_CALLS = 0;
+// TWO counters, and they are load-bearing SEPARATELY. Pages openChat got, and
+// pages openChat registered. Comparing them catches the original defect --
+// registration sitting below the boot wait, which rethrows, so a page that
+// failed to boot never reached the registry. Adjacent today, so they agree;
+// move the registration back down and a failing boot makes them disagree.
+//
+// Neither may be compared against PAGE_CONTEXTS.length: that also holds pages
+// opened outside openChat (the markdown renderer), so a total-vs-total test
+// tolerates exactly as many missing registrations as there are extra pages,
+// going silent on the single-boot regression it exists to catch.
+let OPEN_CHAT_PAGES = 0;
+let OPEN_CHAT_REGISTERED = 0;
 
 // Wire a page for the aggregate error check and register it in one step, so
 // the two can never drift apart. Called the moment a page exists -- before any
 // navigation or wait that could throw and take the context with it.
-function watchPageErrors(page, label) {
+function watchPageErrors(page, openedAt) {
   const pageErrors = [];
   page.on('pageerror', (err) => pageErrors.push(err.message));
-  const openedAt = label ?? (new Error().stack || '').split('\n')
-    .map((l) => (l.match(/render\.mjs:(\d+):/) || [])[1])
-    .filter(Boolean)[1] ?? '?';
   PAGE_CONTEXTS.push({ openedAt, pageErrors });
   return pageErrors;
 }
@@ -442,13 +448,29 @@ async function openChat(browser, base, {
   residencyDelayMs = 0, sseDelayMs = 0, unsaved = false, mobile = false, caps = [],
   secondModel = null, withMedia = false, dripGenerate = false, presets = [], appliedPresetId = null,
 } = {}) {
-  OPEN_CHAT_CALLS += 1;
+  // BUILT HERE, INLINE, and it must stay inline. `new Error().stack` is
+  // relative to where it is CONSTRUCTED, so every helper wrapping it shifts
+  // the index by a frame. This has now been got wrong twice: once by moving
+  // registration into watchPageErrors, and once by "fixing" that with a
+  // callerLine() helper -- both times [1] resolved to a line inside this
+  // file's own plumbing and EVERY context reported the same useless number,
+  // with the suite still green. Frames here: [0] this line, [1] the caller.
+  const openedAt = (new Error().stack || '').split('\n')
+    .map((l) => (l.match(/render\.mjs:(\d+):/) || [])[1])
+    .filter(Boolean)[1] ?? '?';
   const page = await browser.newPage();
+  // Counted once the page EXISTS, not at function entry: a `newPage()` that
+  // rejects (dead browser, crashed target) would otherwise leave the guard
+  // below blaming the registry for something that never got that far.
+  OPEN_CHAT_PAGES += 1;
   // Registered HERE, not after the boot wait below. That wait rethrows, so a
   // page whose module-load error stops any message rendering used to never
   // reach the registry -- losing the context of exactly the boot the aggregate
-  // check exists to report on.
-  const pageErrors = watchPageErrors(page);
+  // check exists to report on. The counter moves WITH the registration, not
+  // at function entry: a `newPage()` that rejects would otherwise leave the
+  // guard below blaming the registry for a dead browser.
+  const pageErrors = watchPageErrors(page, openedAt);
+  OPEN_CHAT_REGISTERED += 1;
   const store = makeStubStore({ unsaved, caps, secondModel, withMedia, presets, appliedPresetId });
   const reqs = [];
 
@@ -2420,7 +2442,7 @@ async function main() {
     // Not an openChat context, so it needs wiring of its own -- and it
     // hosts the markdown/DOMPurify URL-scheme checks, which is the last
     // page a check named 'no page ANYWHERE threw' should be blind to.
-    watchPageErrors(md, 'markdown renderer page');
+    watchPageErrors(md, 'the markdown renderer page');
     await md.goto(`${base}/`, { waitUntil: 'domcontentloaded' });
     const render = (src) => md.evaluate(async (b, text) => {
       const { renderMarkdown } = await import(`${b}/js/markdown.js`);
@@ -3422,18 +3444,26 @@ async function main() {
     // replaced had at least reported for every boot that completed. That is
     // the run you most want it on.
     await suite.check('no page anywhere threw an uncaught error', () => {
+      // An ABORTED run has not opened most of its boots, so a green here
+      // would be a claim about coverage this run does not have -- the precise
+      // overclaim the skip-never-pass rule exists for, on the very run that
+      // motivated moving this into `finally`.
+      if (fatal) {
+        skip(`run aborted after ${OPEN_CHAT_REGISTERED} of the boots -- `
+          + 'the pages never opened cannot be spoken for');
+      }
       // Guard the guard FIRST: if registration ever breaks, the assertion
       // below goes quietly vacuous and takes the suite's only error coverage
       // with it -- and ordered last it could not fire on a run that HAD a page
       // error, which is precisely the run where you need to know the registry
-      // is intact. Derived from the call count rather than a hand-kept
-      // number, so it cannot rot as boots are added or removed.
-      assert(OPEN_CHAT_CALLS > 0 && PAGE_CONTEXTS.length >= OPEN_CHAT_CALLS,
-        `${PAGE_CONTEXTS.length} contexts registered for ${OPEN_CHAT_CALLS} openChat `
-        + 'calls -- registration is no longer happening for every page');
+      // is intact. Compared against openChat's OWN registrations, not the
+      // total: PAGE_CONTEXTS also holds pages opened outside openChat.
+      assert(OPEN_CHAT_PAGES > 0 && OPEN_CHAT_REGISTERED === OPEN_CHAT_PAGES,
+        `${OPEN_CHAT_REGISTERED} of ${OPEN_CHAT_PAGES} openChat pages registered `
+        + '-- registration is no longer reached for every page it opens');
       const bad = PAGE_CONTEXTS.filter((c) => c.pageErrors.length > 0);
       assert(bad.length === 0, bad.map(
-        (c) => `page opened at render.mjs:${c.openedAt}: ${c.pageErrors.join(' | ')}`).join('\n    '));
+        (c) => `page opened at ${c.openedAt}: ${c.pageErrors.join(' | ')}`).join('\n    '));
     });
     await browser.close();
     server.close();

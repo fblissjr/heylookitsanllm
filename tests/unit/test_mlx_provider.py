@@ -510,8 +510,13 @@ class TestCollectionDoesNotBlock:
     that returns early retains NOTHING, because `__del__` runs during
     deallocation. Corrected in v2.0.34.
 
-    The drain-poll check below also passes against 2.0.28: it guards the fix
-    that release made, and its green says nothing about the work in v2.0.34.
+    The two assertions in the first check pin DIFFERENT claims, and neither
+    covers the other: `time.sleep` going uncalled pins that `__del__` still
+    passes `drain=False` (mutate it to call `unload()` and the poll spins),
+    while the warning pins that the branch fires at all (the poll is guarded
+    by `while drain:`, so no drain=False call can reach it whatever the branch
+    above does). Both also pass against 2.0.28 -- they guard the fix that
+    release made, and their green says nothing about the work in v2.0.34.
     """
 
     def test_collection_with_traffic_never_enters_the_drain_poll(
@@ -555,6 +560,60 @@ class TestCollectionDoesNotBlock:
         mock_mlx_provider.__del__()
         assert not hasattr(mock_mlx_provider, "model")
 
+    def test_the_destructor_makes_no_engine_calls(self, mock_mlx_provider, monkeypatch):
+        """`drain=False` means "no wait AND no engine calls", and the second
+        half is the one that was missing.
+
+        Dropping the `waiting` read narrowed the guard to actives alone, which
+        let the QUIET destructor path fall through to `gc.collect()` +
+        `mx.clear_cache()`. That is the hazard CLAUDE.md states as "never gate
+        teardown on actives alone" and `test_unload_waiter_safety.py` exists
+        for: the active counter decrements BEFORE `gate.release()` admits the
+        next waiter, so a woken waiter can be starting a decode exactly then --
+        and `__del__` runs on whatever thread the GC chose. The deliberate
+        path answers that by WAITING; a destructor cannot, so it declines to
+        make the calls at all.
+        """
+        # The module the PROVIDER'S CLASS came from, not a fresh import of
+        # that name: one test in this file pops and re-imports the module, so
+        # `import ... as _mod` can hand back a different object than the one
+        # the running `unload` reads `mx` from, and the patch lands on the
+        # wrong module. Two things forced this shape, both order-dependent and
+        # both green in isolation.
+        #
+        # And the count is kept HERE rather than read off `call_count`: on
+        # Apple hardware `mlx_mocks` skips its patch because real MLX imports,
+        # so `mx` is the real nanobind module and has no mock API at all.
+        _mod = sys.modules[type(mock_mlx_provider).__module__]
+        swept: list = []
+        monkeypatch.setattr(_mod.mx, "clear_cache", lambda: swept.append(1))
+        mock_mlx_provider.model = create_mock_model()
+        mock_mlx_provider._active_generations = 0
+
+        mock_mlx_provider.__del__()
+
+        assert not hasattr(mock_mlx_provider, "model"), (
+            "the destructor stopped dropping its references"
+        )
+        assert swept == [], (
+            "the destructor called mx.clear_cache() -- an engine call on "
+            "whatever thread the GC fired on, possibly while a woken gate "
+            "waiter is starting a decode"
+        )
+
+    def test_a_deliberate_unload_still_sweeps_the_engine(self, mock_mlx_provider, monkeypatch):
+        """The other half: gating the engine calls on `drain` must not stop
+        the real teardown paths sweeping, or the fix trades a hazard for an
+        unswept Metal buffer cache on every eviction."""
+        _mod = sys.modules[type(mock_mlx_provider).__module__]
+        swept: list = []
+        monkeypatch.setattr(_mod.mx, "clear_cache", lambda: swept.append(1))
+        mock_mlx_provider.model = create_mock_model()
+
+        mock_mlx_provider.unload()
+
+        assert swept, "a deliberate unload stopped clearing the Metal buffer cache"
+
     def test_another_models_gate_waiters_do_not_suppress_teardown(self, mock_mlx_provider):
         """The generation gate is a PROCESS-GLOBAL singleton, so its `waiting`
         count can be entirely another model's traffic.
@@ -565,10 +624,25 @@ class TestCollectionDoesNotBlock:
         Both halves were wrong, and `max_loaded_models=1` bounding it in
         practice is a default, not an invariant.
         """
+        asked = []
         mock_mlx_provider.model = create_mock_model()
         mock_mlx_provider._active_generations = 0
-        mock_mlx_provider.generation_queue_stats = lambda: {"active": 0, "waiting": 4}
+
+        def _stats():
+            asked.append(True)
+            return {"active": 0, "waiting": 4}
+
+        mock_mlx_provider.generation_queue_stats = _stats
         mock_mlx_provider.__del__()
+        # The claim is that the destructor does not CONSULT the shared gate --
+        # asserted directly. A stub returning waiters is inert once the read is
+        # gone, so a test that only checked the outcome would pass identically
+        # with the stub deleted, and say nothing the quiet-provider test above
+        # does not already say.
+        assert asked == [], (
+            "the destructor consulted the PROCESS-GLOBAL generation gate; its "
+            "waiters can belong to another model entirely"
+        )
         assert not hasattr(mock_mlx_provider, "model"), (
             "another model's gate waiters suppressed this provider's teardown"
         )

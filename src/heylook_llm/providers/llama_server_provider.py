@@ -822,7 +822,14 @@ class LlamaServerProvider(BaseProvider):
         return None
 
     def _cleanup_handles(self):
-        if self._log_handle is not None:
+        # getattr, because this runs on the DESTRUCTOR path: a provider
+        # collected before __init__ finished setting `_log_handle` raised
+        # AttributeError inside __del__, where Python swallows it and the
+        # object is then never unloaded. Same silent-never-unload the `drain`
+        # contract exists to prevent, arriving by a different route -- it
+        # shows up as one "Exception ignored while calling deallocator" line
+        # in the suite and nothing else.
+        if getattr(self, "_log_handle", None) is not None:
             try:
                 self._log_handle.close()
             except Exception:
@@ -831,7 +838,18 @@ class LlamaServerProvider(BaseProvider):
 
     @staticmethod
     def _register_proc(proc) -> None:
-        """Track a spawned llama-server for the exit backstop (see _ACTIVE_PROCS)."""
+        """Track a spawned llama-server for the exit backstop (see _ACTIVE_PROCS).
+
+        Sweeps exited processes first. The destructor path signals without
+        waiting and deliberately leaves its Popen registered, so nothing else
+        ever reaps it: without this, a long-lived parent that drops gguf
+        providers by collection accumulates one zombie child and one registry
+        entry per occurrence, unbounded. `poll()` reaps a finished child, and
+        an entry whose process has exited is exactly what `_kill_orphans`
+        would skip anyway.
+        """
+        for dead in [p for p in _ACTIVE_PROCS if p.poll() is not None]:
+            _ACTIVE_PROCS.discard(dead)
         _ACTIVE_PROCS.add(proc)
 
     def unload(self, *, drain: bool = True):
@@ -869,11 +887,19 @@ class LlamaServerProvider(BaseProvider):
                     exc_info=True,
                 )
             self._cleanup_handles()
-            # LEFT REGISTERED, deliberately: with no wait we cannot escalate to
-            # SIGKILL from here, so the atexit backstop has to keep that option.
-            # Safe precisely BECAUSE we did not wait -- the Popen is unreaped,
-            # so `poll()` in _kill_orphans still speaks for this pid instead of
-            # whatever process may have inherited it.
+            # LEFT REGISTERED, deliberately: this call did not wait, so it
+            # cannot know the server exited, and dropping it from the registry
+            # would leave nothing at all watching the pid. It is SAFE to leave
+            # precisely because we did not wait -- the Popen is unreaped, so
+            # `poll()` in _kill_orphans still speaks for this pid rather than
+            # for whatever may have inherited it.
+            #
+            # What that backstop gives is ONE MORE SIGTERM at interpreter
+            # exit, and no more: `_kill_orphans` does not escalate to SIGKILL
+            # (only the drain=True path below does). A server that ignores
+            # SIGTERM twice is not recovered by this path, and saying so is
+            # the point -- the first version of this comment claimed the
+            # backstop kept an escalation it has never had.
             logging.warning(
                 f"[GGUF] llama-server for '{self.model_id}' was signalled from a "
                 "destructor and not waited on. A provider collected with a live "

@@ -421,6 +421,23 @@ class _FakeProc:
         return self._rc
 
 
+class _RecordingProc(_FakeProc):
+    """_FakeProc that records every wait() it is asked for.
+
+    The teardown contract is "who waits", so the wait CALL is the observable
+    both destructor tests are aimed at -- shared rather than pasted into each,
+    which is the hand-copied shape this repo treats as a defect with a delay.
+    """
+
+    def __init__(self, pid=4242):
+        super().__init__(pid)
+        self.waits: list = []
+
+    def wait(self, timeout=None):
+        self.waits.append(timeout)
+        return super().wait(timeout)
+
+
 class TestSubprocessRegistry:
     """llama-server is spawned with start_new_session=True, so it sits in its
     OWN process group -- the terminal's Ctrl-C (SIGINT to the foreground
@@ -466,13 +483,6 @@ class TestSubprocessRegistry:
         whatever thread the GC fired on. Both halves of that release's claim
         failed for gguf.
         """
-        waits = []
-
-        class _RecordingProc(_FakeProc):
-            def wait(self, timeout=None):
-                waits.append(timeout)
-                return super().wait(timeout)
-
         p = make_provider()
         proc = _RecordingProc()
         killed = []
@@ -483,29 +493,24 @@ class TestSubprocessRegistry:
 
         p.unload(drain=False)
 
-        assert waits == [], f"unload(drain=False) waited on the subprocess: {waits}"
+        assert proc.waits == [], (
+            f"unload(drain=False) waited on the subprocess: {proc.waits}")
         assert killed == [(proc.pid, signal.SIGTERM)], (
             "drain=False must still SIGNAL -- not signalling strands a whole "
             "llama-server holding GPU memory for the life of the parent, which "
             "is worse than an unreaped child"
         )
         assert proc in llama_mod._ACTIVE_PROCS, (
-            "an unwaited process must stay registered: without a wait we cannot "
-            "escalate to SIGKILL here, so the atexit backstop has to keep that "
-            "option. Safe because we did NOT wait -- the Popen is unreaped, so "
-            "its poll() there still speaks for this pid."
+            "an unwaited process must stay registered: this call cannot know the "
+            "server exited, so deregistering would leave nothing watching the "
+            "pid. Safe because we did NOT wait -- the Popen is unreaped, so its "
+            "poll() in _kill_orphans still speaks for this pid. That backstop is "
+            "ONE more SIGTERM at exit, not an escalation -- it has no SIGKILL."
         )
 
     def test_deliberate_unload_still_waits(self, monkeypatch):
         """The other half of the same contract: a caller that CAN afford to
         wait still does, or drain=False stops being a distinction."""
-        waits = []
-
-        class _RecordingProc(_FakeProc):
-            def wait(self, timeout=None):
-                waits.append(timeout)
-                return super().wait(timeout)
-
         p = make_provider()
         proc = _RecordingProc()
         monkeypatch.setattr(llama_mod.os, "getpgid", lambda pid: pid)
@@ -515,7 +520,8 @@ class TestSubprocessRegistry:
 
         p.unload()
 
-        assert waits, "the deliberate teardown path stopped waiting for the process to exit"
+        assert proc.waits, (
+            "the deliberate teardown path stopped waiting for the process to exit")
         assert proc not in llama_mod._ACTIVE_PROCS
 
     def test_backstop_kills_leftover_process_group(self, monkeypatch):

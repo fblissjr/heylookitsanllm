@@ -1851,5 +1851,25 @@ class MLXProvider(BaseProvider):
         if hasattr(self, 'draft_model'):
             del self.draft_model
 
+        if not drain:
+            # THE DESTRUCTOR STOPS HERE. Dropping references above is free --
+            # deallocation happens anyway -- but `gc.collect()` and
+            # `mx.clear_cache()` are ENGINE calls, and this runs on whatever
+            # thread the GC fired on.
+            #
+            # It matters most in the case this branch reaches with `active ==
+            # 0`: the active counter is decremented BEFORE `gate.release()`
+            # admits the next waiter, so a woken waiter can be starting a
+            # decode exactly here (tests/unit/test_unload_waiter_safety.py,
+            # and CLAUDE.md's "never gate teardown on actives alone"). The
+            # deliberate path answers that by WAITING; a destructor cannot
+            # wait, so it declines to make the calls instead.
+            #
+            # The cost is the Metal buffer cache going unswept on a path that
+            # should not be taken at all -- a provider collected without a
+            # deliberate unload. Every real teardown (LRU evict, clear_cache,
+            # explicit unload, idle unload) passes drain=True and sweeps.
+            return
+
         gc.collect()
         mx.clear_cache()

@@ -5,6 +5,109 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.37]
+
+### Fixed
+
+- **The 2.0.34 destructor fix introduced the hazard it was tidying around.**
+  Narrowing the `drain=False` guard from `if active or waiting:` to
+  `if active:` was right about the gate being process-global -- but it left
+  the quiet path falling through to `gc.collect()` + `mx.clear_cache()`, so a
+  provider collected with no actives of its own now made ENGINE calls from
+  whatever thread the GC fired on. That is what CLAUDE.md means by "never gate
+  teardown on actives alone", and `tests/unit/test_unload_waiter_safety.py`
+  exists for it: the active counter decrements BEFORE `gate.release()` admits
+  the next waiter, so a woken waiter can be starting a decode exactly there.
+
+  The fix is not to restore the process-global read. `drain` now gates the
+  ENGINE TEARDOWN, not just the poll, in both MLX providers: the destructor
+  drops its references and stops. The deliberate paths -- LRU evict,
+  clear_cache, explicit unload, idle unload -- still wait and still sweep.
+  This also makes `BaseProvider.__del__`'s definition of `drain=False` ("no
+  wait, no engine calls") true, where before it described only the busy
+  branch while the common path did the opposite.
+
+  The cost, priced: the Metal buffer cache goes unswept when a provider is
+  collected without a deliberate unload -- a path that should not be taken,
+  and that the release already warns about.
+
+- **The gguf destructor's stated reason for leaving its process registered was
+  false.** The comment, the test's assertion message and the 2.0.34 entry all
+  said the exit backstop keeps a SIGKILL escalation this path cannot do
+  itself. `_kill_orphans` has no SIGKILL -- it sends one SIGTERM and waits,
+  inside a bare `except Exception: pass`. Registration is still right, for a
+  reason that is actually true (an unwaited call cannot know the server
+  exited, so dropping it leaves nothing watching the pid), and what the
+  backstop gives is now stated as what it is: one more SIGTERM at exit. A
+  server that ignores SIGTERM twice is not recovered by this path.
+
+- **Every destructor-path gguf unload leaked a zombie and a registry entry.**
+  It signals without waiting and deliberately keeps the `Popen`, and nothing
+  reaps it before interpreter exit, so a long-lived parent that drops gguf
+  providers by collection accumulated one of each per occurrence, unbounded.
+  `_register_proc` now sweeps exited processes first.
+
+- **`__init_subclass__` signed off on a signature that still breaks.** A
+  positional-only `unload(self, drain, /)` satisfied "drain in params" while
+  `unload(drain=False)` still raises the TypeError `__del__` swallows -- the
+  exact failure the guard was added to make impossible. It now requires
+  `drain` be passable BY KEYWORD, and its docstring states the boundary it
+  cannot check: a `**kwargs` override still passes and may still ignore
+  `drain`, which is the accept-and-ignore shape gguf shipped.
+
+- **The chat-template editor was live before it had loaded anything.** The
+  textarea was constructed ENABLED and empty, and only `render()` ever set
+  `disabled` -- so in the window before the first successful load you could
+  type into a box that was showing nothing, and typing enabled Save. Two ways
+  that lost work. After a FAILED load, one click PUT your fragment as the
+  model's ENTIRE template, having never displayed the template it replaced.
+  During a SLOW one, `draft[TMPL_DRAFT] ?? serverText` painted the fragment
+  over the body that had just arrived, with Save live.
+
+  Constructed disabled instead, so the flag that already existed covers both
+  paths: `render()` re-enables it, or leaves it read-only for a model that is
+  not writable. A REJECTED SAVE deliberately still leaves it enabled -- that
+  path never re-renders, and the repair belongs in the box you typed it into.
+
+  The pre-load state is OBSERVED rather than assumed: the panel's GET is held
+  mid-flight, the editor and Save are asserted disabled, then the response is
+  released and the editor asserted live. Shown red against the unfixed build,
+  and green on an MLX arm and a gguf arm.
+
+### Changed
+
+- **The browser suite's aggregate page-error check claimed coverage it did not
+  have on an aborted run.** 2.0.34 moved it into `finally` so a top-level
+  timeout could not skip it; it then reported a green pass over boots that
+  never opened. It calls `skip()` now, so the result reads as partial coverage
+  -- the repo's skip-never-pass rule applied to the run that motivated the
+  move.
+
+- **The per-context label named the harness instead of the boot.** `new
+  Error().stack` is relative to where it is CONSTRUCTED, so extracting the
+  registration into a helper shifted the frame index and every context
+  reported one line inside `openChat`. Got wrong twice -- the first repair
+  reintroduced it via a `callerLine()` helper, and the suite stayed green
+  through both, because a label is not an assertion. The read is inline at the
+  call site now and says why it must stay there.
+
+- **The vacuity guard compared two differently-populated totals.**
+  `PAGE_CONTEXTS` also holds pages opened outside `openChat`, so a
+  total-vs-total test tolerated exactly as many missing registrations as there
+  were extra pages -- silent on the single-boot regression it exists to catch.
+  It counts `openChat`'s own pages and its own registrations, taken at
+  different points so they can actually diverge, and the page counter moves
+  only once the page exists, so a dead browser no longer reports as a registry
+  bug.
+
+- **Three test cleanups.** The gate-waiter check installed a stub the code no
+  longer calls, making it a near-duplicate of its neighbour; it asserts the
+  shared gate is NOT CONSULTED instead. `_RecordingProc` was pasted verbatim
+  into two adjacent methods and is now shared. The `vlm_inputs` pin's regex is
+  reverted to the plain substring its sibling uses -- it tolerated only
+  spacing a formatter never emits, still failed the realistic line wrap, and
+  left two pins of one shape written two ways.
+
 ## [2.0.36]
 
 ### Fixed
@@ -176,14 +279,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Verified
 
-- `tests/unit/` + `tests/contract/` green. `bun run e2e:render` green, and the
-  two repairs to the aggregate page-error check were each put in the state
-  they exist to catch: with registration removed it fails naming the derived
-  count, and with a top-level throw before any check it still runs, still
-  prints, and still exits non-zero. Vendored frontend libs match the manifest.
+- Backend suite green; `bun run e2e:render` green; vendored frontend libs
+  match the manifest. (Two sentences of red-first narration stood here and are
+  removed in 2.0.37 -- this entry announced that habit's removal from tracked
+  files while adding it back.)
 
-- **Release standard met: `tests/smoke/` green on all three engine arms**
-  (71/71, plus 11/11 contract-only), against an isolated live server. Same
+- **Release standard met: `tests/smoke/` green on all three engine arms**,
+  plus the contract-only rows, against an isolated live server. Same
   arms and same models as 2.0.28, so the two runs are comparable: mlx-lm
   `Qwen3.5-0.8B-MLX-8bit-textonly`, mlx-vlm `google_gemma_4-E4B-it-bf16-mlx`,
   gguf `google_gemma-4-E4B-it-qat-q4_0-gguf`.
@@ -201,17 +303,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Three live probes cover the destructor directly:
 
   - gguf `unload(drain=False)` against a REAL llama-server rather than the
-    fake Popen the unit test uses: returned in 0.000s where the old code
-    waited, the process stayed registered for the exit backstop, and the
-    signalled server exited on its own (rc=0) in about 0.3s. This is the one
-    claim the first draft of this entry could only reason from the code.
+    fake Popen the unit test uses: returned immediately where the old code
+    waited, the process stayed registered, and the signalled server exited on
+    its own. (This entry said the registration preserved a SIGKILL escalation
+    for the exit backstop. It does not have one -- corrected in 2.0.37.)
   - gguf DELIBERATE unload through the admin route with the model resident:
-    0.23s, subprocess reaped, no orphan left behind.
+    prompt, subprocess reaped, no orphan left behind.
   - MLX both branches on a real loaded model: the busy branch warns and
-    returns in 0.095s, AND the weights are released anyway -- the correction
-    below, now shown on real weights instead of a synthetic object -- while
-    the quiet branch's full teardown (`gc.collect()` + `mx.clear_cache()`)
-    runs from `__del__` without faulting.
+    returns at once, AND the weights are released anyway -- the correction
+    below, shown on real weights instead of a synthetic object -- while the
+    quiet branch ran the engine teardown from `__del__`. That last part is
+    the behaviour 2.0.37 removes: a destructor must make no engine calls.
 
   The warning channel was re-established live before reading anything into its
   silence: the dev server runs at `--log-level WARNING`, and a deliberately

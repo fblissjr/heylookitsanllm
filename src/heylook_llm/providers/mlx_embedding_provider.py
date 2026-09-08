@@ -236,13 +236,18 @@ class MLXEmbeddingProvider(BaseProvider):
     def unload(self, *, drain: bool = True):
         """Release model resources.
 
-        `drain` is accepted for the BaseProvider contract and ignored: this
-        provider runs no generation gate and has no in-flight work to wait on.
+        This provider runs no generation gate and has no in-flight work, so
+        `drain` buys it no WAIT. It still gates the ENGINE calls: the gate is
+        process-global, so another model's woken waiter can be starting a
+        decode while this one is collected, and `__del__` runs on whatever
+        thread the GC fired on. Dropping the references is free either way.
         """
         if self.model is not None:
             self.model = None
             self.tokenizer = None
             self.processor = None
+            if not drain:
+                return
             gc.collect()
             try:
                 mx.clear_cache()

@@ -134,13 +134,25 @@ class BaseProvider(ABC):
         because nothing anywhere could go red on it. This is the derive-
         rather-than-document rule the repo applies to its constant lists,
         pointed at a signature: the wrong thing now fails to import.
+
+        ITS BOUNDARY: this is a check on the SIGNATURE, not the behaviour. A
+        `**kwargs` override passes and may still swallow `drain` -- which is
+        the accept-and-ignore shape `LlamaServerProvider` shipped for a
+        release. No signature check can see that; only a caller can.
         """
         super().__init_subclass__(**kwargs)
         unload = cls.__dict__.get("unload")
         if unload is None:
             return  # inherits a conforming one
         params = inspect.signature(unload).parameters
-        if "drain" in params or any(
+        drain = params.get("drain")
+        # BY KEYWORD, because that is how __del__ passes it. A positional-only
+        # `unload(self, drain, /)` satisfies "drain in params" and still
+        # raises the swallowed TypeError, so the membership test alone would
+        # have signed off on the exact failure this exists to prevent.
+        passable = {inspect.Parameter.KEYWORD_ONLY,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD}
+        if (drain is not None and drain.kind in passable) or any(
             p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
         ):
             return
@@ -352,8 +364,9 @@ class BaseProvider(ABC):
         # but the hazard is here, not there: in the server, GC fires on any
         # thread, including one delivering tokens.
         #
-        # `drain=False` means ONLY "do not wait, and do not reach for the
-        # engine on the way out". It CANNOT mean "keep the model loaded":
+        # `drain=False` means ONLY "do not wait, and make no engine calls on
+        # the way out" -- both halves enforced by the implementations, not by
+        # this comment. It CANNOT mean "keep the model loaded":
         # RETURNING EARLY FROM A DESTRUCTOR RETAINS NOTHING. `__del__` runs
         # during deallocation, so the weights are released when it returns,
         # whatever it decided -- measured 2026-09-08, against the claim this
