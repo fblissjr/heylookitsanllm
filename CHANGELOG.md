@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.39]
+
+### Fixed
+
+- **The `/docs` narrative still called `/v1/capabilities` the "sampler
+  roster".** That roster left with the named-sampler system in v2.0.30; the
+  quick-start comment now names what the endpoint actually returns.
+
 ## [2.0.38]
 
 ### Removed

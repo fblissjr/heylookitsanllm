@@ -59,7 +59,7 @@ overrides the model's configured floor.
 
 ```bash
 curl http://localhost:{DEFAULT_PORT}/v1/models        # what is served right now
-curl http://localhost:{DEFAULT_PORT}/v1/capabilities  # version, sampler roster
+curl http://localhost:{DEFAULT_PORT}/v1/capabilities  # server version, Metal, features
 ```
 
 Model ids are **not stable across installs** -- the registry is
