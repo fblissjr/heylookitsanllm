@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Preset routes now declare their response bodies.** `/docs` showed `{}` for
+  all four; they are typed as `Preset`, `PresetList` and `PresetDeleted`, with
+  their 400/404/409 answers listed. Wire output is unchanged.
+- **`/v1/capabilities` stopped advertising things that are not true.**
+  `recommendations.batch_size` described the batch route removed in v1.79.66,
+  and both `concurrent_requests` entries implied parallel generation across
+  models, while one process-wide queue serializes all of it. All three keys
+  are removed.
 - **The `/docs` narrative still called `/v1/capabilities` the "sampler
   roster".** That roster left with the named-sampler system in v2.0.30; the
   quick-start comment now names what the endpoint actually returns.

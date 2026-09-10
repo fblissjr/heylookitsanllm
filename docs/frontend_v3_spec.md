@@ -504,8 +504,9 @@ at create: same v1.59.0 inheritance contract as conversations); `PUT /{id}` part
 
 **Presets** (prefix `/v1/presets`, no auth; added v1.34.22): saved bundles of system prompt + sampler
 params, LM-Studio-style. UI-authored and expanded **client-side** (apply = copy `system_prompt` onto the
-conversation + copy `params` into the settings panel); NOT the server's TOML preset registry that
-`ChatRequest.sampler` names — no wire relationship between the two.
+conversation + copy `params` into the settings panel). The ONLY named-bundle system since v2.0.30
+removed the server's TOML sampler registry; a request naming `sampler` or `preset` is a 422.
+Response bodies are typed in `/openapi.json` (`Preset`, `PresetList`, `PresetDeleted`).
 - `GET /` → `{presets:[{id,name,system_prompt,params,created_at,updated_at}], total}` ordered by name.
 - `POST /` (201) `{name, system_prompt?, params?:{}}` → preset. Names unique → 409; blank name → 400.
 - `PUT /{id}` `{name?,system_prompt?,params?}` (only set fields patched; `system_prompt:null` clears;

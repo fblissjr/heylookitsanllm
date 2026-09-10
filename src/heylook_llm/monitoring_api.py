@@ -107,9 +107,12 @@ Get detailed information about server capabilities and optimization options.
 
 **Client Integration:**
 Clients should query this endpoint on startup to discover:
-1. Recommended batch sizes
-2. Optimal request patterns
+1. Preferred image format
+2. Request patterns
 3. Available performance features
+
+Generation is serialized through ONE process-wide queue, so concurrent
+requests wait their turn whatever model they name.
     """,
     response_description="Server capabilities and optimization details",
 )
@@ -161,16 +164,10 @@ async def get_capabilities(request: Request):
                 "eviction_policy": "LRU",
             },
             "vision_models": True,
-            "concurrent_requests": True,
             "max_image_size": "No hard limit; clients downscale before sending",
             "supported_image_formats": ["JPEG", "PNG", "WEBP", "BMP", "GIF"]
         },
         "recommendations": {
-            "batch_size": {
-                "optimal": 4,
-                "max": 8,
-                "note": "Depends on model size and available memory"
-            },
             "image_format": {
                 "preferred": "JPEG",
                 "quality": 85,
@@ -179,7 +176,6 @@ async def get_capabilities(request: Request):
             "request_pattern": {
                 "use_streaming": "For responses > 100 tokens",
                 "reuse_connection": "Keep-alive recommended",
-                "concurrent_requests": "Safe with different models"
             }
         },
     }
