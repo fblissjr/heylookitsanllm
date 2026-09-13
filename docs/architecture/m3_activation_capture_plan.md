@@ -134,12 +134,25 @@ What it changes and what it does not:
 - It is an instrument beside the server, in the spirit of `llama-bench`
   and `llama-fit-params`: it must be built against the same llama.cpp
   commit as the canonical binary or the graph and tensor names can differ.
-  The canonical build tree under the home directory provides everything to
-  link against (static `libllama`, `libmtmd`, the ggml backends, the common
-  library), all at the binary's commit, so no fork and no second
-  llama-server are needed. Build it as an extra target in that tree, or
-  point its CMake at those libraries. The canonical build script does not
-  build it; that stays a deliberate, named act.
+  No fork and no second llama-server are needed. Its CMake pulls llama.cpp
+  in with `add_subdirectory` and links the native targets, which carry the
+  Metal, embedded-shader, Apple-framework and BLAS wiring themselves, so
+  nothing is reproduced by hand and nothing goes into the canonical tree.
+  Two things make the result match the server binary: point
+  `add_subdirectory` at the canonical CLONE under the home directory (it is
+  already checked out at the binary's commit; a fresh clone would need
+  pinning to that same commit), and configure with the same backend flags
+  the build script passes (its `cmake` argument list in
+  `scripts/build_llama.py`, rationale in `scripts/README.md`: static libs,
+  Metal with the embedded library, native, Accelerate BLAS, no LTO, no
+  OpenMP, and `GGML_METAL_NDEBUG` left unset). The cost is a second build
+  of the libraries in the tool's own build directory, minutes with ccache.
+  The canonical build script does not build it; that stays a deliberate,
+  named act.
+- The micro-batch repeat is an ORDERING check with a tolerance, not a
+  bit-equality check: on Metal a different micro-batch changes how matmuls
+  are batched, so rows agree closely, not exactly. Row order and count must
+  match exactly; values must match within a small tolerance.
 - Running it has the same precondition as everything else here: the daily
   server's M3 must be unloaded first, and the tool loads the same GGUF and
   mmproj that the server does.
