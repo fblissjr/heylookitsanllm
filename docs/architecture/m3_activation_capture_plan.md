@@ -105,10 +105,18 @@ open decision below.
 
 ### Step 1, alternative: a standalone capture tool on the evaluation callback
 
-Codex wrote this on 2026-09-13 as an independent route; it compiled on
-Linux and has not run against M3. Its files live outside this checkout in
-Codex's local `internal/` tree and must be copied to the Mac by hand, since
-`internal/` never travels through git.
+Codex wrote this on 2026-09-13 as an independent route. Later the same day
+it was built on the Mac against the canonical clone at the server binary's
+commit and RUN against M3: text-only, one image, a fresh-process repeat, a
+different micro-batch, a swapped image, and two images in one prompt. Every
+run captured every row, including image chunks split across micro-batches;
+the repeat and the micro-batch variant were bit-identical; the swapped
+image changed the image rows and the text rows after the image while the
+text before it stayed identical. Observations with the numbers are in
+`internal/research/`. THIS IS THE ROUTE. Step 0 and step 1 above are no
+longer needed for the spike and stay only as the HTTP alternative for a
+later consumer. The tool lives in this checkout's gitignored `internal/`
+tree (copied from Codex's box; it never travels through git).
 
 The idea: `llama_context_params.cb_eval` sees every intermediate tensor the
 scheduler computes, for the text batches and for the image-embedding batch
@@ -201,8 +209,10 @@ machine Codex chooses. Nothing here depends on it.
 
 ## Open decisions
 
-- Which llama.cpp fork carries the patch branch.
-- When the daily server's M3 can be unloaded for a capture window.
+- Whether the HTTP capture path (server patch) is ever needed; the
+  standalone tool covers the spike, so this waits for a consumer that needs
+  capture over HTTP.
+- Capture windows still need the daily server's M3 unloaded each time.
 - Which M3 feature the bridge trains on: the final-norm output (server
   path, or a standalone tool that flags every row for output) or a chosen
   pre-norm residual (the callback tool's default). The first live capture
