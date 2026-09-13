@@ -218,6 +218,9 @@ machine Codex chooses. Nothing here depends on it.
   pre-norm residual (the callback tool's default). The first live capture
   decides what is cheap; the bridge decides what is useful.
 
+Postmortem of the day this was written and first run (local, gitignored):
+`internal/postmortems/2026-09-13_session_m3-capture-and-removals.md`.
+
 ## Rules that apply
 
 - One model resident at a time; check reclaimable memory before a spawn.
