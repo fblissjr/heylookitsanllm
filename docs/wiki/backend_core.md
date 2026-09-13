@@ -29,8 +29,6 @@ Route modules in src/heylook_llm/:
 ├── config_api.py                # Operational settings: /v1/admin/config
 ├── monitoring_api.py            # /v1/capabilities, /v1/system/metrics,
 │                                # /v1/performance/profile/{time_range}, /v1/cache/*
-├── embeddings_api.py            # POST /v1/embeddings
-├── hidden_states_api.py         # /v1/hidden_states, /v1/hidden_states/structured
 ├── requests_api.py              # Execution cancellation: DELETE /v1/requests/{id}
 ├── telemetry_api.py             # Frontend ingestion: /v1/telemetry/events
 ├── rlm.py                       # Recursive inference (POST /v1/rlm/completions)
@@ -118,7 +116,7 @@ To maintain simplicity and prevent migration drift in a local workstation contex
 System and model configurations are defined in [`src/heylook_llm/config.py`](../../src/heylook_llm/config.py) and stored on disk in `models.toml`.
 
 ### 4.1. Effect Classes
-Every field of the **provider config classes** -- the ones in `PROVIDER_CONFIG_CLASSES` -- declares an **effect class** in its Pydantic `json_schema_extra`. The enforcing test iterates exactly that mapping, so the covered set is the MLX, MLX-embedding and GGUF config classes. **`AppConfig` is not covered and declares no effect metadata on any field.**
+Every field of the **provider config classes** -- the ones in `PROVIDER_CONFIG_CLASSES` -- declares an **effect class** in its Pydantic `json_schema_extra`. The enforcing test iterates exactly that mapping, so the covered set is the MLX and GGUF config classes. **`AppConfig` is not covered and declares no effect metadata on any field.**
 
 The classes themselves, and which field declares which, are in [`config.py`](../../src/heylook_llm/config.py) -- read them there. A roster copied into prose is the drift this repo already names: a hand-copied constant list is a defect with a delay.
 

@@ -80,8 +80,6 @@ def get_smart_defaults(model_info: dict[str, Any]) -> dict[str, Any]:
     ``samplers.resolve_effective_sampling``.
     """
     provider = model_info.get("provider", "mlx")
-    if provider == "mlx_embedding":
-        return {"max_length": 2048}
 
     defaults: dict[str, Any] = {}
     size_gb = model_info.get("size_gb", 0)
@@ -162,7 +160,7 @@ class ScannedModel:
 
     id: str
     path: str
-    provider: str  # "mlx", "mlx_embedding", "gguf"
+    provider: str  # "mlx", "gguf"
     size_gb: float
     vision: bool
     quantization: Optional[str] = None
@@ -862,13 +860,7 @@ class ModelService:
                 config = model_data.get("config", {})
                 model_path = config.get("model_path", model_data.get("path", ""))
 
-                if provider == "mlx_embedding":
-                    # Embedding models: no vision, no generation params, no sampler presets
-                    entry_config = {
-                        "model_path": model_path,
-                        "max_length": 2048,
-                    }
-                elif provider == "gguf":
+                if provider == "gguf":
                     # GGUFModelConfig has model_config = ConfigDict(extra=
                     # "forbid") and no "vision"/cache_type/chat-template
                     # fields (llama-server owns its own KV cache and
@@ -966,7 +958,7 @@ class ModelService:
 
         if not config_data.get("provider"):
             errors.append("Provider is required")
-        elif config_data["provider"] not in ("mlx", "mlx_embedding", "gguf"):
+        elif config_data["provider"] not in ("mlx", "gguf"):
             errors.append(f"Unknown provider: {config_data['provider']}")
 
         config = config_data.get("config", {})

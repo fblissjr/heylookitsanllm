@@ -19,7 +19,7 @@ import pytest
 # under an import-scoped `patch.dict(sys.modules, mocks)` -- which looked
 # safe but was an ACTIVE defect (ordering review 2026-08-18): patch.dict
 # restores by clear+update, so any module FIRST-imported inside the window
-# (the whole provider chain, and real numpy via mlx_embedding_provider) was
+# (the whole provider chain, and real numpy through it) was
 # EVICTED from sys.modules on exit. When this file was the first importer
 # of the router chain (any per-file invocation: IDE run-this-file,
 # changed-files CI, file-list sharding), later re-imports crashed --

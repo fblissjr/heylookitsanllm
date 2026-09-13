@@ -131,8 +131,8 @@ def effective_loader_for_config(provider: str, config: dict) -> Optional[str]:
     arm names an ENGINE rather than a provider Literal.
 
     ``None`` for anything but ``"mlx"``: the question is *which mlx library*, and
-    it has no answer for a gguf subprocess or an embedding model. gguf is one
-    engine, already named by ``provider``.
+    it has no answer for a gguf subprocess. gguf is one engine, already named
+    by ``provider``.
 
     Pure over the config plus one mtime-cached read of the model dir's
     ``config.json`` -- no import of the model, no MLX. It agrees with the loaded

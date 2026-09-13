@@ -48,17 +48,6 @@ class TestEngineIdentity:
         ))
         assert cov.by_engine == {"g": "gguf"}
 
-    def test_embeddings_are_excluded_not_unclassified(self):
-        # Two different answers that must not print the same: "we chose not to
-        # cover this" versus "we could not tell what this is".
-        cov = classify("x", get_json=_server(
-            models=[{"id": "e"}],
-            admin_models=[{"id": "e", "provider": "mlx_embedding"}],
-        ))
-        assert "e" in cov.excluded
-        assert "e" not in cov.unclassified
-        assert "e" not in cov.by_engine
-
     def test_residency_is_carried_through(self):
         # The only cheapness signal a live harness has when choosing an arm's
         # model; losing it makes the smoke run cost a cold load it did not need.
@@ -129,18 +118,17 @@ class TestCoverageReport:
         # Phase 1's own check: an unclassifiable model is a coverage hole with
         # no name, so every id must land in exactly one bucket.
         models = [{"id": "t"}, {"id": "v", "capabilities": ["vision"]},
-                  {"id": "g"}, {"id": "e"}, {"id": "weird"}]
+                  {"id": "g"}, {"id": "weird"}]
         cov = classify("x", get_json=_server(
             models=models,
             admin_models=[
                 {"id": "t", "provider": "mlx", "effective_loader": "mlx-lm"},
                 {"id": "v", "provider": "mlx", "effective_loader": "mlx-vlm"},
                 {"id": "g", "provider": "gguf"},
-                {"id": "e", "provider": "mlx_embedding"},
                 {"id": "weird", "provider": "quantum-goat"},
             ],
         ))
-        placed = set(cov.by_engine) | set(cov.excluded) | set(cov.unclassified)
+        placed = set(cov.by_engine) | set(cov.unclassified)
         assert placed == {m["id"] for m in models}
         assert cov.unclassified.keys() == {"weird"}
 

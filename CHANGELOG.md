@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.41]
+
+### Removed
+
+- **The `mlx_embedding` provider.** Its only route left in v2.0.40 and no
+  models.toml entry used it. Gone: `MLXEmbeddingProvider`, the backbone
+  loader under `models/`, `MLXEmbeddingModelConfig` and its slot in the
+  provider Literal and config union, the importer's embedding detection and
+  its "Embedding Models" section, the admin import branch, and the example
+  entry in `models.example.toml`. The provider Literal is now `mlx | gguf`.
+- **`supported` on the chat-template response, and the 400 that went with
+  it.** Both existed only because the embedding provider rendered no
+  template; every remaining provider does, so the field was always true and
+  the branch unreachable. The models page no longer reads it.
+- **The "excluded by design" bucket in the live-coverage taxonomy**
+  (`tests/helpers/engines.py`). Its one member was the embedding provider.
+
 ## [2.0.40]
 
 ### Removed

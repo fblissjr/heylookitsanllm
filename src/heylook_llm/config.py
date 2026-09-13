@@ -531,24 +531,6 @@ MLX_RUNTIME_DEFAULT_FIELDS: frozenset[str] = frozenset(
     if _extra(field).get("is_runtime_default")
 )
 
-class MLXEmbeddingModelConfig(BaseModel):
-    """Configuration for MLX embedding models."""
-    # extra="forbid" like the other two provider configs. Without it pydantic
-    # DEFAULTS to ignoring unknown keys, so `max_lenght = 4096` validated fine,
-    # got written to models.toml, and was then dropped forever at load -- the
-    # importer's own validator could not catch it because there was nothing to
-    # catch. Silent, permanent loss of an operator's setting.
-    model_config = ConfigDict(extra="forbid")
-    # Local path or HF repo
-    model_path: str = Field(json_schema_extra={"effect": EFFECT_IDENTITY})
-    # Both are baked into the loaded backbone: max_length sizes the truncation
-    # the encoder was loaded for, pooling selects the head. Changing either
-    # under a live model would silently mismatch the weights in memory.
-    max_length: int = Field(
-        default=2048, json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
-    pooling: Literal["mean", "cls", "none"] = Field(
-        default="mean", json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
-
 class GGUFModelConfig(BaseModel):
     """A GGUF model served by a llama-server SUBPROCESS (plan Phase 7).
 
@@ -952,7 +934,6 @@ class GGUFModelConfig(BaseModel):
 # provider_map (which must stay in key-sync with this dict).
 PROVIDER_CONFIG_CLASSES: Dict[str, type] = {
     "mlx": MLXModelConfig,
-    "mlx_embedding": MLXEmbeddingModelConfig,
     "gguf": GGUFModelConfig,
 }
 
@@ -997,8 +978,8 @@ _validate_effect_declarations()
 
 class ModelConfig(BaseModel):
     id: str
-    provider: Literal["mlx", "mlx_embedding", "gguf"]
-    config: Union[MLXModelConfig, MLXEmbeddingModelConfig, GGUFModelConfig]
+    provider: Literal["mlx", "gguf"]
+    config: Union[MLXModelConfig, GGUFModelConfig]
     description: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     enabled: bool = True
@@ -1212,7 +1193,7 @@ class ScannedModelResponse(BaseModel):
     """
     id: str = Field(..., description="Auto-generated model identifier")
     path: str = Field(..., description="Filesystem path to model")
-    provider: Literal["mlx", "mlx_embedding", "gguf"] = Field(..., description="Detected provider type")
+    provider: Literal["mlx", "gguf"] = Field(..., description="Detected provider type")
     size_gb: float = Field(..., description="Estimated model size in GB")
     vision: bool = Field(default=False, description="Whether model supports vision (shadow of `modalities`)")
     quantization: Optional[str] = Field(default=None, description="Quantization level (4bit, 8bit, etc)")
@@ -1349,8 +1330,7 @@ class AdminModelResponse(BaseModel):
         description="Which MLX library actually decodes this model -- mlx-lm "
                     "(text) or mlx-vlm (vision). Null for every non-mlx "
                     "provider: gguf is one engine, already named by "
-                    "`provider`, and the question has no answer for an "
-                    "embedding model. DERIVED from the config (loader + "
+                    "`provider`. DERIVED from the config (loader + "
                     "modalities + the model dir's model_type), so it is "
                     "answered for UNLOADED models too -- provider `mlx` is "
                     "two separate upstream repos, and this is the only field "
@@ -1406,8 +1386,6 @@ class ChatTemplateResponse(BaseModel):
     """
     model_id: str
     provider: str
-    supported: bool = Field(
-        description="False for providers that render no chat template (embeddings).")
     template: Optional[str] = Field(
         default=None, description="The resolved template body, or null if the model has none.")
     origin: str = Field(

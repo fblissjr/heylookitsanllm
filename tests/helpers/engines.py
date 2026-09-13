@@ -21,11 +21,6 @@ the two MLX libraries decodes is `effective_loader`, which the admin listing
 serves for UNLOADED models too (v1.79.31) precisely so a harness can choose
 its arms without loading anything.
 
-`mlx_embedding` is deliberately out of scope (owner call, 2026-08-28): it
-generates nothing, so no lifecycle arm applies to it. It classifies as
-EXCLUDED, which is a named outcome -- distinct from unclassifiable, which is a
-coverage hole with no name.
-
 Stdlib only, same rule as the harnesses that import it (they run as scripts,
 not under pytest, and must not need a venv beyond the server's own).
 """
@@ -41,14 +36,6 @@ from dataclasses import dataclass, field
 # The engines a live run can have an arm for. Order is display order.
 ARMS = ("mlx-lm", "mlx-vlm", "gguf")
 
-# Providers that are real engines but carry no arm, and why. Reported as
-# excluded rather than unclassified: "we chose not to" and "we could not tell"
-# are different answers and must not print the same.
-EXCLUDED_PROVIDERS = {
-    "mlx_embedding": "embeddings generate nothing -- no lifecycle arm applies "
-                     "(out of scope, owner call 2026-08-28)",
-}
-
 
 @dataclass
 class Coverage:
@@ -57,7 +44,6 @@ class Coverage:
     by_engine: dict[str, str] = field(default_factory=dict)      # model_id -> arm
     capabilities: dict[str, set[str]] = field(default_factory=dict)  # model_id -> caps
     resident: set[str] = field(default_factory=set)              # already loaded
-    excluded: dict[str, str] = field(default_factory=dict)       # model_id -> why
     unclassified: dict[str, str] = field(default_factory=dict)   # model_id -> why
     unconfirmable: dict[str, str] = field(default_factory=dict)  # named, not confirmed
 
@@ -136,9 +122,6 @@ def classify(server: str, *, get_json=None) -> Coverage:
             cov.resident.add(mid)
 
         provider = row.get("provider") or entry.get("provider")
-        if provider in EXCLUDED_PROVIDERS:
-            cov.excluded[mid] = EXCLUDED_PROVIDERS[provider]
-            continue
         if provider == "gguf":
             cov.by_engine[mid] = "gguf"
             continue
@@ -194,8 +177,6 @@ def format_coverage(cov: Coverage, *, spanned: list[str] | None = None,
     if cov.unclassified:
         lines.append("  unclassified (a coverage hole with no name): "
                      + ", ".join(sorted(cov.unclassified)))
-    if cov.excluded:
-        lines.append(f"  excluded by design: {', '.join(sorted(cov.excluded))}")
     if narrowed:
         lines.append("  run was NARROWED explicitly; an uncovered arm below is a "
                      "choice, not a gap.")

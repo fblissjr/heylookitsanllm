@@ -6,13 +6,12 @@ This document explains the provider subsystem in `heylookitsanllm`. Providers br
 
 ## 1. Provider Topology & Contracts
 
-All providers inherit from [`BaseProvider`](../../src/heylook_llm/providers/base.py). Three are registered, but **`mlx_embedding` is unsupported right now**: its `create_chat_completion` raises `NotImplementedError`, and it is not wired to the generation gate, so its forward pass is not serialized against a running generation. Read every provider-behaviour statement below as covering `mlx` and `gguf`.
+All providers inherit from [`BaseProvider`](../../src/heylook_llm/providers/base.py). Two are registered (the `mlx_embedding` provider was removed in v2.0.41; nothing used it).
 
 ```python
 # src/heylook_llm/config.py
 PROVIDER_CONFIG_CLASSES = {
     "mlx": MLXModelConfig,
-    "mlx_embedding": MLXEmbeddingModelConfig,
     "gguf": GGUFModelConfig,
 }
 ```
@@ -21,7 +20,6 @@ PROVIDER_CONFIG_CLASSES = {
 flowchart TD
     Base["BaseProvider (Abstract Interface)"]
     Base --> MLX["MLXProvider<br/>In-Process Metal / mlx-lm & mlx-vlm"]
-    Base --> MLXEmb["MLXEmbeddingProvider<br/>In-Process Vector Embeddings"]
     Base --> GGUF["LlamaServerProvider<br/>Subprocess HTTP SSE Adapter"]
 
     MLX --> UnifiedText["UnifiedTextStrategy (Text Generation)"]
@@ -40,7 +38,7 @@ Only two members are `@abstractmethod`; the rest are concrete base-class behavio
 - **`check_capacity()`**: the contract is "raise `ModelBusyError` (HTTP 503) when the queue is saturated". The **base is a no-op** -- no admission limit -- so a provider that does not override it has none.
 - **`unload()`**, **`warmup()`**, **`get_metrics()`**, **`clear_cache()`**, **`get_tokenizer()`**, **`template_info()`**, **`thinking_capable`**, **`effective_thinking()`**, **`generation_queue_stats()`** are likewise declared here with defaults.
 
-Read a stub as a contract, not as inherited behaviour: the embedding provider inherits the no-op `check_capacity` and is therefore ungated.
+Read a stub as a contract, not as inherited behaviour: a provider that inherits the no-op `check_capacity` is ungated.
 
 ### 1.2. The `GenerationChunk` Invariant
 Providers yield [`GenerationChunk`](../../src/heylook_llm/providers/base.py) dataclass instances:
@@ -101,16 +99,7 @@ Audio towers are stripped at load on the MLX path, so `input_audio` content part
 
 ---
 
-## 3. MLXEmbeddingProvider
-
-[`MLXEmbeddingProvider`](../../src/heylook_llm/providers/mlx_embedding_provider.py) generates high-throughput dense vector embeddings:
-- Uses `mlx_lm.utils._get_classes(config_dict)` -- a **private** API that takes a dict -- to resolve the architecture, then extracts `.model` as the backbone.
-- Pooling is `Literal["mean", "cls", "none"]`, default `mean`. `mean` and `cls` return one vector per input; **`none` returns per-token output** instead of pooling. L2 normalization is applied unconditionally in all three cases, so `none` is per-token *and* normalized -- it is not a last-token pooler. Optional dense projection layers sit between pooling and normalization.
-- Applies model-specific scaling, such as Gemma's $\sqrt{d_{\text{model}}}$ embedding multiplier (gated on `model_type.startswith("gemma")`).
-
----
-
-## 4. LlamaServerProvider (GGUF) Overview
+## 3. LlamaServerProvider (GGUF) Overview
 
 [`LlamaServerProvider`](../../src/heylook_llm/providers/llama_server_provider.py) provides out-of-process serving of quantized GGUF models via `llama-server`:
 - Spawns one isolated subprocess per resident model.
@@ -123,7 +112,7 @@ Audio towers are stripped at load on the MLX path, so `input_audio` content part
 
 ---
 
-## 5. Reasoning Parsers & Stream Separation
+## 4. Reasoning Parsers & Stream Separation
 
 Models format their internal reasoning in diverse, vendor-specific ways. The parser subsystem ([`reasoning_parser.py`](../../src/heylook_llm/reasoning_parser.py)) separates reasoning thoughts from final assistant content:
 

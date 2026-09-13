@@ -40,20 +40,6 @@ from .providers.common.template_info import (
 
 logger = logging.getLogger(__name__)
 
-# Providers that render a chat template at all: DERIVED from the provider
-# roster, not hand-listed. `PROVIDER_CONFIG_CLASSES` is this repo's single
-# source of truth for the provider Literal, and a hand-copied sibling list is
-# what the reload set, the import allowlist and /v1/admin/model-options were
-# all changed to stop being. Only embeddings are excluded, and that exclusion
-# is the thing worth stating: they generate nothing, so no template applies.
-def _template_providers() -> frozenset:
-    from .config import PROVIDER_CONFIG_CLASSES
-    return frozenset(PROVIDER_CONFIG_CLASSES) - {"mlx_embedding"}
-
-
-TEMPLATE_PROVIDERS = _template_providers()
-
-
 class TemplateWriteRefused(ValueError):
     """A template was rejected before anything touched disk."""
 
@@ -64,7 +50,6 @@ class TemplateView:
 
     model_id: str
     provider: str
-    supported: bool
     template: Optional[str] = None
     origin: str = "unknown"
     override_present: bool = False
@@ -127,13 +112,6 @@ def view(model_id: str, provider: str, config: dict,
     thing you most want to see before loading a model is the prompt format it
     will load with.
     """
-    if provider not in TEMPLATE_PROVIDERS:
-        return TemplateView(
-            model_id=model_id, provider=provider, supported=False,
-            origin="not applicable",
-            notes=[f"The {provider} provider does not render a chat template."],
-        )
-
     model_path = str(config.get("model_path") or "")
     path = override_path(model_path)
     present = bool(path and path.is_file())
@@ -160,7 +138,7 @@ def view(model_id: str, provider: str, config: dict,
         notes.append(f"{directory} is not writable, so an override cannot be saved.")
 
     return TemplateView(
-        model_id=model_id, provider=provider, supported=True,
+        model_id=model_id, provider=provider,
         template=template, origin=origin,
         override_present=present,
         override_path=str(path) if path else None,

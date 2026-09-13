@@ -108,35 +108,3 @@ class TestChatTemplateRoutes:
         assert client.get(missing).status_code == 404
         assert client.put(missing, json={"template": OVERRIDE}).status_code == 404
         assert client.delete(missing).status_code == 404
-
-    def test_a_provider_without_templates_says_so_rather_than_showing_an_editor(
-        self, client
-    ):
-        """mlx_embedding renders no chat template.
-
-        `supported: false` is what stops the UI drawing an empty editor over a
-        model that has nothing to edit, and PUT/DELETE must give the SAME
-        answer rather than one of them 404ing as though an override were
-        merely absent.
-
-        This asserts the false branch against a real embeddings row. The first
-        version asserted `supported is True` on an mlx model -- the opposite of
-        its own name -- and the false branch was unreachable through any route,
-        so deleting it from `view()` left this green.
-        """
-        got = client.get("/v1/admin/models/test-embedding-model/chat-template")
-        assert got.status_code == 200, got.text
-        body = got.json()
-        assert body["supported"] is False
-        assert body["template"] is None
-        assert body["notes"], "supported:false with no explanation"
-
-        for res in (client.put("/v1/admin/models/test-embedding-model/chat-template",
-                               json={"template": OVERRIDE}),
-                    client.delete("/v1/admin/models/test-embedding-model/chat-template")):
-            assert res.status_code == 400, res.text
-            assert "does not render a chat template" in res.json()["detail"]
-
-        # and the templated providers still say true
-        assert client.get(
-            "/v1/admin/models/test-mlx-model/chat-template").json()["supported"] is True

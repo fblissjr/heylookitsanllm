@@ -94,7 +94,6 @@ class TestEffectiveLoaderForConfig:
 
         cfg = {"loader": "auto", "modalities": ["text", "vision"]}
         assert effective_loader_for_config("gguf", cfg) is None
-        assert effective_loader_for_config("mlx_embedding", cfg) is None
         assert effective_loader_for_config("mlx", cfg) in ("mlx-lm", "mlx-vlm")
 
     def test_explicit_loader_wins_over_the_vision_capability(self):
@@ -159,4 +158,3 @@ class TestUnresolvedDescriptionIsRefused:
         # The question is WHICH MLX LIBRARY; gguf has no answer and must not
         # be refused on its way to None.
         assert self._f()("gguf", {"loader": "auto"}) is None
-        assert self._f()("mlx_embedding", {"loader": "auto"}) is None

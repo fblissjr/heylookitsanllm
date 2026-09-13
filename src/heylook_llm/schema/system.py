@@ -11,12 +11,11 @@ from pydantic import BaseModel, Field
 
 class ProviderCapability(BaseModel):
     """What a specific provider can do."""
-    name: str = Field(..., description="Provider name (mlx, mlx_embedding)")
+    name: str = Field(..., description="Provider name (mlx, gguf)")
     supports_streaming: bool = True
     supports_vision: bool = False
     supports_thinking: bool = False
     supports_batch: bool = False
-    supports_embeddings: bool = False
 
 
 class SystemCapabilities(BaseModel):

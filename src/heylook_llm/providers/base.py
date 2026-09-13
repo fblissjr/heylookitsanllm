@@ -85,7 +85,7 @@ class InvalidGenerationRequest(GenerationFailed):
 class BaseProvider(ABC):
     """Abstract base class for all model backends."""
 
-    # Registry name of this backend ("mlx", "mlx_embedding", ...). A CLASS
+    # Registry name of this backend ("mlx", "gguf", ...). A CLASS
     # attribute so neutral code (router teardown, telemetry's dim_model)
     # never has to sniff type names -- the pre-7a state was a `provider`
     # attr nobody set, which made the router's MLX cache-clear dead code.

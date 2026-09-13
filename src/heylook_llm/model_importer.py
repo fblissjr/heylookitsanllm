@@ -79,12 +79,6 @@ class ModelImporter:
                 # their own and must be refused BEFORE the mlx branch below
                 # would otherwise happily import them.
                 logging.info(f"Skipping drafter/assistant checkpoint (not servable): {rel_path}")
-            elif self._is_embedding_model(root_path, config_data):
-                logging.info(f"Found embedding model in: {rel_path}")
-                model = self._create_embedding_entry(root_path)
-                if model:
-                    models.append(model)
-                    logging.info(f"Added embedding model: {model['id']}")
             elif self._is_gguf_model(root_path):
                 logging.info(f"Found GGUF model in: {rel_path}")
                 model = self._create_gguf_entry(root_path)
@@ -126,8 +120,6 @@ class ModelImporter:
 
         if self._is_drafter_checkpoint(config_data):
             model = None
-        elif self._is_embedding_model(snapshot_path, config_data):
-            model = self._create_embedding_entry(snapshot_path)
         elif self._is_gguf_model(snapshot_path):
             model = self._create_gguf_entry(snapshot_path)
         elif self._is_mlx_model(snapshot_path):
@@ -188,44 +180,6 @@ class ModelImporter:
     def _read_model_config(self, path: Path) -> Optional[dict]:
         """Delegates to the shared reader (modality_detect.py, 6a)."""
         return read_model_config_json(path)
-
-    def _is_embedding_model(self, path: Path, config_data: Optional[dict] = None) -> bool:
-        """Check if a directory contains an embedding model.
-
-        Detects two signals (either is sufficient):
-        - config.json has "use_bidirectional_attention": true
-        - Presence of *_Dense subdirectories (sentence-transformer projection layers)
-        """
-        if config_data is None:
-            config_data = self._read_model_config(path)
-
-        if config_data and config_data.get("use_bidirectional_attention") is True:
-            return True
-
-        # Check for sentence-transformer Dense projection dirs
-        if any(d.is_dir() and d.name.endswith("_Dense") for d in path.iterdir()):
-            return True
-
-        return False
-
-    def _create_embedding_entry(self, path: Path) -> Optional[dict]:
-        """Create a models.toml entry for an embedding model."""
-        model_id = path.name
-        if model_id in self.existing_ids:
-            return None
-        self.existing_ids.add(model_id)
-
-        config: dict[str, Any] = {
-            "model_path": str(path),
-            "max_length": 2048,
-        }
-
-        return {
-            "id": model_id,
-            "provider": "mlx_embedding",
-            "enabled": True,
-            "config": config,
-        }
 
     def _is_mlx_model(self, path: Path) -> bool:
         """Check if a directory contains an MLX model."""
@@ -569,7 +523,6 @@ class ModelImporter:
     # (a future provider) still gets emitted, under "Other Models".
     _SECTION_HEADERS: list[tuple[str, str]] = [
         ("mlx", "# --- MLX Models ---"),
-        ("mlx_embedding", "# --- Embedding Models ---"),
         ("gguf", "# --- GGUF Models ---"),
     ]
 
@@ -577,7 +530,7 @@ class ModelImporter:
         """Generate models.toml content from discovered models.
 
         Entries are grouped into one ``# --- <Provider> Models ---`` section
-        per provider (stable order: MLX, embedding, GGUF, then anything
+        per provider (stable order: MLX, GGUF, then anything
         else) so a mixed scan reads as organized sections instead of one
         undifferentiated list under a single "MLX Models" header.
         """

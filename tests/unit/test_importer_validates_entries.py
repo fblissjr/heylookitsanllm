@@ -71,7 +71,6 @@ def test_every_provider_can_round_trip_a_minimal_entry():
     for provider, config in (
         ("gguf", {"model_path": "/tmp/m.gguf"}),
         ("mlx", {"model_path": "/tmp/m"}),
-        ("mlx_embedding", {"model_path": "/tmp/m"}),
     ):
         entry = {"id": f"m-{provider}", "provider": provider,
                  "enabled": True, "config": config}

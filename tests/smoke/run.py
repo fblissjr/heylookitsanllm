@@ -19,8 +19,7 @@
 # Which of the two MLX libraries runs is `MLXProvider.effective_loader`, not
 # the provider field, so "we covered mlx" is a claim about a config value
 # rather than about code. A text arm and a vision arm are different engines
-# and this harness treats them that way. (mlx_embedding is deliberately out of
-# scope -- owner call 2026-08-28.)
+# and this harness treats them that way.
 #
 # This tool NEVER spawns a server -- same rule as tests/eval/run.py. Point
 # --server at a running `heylookllm`.

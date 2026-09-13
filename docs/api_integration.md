@@ -33,7 +33,7 @@ themselves.)
 
 ```json
 { "id": "...", "object": "model", "owned_by": "user",
-  "provider": "mlx" | "mlx_embedding" | "gguf",
+  "provider": "mlx" | "gguf",
   "modalities": ["text", "vision", ...],
   "capabilities": ["chat", "vision", "thinking", "reasoning_effort", ...] }
 ```

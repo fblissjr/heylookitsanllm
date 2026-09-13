@@ -325,7 +325,7 @@ class TestModalitiesAndLoader:
 
     def test_loader_rejects_unknown(self):
         with pytest.raises(ValidationError):
-            MLXModelConfig(**self.BASE, loader="mlx_embedding")
+            MLXModelConfig(**self.BASE, loader="torch")
         with pytest.raises(ValidationError):
             MLXModelConfig(**self.BASE, loader="vllm")
 
@@ -397,6 +397,6 @@ class TestModelsExampleToml:
         with open(example, "rb") as f:
             data = tomllib.load(f)
         cfg = AppConfig(**data)
-        assert len(cfg.models) >= 3  # minimal MLX, override MLX, gguf, embedding
+        assert len(cfg.models) >= 3  # minimal MLX, override MLX, gguf
         providers = {m.provider for m in cfg.models}
-        assert {"mlx", "gguf", "mlx_embedding"} <= providers
+        assert {"mlx", "gguf"} <= providers

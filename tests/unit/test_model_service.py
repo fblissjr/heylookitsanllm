@@ -11,7 +11,7 @@ onto the sampler registry, itself removed in v2.0.30.)
 Preset-registry semantics are covered by ``test_preset_registry.py``.
 This file focuses on:
   - ``get_smart_defaults`` returning only load-time fields
-  - ``ModelImporter`` model-size regex and embedding detection (unchanged)
+  - ``ModelImporter`` model-size regex (unchanged)
 """
 
 import json
@@ -74,10 +74,6 @@ class TestSmartDefaultsLoadTimeOnly:
                 "provider": "mlx", "name": "m", "size_gb": size,
             })
             assert "max_kv_size" not in defaults
-
-    def test_mlx_embedding_returns_max_length_only(self):
-        defaults = get_smart_defaults({"provider": "mlx_embedding", "name": "e"})
-        assert defaults == {"max_length": 2048}
 
 
 class TestImportWizardChatTemplateDetection:
@@ -217,62 +213,3 @@ class TestServerImportChatTemplateDetection:
         assert imported[0].config.chat_template_source == "tokenizer_config"
 
 
-class TestEmbeddingModelDetection:
-    """Embedding model detection is unchanged by C4."""
-
-    def _make_embedding_dir(self, tmp_path, *, bidirectional=True, dense_dirs=False):
-        config = {"model_type": "gemma2", "hidden_size": 768}
-        if bidirectional:
-            config["use_bidirectional_attention"] = True
-        (tmp_path / "config.json").write_text(json.dumps(config))
-        (tmp_path / "model.safetensors").write_bytes(b"\x00" * 64)
-        if dense_dirs:
-            (tmp_path / "2_Dense").mkdir()
-            (tmp_path / "3_Dense").mkdir()
-        return tmp_path
-
-    def _make_generative_dir(self, tmp_path):
-        config = {"model_type": "llama", "hidden_size": 4096}
-        (tmp_path / "config.json").write_text(json.dumps(config))
-        (tmp_path / "model.safetensors").write_bytes(b"\x00" * 64)
-        return tmp_path
-
-    def test_detects_embedding_from_bidirectional_config(self, tmp_path):
-        self._make_embedding_dir(tmp_path, bidirectional=True)
-        importer = ModelImporter()
-        assert importer._is_embedding_model(tmp_path) is True
-
-    def test_detects_embedding_from_dense_dirs(self, tmp_path):
-        self._make_embedding_dir(tmp_path, bidirectional=False, dense_dirs=True)
-        importer = ModelImporter()
-        assert importer._is_embedding_model(tmp_path) is True
-
-    def test_rejects_generative_model(self, tmp_path):
-        self._make_generative_dir(tmp_path)
-        importer = ModelImporter()
-        assert importer._is_embedding_model(tmp_path) is False
-
-    def test_create_embedding_entry_sets_provider(self, tmp_path):
-        self._make_embedding_dir(tmp_path, bidirectional=True)
-        importer = ModelImporter()
-        entry = importer._create_embedding_entry(tmp_path)
-
-        assert entry is not None
-        assert entry["provider"] == "mlx_embedding"
-        assert entry["config"]["model_path"] == str(tmp_path)
-        assert entry["config"]["max_length"] == 2048
-        assert "temperature" not in entry["config"]
-        # Derive-at-load (6a): no auto tags materialized.
-        assert "tags" not in entry
-
-    def test_scan_finds_embedding_model(self, tmp_path):
-        model_dir = tmp_path / "embeddinggemma-300m"
-        model_dir.mkdir()
-        self._make_embedding_dir(model_dir, bidirectional=True)
-
-        importer = ModelImporter()
-        models = importer.scan_directory(str(tmp_path))
-
-        assert len(models) == 1
-        assert models[0]["provider"] == "mlx_embedding"
-        assert "tags" not in models[0]

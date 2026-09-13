@@ -341,19 +341,16 @@ function buildChatTemplatePanel({ model, draft, onDraftChange }) {
     // Save disabled and no way to repair it.
     serverText = (view.override_present ? view.override_template : view.template) || '';
     area.value = draft[TMPL_DRAFT] ?? serverText;
-    area.disabled = !view.supported || !view.writable;
+    area.disabled = !view.writable;
     revertBtn.hidden = !view.override_present;
 
-    const bits = [];
-    if (view.supported) bits.push(`In force: ${view.origin}`);
+    const bits = [`In force: ${view.origin}`];
     if (view.override_present) bits.push('your override is on disk');
     originEl.textContent = bits.join(' · ');
 
     // Ordered worst-first: an edit that cannot land at all matters more than
     // one that has landed but needs a reload.
-    if (!view.supported) {
-      say(view.notes[0] || 'This provider does not use a chat template.');
-    } else if (view.inert_reason) {
+    if (view.inert_reason) {
       say(view.inert_reason, 'warn');
     } else if (!view.writable) {
       say(view.notes[0] || 'This model folder is not writable.', 'warn');

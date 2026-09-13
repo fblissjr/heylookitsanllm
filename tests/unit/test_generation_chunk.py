@@ -192,19 +192,15 @@ class TestProviderSurface:
     def test_concrete_providers_accept_abort_event(self):
         mlx = pytest.importorskip("mlx")  # noqa: F841 -- import gate only
         from heylook_llm.providers.mlx_provider import MLXProvider
-        from heylook_llm.providers.mlx_embedding_provider import MLXEmbeddingProvider
 
-        for cls in (MLXProvider, MLXEmbeddingProvider):
-            sig = inspect.signature(cls.create_chat_completion)
-            assert "abort_event" in sig.parameters, cls.__name__
+        sig = inspect.signature(MLXProvider.create_chat_completion)
+        assert "abort_event" in sig.parameters
 
     def test_provider_name_set_on_concrete_classes(self):
         mlx = pytest.importorskip("mlx")  # noqa: F841
         from heylook_llm.providers.mlx_provider import MLXProvider
-        from heylook_llm.providers.mlx_embedding_provider import MLXEmbeddingProvider
 
         assert MLXProvider.provider_name == "mlx"
-        assert MLXEmbeddingProvider.provider_name == "mlx_embedding"
 
 
 # ---------------------------------------------------------------------------

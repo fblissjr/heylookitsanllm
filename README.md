@@ -25,10 +25,10 @@ subprocess -- one API, one UI, per-model engine choice.
   removed in v1.79.66: no page of the web UI had used it since v1.74.0 and the
   owner's other project speaks `/v1/messages`, so one generation now has one
   grammar.
-- **Three providers**: MLX text + vision ([mlx-lm](https://github.com/ml-explore/mlx-lm),
-  [mlx-vlm](https://github.com/Blaizzy/mlx-vlm)), GGUF via a managed
+- **Two providers**: MLX text + vision ([mlx-lm](https://github.com/ml-explore/mlx-lm),
+  [mlx-vlm](https://github.com/Blaizzy/mlx-vlm)), and GGUF via a managed
   llama-server subprocess (vision mmproj sidecars, audio input, speculative
-  decoding/MTP, prefix caching), and MLX embeddings (any mlx-lm architecture)
+  decoding/MTP, prefix caching)
 - **Thinking blocks**: format-aware reasoning parsing driven by the model's
   own chat template (Qwen `<think>` styles, gemma channel format), with
   round-trip editing, streaming, and a per-request toggle
@@ -120,7 +120,7 @@ wins as an override. See `models.example.toml` for the format.
 Three routes: the Models page in the UI (scan, select, import), the CLI
 (`heylookllm import --folder ...`), or the admin API
 (`POST /v1/admin/models/scan` then `POST /v1/admin/models/import`). The scan
-understands MLX/safetensors dirs, embedding models, and GGUF dirs (mmproj
+understands MLX/safetensors dirs and GGUF dirs (mmproj
 projectors and `mtp-*` drafter sidecars auto-paired).
 
 After hand-editing `models.toml` on a running server:

@@ -14,8 +14,8 @@
 # section on mlx-vlm bus-factor risk): import/inspect-level only. No model
 # downloads, no network, no Metal-requiring calls (no thread-local GPU streams, no
 # real vision-tower forward passes). Plain mx.array construction from Python lists
-# IS used elsewhere in this suite unguarded (test_samplers.py, test_embedding_model.py,
-# etc.) so it appears here too where it gives a stronger pin than source-text
+# IS used elsewhere in this suite unguarded (test_samplers.py etc.) so it
+# appears here too where it gives a stronger pin than source-text
 # matching alone.
 #
 # Import discipline: this file imports the REAL mlx_lm / mlx_vlm / heylook_llm.*
@@ -52,7 +52,6 @@ from mlx_vlm.models.qwen3_5 import language as _qwen3_5_language_module
 
 # --- Real mlx_lm surface -------------------------------------------------------
 from mlx_lm.generate import GenerationResponse
-from mlx_lm.utils import _get_classes
 from mlx_lm.models.cache import KVCache, QuantizedKVCache, RotatingKVCache, make_prompt_cache
 
 # --- Real heylook_llm consumption-side helpers (safe to import unmocked: no
@@ -138,7 +137,7 @@ class TestPrepareInputs:
         # exactly what our vision strategy hits when a VLM request formats a
         # prompt with zero images resolved. No Metal: only mx.array(list) from
         # plain Python lists, the same pattern used unguarded elsewhere in this
-        # suite (tests/unit/test_samplers.py, tests/unit/test_embedding_model.py).
+        # suite (tests/unit/test_samplers.py).
         class _FakeTokenizerOutput:
             def __init__(self, input_ids, attention_mask):
                 self.input_ids = input_ids
@@ -367,25 +366,6 @@ class TestPositionIdsRopeDeltasConvention:
 # mlx-lm private-API touchpoints
 # ---------------------------------------------------------------------------
 
-class TestGetClasses:
-    """Consumed at src/heylook_llm/models/embedding_model.py:75-94
-    (load_backbone): mlx_lm.utils._get_classes(model_config) is a PRIVATE API
-    (leading underscore, no compat guarantee) returning (ModelClass, ArgsClass);
-    ArgsClass must be a dataclass so `ArgsClass.__dataclass_fields__` can filter
-    the config dict before construction."""
-
-    def test_get_classes_signature_takes_a_config_dict(self):
-        sig = inspect.signature(_get_classes)
-        assert "config" in sig.parameters
-
-    def test_get_classes_returns_model_and_dataclass_args(self):
-        ModelClass, ArgsClass = _get_classes({"model_type": "llama"})
-        assert inspect.isclass(ModelClass)
-        assert inspect.isclass(ArgsClass)
-        assert hasattr(ArgsClass, "__dataclass_fields__"), (
-            "embedding_model.load_backbone filters model_config keys via "
-            "ArgsClass.__dataclass_fields__ -- ArgsClass must stay a dataclass"
-        )
 
 
 class TestCacheClasses:

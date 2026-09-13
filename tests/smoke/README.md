@@ -48,10 +48,6 @@ different release cadences and different failure modes. This harness treats
 them as separate arms and reports a missing arm as **uncovered**, never as
 green.
 
-`mlx_embedding` is deliberately out of scope (owner call, 2026-08-28); it
-classifies as *excluded*, which prints differently from *unclassified* on
-purpose — "we chose not to" and "we could not tell" are different answers.
-
 The classification itself is `tests/helpers/engines.py`, shared with
 `tests/eval/run.py` (two copies of a taxonomy is one drifting copy). It reads
 `effective_loader` off `GET /v1/admin/models`, which the server answers for

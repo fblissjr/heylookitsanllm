@@ -61,14 +61,3 @@ enabled = true
   # speculative decoding is per-model opt-in (measured, not assumed):
   # draft_model_path = "modelzoo/gguf/my-gguf-model/mtp-model.gguf"
   # spec_type = "draft-mtp"
-
-# --- Embedding ---
-
-[[models]]
-id = "my-embedding-model"
-provider = "mlx_embedding"
-enabled = true
-
-  [models.config]
-  model_path = "modelzoo/my-embedding-model"
-  max_length = 2048

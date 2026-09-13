@@ -32,7 +32,6 @@ flowchart TB
 
         subgraph InProcessProviders ["In-Process Providers (Metal Engine)"]
             MLX["MLXProvider (mlx-lm / mlx-vlm)<br/>Text & Vision Inference"]
-            MLXEmb["MLXEmbeddingProvider"]
             PromptCache["Single-Slot Prompt Cache (KV Snapshots)"]
             VisionCache["Vision Feature LRU Cache"]
         end
@@ -72,7 +71,6 @@ A foundational design decision in `heylookitsanllm` is how providers are hosted:
 | Provider | Host Execution Model | Dependency Boundary | Lifecycle Model |
 | :--- | :--- | :--- | :--- |
 | **`mlx`** (Text/Vision) | **In-Process** | `mlx`, `mlx-lm`, `mlx-vlm` Python packages running on GPU streams | Memory-managed by MLX cache and Python GC; pinned executor threadpool |
-| **`mlx_embedding`** | **UNSUPPORTED RIGHT NOW** | -- | `create_chat_completion` raises `NotImplementedError` ([`mlx_embedding_provider.py`](../../src/heylook_llm/providers/mlx_embedding_provider.py)); the provider is not wired to the generation gate. Treat every statement in this wiki about provider behaviour as covering `mlx` and `gguf` only. |
 | **`gguf`** | **Out-of-Process Subprocess** | Zero MLX dependency; pure Python stdlib (`urllib`, `subprocess`, `socket`) | 1 `llama-server` process per loaded model; spawned on load, killed on unload |
 
 ### Why Out-of-Process `llama-server`?
@@ -88,7 +86,7 @@ A foundational design decision in `heylookitsanllm` is how providers are hosted:
 The reason in the source is **one GPU**, not memory-bandwidth economics. [`generation_gate.py`](../../src/heylook_llm/providers/common/generation_gate.py) states it: a single GPU with one loaded model and a shared KV cache means only one generation can run at a time, so concurrent requests should *queue and each complete* rather than the newest aborting the in-flight one. [`mlx_provider.py`](../../src/heylook_llm/providers/mlx_provider.py) adds the cross-model half: generation must serialize across all loaded MLX models, or two providers would run concurrent generations on the shared Metal command queue.
 
 No throughput claim is made here, and none should be added -- read the two sources above for the design's actual premise.
-- **Process-Global FIFO Generation Gate** ([`get_process_gate`](../../src/heylook_llm/providers/common/generation_gate.py)): a process-wide singleton with exactly two consumers -- [`mlx_provider.py`](../../src/heylook_llm/providers/mlx_provider.py) (through its kept-name wrapper `_get_generation_gate`) and [`llama_server_provider.py`](../../src/heylook_llm/providers/llama_server_provider.py). `mlx_embedding` is unsupported and touches none of it.
+- **Process-Global FIFO Generation Gate** ([`get_process_gate`](../../src/heylook_llm/providers/common/generation_gate.py)): a process-wide singleton with exactly two consumers -- [`mlx_provider.py`](../../src/heylook_llm/providers/mlx_provider.py) (through its kept-name wrapper `_get_generation_gate`) and [`llama_server_provider.py`](../../src/heylook_llm/providers/llama_server_provider.py).
 - The **first provider constructed wins**: it fixes the queue depth for the whole process, which is why that field is classified load-time-only rather than as per-model tuning. Because the gate is process-wide, `generation_queue_stats()` reports process traffic, not per-model traffic, and any "is this model busy" logic built on it is conservative across models.
 - **Admission Queue**: admits waiting requests in arrival order up to `max_queue_depth` (the bound and its default live on the provider config in [`config.py`](../../src/heylook_llm/config.py)). A request arriving when the queue is saturated gets `503 Service Unavailable` via `ModelBusyError`.
 - **One Active Slot (`-np 1`)**: For GGUF models, `llama-server` is spawned strictly with `-np 1`. Heylook holds the generation gate before forwarding the request, ensuring requests never silently queue in `llama-server`'s internal HTTP queue where they might exceed read timeouts.

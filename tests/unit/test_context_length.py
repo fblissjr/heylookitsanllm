@@ -56,9 +56,6 @@ class TestModelContextLength:
     def test_gguf_unreadable_header_is_none(self, tmp_path):
         assert model_context_length("gguf", str(tmp_path / "nope.gguf")) is None
 
-    def test_providers_without_a_chat_context_answer_none(self, tmp_path):
-        assert model_context_length("mlx_embedding", _checkpoint(tmp_path, {"max_position_embeddings": 512})) is None
-
     def test_no_path_is_none(self):
         assert model_context_length("mlx", None) is None
         assert model_context_length("mlx", "") is None

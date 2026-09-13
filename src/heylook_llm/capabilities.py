@@ -313,8 +313,7 @@ def model_context_length(provider: str, model_path: str | None,
     provider it is read where that provider keeps it: the GGUF header's
     ``<arch>.context_length`` (the TRAINING context llama-server sizes from
     when ``ctx_size`` is unset) for gguf, config.json for MLX. Derived from
-    the files, so it is answered for unloaded models too. Embedding models
-    have no chat context and answer None.
+    the files, so it is answered for unloaded models too.
 
     ``override`` is the entry's own ``context_length`` (the MLX config field)
     and wins over the files whatever they say: a YaRN-scaled checkpoint

@@ -24,15 +24,6 @@ except ImportError as e:
     # Store the error for later logging
     MLX_IMPORT_ERROR = str(e)
 
-# Try to import MLX Embedding provider
-try:
-    from heylook_llm.providers.mlx_embedding_provider import MLXEmbeddingProvider
-    HAS_MLX_EMBEDDING = True
-except ImportError as e:
-    MLXEmbeddingProvider = None
-    HAS_MLX_EMBEDDING = False
-
-
 class ModelNotFound(ValueError):
     """The requested model could not be RESOLVED to a config entry.
 
@@ -328,7 +319,7 @@ class ModelRouter:
         # provider_name is the BaseProvider class attribute (7a) -- the old
         # getattr(provider, "provider") gate matched nothing and made this
         # cache-clear dead code.
-        is_mlx_model = getattr(provider, "provider_name", "") in ("mlx", "mlx_embedding")
+        is_mlx_model = getattr(provider, "provider_name", "") == "mlx"
         try:
             provider.unload()
         except Exception:
@@ -478,8 +469,6 @@ class ModelRouter:
             provider_map = {}
             if MLXProvider:
                 provider_map["mlx"] = MLXProvider
-            if MLXEmbeddingProvider:
-                provider_map["mlx_embedding"] = MLXEmbeddingProvider
             from heylook_llm.providers.llama_server_provider import LlamaServerProvider
             provider_map["gguf"] = LlamaServerProvider
 
@@ -729,7 +718,7 @@ class ModelRouter:
         # Unload outside the cache lock to avoid holding it during slow ops.
         # provider_name is the BaseProvider class attribute (7a); the old
         # `provider.provider` gate matched nothing (dead cache-clear).
-        is_mlx = getattr(provider, "provider_name", "") in ("mlx", "mlx_embedding")
+        is_mlx = getattr(provider, "provider_name", "") == "mlx"
         try:
             provider.unload()
             del provider

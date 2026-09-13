@@ -733,7 +733,7 @@ handler would freeze in-flight SSE streams for its duration. Expect these calls 
 as long as a scan takes; other requests keep flowing meanwhile.
 
 **Chat template** (v2.0.22). `GET /v1/admin/models/{id}/chat-template` →
-`{model_id, provider, supported, template, origin, override_present, override_path,
+`{model_id, provider, template, origin, override_present, override_path,
 writable, inert_reason, override_template, stale, notes}`. It reads FILES (and, for gguf, the GGUF header),
 never a running process, so it answers for models that are NOT resident — the prompt
 format a model will load with is the thing worth seeing before loading it.

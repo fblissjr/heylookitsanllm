@@ -54,18 +54,6 @@ TEST_MODELS_DATA = {
             "config": {"model_path": "/fake/mlx-model", "vision": False},
         },
         {
-            # An embeddings row, so the "this provider renders no chat
-            # template" branch is REACHABLE through a route. Without one, the
-            # chat-template route's `supported: false` path could be deleted
-            # wholesale with the suite still green.
-            "id": "test-embedding-model",
-            "provider": "mlx_embedding",
-            "description": "Test embedding model for contract tests",
-            "tags": ["test"],
-            "enabled": True,
-            "config": {"model_path": "/fake/embedding-model"},
-        },
-        {
             # A gguf row, so routes with a provider branch (context fields on
             # the admin row, ctx_size on /reload) have both arms reachable.
             # FakeProvider serves it like any other id; its path does not

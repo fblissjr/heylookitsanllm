@@ -35,7 +35,6 @@ Server version **{__version__}**. Default base URL `http://localhost:{DEFAULT_PO
 - **mlx** -- text and vision, via mlx-lm / mlx-vlm, Metal-accelerated.
 - **gguf** -- one `llama-server` subprocess per loaded model. Adds audio
   input; MLX rejects audio (400), because audio towers are stripped at load.
-- **mlx_embedding** -- embeddings.
 
 ## The inference wire
 

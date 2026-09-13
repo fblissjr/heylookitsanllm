@@ -51,7 +51,7 @@ max_loaded_models = 2
 # real schema by tests/unit/test_config.py::TestModelsExampleToml).
 [[models]]
 id = "model-identifier"       # Unique ID for API requests
-provider = "mlx"              # mlx | mlx_embedding | gguf
+provider = "mlx"              # mlx | gguf
 enabled = true                # Include in /v1/models?
 
   [models.config]
@@ -65,13 +65,12 @@ enabled = true                # Include in /v1/models?
 Unique identifier used in API requests. Must be unique, no spaces, case-sensitive.
 
 #### `provider` (required)
-Valid values: `"mlx"`, `"mlx_embedding"`, `"gguf"`
+Valid values: `"mlx"`, `"gguf"`
 
-| Provider | Text | Vision | Embeddings | Platforms |
-|---|---|---|---|---|
-| `mlx` | Yes | Yes | No | macOS (Apple Silicon) |
-| `mlx_embedding` | No | No | Yes | macOS (Apple Silicon) |
-| `gguf` | Yes | Yes (mmproj) | No | anywhere a llama-server binary runs |
+| Provider | Text | Vision | Platforms |
+|---|---|---|---|
+| `mlx` | Yes | Yes | macOS (Apple Silicon) |
+| `gguf` | Yes | Yes (mmproj) | anywhere a llama-server binary runs |
 
 #### `enabled` (optional, default `true`)
 Whether the model appears in `/v1/models`. Set to `false` to hide experimental models.
@@ -118,7 +117,7 @@ enabled = true
   kv_bits = 8
 ```
 
-More shapes (GGUF sidecars, embedding): `models.example.toml`.
+More shapes (GGUF sidecars): `models.example.toml`.
 
 ### MLX Config Fields
 
@@ -324,30 +323,6 @@ than it used to be:
 
 ---
 
-## MLX Embedding Provider Configuration (`provider = "mlx_embedding"`)
-
-```toml
-[[models]]
-id = "embeddinggemma-300m"
-provider = "mlx_embedding"
-enabled = true
-
-  [models.config]
-  model_path = "/path/to/google_embeddinggemma-300m"
-  max_length = 2048
-```
-
-### Embedding Config Fields
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `model_path` | string | required | HuggingFace model ID or local path |
-| `max_length` | int | `2048` | Maximum tokenization length |
-
-The embedding provider uses dynamic backbone loading -- it supports any architecture that mlx-lm's `_get_classes()` can resolve, not just Gemma3. Design notes live in `src/heylook_llm/models/embedding_model.py`'s docstring.
-
----
-
 ## Pydantic Schemas
 
 **File**: `src/heylook_llm/config.py` (Pydantic V2, `@field_validator` / `@model_validator`)
@@ -355,8 +330,8 @@ The embedding provider uses dynamic backbone loading -- it supports any architec
 ```python
 class ModelConfig(BaseModel):
     id: str
-    provider: Literal["mlx", "mlx_embedding"]
-    config: Union[MLXModelConfig, MLXEmbeddingModelConfig]
+    provider: Literal["mlx", "gguf"]
+    config: Union[MLXModelConfig, GGUFModelConfig]
     description: Optional[str]
     tags: List[str] = []
     enabled: bool = True
@@ -368,7 +343,7 @@ class AppConfig(BaseModel):
     max_loaded_models: int = 2
 ```
 
-The `config` field is discriminated on `provider`: `"mlx"` parses as `MLXModelConfig`, `"mlx_embedding"` parses as `MLXEmbeddingModelConfig`.
+The `config` field is discriminated on `provider`: `"mlx"` parses as `MLXModelConfig`, `"gguf"` as `GGUFModelConfig`.
 
 ---
 
@@ -483,10 +458,10 @@ Check `/v1/models` or run `heylookllm import` to regenerate `models.toml`.
 
 ```
 ValidationError: provider
-  Input should be 'mlx', 'mlx_embedding' or 'gguf'
+  Input should be 'mlx' or 'gguf'
 ```
 
-`llama_cpp` (embedded) and `mlx_stt` providers have been removed. Valid providers: `"mlx"` (text/vision), `"mlx_embedding"` (sentence-transformer), `"gguf"` (llama-server subprocess, v1.41+).
+`llama_cpp` (embedded), `mlx_stt` and `mlx_embedding` (v2.0.41) providers have been removed. Valid providers: `"mlx"` (text/vision), `"gguf"` (llama-server subprocess, v1.41+).
 
 ### Model Load Failure
 
