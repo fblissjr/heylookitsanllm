@@ -1,0 +1,159 @@
+# MiniMax-M3 activation capture: the spike plan
+
+Status: proposed, 2026-09-13. Nothing in this document is implemented. It
+records what was established on 2026-09-13 so the work can be picked up
+another day without re-deriving it. Owner decision the same day: this is the
+experiment; the Qwen/H3 conditioning route in
+[multimodal_feature_extraction.md](./multimodal_feature_extraction.md) is
+supporting infrastructure and is built only as far as the experiment needs it.
+
+## The experiment
+
+1. Extract useful MiniMax-M3 representations for a prompt plus references.
+2. Capture the corresponding Qwen3-VL conditioning that MiniMax-H3 expects.
+3. Train a small bridge between them, outside this server.
+4. Check on held-out inputs whether the bridge improves H3, not merely whether
+   it reconstructs Qwen's features.
+
+The central research risk is step 4. A bridge that matches Qwen features has
+shown compatibility, not improvement. Keep the pilot small enough that a null
+result costs a day, and hold out inputs from the first run.
+
+## What is established (verified, not assumed)
+
+Each of these was checked against code, headers or a live run on 2026-09-13.
+Where the evidence was a model card it says so.
+
+- **The canonical llama.cpp build requires MSA indexer tensors to load M3.**
+  Its M3 loader reads the `minimax-m3.attention.indexer.*` header keys and
+  creates the per-layer `indexer.*` tensors as required, not optional.
+  Unsloth's M3 GGUFs carry neither (converted from the pre-merge PR) and do
+  not load. AesSedai's quants carry them, verified by parsing shard headers
+  over HTTP range requests. The owner replaced the Unsloth file with
+  AesSedai IQ3_S plus its mmproj; it sits in the models.toml scan folder and
+  discovery derives the entry (`AesSedai_MiniMax-M3-GGUF_IQ3_S`, text plus
+  vision, projector paired) with no config edit.
+- **M3 loads and serves chat with images.** Materialized entry with
+  `ctx_size = 32768` and `n_ubatch = 512`, both set before the first load.
+  The micro-batch must be explicit: with the owner's raised wired limit the
+  auto path picks the wide micro-batch, which is the shape that killed a
+  vision model on its first decode once before. Text, image and a follow-up
+  text request all end their turn. Memory is the constraint: one model at a
+  time, nothing co-loaded, and a capture run needs the daily server's copy
+  unloaded first.
+- **The stock embeddings endpoint drops the visual rows.** In the server,
+  image chunks are decoded through their own embedding batch whose rows are
+  all flagged no-output (`decode_embd_batch` in `tools/mtmd/`), and that
+  batch never reaches `send_embedding`, which iterates the text batch and
+  skips any row without the output flag. So `--pooling none` returns text
+  rows only, with the image span silently absent. This is a code-level
+  finding, not a measurement; the measurement is step 0 below.
+- **Embedding mode and chat appear to coexist on this build.** `--embedding`
+  gates only the embeddings routes, and the server toggles embeddings per
+  batch. It does change the server's output limits at spawn, so coexistence
+  still wants one live check. The native `/embeddings` route is the one that
+  accepts `--pooling none` and returns unnormalized per-token rows; the
+  OpenAI-shaped `/v1/embeddings` refuses that pooling.
+- **The M3 feature the plan chose is the final-norm output**, width 6144,
+  after 60 blocks of which the first three are dense. The graph assigns the
+  final RMSNorm output to the embeddings tensor; an intermediate layer would
+  need the graph callback and is not part of the first spike.
+- **M3 on MLX is not an option for the full model.** The pinned mlx-vlm has
+  the M3-VL class including the sparse indexer, but every MLX conversion
+  that fits this machine is either text-only or REAP-pruned with
+  coder-calibrated 2-bit experts. Pruning it here is not possible either:
+  the tooling needs the unpruned model running under torch. A pruned MLX
+  checkpoint is acceptable only as plumbing validation, never as evidence
+  about M3.
+- **The H3 side needs no server.** The pinned mlx-vlm ships the whole H3
+  conditioning path: the layer-50 conditioner, the presentation builders,
+  H3's own image processing and the token tags. For the spike it is called
+  directly from a Python script on the resident Qwen3-VL-32B. The HTTP route
+  matters only when ComfyUI consumes a bridge that has proven itself.
+
+## The spike, in cost order
+
+### Step 0: text rows from the stock server (nothing to build)
+
+Spawn M3 through the existing provider with `extra_args` of `--embedding`
+and `--pooling none`, post the native embeddings request with one prompt and
+one image, and count rows against prompt tokens. One run answers:
+
+- whether embedding mode coexists with MSA and the projector on this build;
+- whether a chat request still works on the same process afterwards;
+- exactly how many rows the image span loses.
+
+That last count is the acceptance test for step 1. Record the build tag,
+the artifact, the flags and the counts in `internal/research/`, not here.
+
+### Step 1: the visual-row patch (bounded C++)
+
+Two changes in the server, from reading the code rather than from a
+prototype: flag the image-chunk rows for output when the slot wants
+embeddings, and collect those rows in position order into the same result
+the text rows go into. Final-norm output only. Acceptance: rows returned
+equals text tokens plus image tokens, in prompt order, and repeated requests
+and a changed image give consistent counts. Do not add a layer tap until the
+bridge asks for one.
+
+Where it lives: a branch on a llama.cpp fork, not the canonical build. The
+build script clones only upstream and verifies the remote, so it needs a
+small change to build from a fork, or the experimental binary runs through
+the `server_binary` escape hatch, which warns at every spawn. That warning
+is the point: an experiment binary must announce itself. Which fork is an
+open decision below.
+
+### Step 2: a capture script, not an endpoint
+
+A script that takes a handful of paired prompt-plus-image examples and
+writes both sides to files:
+
+- M3 rows from the patched server, with the token ids and the image span
+  boundaries the server reports, so a row can be attributed;
+- H3 conditioning from mlx-vlm's conditioner called in-process on
+  Qwen3-VL-32B: hidden states, token tags, input ids, image grid.
+
+Sequential, one model at a time. The two sides differ in width, tokenizer
+and layout by design; equal sequence length never implies alignment. The
+client that prepares images for H3's VAE path must prepare the same pixels
+the conditioner sees. Store captures under an explicitly chosen artifact
+location; the observability policy keeps prompts and tensors out of logs.
+
+### Step 3: the bridge, elsewhere
+
+Training happens on the captured files, outside this server, on whatever
+machine Codex chooses. Nothing here depends on it.
+
+## Not being built
+
+- A polished or generic extraction API. The removed `/v1/hidden_states`
+  routes are not coming back in another shape.
+- The Qwen HTTP conditioning route, until a bridge exists to consume it.
+- A large dataset. The first pilot is a handful of pairs with held-out
+  examples.
+- Thinking control for M3 through heylook's toggle. Finding recorded for
+  later: M3's template reads only its own `thinking_mode` variable (enabled,
+  disabled, adaptive; undefined means adaptive), heylook forwards only
+  `enable_thinking` and `reasoning_effort`, and llama.cpp's M3 parser maps
+  nothing between them, so the toggle does nothing on this model. The agreed
+  wiring, when someone wants it: explicit on and off map to enabled and
+  disabled, unset sends nothing so adaptive survives, and the admin row's
+  `thinking_default` must be able to say "model decides" instead of a bool.
+  It is chat behaviour, not a prerequisite for capture.
+
+## Open decisions
+
+- Which llama.cpp fork carries the patch branch.
+- When the daily server's M3 can be unloaded for a capture window.
+- Whether the bridge needs an intermediate M3 layer, which reopens the
+  graph-callback question.
+
+## Rules that apply
+
+- One model resident at a time; check reclaimable memory before a spawn.
+- No performance numbers in tracked docs; observations go to
+  `internal/research/` with the build, artifact and flags named.
+- llama-server's own log is captured only when the observability level is
+  above off at spawn time.
+- Match prompt, image, flags and build across arms before comparing any two
+  captures.

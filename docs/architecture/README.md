@@ -18,7 +18,8 @@ frontend map is [../frontend_v3.md](../frontend_v3.md).
 
 | Doc | Covers |
 |-----|--------|
-| [multimodal_feature_extraction.md](./multimodal_feature_extraction.md) | Resident Qwen3-VL H3 conditioning through mlx-vlm, native token tags, legacy fixes, and deferred M3 visual extraction |
+| [m3_activation_capture_plan.md](./m3_activation_capture_plan.md) | THE experiment (owner, 2026-09-13): MiniMax-M3 representation capture including visual rows, what is verified, the spike in cost order, what is not being built |
+| [multimodal_feature_extraction.md](./multimodal_feature_extraction.md) | Resident Qwen3-VL H3 conditioning through mlx-vlm and native token tags -- supporting infrastructure for the M3 experiment, built only as far as it needs |
 
 ## Postmortems
 

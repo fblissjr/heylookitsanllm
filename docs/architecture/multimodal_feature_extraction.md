@@ -4,6 +4,14 @@ Status: revised proposal, 2026-09-13, following the owner's supplied review from
 Claude working on the Mac installation. No implementation or live validation is
 claimed here. This replaces the earlier shared Qwen/M3 feature-API proposal.
 
+Priority note, later the same day: the owner confirmed that M3 representation
+capture is the experiment and this route is supporting infrastructure. The
+capture plan, and the order of work, is
+[m3_activation_capture_plan.md](./m3_activation_capture_plan.md). For the
+first spike the H3 side is called directly from a script through mlx-vlm's
+conditioner; this HTTP route is built when a bridge exists for ComfyUI to
+consume.
+
 ## Decision and scope
 
 Expose a narrow H3 conditioning operation through heylook's resident Qwen3-VL-32B
