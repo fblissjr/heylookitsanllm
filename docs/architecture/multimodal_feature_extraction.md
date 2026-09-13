@@ -8,18 +8,21 @@ claimed here. This replaces the earlier shared Qwen/M3 feature-API proposal.
 
 Expose a narrow H3 conditioning operation through heylook's resident Qwen3-VL-32B
 `MLXProvider`, using the H3 presentation builders and `MiniMaxH3Conditioner`
-already shipped in the pinned mlx-vlm dependency. Return conditioning states
-**and `token_tags`**. Preserve normal chat behavior on the same loaded model.
+already shipped in the pinned mlx-vlm dependency. Return the native conditioning
+bundle: hidden states, `token_tags`, `input_ids`, and the image grid. Preserve
+normal chat behavior on the same loaded model.
 
-The value of heylook is ownership and scheduling of one resident encoder, usable
-by ComfyUI or an offline capture client. A ComfyUI process on another machine
-can request conditioning from the Mac. If ComfyUI runs on the Mac and can import
-mlx-vlm directly, direct conditioning is another integration option, but an
-import alone does not share a model instance held in heylook's process.
+The owner confirmed that ComfyUI/H3 runs on a separate Linux machine and reaches
+heylook on the Mac over HTTP only. Heylook owns the complete encoder operation.
+There is no shared Python process, filesystem, MLX array, or consumer-side
+mlx-vlm dependency to rely on. The consumer's hostname and address are private
+and must not be recorded in repository files, internal notes, logs, or examples.
 
-The current editing environment is the Linux ComfyUI checkout. Whether the
-owner also runs ComfyUI with mlx-vlm on the Mac is unverified and does not block
-designing the shared-resident-model route.
+Initial scope is T2VA, FL2VA, and Ref2VA with still-image references, subject to
+the pinned builders' supported input contracts. Video references are deferred:
+transporting sampled frames requires an explicit sampling, ordering, and timing
+contract and a separate upload-cost check. Do not silently interpret video as
+unrelated image references.
 
 Defer M3 visual feature extraction as a separate project. Do not introduce a
 generic schema-version-2 feature API or change the GGUF provider for this first
@@ -66,7 +69,9 @@ strength of that TODO's historical examples.
 
 Provisional route: `POST /v1/h3/conditioning`, authenticated like the existing
 inference endpoints. Final naming and concrete image fields should follow the
-existing API conventions and the actual pinned builder signatures.
+existing API conventions and the actual pinned builder signatures. Image inputs
+must carry encoded image content or use an explicitly supported upload handle;
+a path on the consumer machine is not an image source the server can open.
 
 Request fields:
 
@@ -89,16 +94,58 @@ The result must contain:
 |---|---|
 | Conditioning tensor | Complete native H3 conditioning, explicit shape and feature width |
 | `token_tags` | The conditioner's aligned tags, explicit shape and integer encoding; not reconstructed from a separate tokenizer pass |
+| `input_ids` | Exact integer presentation IDs returned by the native conditioning path; preserve shape and order |
+| Image grid | Native grid metadata and its ordering relative to supplied references; define the no-image representation explicitly |
 | Tensor serialization | Actual wire dtype, byte order, layout, and encoding for each tensor |
 | Capture identity | Completed block count and final-norm behavior from the native path |
 | Provenance | Model/quantization, dependency revision, mode, effective image preparation |
 | Sequence length | Consistent with the conditioning and tag arrays |
 
-Return additional native fields only where the consumer needs them. Do not
-invent a universal feature metadata system for one consumer. If using the
-existing float32/base64 serializer, describe the actual float32 wire bytes
-separately from the forward's compute dtype. Reuse exact native H3 tag semantics.
-The ComfyUI client owns mapping response fields into its conditioning container.
+Carry all four native outputs across the API, even where the current DiT call
+uses only states and tags directly. IDs and grids retain the exact presentation
+and image-layout context for the remote integration and capture workflow. Map
+the native field names and shapes from the pinned conditioner; do not invent or
+reconstruct them from a separate tokenizer/image-processing pass. Check the
+actual relationships rather than assuming one grid entry per sequence row.
+
+The ComfyUI client owns HTTP requests, tensor decoding and device transfer, and
+mapping the bundle into its conditioning container. It can still construct scene
+prompts and perform its separate VAE/DiT work. Server ownership refers to H3's
+encoder presentation and encoder image processing, not all H3 preprocessing.
+Maintain image order and correspondence across the encoder and VAE paths without
+assuming shared files or copying the encoder processor into the client.
+
+## Wire format decision
+
+The response's dominant cost is the conditioning tensor: sequence length times
+feature width times bytes per element. Base64 adds roughly one third to binary
+payload size, and JSON numeric arrays also add parsing and allocation costs.
+Account for image upload, serialization copies, response bytes, transfer, and
+client decode/device transfer, not just encoder execution. Put measured sizes
+and timings in a local evidence artifact, not this tracked design.
+
+Use an explicit tensor descriptor with shape, actual wire dtype, byte order,
+layout, and encoding. Integer IDs, tags, and grids stay integer-valued. Start
+validation with the existing float32/base64 path if convenient; that does not
+commit the new endpoint's default to it. Compare one representative real
+still-reference request using that baseline and a compact tensor payload before
+finalizing transport. Prefer a small supported container/encoding contract over
+a general streaming-tensor protocol.
+
+A 16-bit payload halves raw bytes relative to float32. Float16 and bfloat16 are
+**different formats**, however: float16 has a smaller exponent range. A bf16
+DiT does not make conversion through float16 lossless or guarantee that it avoids
+overflow. Where the conditioner produces bf16, an explicitly typed bf16 payload
+can preserve those bits if both serializer and client support it. Otherwise
+compare float16 round-trip numerical error and finite values against the native
+output before selecting it. Record any dtype conversion separately from the
+model's 8-bit weight quantization. Select the default from the actual output
+and supported client decoder rather than assuming float16 is interchangeable.
+
+Bound upload size and output sequence length. Avoid conversion into giant Python
+float lists and unnecessary simultaneous copies of the full tensor. Transport
+validation should be part of the first remote-client probe, not a separate
+research program or a reason to delay defining the H3 operation.
 
 ## Provider execution
 
@@ -146,7 +193,9 @@ task in this checkout. Recheck the actual implementation branch before editing.
 
 First validate the wrapper against direct use of the pinned conditioner on the
 same local quantized model: identical presentation IDs, prepared image inputs,
-tag values and ordering, and conditioning shape. This isolates wrapper errors.
+tag values and ordering, native image grids, and conditioning shape. This isolates
+wrapper errors. Verify the complete bundle survives an HTTP round trip to the
+remote consumer without dtype, shape, ordering, or integer-value changes.
 Then compare the local 8-bit result with reference bf16 H3 conditioning on a
 small set of text/reference inputs. Quantization is a numerical question; do not
 claim exact tensor equality across those checkpoints or invent a universal
@@ -157,11 +206,16 @@ round trips, concurrent busy behavior, cancellation, pin release, and a normal
 chat request afterward. No model downloads, server restarts, or tests were run
 as part of this documentation revision.
 
-Completion means a client can obtain verified H3 conditioning and aligned tags
-from the already-loaded Qwen model with correct lifecycle and explicit limits.
+Completion means the remote client can obtain the complete verified H3 bundle
+from the already-loaded Qwen model over HTTP, decode it for its conditioning
+consumer, and preserve states, tags, IDs, and grids with explicit dtype and limits.
 M3 availability and bridge quality are not completion criteria for this route.
 
-## Deferred M3 visual feature work
+## Deferred appendix: M3 visual feature work
+
+The remote deployment does not change the M3 blockers. The missing projector
+and omitted visual rows are findings verified by the supplied Mac review; actual
+multimodal memory fit remains unmeasured. Do not label that fit as verified.
 
 The earlier proposal treated complete native M3 embedding output as a gate to
 test before deciding whether an extension was needed. The supplied build review
