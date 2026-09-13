@@ -18,11 +18,11 @@ There is no shared Python process, filesystem, MLX array, or consumer-side
 mlx-vlm dependency to rely on. The consumer's hostname and address are private
 and must not be recorded in repository files, internal notes, logs, or examples.
 
-Initial scope is T2VA, FL2VA, and Ref2VA with still-image references, subject to
-the pinned builders' supported input contracts. Video references are deferred:
-transporting sampled frames requires an explicit sampling, ordering, and timing
-contract and a separate upload-cost check. Do not silently interpret video as
-unrelated image references.
+Initial scope is T2VA, FL2VA, and Ref2VA with still-image pixels and an ordered,
+typed reference list that also preserves audio-only entries. Such entries affect
+presentation numbering even though they supply no image pixels. Video reference
+kinds are explicitly rejected in the first release, not filtered out. Supporting
+video later requires a frame sampling, ordering, timing, and upload contract.
 
 Defer M3 visual feature extraction as a separate project. Do not introduce a
 generic schema-version-2 feature API or change the GGUF provider for this first
@@ -44,6 +44,17 @@ canonical llama.cpp build, and Mac model directories:
   before final normalization. The local Qwen tokenizer's added tokens agree
   with the release; the local checkpoint uses 8-bit affine quantization whereas
   the reference weights are bf16.
+- The follow-up review verifies that the conditioner accepts the resident model
+  and an HF tokenizer directly, without a weight loader. On heylook's mlx-vlm
+  path, that tokenizer is available as `processor.tokenizer`. The native builder
+  tokenizes with special tokens off and uses `convert_tokens_to_ids`.
+- The resident model's text dtype and conditioner output are bf16. Preserve that
+  representation directly on the wire; choosing a lossy float16 conversion is
+  unnecessary.
+- In the pinned H3 pipeline, FL2VA keyframes are prepared at the generation
+  canvas before conditioning, including stretching the first keyframe. Ref2VA
+  reference images are prepared at H3's reference short edge before conditioning.
+  Qwen smart-resize and patchification happen afterward inside the conditioner.
 - The installed M3 GGUF has no paired projector and is currently text-only for
   heylook. The reviewed Unsloth repository did not supply one. The canonical
   converter has a vision implementation, so obtaining one is separate download
@@ -77,22 +88,27 @@ Request fields:
 
 - Resident model identifier.
 - H3 mode, limited to modes explicitly supported by the pinned builders.
-- Prompt and ordered image inputs, with mode-specific count/role validation.
+- Prompt and mode-specific prepared inputs: ordered keyframes for FL2VA;
+  the complete ordered reference list with a kind per entry for Ref2VA.
+- Image-bearing entries carry client-prepared pixels. Audio-only entries carry
+  their native presentation metadata and no pixels. Preserve their positions
+  when assigning labels to later image entries. Reject video and unknown kinds
+  before inference; never turn a mixed reference list into an image-only list.
 - A bounded sequence/image policy that rejects overflow rather than silently
   truncating the conditioning presentation.
 - An explicit tensor encoding if more than one is supported.
 
 The endpoint is H3-shaped. Do not expose arbitrary layer selection, chat
 messages, generic raw-content formatting, or caller-fabricated visual tokens.
-Use the dependency's H3 builder as the sole owner of presentation and image
-processing. Resolve supported modes from its actual API; do not infer a mode's
+Use the dependency's H3 builder as the sole owner of encoder presentation and
+encoder-side image processing. Resolve supported modes from its actual API; do not infer a mode's
 semantics or accepted reference layout merely from its name.
 
 The result must contain:
 
 | Result | Contract |
 |---|---|
-| Conditioning tensor | Complete native H3 conditioning, explicit shape and feature width |
+| Conditioning tensor | Complete native bf16 H3 conditioning, explicit shape and feature width, lossless raw-bit serialization |
 | `token_tags` | The conditioner's aligned tags, explicit shape and integer encoding; not reconstructed from a separate tokenizer pass |
 | `input_ids` | Exact integer presentation IDs returned by the native conditioning path; preserve shape and order |
 | Image grid | Native grid metadata and its ordering relative to supplied references; define the no-image representation explicitly |
@@ -108,44 +124,77 @@ the native field names and shapes from the pinned conditioner; do not invent or
 reconstruct them from a separate tokenizer/image-processing pass. Check the
 actual relationships rather than assuming one grid entry per sequence row.
 
-The ComfyUI client owns HTTP requests, tensor decoding and device transfer, and
-mapping the bundle into its conditioning container. It can still construct scene
-prompts and perform its separate VAE/DiT work. Server ownership refers to H3's
-encoder presentation and encoder image processing, not all H3 preprocessing.
-Maintain image order and correspondence across the encoder and VAE paths without
-assuming shared files or copying the encoder processor into the client.
+## Image preparation ownership
+
+The client chooses the generation canvas and owns the preparation shared with
+its VAE path. The server owns only the subsequent encoder processing:
+
+1. For FL2VA, the client prepares each keyframe using the pinned pipeline's
+   `prepare_keyframe_image` semantics at the generation canvas, including the
+   first-keyframe stretch. It sends those prepared pixels, not the original upload.
+2. For Ref2VA, the client prepares reference images at H3's reference short edge
+   using the same preparation as its VAE path, then sends those pixels in their
+   original reference-list positions.
+3. The server decodes the prepared pixels and feeds them directly into the native
+   conditioner. It must not repeat canvas fitting, keyframe stretching, or H3
+   reference-short-edge resizing. The conditioner still performs its own Qwen
+   smart-resize and patchification.
+
+The decoded upload must be byte-identical to the prepared pixel array that feeds
+the client's VAE-side tensor conversion. Specify pixel format, dimensions, and
+channel order and use a lossless representation; lossy image re-encoding or an
+extra orientation/color conversion can break parity even at the same dimensions.
+This comparison is before the conditioner-specific resize and the VAE-specific
+normalization, whose final tensors are intentionally different. Verify the
+prepared pixels directly in the integration probe; do not rely only on filenames
+or dimensions. Keep probe pixel checks out of routine request logs.
+
+The ComfyUI client owns the request, tensor decoding and device transfer, and
+mapping the returned bundle into its conditioning container. It also owns scene
+prompt authoring and separate VAE/DiT processing. Heylook owns H3 token-level
+presentation, reference labels, encoder preprocessing, and encoder execution.
+There is no shared-file or consumer-side mlx-vlm assumption.
+
+For Ref2VA, label numbering follows the full typed reference sequence. An audio
+entry emits its native label and shifts later picture numbering despite having
+no pixels. Pass that full sequence to the native builder; map the image payloads
+and grids back to the image-bearing entries without renumbering them. This
+preserves audio-reference presentation; it does not add waveform encoding to
+the Qwen route. Reject a video kind explicitly, including when mixed with valid
+image/audio entries, rather than generating a different presentation by omission.
 
 ## Wire format decision
 
-The response's dominant cost is the conditioning tensor: sequence length times
-feature width times bytes per element. Base64 adds roughly one third to binary
-payload size, and JSON numeric arrays also add parsing and allocation costs.
-Account for image upload, serialization copies, response bytes, transfer, and
-client decode/device transfer, not just encoder execution. Put measured sizes
-and timings in a local evidence artifact, not this tracked design.
+The conditioning tensor uses **raw bfloat16 bits**, with `dtype=bfloat16`, an
+explicit shape, contiguous row-major layout, and little-endian byte order. The
+resident output is bf16 per the supplied pinned-runtime review, so this preserves
+the native result losslessly at the same raw size as float16. Do not route it
+through the legacy float32 serializer or numerically cast it to uint16/float16.
 
-Use an explicit tensor descriptor with shape, actual wire dtype, byte order,
-layout, and encoding. Integer IDs, tags, and grids stay integer-valued. Start
-validation with the existing float32/base64 path if convenient; that does not
-commit the new endpoint's default to it. Compare one representative real
-still-reference request using that baseline and a compact tensor payload before
-finalizing transport. Prefer a small supported container/encoding contract over
-a general streaming-tensor protocol.
+Standard NumPy does not provide a native bf16 dtype for this serializer. Evaluate
+the MLX array within the established worker/stream lifecycle, reinterpret its
+storage as uint16 words, and export those words without changing their bits.
+Normalize byte order as necessary for the declared wire order. The torch client
+reconstructs bf16 from those bytes with the stated shape; a uint16 staging view
+is a bit reinterpretation, not a numeric conversion. Give the decoded storage an
+appropriate owned lifetime before device transfer. Verify output dtype and fail
+clearly if the runtime violates the declared bf16 contract rather than mislabel
+another dtype's bytes.
 
-A 16-bit payload halves raw bytes relative to float32. Float16 and bfloat16 are
-**different formats**, however: float16 has a smaller exponent range. A bf16
-DiT does not make conversion through float16 lossless or guarantee that it avoids
-overflow. Where the conditioner produces bf16, an explicitly typed bf16 payload
-can preserve those bits if both serializer and client support it. Otherwise
-compare float16 round-trip numerical error and finite values against the native
-output before selecting it. Record any dtype conversion separately from the
-model's 8-bit weight quantization. Select the default from the actual output
-and supported client decoder rather than assuming float16 is interchangeable.
+Tags, IDs, and grids retain their integer values and explicit shapes/dtypes.
+The payload container remains a small implementation choice: binary transport
+or a base64 wrapper can carry the same raw bf16 bytes. Base64 adds roughly one
+third to payload size. This is an envelope/overhead decision, not an open
+float32-versus-float16-versus-bf16 comparison. Avoid JSON float lists and
+unnecessary simultaneous copies of the full tensor.
 
-Bound upload size and output sequence length. Avoid conversion into giant Python
-float lists and unnecessary simultaneous copies of the full tensor. Transport
-validation should be part of the first remote-client probe, not a separate
-research program or a reason to delay defining the H3 operation.
+The response's dominant cost is sequence length times feature width times bytes
+per element. Check a representative remote request for upload, serialization
+copies, response bytes, transfer, and client decode/device transfer. Put measured
+sizes and timings in a local evidence artifact, not this tracked design. Bound
+upload size and output sequence length. Require bitwise equality of the bf16
+payload after round-trip; compare encoder quantization against reference bf16
+weights separately. Lossless transport does not remove weight-quantization error.
 
 ## Provider execution
 
@@ -153,17 +202,20 @@ research program or a reason to delay defining the H3 operation.
    instance through heylook's router lifecycle. Do not load another encoder.
 2. Enter the existing generation gate and model-pin lifecycle, following the
    established acquisition order. Keep the pin until all request GPU work ends.
-3. Build the H3 presentation and run the dependency's conditioner against that
-   model. Verify its construction/injection API before implementing the wrapper;
-   do not assume a constructor signature or invoke an implicit weight loader.
+3. Construct the dependency's conditioner with the resident model and the HF
+   tokenizer at `processor.tokenizer`; this interface is verified by the supplied
+   pinned-source review. Build the native presentation and run conditioning on
+   client-prepared images. No weight loader or construction-API research gate is
+   needed. Leave special-token handling and token-ID lookup to the native builder.
 4. Run MLX operations on the existing pinned executor and generation stream,
    with the established wired-limit management. Evaluate and serialize outputs
    before releasing request-owned GPU resources.
 5. Preserve cancellation, resource release, busy responses, and later chat.
    Do not mutate the model's layer list or output head to implement early stop.
 
-The dependency already owns MRoPE, DeepStack, H3 image preparation, token-level
-presentation, and token tags. Heylook owns input transport, residency, scheduling,
+The dependency already owns MRoPE, DeepStack, encoder-side image preparation,
+token-level presentation, and token tags. The client owns pre-encoder canvas
+and reference preparation shared with its VAE path. Heylook owns input transport, residency, scheduling,
 authentication, error handling, and tensor transport.
 
 ## Legacy route corrections
@@ -195,7 +247,12 @@ First validate the wrapper against direct use of the pinned conditioner on the
 same local quantized model: identical presentation IDs, prepared image inputs,
 tag values and ordering, native image grids, and conditioning shape. This isolates
 wrapper errors. Verify the complete bundle survives an HTTP round trip to the
-remote consumer without dtype, shape, ordering, or integer-value changes.
+remote consumer without dtype, shape, ordering, or integer-value changes. Check
+bf16 bit patterns before and after transport, not just approximate float values.
+Compare decoded prepared pixels with the client's pre-VAE pixels before running
+encoder processing. Cover a non-canvas-sized first keyframe and an audio reference
+before an image reference, so resize ownership and label numbering can fail
+observably. A mixed list containing video must fail explicitly.
 Then compare the local 8-bit result with reference bf16 H3 conditioning on a
 small set of text/reference inputs. Quantization is a numerical question; do not
 claim exact tensor equality across those checkpoints or invent a universal
