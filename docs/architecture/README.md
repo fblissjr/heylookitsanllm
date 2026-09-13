@@ -18,7 +18,7 @@ frontend map is [../frontend_v3.md](../frontend_v3.md).
 
 | Doc | Covers |
 |-----|--------|
-| [multimodal_feature_extraction.md](./multimodal_feature_extraction.md) | Qwen3-VL via MLX-VLM and MiniMax M3 via llama.cpp: shared feature API, backend changes, H3 compatibility, and validation |
+| [multimodal_feature_extraction.md](./multimodal_feature_extraction.md) | Resident Qwen3-VL H3 conditioning through mlx-vlm, native token tags, legacy fixes, and deferred M3 visual extraction |
 
 ## Postmortems
 
