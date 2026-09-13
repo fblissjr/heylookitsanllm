@@ -103,6 +103,51 @@ the `server_binary` escape hatch, which warns at every spawn. That warning
 is the point: an experiment binary must announce itself. Which fork is an
 open decision below.
 
+### Step 1, alternative: a standalone capture tool on the evaluation callback
+
+Codex wrote this on 2026-09-13 as an independent route; it compiled on
+Linux and has not run against M3. Its files live outside this checkout in
+Codex's local `internal/` tree and must be copied to the Mac by hand, since
+`internal/` never travels through git.
+
+The idea: `llama_context_params.cb_eval` sees every intermediate tensor the
+scheduler computes, for the text batches and for the image-embedding batch
+alike, so the row filter that drops visual rows from the final output never
+applies. Verified in the M3 graph: only at the last layer does the graph
+gather the output rows (`inp_out_ids`), so the penultimate layer's residual
+is the last tensor that still carries every row. The tool captures one
+selected layer with the native chunk metadata and refuses a capture whose
+row count disagrees with the chunk's token count. That refusal is the
+acceptance test, the same one step 1 has.
+
+What it changes and what it does not:
+
+- The M3 feature becomes a pre-norm residual at a chosen layer, not the
+  final-norm output the profile table in the sibling doc names. Either is a
+  legitimate bridge source; record which one every capture used. Final-norm
+  output for all rows is still reachable from a standalone tool by building
+  the image batch itself with every row flagged for output, instead of
+  going through the helper that flags none.
+- Micro-batching splits a layer's tensor across ubatches. Rows must be
+  concatenated in position order across them, and the chunk metadata is
+  what proves nothing was lost at a boundary.
+- It is an instrument beside the server, in the spirit of `llama-bench`
+  and `llama-fit-params`: it must be built against the same llama.cpp
+  commit as the canonical binary or the graph and tensor names can differ.
+  The canonical build tree under the home directory provides everything to
+  link against (static `libllama`, `libmtmd`, the ggml backends, the common
+  library), all at the binary's commit, so no fork and no second
+  llama-server are needed. Build it as an extra target in that tree, or
+  point its CMake at those libraries. The canonical build script does not
+  build it; that stays a deliberate, named act.
+- Running it has the same precondition as everything else here: the daily
+  server's M3 must be unloaded first, and the tool loads the same GGUF and
+  mmproj that the server does.
+
+Prefer this route over the server patch if the first live run captures
+every row: it leaves the serving path untouched. The server patch remains
+the route if a bridge consumer later needs capture over HTTP.
+
 ### Step 2: a capture script, not an endpoint
 
 A script that takes a handful of paired prompt-plus-image examples and
@@ -145,8 +190,10 @@ machine Codex chooses. Nothing here depends on it.
 
 - Which llama.cpp fork carries the patch branch.
 - When the daily server's M3 can be unloaded for a capture window.
-- Whether the bridge needs an intermediate M3 layer, which reopens the
-  graph-callback question.
+- Which M3 feature the bridge trains on: the final-norm output (server
+  path, or a standalone tool that flags every row for output) or a chosen
+  pre-norm residual (the callback tool's default). The first live capture
+  decides what is cheap; the bridge decides what is useful.
 
 ## Rules that apply
 
