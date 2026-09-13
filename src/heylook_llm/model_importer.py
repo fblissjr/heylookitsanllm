@@ -79,6 +79,8 @@ class ModelImporter:
                 # their own and must be refused BEFORE the mlx branch below
                 # would otherwise happily import them.
                 logging.info(f"Skipping drafter/assistant checkpoint (not servable): {rel_path}")
+            elif self._is_embedding_checkpoint(root_path, config_data):
+                logging.info(f"Skipping embedding checkpoint (no provider serves it): {rel_path}")
             elif self._is_gguf_model(root_path):
                 logging.info(f"Found GGUF model in: {rel_path}")
                 model = self._create_gguf_entry(root_path)
@@ -119,6 +121,8 @@ class ModelImporter:
         config_data = self._read_model_config(snapshot_path)
 
         if self._is_drafter_checkpoint(config_data):
+            model = None
+        elif self._is_embedding_checkpoint(snapshot_path, config_data):
             model = None
         elif self._is_gguf_model(snapshot_path):
             model = self._create_gguf_entry(snapshot_path)
@@ -211,6 +215,25 @@ class ModelImporter:
             return False
         architectures = config_data.get("architectures") or []
         return any("assistant" in str(a).lower() for a in architectures)
+
+    def _is_embedding_checkpoint(self, path: Path, config_data: Optional[dict]) -> bool:
+        """A sentence-embedding checkpoint: not servable by any provider.
+
+        The `mlx_embedding` provider that used to claim these went in
+        v2.0.41. Without this guard they fall through to the mlx detector,
+        which sees config.json + safetensors and imports an ENABLED chat
+        entry for a model that has no causal head -- a load-time 500
+        dressed as a servable model. Same shape as the drafter skip above:
+        refuse it here, before the mlx branch. Two signals, either suffices:
+        config.json's ``use_bidirectional_attention: true``, or a
+        sentence-transformers ``*_Dense`` projection directory.
+        """
+        if config_data and config_data.get("use_bidirectional_attention") is True:
+            return True
+        try:
+            return any(d.is_dir() and d.name.endswith("_Dense") for d in path.iterdir())
+        except OSError:
+            return False
 
     def _is_gguf_model(self, path: Path) -> bool:
         """Dir containing >=1 PRIMARY .gguf file (root level only).

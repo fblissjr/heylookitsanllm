@@ -124,6 +124,26 @@ class TestImportWizardChatTemplateDetection:
             assert key not in entry, key
         assert entry["config"]["model_path"] == str(model_dir)
 
+    def test_embedding_checkpoint_is_skipped_not_served_as_chat(self, tmp_path):
+        # v2.0.41 removed the embedding provider; without a skip these fell
+        # through to the mlx detector and imported as an ENABLED chat entry.
+        for name, marker in (("bidir", "config"), ("dense", "dir")):
+            d = tmp_path / name
+            d.mkdir()
+            cfg = {"model_type": "gemma2", "hidden_size": 768}
+            if marker == "config":
+                cfg["use_bidirectional_attention"] = True
+            (d / "config.json").write_text(json.dumps(cfg))
+            (d / "model.safetensors").write_bytes(b"\x00" * 64)
+            if marker == "dir":
+                (d / "2_Dense").mkdir()
+        (tmp_path / "chat").mkdir()  # a real chat model beside them
+        self._make_mlx_dir(tmp_path / "chat")
+
+        models = ModelImporter().scan_directory(str(tmp_path))
+
+        assert [m["id"] for m in models] == ["chat"]
+
     def test_no_jinja_in_folder_leaves_source_unset(self, tmp_path):
         model_dir = tmp_path / "some-model"
         model_dir.mkdir()

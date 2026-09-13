@@ -221,10 +221,11 @@ is the point.
   wait is an elapsed-counter difference, so even an idle gate reports a tiny
   nonzero float (live: 0.0044, 0.0037, 0.0024 ms). The only things that would
   produce an exact `0` are the cases where nothing measured it — **gguf never
-  measures it at all**, because it bypasses this server's FIFO gate and queues
-  inside `llama-server`, so a gguf request that really waited seconds has no
-  wait to report. So: absent on gguf always, absent on MLX only when the run
-  produced no chunk. (v1.79.58 briefly published that zero on the reasoning
+  measures it at all**: it takes the same process-wide FIFO gate as MLX (since
+  v1.79.44, so a busy backend queues here in arrival order and can answer 503),
+  but the provider does not stamp the wait on its chunks, so a gguf request
+  that really waited seconds has no wait to report. So: absent on gguf always,
+  absent on MLX only when the run produced no chunk. (v1.79.58 briefly published that zero on the reasoning
   that it rescued a measurement on idle servers; measurement showed the idle
   case was never zero, so the release was inverting a correct behaviour.
   Restored in .59.)

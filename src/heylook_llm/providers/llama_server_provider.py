@@ -51,7 +51,7 @@ from typing import Dict, Generator, Optional
 from .. import observability, ram_fit
 from ..config import ChatRequest
 from ..samplers import GLOBAL_SAMPLER_FLOOR, resolve_effective_sampling
-from .common.generation_gate import get_process_gate
+from .common.generation_gate import GenerationCancelled, get_process_gate
 # ONE filename for both engines, imported rather than re-spelled -- a second
 # copy of a literal filename is a second place for the editor to write
 # somewhere the loader does not look. template_info is stdlib+orjson only, so
@@ -1265,7 +1265,18 @@ class LlamaServerProvider(BaseProvider):
         # happens in arrival order on this side, where check_capacity() can
         # answer 503 and a cancelled waiter is released, and the read timeout
         # goes back to meaning what its comment says: wedged.
-        self._gen_gate.acquire()
+        #
+        # The cancel check is what makes "a cancelled waiter is released"
+        # true. Without it (v1.79.44 through v2.0.41) a request abandoned via
+        # DELETE /v1/requests/{id} or a hung-up stream kept its place in the
+        # queue, took its turn, and FORWARDED to llama-server -- paying the
+        # prefill for a client that was gone -- before _stream_chunks saw the
+        # flag on the first frame. Same shape as the MLX chat path.
+        try:
+            self._gen_gate.acquire(
+                cancel_check=abort_event.is_set if abort_event is not None else None)
+        except GenerationCancelled:
+            return
         try:
             try:
                 response = urllib.request.urlopen(http_request, timeout=self._request_timeout())

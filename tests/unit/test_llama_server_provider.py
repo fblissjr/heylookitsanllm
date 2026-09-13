@@ -1175,6 +1175,28 @@ class TestGenerationGate:
         gen.close()
         assert p._gen_gate.busy is False
 
+    def test_a_waiter_cancelled_while_queued_never_forwards(self, monkeypatch):
+        # Reported 2026-09-13: the gate was taken without a cancel check, so a
+        # request abandoned while queued still took its turn and forwarded to
+        # llama-server. The MLX chat path already passed the check; gguf did not.
+        from heylook_llm.providers.abort import AbortEvent
+
+        p = self._gated(monkeypatch)
+        monkeypatch.setattr(
+            llama_mod.urllib.request, "urlopen",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("forwarded a cancelled request")),
+        )
+        p._gen_gate = GenerationGate(max_waiting=1)
+        p._gen_gate.acquire()  # someone else is generating
+        try:
+            abort = AbortEvent()
+            abort.set()  # the client is already gone
+            assert list(p.create_chat_completion(req(), abort_event=abort)) == []
+            assert p._gen_gate.snapshot()["waiting"] == 0, "left the queue"
+            assert p._gen_gate.busy is True, "did not steal or release the other run's slot"
+        finally:
+            p._gen_gate.release()
+
     def test_check_capacity_answers_busy_while_another_generation_holds_the_gate(self):
         p = make_provider()
         p._gen_gate = GenerationGate(max_waiting=0)

@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.42]
+
+### Fixed
+
+- **A gguf request cancelled while queued no longer forwards to
+  llama-server.** The provider took the process gate without a cancel
+  check, so a request abandoned via `DELETE /v1/requests/{id}` or a
+  hung-up stream kept its place in the queue, took its turn, and paid the
+  prefill before the first frame revealed the flag. The MLX chat path had
+  passed the check since v1.79.44; gguf now does the same and yields
+  nothing. (Reported by the owner's other reviewer; predates the removals.)
+- **An embedding checkpoint is skipped at import, not served as chat.**
+  v2.0.41 removed the embedding provider and with it the detection that
+  kept such checkpoints out of the mlx branch, so a bidirectional or
+  `*_Dense` checkpoint imported as an enabled chat entry that would 500 at
+  load. Same skip shape as the drafter guard. No such checkpoint exists
+  on the owner's machine; found by review.
+- **The client guide's `queue_wait_ms` note gave the wrong reason for gguf.**
+  gguf has taken the same FIFO gate as MLX since v1.79.44; the field is
+  absent because the provider does not stamp the wait, not because it
+  bypasses the gate.
+
 ## [2.0.41]
 
 ### Removed
