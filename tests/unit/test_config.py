@@ -133,8 +133,6 @@ class TestModelConfig:
         # None = auto: resolved at model load from actual weight size vs RAM
         # (derive-at-load, 6a). A stored value is an explicit override.
         assert mc.cache_type is None
-        assert mc.default_hidden_layer == -2
-        assert mc.default_max_length == 512
 
     def test_capabilities_list(self):
         mc = ModelConfig(

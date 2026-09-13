@@ -140,14 +140,6 @@ app = FastAPI(
             "description": "THE inference wire (v1.79.66: the OpenAI-compatible chat route was removed). Anthropic Messages-conformant: top-level system prompt, typed content blocks, block-structured SSE, plus documented heylook extensions. The wire this project's own frontend speaks."
         },
         {
-            "name": "Embeddings",
-            "description": "Text embeddings from an mlx_embedding model, in the OpenAI list shape"
-        },
-        {
-            "name": "Hidden States",
-            "description": "Hidden-state extraction for analysis and interpretability work"
-        },
-        {
             "name": "Requests",
             "description": "Cancel an in-flight generation by the X-Request-ID the client sent -- the only way to stop a NON-streaming run, which writes nothing until it finishes and so never notices an abandoned client"
         },
@@ -265,13 +257,10 @@ app.include_router(config_router)
 from heylook_llm.telemetry_api import telemetry_router
 app.include_router(telemetry_router)
 
-# Monitoring, embeddings and hidden states (in api.py itself until v1.79.67)
+# Monitoring (in api.py itself until v1.79.67). The embeddings and
+# hidden-states routers that used to mount beside it were removed in v2.0.40.
 from heylook_llm.monitoring_api import monitoring_router
 app.include_router(monitoring_router)
-from heylook_llm.embeddings_api import embeddings_router
-app.include_router(embeddings_router)
-from heylook_llm.hidden_states_api import hidden_states_router
-app.include_router(hidden_states_router)
 
 # Data management.
 #

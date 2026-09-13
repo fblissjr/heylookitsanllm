@@ -58,7 +58,6 @@ uv run pytest tests/ -v
 - **test_model_service.py** -- Model profiles, smart defaults, size regex
 - **test_generation_core.py** -- Core generation logic
 - **test_messages_api.py** -- Anthropic Messages-style API
-- **test_hidden_states.py** -- Hidden states extraction, base64 encoding, structured requests
 - **test_thinking_parser.py** -- Thinking block parsing
 - **test_thinking_roundtrip.py** -- Thinking block roundtrip fidelity
 - **test_radix_cache.py** -- Radix/prefix cache

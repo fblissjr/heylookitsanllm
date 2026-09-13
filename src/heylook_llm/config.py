@@ -425,13 +425,6 @@ class MLXModelConfig(BaseModel):
     vision_tokens: Optional[int] = Field(
         default=None, ge=16, le=16384,
         json_schema_extra={"effect": EFFECT_PER_REQUEST})
-    # Hidden states defaults (for /v1/hidden_states endpoint)
-    # Kept requires_reload to match the old hand-written set rather than
-    # quietly relaxing behaviour during a refactor.
-    default_hidden_layer: int = Field(  # Z-Image uses penultimate layer
-        default=-2, json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
-    default_max_length: int = Field(
-        default=512, json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
     # NOTE: no supports_thinking here (removed v1.46.0) -- MLX thinking
     # capability is DERIVED (template probe / enable_thinking / the explicit
     # ModelConfig.capabilities override). GGUFModelConfig keeps its flag:
@@ -1009,7 +1002,7 @@ class ModelConfig(BaseModel):
     description: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     enabled: bool = True
-    # Model capabilities for discovery (e.g., ["hidden_states", "chat", "thinking", "vision"])
+    # Model capabilities for discovery (e.g., ["chat", "thinking", "vision"])
     capabilities: List[str] = Field(default_factory=list)
 
     @model_validator(mode='before')

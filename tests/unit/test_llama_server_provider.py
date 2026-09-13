@@ -93,7 +93,6 @@ class TestGGUFConfig:
              "config": {"model_path": "/x.gguf", "supports_thinking": True}})
         caps = infer_model_capabilities(thinking)
         assert "thinking" in caps
-        assert "hidden_states" not in caps  # MLX-only feature stays MLX-only
 
 
 # ---------------------------------------------------------------------------

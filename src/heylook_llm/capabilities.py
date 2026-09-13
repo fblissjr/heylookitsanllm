@@ -224,14 +224,10 @@ def infer_model_capabilities(model_config, effective_loader: str | None = None) 
         ):
             capabilities.append("reasoning_effort")
 
-        # MLX models support hidden states extraction
-        capabilities.append("hidden_states")
-
     # GGUF via llama-server subprocess. Capabilities come from the entry's
     # own description (mmproj sidecar / modalities / explicit thinking flag)
-    # -- no template probing (the template lives inside GGUF metadata), and
-    # NEVER hidden_states (an MLX-only surface). The explicit
-    # ModelConfig.capabilities override short-circuits this entirely.
+    # -- no template probing (the template lives inside GGUF metadata). The
+    # explicit ModelConfig.capabilities override short-circuits this entirely.
     elif provider == "gguf":
         capabilities.append("chat")
         modalities = getattr(config, "modalities", None) or []

@@ -33,8 +33,7 @@ class TestMonitoringRoutesAnswer:
 
     def test_each_route_carries_its_tag_once(self, client):
         paths = client.get("/openapi.json").json()["paths"]
-        for path in ("/v1/system/metrics", "/v1/capabilities", "/v1/cache/list", "/v1/embeddings",
-                     "/v1/hidden_states", "/v1/models"):
+        for path in ("/v1/system/metrics", "/v1/capabilities", "/v1/cache/list", "/v1/models"):
             for op in paths[path].values():
                 tags = op.get("tags", [])
                 assert len(tags) == len(set(tags)) == 1, f"{path}: {tags}"

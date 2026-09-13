@@ -77,7 +77,7 @@ Valid values: `"mlx"`, `"mlx_embedding"`, `"gguf"`
 Whether the model appears in `/v1/models`. Set to `false` to hide experimental models.
 
 #### `capabilities` (optional)
-Array of feature flags for client-side discovery. Common values: `"chat"`, `"vision"`, `"thinking"`, `"hidden_states"`.
+Array of feature flags for client-side discovery. Common values: `"chat"`, `"vision"`, `"thinking"`.
 
 #### `config` (required)
 Provider-specific configuration (see sections below).
@@ -154,8 +154,6 @@ Do not put it in `models.toml`.)
 | ~~`supports_thinking`~~ | -- | -- | REMOVED v1.46.0 (MLX only; the GGUF config keeps its flag). MLX thinking capability is derived: `enable_thinking`, else template probe, else the explicit `ModelConfig.capabilities` override. |
 | `draft_model_path` | string | none | Path to draft model for speculative decoding |
 | `num_draft_tokens` | int | `3` | Draft tokens for speculative decoding. The importer no longer stamps this on every import (v1.32.0) -- it's inert without `draft_model_path`, so writing it on every model was dead config. The field and its default of 3 remain; only the automatic import-time write was removed. |
-| `default_hidden_layer` | int | `-2` | Layer for hidden state extraction |
-| `default_max_length` | int | `512` | Max sequence length for hidden states |
 | `unload_after_idle_seconds` | int, none | none | Per-model idle-unload override. `None` = use `AppConfig.idle_unload_seconds`; `0` = never idle-unload this model |
 | `chat_template_source` | string, none | none | `"auto"` / `"jinja"` / `"tokenizer_config"` / absolute path -- overrides chat-template source detection. Since v1.47.0 the importer records this ONLY for an explicit CLI `--chat-template` override; absent = load-time auto resolution (template_info.py, same policy the detection duplicated). |
 

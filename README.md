@@ -19,7 +19,7 @@ subprocess -- one API, one UI, per-model engine choice.
 ## Features
 
 - **One inference API**: Anthropic Messages-conformant `/v1/messages` with
-  typed content blocks (text, image, thinking, hidden states) plus
+  typed content blocks (text, image, thinking) plus
   documented heylook extensions; `/v1/models` keeps the OpenAI-shaped list for
   discovery clients. The OpenAI-compatible `/v1/chat/completions` route was
   removed in v1.79.66: no page of the web UI had used it since v1.74.0 and the
@@ -35,8 +35,6 @@ subprocess -- one API, one UI, per-model engine choice.
 - **Vision and audio input**: images on both APIs and in the chat UI; audio
   clips (WAV/MP3/FLAC) on GGUF models -- MLX models reject audio with a
   clear 400
-- **Hidden states**: intermediate layer extraction for conditioning or
-  research
 - **RLM**: recursive inference -- the model explores long contexts by writing
   Python against a sandboxed REPL ([guide](docs/rlm_guide.md),
   [advanced](docs/rlm_advanced.md))
@@ -133,7 +131,7 @@ After hand-editing `models.toml` on a running server:
 Interactive docs at `http://localhost:8000/docs`; live schema at
 `/openapi.json`. Key endpoints: `/v1/messages` (inference),
 `/v1/conversations/{id}/generate` (server-owned chat), `/v1/models`,
-`/v1/embeddings`, `/v1/hidden_states`, `/v1/rlm/completions`.
+`/v1/rlm/completions`.
 
 A first call, streaming off:
 

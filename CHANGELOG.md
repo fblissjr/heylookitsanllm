@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.40]
+
+### Removed
+
+- **`/v1/hidden_states`, `/v1/hidden_states/structured` and `/v1/embeddings`.**
+  Owner call: nothing calls them any more. The hidden-state extractor walked
+  decoder blocks by hand on the event loop thread, skipped the generation gate
+  and the model pin, and the structured route hand-built Qwen3 chat strings to
+  find token boundaries; the embeddings route mean-pooled any resident MLX
+  chat model the same way. The H3 conditioning route planned in
+  `docs/architecture/multimodal_feature_extraction.md` replaces the one use
+  case with mlx-vlm's native path and is built on a clean base instead of
+  beside these. Gone with them: the `hidden_states` capability every MLX
+  model advertised, `HiddenStatesBlock` in the Messages output union (no
+  route ever emitted it), `supports_hidden_states` on the system schema, and
+  the `default_hidden_layer` / `default_max_length` MLX config fields. The
+  `mlx_embedding` provider type is unreachable after this and is removed in
+  the next release.
+
 ## [2.0.39]
 
 ### Fixed

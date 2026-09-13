@@ -261,8 +261,8 @@ restore `__pydantic_fields_set__` or they leak back as "stored");
 `stale_reload_fields` on admin responses is the server-derived
 "saved-but-process-runs-old-value" truth (never rebuild it client-side).
 API routers (counts rot; the list is the point): messages, model_ops (load + the
-/v1/models list), monitoring (metrics, profile, capabilities, cache), embeddings,
-hidden_states, conversation, notebook, preset, admin, admin_ops, scan_import,
+/v1/models list), monitoring (metrics, profile, capabilities, cache),
+conversation, notebook, preset, admin, admin_ops, scan_import,
 config (operational settings), telemetry
 (frontend ingestion), requests (cancellation), conversation_generate (the
 server-owned generate route -- the OTHER route on the Messages grammar). `api.py` is APP ASSEMBLY ONLY since

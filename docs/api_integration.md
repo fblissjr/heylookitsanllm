@@ -515,8 +515,7 @@ Both gates are **opt-in and off by default**, and a default localhost
 deployment is open.
 
 - `HEYLOOK_API_KEY` → send `Authorization: Bearer <key>`. Gates inference
-  (messages, the conversation generate route, embeddings, RLM, hidden
-  states, request cancellation). **Loopback
+  (messages, the conversation generate route, RLM, request cancellation). **Loopback
   traffic is exempt by default**; `HEYLOOK_API_KEY_ENFORCE_LOOPBACK=true`
   closes that carve-out. If your app is not on the same machine, this is the
   gate you will meet.

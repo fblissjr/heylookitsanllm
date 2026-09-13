@@ -252,8 +252,7 @@ documented on that route that are about the ENGINES rather than the wire still h
   server has no `default_model` configured, returns HTTP 400 with the reason + the available ids in
   `detail` — on `/v1/messages` (and on the removed OpenAI route). It was a 500 through v1.44.4. A failed
   model *load* (corrupt weights, unsupported architecture) is still a 500: 400 means "pick a different
-  model", 500 means "this model is broken". Note `/v1/hidden_states` and `/v1/embeddings` have not been
-  converted and still answer 500 for an unknown id.
+  model", 500 means "this model is broken".
 - **Startup loads nothing (v1.44.4)**: the server no longer pre-warms `default_model` at boot (only an
   explicit `--model-id` does), so the first request to any model pays the load. v3 must not assume a
   model is resident — the models page reflects real state.

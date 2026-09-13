@@ -26,8 +26,10 @@ video later requires a frame sampling, ordering, timing, and upload contract.
 
 Defer M3 visual feature extraction as a separate project. Do not introduce a
 generic schema-version-2 feature API or change the GGUF provider for this first
-release. Preserve the legacy hidden-state routes and address their confirmed
-execution/correctness defects without a broad API redesign.
+release. The earlier `/v1/hidden_states` routes and the `/v1/embeddings` route
+were removed in v2.0.40 (owner call: nothing used them), so this route is built
+on a clean base rather than beside a legacy one, and the shared MLX worker
+lifecycle helper it needs has exactly one consumer.
 
 ## Evidence and attribution
 
@@ -69,12 +71,10 @@ with implementation evidence. Local [`pyproject.toml`](../../pyproject.toml)
 pins mlx-vlm at `d68a25e71e842e8924a54bb3d84d3a3b4d4a2ee1`, consistent with
 the review's premise; no dependency update is currently justified.
 
-Local code independently confirms that both legacy routes explicitly re-raise
-`ModelBusyError` in [`hidden_states_api.py`](../../src/heylook_llm/hidden_states_api.py),
-and [`api.py`](../../src/heylook_llm/api.py) maps it through the shared 503
-handler. The relevant [`TODO`](../project/TODO.md) is marked closed. Preserve
-and verify this behavior; do not schedule a duplicate busy-to-500 fix on the
-strength of that TODO's historical examples.
+The app-level `ModelBusyError` handler in [`api.py`](../../src/heylook_llm/api.py)
+answers 503 for any route that lets the error out. The new route must let it
+out (no broad handler around the provider call) and pin that through the route
+in `tests/contract/`, the way the removed routes were pinned.
 
 ## Narrow request and result
 
@@ -218,28 +218,13 @@ token-level presentation, and token tags. The client owns pre-encoder canvas
 and reference preparation shared with its VAE path. Heylook owns input transport, residency, scheduling,
 authentication, error handling, and tensor transport.
 
-## Legacy route corrections
-
-Retain existing request semantics while replacing unsafe execution paths with
-the established executor/gate/pin lifecycle. For Qwen multimodal support, use a
-native model entry point rather than manually walking decoder blocks. Do not
-reinterpret all legacy requests as H3 requests.
-
-Resolve the existing wire-dtype mismatch and accepted-multiple-inputs/first-only
-response behavior explicitly. A clear multi-input rejection is preferable to
-silent data loss if true batching is outside scope. Preserve absent-versus-
-explicit parameter semantics. Keep these changes bounded and documented.
-
-The existing busy-to-503 path is a regression check, not an open implementation
-task in this checkout. Recheck the actual implementation branch before editing.
-
 ## Implementation map and validation
 
 | Area | Work |
 |---|---|
 | New narrow H3 route module, mounted in `api.py` | Typed H3 request/result, auth, input validation, error propagation |
 | `providers/mlx_provider.py` and a focused helper if useful | Adapter around the dependency conditioner and resident execution lifecycle |
-| `hidden_states.py` / `hidden_states_api.py` | Bounded legacy correctness and execution fixes; preserve public compatibility |
+| `streaming_utils.py` or `generation_core.py` | One helper that runs an MLX callable under the gate, pin, pinned executor, generation stream and wired limit; this route is its first consumer |
 | `docs/api_integration.md` | Document the actual narrow endpoint once implemented |
 | Focused tests and a Mac probe | Presentation/tag parity, quantization comparison, lifecycle and wire behavior |
 

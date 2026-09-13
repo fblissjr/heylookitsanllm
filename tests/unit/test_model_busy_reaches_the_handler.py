@@ -49,8 +49,10 @@ covering more than it does -- which is the failure this whole file is about.
   own broad handler. That is where four of the six 2026-08-31 defects actually
   lived (``api.py``'s embeddings and hidden_states wrappers): the inner
   handler re-raised correctly and the outer one converted to a 500. It is not
-  a local property and it is not cheaply static. ``tests/contract/`` pins
-  those routes behaviourally instead. Both kinds are needed; neither
+  a local property and it is not cheaply static. ``tests/contract/`` pinned
+  those routes behaviourally until v2.0.40 removed the routes themselves;
+  a route of that shape added later needs the same kind of pin, in
+  ``tests/contract/``, against the route. Both kinds are needed; neither
   substitutes for the other.
 """
 

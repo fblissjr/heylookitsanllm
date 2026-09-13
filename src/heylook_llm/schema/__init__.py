@@ -8,7 +8,6 @@ from heylook_llm.schema.content_blocks import (
     TextBlock,
     ImageBlock,
     ThinkingBlock,
-    HiddenStatesBlock,
     InputContentBlock,
     OutputContentBlock,
 )
@@ -45,7 +44,6 @@ __all__ = [
     "TextBlock",
     "ImageBlock",
     "ThinkingBlock",
-    "HiddenStatesBlock",
     "InputContentBlock",
     "OutputContentBlock",
     # Messages

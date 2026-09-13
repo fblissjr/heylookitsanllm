@@ -4,7 +4,7 @@
 # Input blocks (user->model) and output blocks (model->user) are distinct unions
 # because certain block types only appear in one direction.
 
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -251,28 +251,5 @@ InputContentBlock = Union[TextBlock, ImageBlock, AudioBlock, ThinkingBlock]
 # Output content blocks (appear in assistant responses)
 # ---------------------------------------------------------------------------
 
-class HiddenStatesBlock(BaseModel):
-    """Hidden states extraction results.
-
-    Returned by /v1/hidden_states endpoints. Contains the raw activation
-    vectors from a specified model layer, with token boundary information
-    for mapping back to input tokens.
-    """
-    type: Literal["hidden_states"] = "hidden_states"
-    layer: int = Field(..., description="Layer index the states were extracted from")
-    shape: List[int] = Field(..., description="Tensor shape [seq_len, hidden_dim]")
-    token_boundaries: Optional[List[Dict]] = Field(
-        None, description="Token-to-position mapping for the hidden states"
-    )
-    # Actual tensor data is too large for JSON; this block carries metadata.
-    # The raw data is returned as a separate binary payload or base64 field.
-    data_encoding: Literal["base64", "external"] = Field(
-        "external", description="How the hidden state data is provided"
-    )
-    data: Optional[str] = Field(
-        None, description="Base64-encoded hidden states (when data_encoding='base64')"
-    )
-
-
 # Union of all block types that can appear in an assistant response
-OutputContentBlock = Union[TextBlock, ThinkingBlock, HiddenStatesBlock]
+OutputContentBlock = Union[TextBlock, ThinkingBlock]
