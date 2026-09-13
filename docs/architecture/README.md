@@ -14,6 +14,12 @@ frontend map is [../frontend_v3.md](../frontend_v3.md).
 | [ecosystem_strategy.md](./ecosystem_strategy.md) | MLX ecosystem posture -- **READ before perf / provider work** |
 | [conversation_store.md](./conversation_store.md) | What each chat operation writes to DuckDB; the media-blob lifecycle |
 
+## Proposed designs
+
+| Doc | Covers |
+|-----|--------|
+| [multimodal_feature_extraction.md](./multimodal_feature_extraction.md) | Qwen3-VL via MLX-VLM and MiniMax M3 via llama.cpp: shared feature API, backend changes, H3 compatibility, and validation |
+
 ## Postmortems
 
 Crash postmortems referenced throughout these docs (read before touching the
