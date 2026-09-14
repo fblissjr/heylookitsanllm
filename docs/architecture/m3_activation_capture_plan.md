@@ -171,6 +171,16 @@ the route if a bridge consumer later needs capture over HTTP.
 
 ### Step 2: a capture script, not an endpoint
 
+Status 2026-09-14: the H3 side of this exists and ran. A script in the
+gitignored `internal/codex/h3-target-capture/` calls the pinned mlx-vlm
+conditioner directly on the local Qwen3-VL-32B, writes the layer-50 states
+as bf16 bits with the tags, ids and grid, refuses any mismatch between them,
+and verified bitwise reloads and in-process repeats on the same synthetic
+inputs the M3 tool used. Results in `internal/research/`. Those six pairs
+are a plumbing check, not a dataset: the M3 side used M3's raw diagnostic
+prompt and the H3 side used H3's presentation, and the H3 mode and
+reference contract must be fixed before captures count as aligned pairs.
+
 A script that takes a handful of paired prompt-plus-image examples and
 writes both sides to files:
 
