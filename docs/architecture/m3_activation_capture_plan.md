@@ -212,6 +212,19 @@ the H3 side's own validator against the frozen bank. Receipts sit beside
 the pairs under `internal/claude/m3-h3-pilot/`. From here the work is the
 adapter and its controls, on files, off this server.
 
+Status 2026-09-14, night: the text lane ran on the H3 side and is done. A
+byte-offset alignment between the two tokenizations was enough for a
+linear map from the aligned M3 row to beat every no-M3 baseline on the
+held-out scenes, scored after the DiT's own conditioning projection and
+refiner, with source-shuffled and other-scene controls at the floor; the
+free cross-attention resampler as first contracted scored the same as its
+own query-only ablation, so it had learned the prompt template rather
+than M3. Both tokenizers reproduce the captured ids from the prompt
+bytes, which is also an independent check of this side's M3 capture.
+Nothing is "accepted" until the tolerance between two Qwen runtimes on
+one prompt is measured, which is the H3 side's next step along with one
+injection render. The Mac captures again for the image-conditioned bank.
+
 ### Step 3: the bridge, elsewhere
 
 Training happens on the captured files, outside this server, on whatever
