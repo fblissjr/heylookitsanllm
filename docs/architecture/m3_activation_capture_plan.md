@@ -172,7 +172,7 @@ the route if a bridge consumer later needs capture over HTTP.
 ### Step 2: a capture script, not an endpoint
 
 Status 2026-09-14: the H3 side of this exists and ran. A script in the
-gitignored `internal/codex/h3-target-capture/` calls the pinned mlx-vlm
+gitignored `internal/claude/h3-target-capture/` calls the pinned mlx-vlm
 conditioner directly on the local Qwen3-VL-32B, writes the layer-50 states
 as bf16 bits with the tags, ids and grid, refuses any mismatch between them,
 and verified bitwise reloads and in-process repeats on the same synthetic
@@ -199,7 +199,7 @@ Status 2026-09-14, later: the first REAL pair exists, from a prompt in the
 H3 repo's own prompt bank (a text-only T2VA example, so no image
 dependence yet), captured M3 then Qwen with one encoder resident at a time
 and bound to its example by a pair manifest with payload hashes and
-revisions, under the gitignored `internal/codex/m3-h3-pilot/pairs/`. Row
+revisions, under the gitignored `internal/claude/m3-h3-pilot/pairs/`. Row
 counts differ between the two tokenizers, as they must. Capture order for
 a bank: every M3 example first, then every Qwen one, because alternating
 the two evicts the larger model from the page cache each time.
