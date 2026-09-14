@@ -204,6 +204,14 @@ counts differ between the two tokenizers, as they must. Capture order for
 a bank: every M3 example first, then every Qwen one, because alternating
 the two evicts the larger model from the page cache each time.
 
+Status 2026-09-14, evening: the first bank is captured. The H3 side froze
+a text-only bank of eleven scenes from its own prompt bank with fixed
+train and held-out groups and a capture profile pinned from the first pair;
+this side captured the remaining ten in that order and every pair passes
+the H3 side's own validator against the frozen bank. Receipts sit beside
+the pairs under `internal/claude/m3-h3-pilot/`. From here the work is the
+adapter and its controls, on files, off this server.
+
 ### Step 3: the bridge, elsewhere
 
 Training happens on the captured files, outside this server, on whatever
