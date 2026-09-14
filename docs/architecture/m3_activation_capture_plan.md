@@ -195,6 +195,15 @@ client that prepares images for H3's VAE path must prepare the same pixels
 the conditioner sees. Store captures under an explicitly chosen artifact
 location; the observability policy keeps prompts and tensors out of logs.
 
+Status 2026-09-14, later: the first REAL pair exists, from a prompt in the
+H3 repo's own prompt bank (a text-only T2VA example, so no image
+dependence yet), captured M3 then Qwen with one encoder resident at a time
+and bound to its example by a pair manifest with payload hashes and
+revisions, under the gitignored `internal/codex/m3-h3-pilot/pairs/`. Row
+counts differ between the two tokenizers, as they must. Capture order for
+a bank: every M3 example first, then every Qwen one, because alternating
+the two evicts the larger model from the page cache each time.
+
 ### Step 3: the bridge, elsewhere
 
 Training happens on the captured files, outside this server, on whatever
