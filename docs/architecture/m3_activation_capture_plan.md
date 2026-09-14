@@ -243,6 +243,21 @@ while the bank's capture profile stays pinned to the earlier revision, so
 the fork keeps a build at that revision for bank captures; the two builds
 gave identical M3 states on the check pair.
 
+Status 2026-09-14, evening: the image-conditioned bank is captured on both
+sides. The H3 side built the inputs (prepared first frames through the
+consumer's own first-frame path, image-conditioned prompts graded clean,
+flipped-frame variants as the image-dependence control, and per example
+the release-tokenized ids the Qwen capture must reproduce); the Mac
+captured every M3 side with the pinned-revision fork, then every Qwen side
+in first-frame mode with the release tokenizer, and a pair counts only when
+the captured ids equal the expected ones byte for byte, the M3 grid fields
+multiply out to the image chunk, and the Qwen grid implies the pad count.
+All pairs passed. Each flipped variant changes the visual rows and the text
+rows after the image on both sides while the rows before the image stay
+identical, which is the causal shape the control needs. Next is the H3
+side's: the tolerance run, the injection render, then the first
+image-conditioned fit with the spatial-correspondence source rule.
+
 ### Step 3: the bridge, elsewhere
 
 Training happens on the captured files, outside this server, on whatever
