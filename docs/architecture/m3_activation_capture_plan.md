@@ -225,6 +225,24 @@ Nothing is "accepted" until the tolerance between two Qwen runtimes on
 one prompt is measured, which is the H3 side's next step along with one
 injection render. The Mac captures again for the image-conditioned bank.
 
+Status 2026-09-14, afternoon after: two corrections before any image pair
+counts. The H3 release tokenizer declares its seven prompt markers in a
+THIRD place, the tokenizer config's additional special tokens, which the
+earlier parity check did not read; every Qwen-side tool here now requires
+the release tokenizer directory and refuses one that does not give each
+marker a single id, and the H3 side takes the text bank's Qwen targets from
+its own encoder. And M3's visual grid is not readable from mtmd, which
+stores a flat token count for every projector without M-RoPE; the Mac's
+fork of the capture tool derives it from the projector's own resize rule
+(patch, merge and token limits as clip.cpp sets them for this projector)
+and refuses a capture where the derived grid does not multiply out to the
+chunk's row count, so a rule drift fails loudly. Both grids for one
+prepared frame are on disk now, which is what the H3 side's spatial
+correspondence needs. The canonical llama.cpp build moved during the day
+while the bank's capture profile stays pinned to the earlier revision, so
+the fork keeps a build at that revision for bank captures; the two builds
+gave identical M3 states on the check pair.
+
 ### Step 3: the bridge, elsewhere
 
 Training happens on the captured files, outside this server, on whatever
