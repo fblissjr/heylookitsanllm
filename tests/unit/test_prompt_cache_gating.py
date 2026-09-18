@@ -1,8 +1,8 @@
 # tests/unit/test_prompt_cache_gating.py
 #
-# Prefix reuse is only correct for plain full-precision KVCache:
-# restore_kv_from_snapshot prefix-trims keys[..., :N, :], which is wrong for
-# QuantizedKVCache (packed tuple state) and impossible for RotatingKVCache.
+# Prefix reuse is only correct for plain full-precision KVCache: a
+# prefix-trim of keys[..., :N, :] is wrong for QuantizedKVCache (packed tuple
+# state) and impossible for RotatingKVCache.
 # Non-standard cache configs must bypass the cache path entirely -- both
 # lookup and store (audit 2026-07-06; the silent-wrong-output risk the
 # eligibility gate exists for). The claims predate the Q7 single-slot

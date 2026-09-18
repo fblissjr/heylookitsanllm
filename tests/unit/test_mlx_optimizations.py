@@ -3,7 +3,6 @@
 
 Covers:
 - VisionFeatureCache: LRU eviction, URL keying, pixel hash fallback, stats
-- snapshot_nbytes: byte size computation for KV cache snapshots
 - Keepalive marker: streaming utils sentinel type
 - Cached tokens passthrough: generation_core attaches cached_tokens
 """
@@ -206,36 +205,6 @@ class TestVisionFeatureCache:
 
         cache.put("a.jpg", mx.ones((1, 5)))   # shrinks to 20B
         assert cache.stats()["bytes"] < bytes_after_first
-
-
-# ---------------------------------------------------------------------------
-# snapshot_nbytes tests
-# ---------------------------------------------------------------------------
-
-class TestSnapshotNbytes:
-    def test_empty_snapshot(self):
-        from heylook_llm.providers.common.cache_helpers import snapshot_nbytes
-        assert snapshot_nbytes([]) == 0
-        assert snapshot_nbytes([None, None]) == 0
-
-    def test_with_arrays(self):
-        import mlx.core as mx
-        from heylook_llm.providers.common.cache_helpers import snapshot_nbytes
-
-        k = mx.zeros((1, 4, 32, 64))  # float32: 1*4*32*64*4 = 32768 bytes
-        v = mx.zeros((1, 4, 32, 64))
-        snapshot = [(k, v), None, (k, v)]
-
-        expected = 4 * k.nbytes  # 2 layers * (k + v)
-        assert snapshot_nbytes(snapshot) == expected
-
-    def test_mixed_none_and_data(self):
-        import mlx.core as mx
-        from heylook_llm.providers.common.cache_helpers import snapshot_nbytes
-
-        k = mx.zeros((8,))  # 32 bytes
-        snapshot = [None, (k, k), None]
-        assert snapshot_nbytes(snapshot) == 2 * k.nbytes
 
 
 # ---------------------------------------------------------------------------

@@ -1,17 +1,10 @@
 # src/heylook_llm/providers/common/cache_helpers.py
 """
-KV cache construction, snapshot, and restore utilities.
+KV cache construction from the provider's cache config.
 
-Snapshot/restore is used by the prompt cache to persist KV state across requests.
-Key invariant: restore_kv_from_snapshot(trim_to=N) must trim KVCache layers to N
-tokens, because snapshots are taken at end-of-generation and may contain entries
-for tokens beyond the matched prefix. Without trimming, hybrid models (Qwen3.5)
-crash due to incorrect cache.offset in position computations.
-
-See internal/bugs/radix_cache_vlm_crash.md for the full postmortem.
+Snapshot and restore live in prompt_cache.py, beside the slot that owns them.
 """
 from typing import Any, List
-import mlx.core as mx
 import mlx.nn as nn
 import logging
 
@@ -64,88 +57,3 @@ def make_cache(model: nn.Module, config: dict) -> List[Any]:
 
     else:
         raise ValueError(f"Unknown cache_type: {cache_type}")
-
-
-def snapshot_nbytes(snapshot: List[tuple | None]) -> int:
-    """Compute total byte size of a KV cache snapshot.
-
-    Each snapshot entry is a (keys, values) tuple of mx.arrays. Returns
-    the sum of nbytes across all arrays. Used by the prompt cache for
-    byte-level budget enforcement.
-    """
-    total = 0
-    for state in snapshot:
-        if state is not None:
-            for arr in state:
-                if hasattr(arr, 'nbytes'):
-                    total += arr.nbytes
-    return total
-
-
-def snapshot_kv(cache: List[Any]) -> List[tuple]:
-    """Capture KV cache state for prompt-cache storage.
-
-    Each cache layer exposes a .state property returning (keys, values)
-    trimmed to the current offset.
-
-    The snapshot is MATERIALIZED (mx.eval) before returning. This is a
-    thread-affinity requirement, not an optimization choice: generation runs
-    on a fresh single-worker thread per request (streaming_utils), and both
-    our generation_stream and mlx_lm's are thread-local. GPU thread-local
-    streams die with their thread, so any *pending* lazy node published into
-    the shared cache slot would make the next request's
-    `mx.eval([c.state for c in prompt_cache])` (mlx_lm generate_step) raise
-    "There is no Stream(gpu, N) in current thread" when it runs on a
-    different thread. Eval here happens on the generating thread, where the
-    referenced streams are still alive. See
-    tests/unit/test_snapshot_thread_affinity.py.
-    """
-    snapshots = []
-    for layer in cache:
-        if hasattr(layer, 'state') and not layer.empty():
-            snapshots.append(layer.state)
-        else:
-            snapshots.append(None)
-    # One batched eval; the security hook flags mx.eval, but this is MLX's
-    # graph materializer, not Python's eval().
-    mx.eval([s for s in snapshots if s is not None])
-    return snapshots
-
-
-def restore_kv_from_snapshot(
-    snapshot: List[tuple | None],
-    model: Any,
-    cache_config: dict | None = None,
-    trim_to: int | None = None,
-) -> List[Any]:
-    """Create fresh KV cache objects initialized from a snapshot.
-
-    Args:
-        snapshot: Per-layer (keys, values) tuples from snapshot_kv().
-        model: The model (used to create correctly-sized cache objects).
-        cache_config: Cache configuration dict.
-        trim_to: If set, trim KVCache layers to this many tokens. Required
-            when the snapshot was stored from a longer sequence than the
-            matched prefix (e.g. prompt + generated tokens > matched prefix).
-
-    Returns:
-        A new cache list with state restored from the snapshot.
-    """
-    new_cache = make_cache(model, cache_config or {})
-    for layer, state in zip(new_cache, snapshot):
-        if state is not None:
-            layer.state = state
-            # Trim KVCache layers whose offset exceeds the matched prefix.
-            # Snapshots are taken at end-of-generation and may contain KV
-            # entries for tokens beyond the prefix boundary.
-            if (
-                trim_to is not None
-                and hasattr(layer, 'offset')
-                and hasattr(layer, 'keys')
-                and layer.keys is not None
-                and layer.offset > trim_to
-            ):
-                layer.keys = layer.keys[..., :trim_to, :]
-                layer.values = layer.values[..., :trim_to, :]
-                layer.offset = trim_to
-    return new_cache

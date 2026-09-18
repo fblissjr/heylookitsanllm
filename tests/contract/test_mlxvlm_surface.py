@@ -373,22 +373,20 @@ class TestCacheClasses:
     (`from mlx_lm.models.cache import make_prompt_cache`) and
     providers/common/cache_helpers.py:19
     (`from mlx_lm.models.cache import KVCache, QuantizedKVCache, RotatingKVCache`).
-    cache_helpers.make_cache/snapshot_kv/restore_kv_from_snapshot rely on every
-    cache class exposing a settable `.state` property and an `.empty()` method."""
+    prompt_cache._restore_layers relies on every cache class exposing a
+    settable `.state` property."""
 
     @pytest.mark.parametrize("cache_factory", [
         lambda: KVCache(),
         lambda: QuantizedKVCache(),
         lambda: RotatingKVCache(max_size=8),
     ])
-    def test_cache_class_exposes_settable_state_and_empty(self, cache_factory):
+    def test_cache_class_exposes_settable_state(self, cache_factory):
         cache = cache_factory()
-        assert hasattr(cache, "empty")
-        assert cache.empty() is True  # fresh cache: snapshot_kv's guard depends on this
         state_prop = type(cache).state
         assert isinstance(state_prop, property)
         assert state_prop.fset is not None, (
-            "restore_kv_from_snapshot does `layer.state = state` -- the "
+            "prompt_cache._restore_layers does `layer.state = state` -- the "
             "property must stay settable"
         )
 
