@@ -197,11 +197,14 @@ class TestContinuationKeepsTheSeamSpace:
 
     class _Wrapper:
         def __init__(self, cls):
-            self._detokenizer_class = cls
+            self._detokenizer = cls(self)
 
         @property
         def detokenizer(self):
-            return self._detokenizer_class(self)
+            import copy
+            detok = copy.copy(self._detokenizer)
+            detok.reset()
+            return detok
 
     def _run(self, continuing):
         from heylook_llm.providers.common.generation_core import continuation_detokenizer
@@ -218,13 +221,13 @@ class TestContinuationKeepsTheSeamSpace:
     def test_fresh_turn_still_trims(self):
         tok, first, second = self._run(continuing=False)
         assert (first, second) == ("need", " the")
-        assert tok._detokenizer_class is self._SpmLike
+        assert type(tok._detokenizer) is self._SpmLike
 
     def test_continuation_keeps_the_first_space_and_restores_the_factory(self):
         tok, first, second = self._run(continuing=True)
         assert (first, second) == (" need", " the")
         assert "\x00" not in first + second
-        assert tok._detokenizer_class is self._SpmLike  # restored in finally
+        assert type(tok._detokenizer) is self._SpmLike  # restored in finally
 
     def test_restored_even_when_the_generation_raises(self):
         from heylook_llm.providers.common.generation_core import continuation_detokenizer
@@ -232,7 +235,7 @@ class TestContinuationKeepsTheSeamSpace:
         with pytest.raises(RuntimeError):
             with continuation_detokenizer(tok, True):
                 raise RuntimeError("mid-generation")
-        assert tok._detokenizer_class is self._SpmLike
+        assert type(tok._detokenizer) is self._SpmLike
 
     def test_a_read_only_text_detokenizer_is_left_alone(self):
         """The runtime shape on the mlx-vlm path: a raw HF tokenizer wrapped
@@ -246,7 +249,7 @@ class TestContinuationKeepsTheSeamSpace:
         from heylook_llm.providers.common.generation_core import continuation_detokenizer
 
         wrapper = TokenizerWrapper(_FakeHfForDetok(), eos_token_ids={0})
-        assert wrapper._detokenizer_class is NaiveStreamingDetokenizer
+        assert type(wrapper._detokenizer) is NaiveStreamingDetokenizer
         with continuation_detokenizer(wrapper, True):
             d = wrapper.detokenizer
             d.reset()
@@ -255,17 +258,16 @@ class TestContinuationKeepsTheSeamSpace:
             d.add_token(2)
             second = d.last_segment
         assert (first, second) == (" need", " the")
-        assert wrapper._detokenizer_class is NaiveStreamingDetokenizer
+        assert type(wrapper._detokenizer) is NaiveStreamingDetokenizer
 
-    def test_a_partial_factory_is_unwrapped_before_the_seed_check(self):
-        """mlx-lm hands gemma-family SPM tokenizers a functools.partial
-        (trim_space=False); the seedability check must look through it."""
-        from functools import partial
+    def test_only_a_settable_text_is_seeded(self):
+        """SPM and BPE assign `text` in reset; Naive computes it as a
+        property with no setter, and seeding it raised inside the first
+        next() of every continuation on the mlx-vlm path (v1.79.64)."""
         from heylook_llm.providers.common.generation_core import _seedable
         from mlx_lm.tokenizer_utils import (
             BPEStreamingDetokenizer, NaiveStreamingDetokenizer, SPMStreamingDetokenizer)
         assert _seedable(SPMStreamingDetokenizer)
-        assert _seedable(partial(SPMStreamingDetokenizer, trim_space=False))
         assert _seedable(BPEStreamingDetokenizer)
         assert not _seedable(NaiveStreamingDetokenizer)
 
@@ -345,4 +347,4 @@ class TestEnsureGenTokenizerPicksAStreamingDetokenizer:
         from heylook_llm.providers.common import generation_core as gc
         wrapped = gc.ensure_gen_tokenizer(_FakeHfForDetok())
         assert isinstance(wrapped, TokenizerWrapper)
-        assert wrapped._detokenizer_class is NaiveStreamingDetokenizer
+        assert type(wrapped._detokenizer) is NaiveStreamingDetokenizer

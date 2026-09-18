@@ -5,7 +5,7 @@ Cross-request prompt cache management for MLX models.
 Single-slot cache per model (Q7, plan_2026-07.md: the radix tree, its
 restore-time slicing, segment eviction and the system-boundary machinery are
 DELETED -- mlx-lm-aligned: state round-trips through mlx-lm's own
-state/meta_state properties and divergence uses its ``trim_prompt_cache``).
+``state`` property and divergence uses its ``trim_prompt_cache``).
 Each model keeps ONE slot: per-layer snapshots of the last completed
 generation plus the token sequence the cache actually covers. A new request
 reuses it in exactly two shapes:
@@ -32,16 +32,27 @@ that latent wrongness became constant, live-verified garbage on
 Qwen3.5-0.8B (greedy: fresh="Paris.", restored="\\n\\n") -- which is how the
 snapshot/slice approach died in review before it was ever committed.
 
-The slot stores per-layer (state, meta_state) SNAPSHOTS, never live cache
-objects, and every reuse reconstructs fresh cache objects from them. This
-is load-bearing, not style: MLX arrays are immutable but cache OBJECTS are
-not, and this server quarantines a wedged generator's worker thread alive
-("Generator close timed out; quarantining its worker") -- a zombie
-generation keeps rebinding .keys/.offset on its cache objects. Sharing
-those objects through the slot handed the next request state mutating
-under it (live-verified 2026-08-18: process-poisoning garbage during the
-eval bank, unreproducible single-threaded). Snapshot arrays are immune:
-the zombie rebinds its own attributes; the captured arrays never change.
+The slot stores per-layer ``state`` SNAPSHOTS, never live cache objects,
+and every reuse reconstructs fresh cache objects from them. This is
+load-bearing, not style: this server quarantines a wedged generator's
+worker thread alive ("Generator close timed out; quarantining its worker")
+-- a zombie generation keeps rebinding .keys/.offset on its cache objects.
+Sharing those objects through the slot handed the next request state
+mutating under it (live-verified 2026-08-18: process-poisoning garbage
+during the eval bank, unreproducible single-threaded).
+
+THE SNAPSHOT IS AN EXPLICIT COPY, and that is the whole of its immunity.
+An mx.array is NOT immutable -- ``a[i] = v`` writes through every reference
+to it -- so a snapshot is only safe while it owns its buffers. Until
+mlx-lm's detokenizer/cache refactor (#1778) it did so by accident:
+``KVCache.state`` returned ``keys[..., :offset, :]``, a slice, and a slice
+is a copy. That property now returns ``(self.keys, self.values, offset)``
+-- the LIVE pre-allocated buffer, which the next ``update_and_fetch``
+writes into in place, because it allocates 256 slots ahead and only
+reallocates when it runs out. Capturing it by reference was measured
+poisoned within one update, so ``_copy_arrays`` copies every array out.
+The cost is the ahead-allocated tail (bounded by the step size, per layer);
+the bug it prevents is the one this whole slot exists to prevent.
 
 Thread-affinity invariant (see postmortems/radix_thread_affinity.md): every
 generation runs on its own worker thread with thread-local GPU streams, so
@@ -98,16 +109,16 @@ def _flat_arrays(x, out: list) -> None:
             _flat_arrays(y, out)
 
 
-def _materialize(layers: List[Tuple[Any, Any]]) -> int:
+def _materialize(layers: List[Any]) -> int:
     """mx.eval every array in the CAPTURED snapshots ON THE CALLING THREAD
     and return the total byte size. Takes the snapshot list itself, never
-    the cache: each ``.state`` access builds FRESH lazy slice objects, so
-    evaluating a second capture leaves the stored one lazy -- and a lazy
+    the cache: each capture builds FRESH lazy copies, so evaluating a
+    second capture leaves the stored one lazy -- and a lazy
     array restored on another thread is the "There is no Stream(gpu, N)"
     crash (postmortems/radix_thread_affinity.md; re-caught live in the
     chat e2e when exactly that eval/store split shipped here)."""
     arrays: list = []
-    for state, _meta in layers:
+    for state in layers:
         _flat_arrays(state, arrays)
     if arrays:
         # The security hook flags mx.eval; this is MLX's graph materializer,
@@ -119,28 +130,41 @@ def _materialize(layers: List[Tuple[Any, Any]]) -> int:
 @dataclass
 class _Slot:
     """One model's persistent cache: immutable per-layer snapshots of the
-    last completed generation. ``layers`` holds (state, meta_state) pairs in
-    layer order -- every cache type mlx-lm ships round-trips through those
-    two properties (its own save/load_prompt_cache contract)."""
+    last completed generation. ``layers`` holds one ``state`` per layer in
+    layer order -- every cache type mlx-lm ships round-trips through that
+    one property (its own save/load_prompt_cache contract; ``meta_state``
+    was folded into it upstream in #1778)."""
     tokens: List[int]
-    layers: List[Tuple[Any, Any]]
+    layers: List[Any]
     nbytes: int
 
 
-def _snapshot_layers(cache: List[Any]) -> List[Tuple[Any, Any]]:
-    return [(layer.state, getattr(layer, 'meta_state', None)) for layer in cache]
+def _copy_arrays(x):
+    """The same structure with every mx.array copied out of its buffer.
+
+    A full-slice ``a[...]`` is the copy: MLX slicing allocates, which is why
+    the snapshot was safe for free while ``state`` was itself a slice."""
+    if isinstance(x, mx.array):
+        return x[...]
+    if isinstance(x, tuple):
+        return tuple(_copy_arrays(y) for y in x)
+    if isinstance(x, list):
+        return [_copy_arrays(y) for y in x]
+    return x
+
+
+def _snapshot_layers(cache: List[Any]) -> List[Any]:
+    return [_copy_arrays(layer.state) for layer in cache]
 
 
 def _restore_layers(slot: _Slot, model: Any, cache_config: dict) -> List[Any]:
     """Fresh cache objects seeded from the slot's snapshots."""
     cache = make_cache(model, cache_config)
-    for layer, (state, meta) in zip(cache, slot.layers):
+    for layer, state in zip(cache, slot.layers):
         arrays: list = []
         _flat_arrays(state, arrays)
         if arrays:  # an empty layer's state round-trips as no-op
             layer.state = state
-        if meta:
-            layer.meta_state = meta
     return cache
 
 
@@ -237,7 +261,7 @@ class PromptCacheManager:
                 self._update_lru_unlocked(model_id)
             return slot
 
-    def _put_slot(self, model_id: str, tokens: List[int], layers: List[Tuple[Any, Any]], nbytes: int) -> None:
+    def _put_slot(self, model_id: str, tokens: List[int], layers: List[Any], nbytes: int) -> None:
         with self._lock:
             # Under GPU memory pressure, other models' slots are the
             # reclaimable thing we own -- drop them before storing this one.

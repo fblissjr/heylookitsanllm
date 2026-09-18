@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.43]
+
+### Changed
+
+- **The mlx-lm and mlx-vlm pins move to upstream tip** -- mlx-lm
+  `28e9ccd9cb52d1d4a6f674b7914bae2de49d9aad`, mlx-vlm
+  `10db092733a416439fce874cd96a7835b700f43d` (0.7.0rc0 -> 0.7.1). `uv.lock`
+  carries an unrelated dependency upgrade made alongside it: transformers
+  5.16.1 -> 5.17.0, huggingface-hub 1.30 -> 1.31, mlx-audio 0.5.1 -> 0.5.4,
+  plus uvicorn, urllib3, tqdm, regex, filelock and the cuda shims.
+  Unit + contract green. NOT live-verified: `tests/smoke/` did not run, so
+  all three engine arms are UNCOVERED for this release.
+
+### Fixed
+
+- **A prompt-cache snapshot owns its buffers again.** mlx-lm's cache
+  refactor (upstream #1778) folded `meta_state` into `state` and changed
+  what `state` hands out: it was `keys[..., :offset, :]`, a slice, and an
+  MLX slice is a copy; it is now the LIVE pre-allocated buffer. KVCache
+  allocates 256 slots ahead and writes into them in place, so a stored slot
+  was mutated by the generation that produced it -- measured poisoned
+  within one `update_and_fetch`, and the same process-poisoning the slot
+  exists to prevent when a quarantined zombie generator keeps writing.
+  `_copy_arrays` now copies every array out at capture. The immunity check
+  asserts on CONTENT rather than buffer shape, because the shape no longer
+  moves when the poisoning happens.
+- **A continuation keeps the space at the seam again.** The same upstream
+  release (#1879) replaced `TokenizerWrapper._detokenizer_class` with one
+  prebuilt `_detokenizer` prototype that `copy.copy` is taken from per
+  access. `continuation_detokenizer` swapped the old attribute, so on the
+  new wrapper it found nothing and took its no-op branch -- silently, since
+  a missing attribute is the same branch as an unseedable detokenizer. It
+  now swaps the prototype for one whose class seeds the sentinel; a
+  subclass and not a patched instance, because a closure bound to the
+  prototype would seed the prototype while the copy that streams stayed
+  empty. Verified on a real `TokenizerWrapper`, not the stand-in alone.
+
 ## [2.0.42]
 
 ### Fixed

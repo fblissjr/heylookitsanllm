@@ -21,8 +21,10 @@ Error handling:
   requests. See internal/bugs/radix_cache_vlm_crash.md.
 """
 
+import copy
 import logging
 from contextlib import contextmanager
+from functools import lru_cache
 import threading
 from collections import deque
 from pathlib import Path
@@ -263,19 +265,37 @@ def _setup_prompt_cache(model_id, model, prompt_tokens, cache_config, cache_mana
     return prompt_cache, tokens_to_process, generation_cache
 
 
-def _seedable(factory) -> bool:
-    """Whether the detokenizer ``factory`` builds lets ``reset`` seed ``text``.
+def _seedable(detokenizer) -> bool:
+    """Whether this detokenizer lets ``reset`` seed ``text``.
 
-    The SPM and BPE classes keep ``text`` in a slot, so a seed is one
+    The SPM and BPE classes assign ``text`` in ``reset``, so a seed is one
     assignment. ``NaiveStreamingDetokenizer`` computes ``text`` as a property
     with no setter -- and never trims a leading space, so it needs no seed
     either: seeding it raised AttributeError inside the first next() of
-    every continuation on an mlx-vlm-loaded model (v1.79.64). Unwraps a
-    functools.partial: mlx-lm hands gemma an SPM partial with trim_space off.
+    every continuation on an mlx-vlm-loaded model (v1.79.64). Takes an
+    instance or a class; the question is about the CLASS either way, because
+    an instance's ``text`` reads as the string it currently holds.
     """
-    cls = getattr(factory, "func", factory)
+    cls = detokenizer if isinstance(detokenizer, type) else type(detokenizer)
     attr = getattr(cls, "text", None)
     return not (isinstance(attr, property) and attr.fset is None)
+
+
+@lru_cache(maxsize=None)
+def _seeding_subclass(cls: type) -> type:
+    """``cls`` with a ``reset`` that leaves the sentinel in place.
+
+    A SUBCLASS rather than a patched instance, because the wrapper hands
+    every caller ``copy.copy`` of its prototype: a closure bound to the
+    prototype would seed the prototype while the copy -- the one actually
+    streaming -- stayed empty. A class travels through the copy intact.
+    """
+    def reset(self):
+        cls.reset(self)
+        self.text = "\x00"
+        self.offset = 1
+
+    return type(f"Seeded{cls.__name__}", (cls,), {"reset": reset})
 
 
 @contextmanager
@@ -287,38 +307,33 @@ def continuation_detokenizer(tokenizer, continuing: bool):
     ``_maybe_trim_space`` on an empty buffer). Right for a fresh turn, where
     the space after the role marker is an artifact -- wrong for a continuation,
     where the model's first token completes a prefilled "First I" and the
-    space in " need" is real. ``TokenizerWrapper.detokenizer`` builds a fresh
-    instance per access, and ``stream_generate`` accesses it exactly once
-    and calls ``reset()`` on it, so the class factory is swapped for the
-    duration of one generation (the process-global gate serialises them)
-    with one whose ``reset`` seeds a one-char sentinel into ``text`` and
-    advances ``offset`` past it: every trim test reads a non-empty buffer,
-    every ``last_segment`` starts after the sentinel, and no caller ever
-    sees it. Restored in ``finally`` whatever happens to the generator.
+    space in " need" is real. ``TokenizerWrapper.detokenizer`` hands each
+    caller a ``copy.copy`` of one prebuilt prototype and resets it, so the
+    PROTOTYPE is swapped for the duration of one generation (the
+    process-global gate serialises them) for one whose ``reset`` seeds a
+    one-char sentinel into ``text`` and advances ``offset`` past it: every
+    trim test reads a non-empty buffer, every ``last_segment`` starts after
+    the sentinel, and no caller ever sees it. Restored in ``finally``
+    whatever happens to the generator.
+
+    The prototype is ``_detokenizer``; before mlx-lm's detokenizer refactor
+    it was a CLASS on ``_detokenizer_class``, instantiated per access. A
+    rename is SILENT here by construction -- no attribute means no seeding
+    means the space goes back to being trimmed, with nothing raised -- so
+    the seam-space tests drive the real wrapper, not a stand-in alone.
     """
-    factory_attr = "_detokenizer_class"
-    original = getattr(tokenizer, factory_attr, None)
-    if not continuing or original is None or not _seedable(original):
+    prototype = getattr(tokenizer, "_detokenizer", None)
+    if not continuing or prototype is None or not _seedable(prototype):
         yield
         return
 
-    def seeded(tok):
-        detok = original(tok)
-        base_reset = detok.reset
-
-        def reset():
-            base_reset()
-            detok.text = "\x00"
-            detok.offset = 1
-
-        detok.reset = reset
-        return detok
-
-    setattr(tokenizer, factory_attr, seeded)
+    seeded = copy.copy(prototype)
+    seeded.__class__ = _seeding_subclass(type(prototype))
+    tokenizer._detokenizer = seeded
     try:
         yield
     finally:
-        setattr(tokenizer, factory_attr, original)
+        tokenizer._detokenizer = prototype
 
 
 def generate_text(

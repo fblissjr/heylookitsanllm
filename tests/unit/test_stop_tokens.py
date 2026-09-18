@@ -90,6 +90,14 @@ class _FakeHfTokenizer:
         # mlx-lm (0.32) probes this on the tokenizer CLASS at wrap time.
         return ""
 
+    # TokenizerWrapper builds its detokenizer eagerly since mlx-lm's
+    # detokenizer refactor, and the naive one probes decode/encode.
+    def decode(self, ids, **_kw):
+        return "".join(str(i) for i in ids)
+
+    def encode(self, text, **_kw):
+        return [0]
+
 
 @pytest.mark.unit
 class TestEnsureGenTokenizer:

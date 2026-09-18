@@ -168,7 +168,9 @@ class TestTrimInvariant:
         _, pc = _lookup(mgr, "slot-trim", edited)
         layer = pc.cache[0]
         assert layer.offset == 40
-        keys, _values = layer.state  # state is the offset-trimmed view
+        # `state` carries the whole pre-allocated buffer since mlx-lm #1778;
+        # the offset-trimmed view is keys_and_values().
+        keys, _values = layer.keys_and_values()
         assert keys.shape[2] == 40
 
     def test_full_length_match_trims_before_the_reprocessed_token(self):
@@ -233,16 +235,23 @@ class TestZombieImmunity:
         # later mutation of those objects can reach -- storing live objects
         # (however convenient) reintroduces process-poisoning.
         mgr = get_global_cache_manager()
-        kv = _kv_of_len(16)
+        kv = KVCache()
+        kv.update_and_fetch(mx.ones((1, 2, 16, 4)), mx.ones((1, 2, 16, 4)))
         pc = mgr.get_or_create_cache("zombie", _TinyModel(), STD)
         pc._radix_eligible = True
         store_generation_cache(pc, list(range(16)), [kv])
-        # the zombie writes on: buffer grows, attributes thrash
-        kv.update_and_fetch(mx.zeros((1, 2, 50, 4)), mx.zeros((1, 2, 50, 4)))
-        kv.offset = 3
         slot = mgr._get_slot("zombie")
-        keys, _values = slot.layers[0][0]
-        assert keys.shape[2] == 16  # the capture never moved
+        keys = slot.layers[0][0]
+        before = keys[..., :66, :].tolist()
+
+        # The zombie writes on. Since mlx-lm #1778 `state` hands out the LIVE
+        # pre-allocated buffer, and KVCache allocates 256 slots ahead, so this
+        # write lands IN PLACE -- through every reference that shares it.
+        kv.update_and_fetch(mx.ones((1, 2, 50, 4)) * 7, mx.zeros((1, 2, 50, 4)))
+        kv.offset = 3
+
+        assert keys[..., :66, :].tolist() == before  # the capture never moved
+        assert slot.layers[0][2] == 16               # ... nor its offset
 
 
 @pytest.mark.unit
@@ -304,8 +313,8 @@ except Exception:
 @_pytest.mark.unit
 @_pytest.mark.skipif(not _metal, reason="needs Metal GPU thread-local streams")
 class TestSlotThreadAffinity:
-    """The store path must eval the EXACT arrays it registers. Each .state
-    access builds fresh lazy slice objects, so an implementation that evals
+    """The store path must eval the EXACT arrays it registers. Each capture
+    builds fresh lazy copies, so an implementation that evals
     one capture and stores another ships lazy state -- restored on the next
     request's thread, that is the "There is no Stream(gpu, N)" crash
     (postmortems/radix_thread_affinity.md). This exact split shipped in the
@@ -333,7 +342,7 @@ class TestSlotThreadAffinity:
         slot = mgr._get_slot("affinity")
         assert slot is not None
         arrays = []
-        for state, _meta in slot.layers:
+        for state in slot.layers:
             from heylook_llm.providers.common.prompt_cache import _flat_arrays
             _flat_arrays(state, arrays)
         assert arrays
