@@ -471,21 +471,38 @@ class ModelImporter:
             config["mmproj_path"] = str(mmproj)
         if draft is not None:
             config["draft_model_path"] = str(draft)
-        # spec_type is DELIBERATELY left unset even when a draft sidecar is
-        # paired: whether speculative decoding actually helps is measured
-        # per-model (draft-accept rate varies a lot), so import only pairs
-        # the drafter PATH automatically -- turning spec decode ON via
-        # spec_type stays an explicit owner choice, never inferred here.
+        # spec_type is left unset even when a draft sidecar is paired, and
+        # THAT DOES NOT MEAN SPECULATIVE DECODING IS OFF. This comment claimed
+        # it did until 2026-09-19, and the claim was wrong in both halves:
+        # the provider emits `-md <drafter>` on draft_model_path ALONE
+        # (llama_server_provider._build_args), and llama.cpp then infers the
+        # type from the drafter's own header when no --spec-type was passed
+        # (common/arg.cpp: common_speculative_types_from_gguf -- arch "dflash"
+        # plus a markov_w1.weight tensor reads as draft-dspark, a trailing
+        # blk.N.nextn.eh_proj.weight as draft-mtp). So pairing the PATH is
+        # what turns it on; spec_type only pins WHICH type, and pins it for
+        # the one case inference cannot reach -- a SHARDED drafter, whose
+        # header read sees only the first split.
         #
-        # But WHICH spec type a drafter requires is a fact about the file, not
-        # a choice, and guessing it wrong is a load failure. Report it so the
+        # The consequence for a DISCOVERED model is the one to hold: it gets
+        # a drafter path with no models.toml entry anywhere, so it runs spec
+        # decode with llama.cpp's own spec_draft_* defaults and nothing on
+        # this side says so. The "default OFF for a new model" rule in
+        # CLAUDE.md is about not writing spec_type by hand; it is NOT a
+        # description of what a paired drafter does at spawn. To actually
+        # keep it off, the drafter must not be paired.
+        #
+        # WHICH spec type a drafter requires is a fact about the file, not a
+        # choice, and guessing it wrong is a load failure. Report it so the
         # decision is "do I want this on", not "what is this drafter called".
         if draft is not None:
             spec_type = gguf_metadata.infer_spec_type(draft)
             if spec_type:
                 logging.info(
                     f"[import] {model_id}: paired drafter {draft.name} -- "
-                    f"set spec_type = \"{spec_type}\" to enable speculative decoding"
+                    f"llama.cpp will run {spec_type} speculative decoding from "
+                    f"the drafter's own header; set spec_type = \"{spec_type}\" "
+                    f"to pin it (required only for a sharded drafter)"
                 )
             else:
                 logging.warning(

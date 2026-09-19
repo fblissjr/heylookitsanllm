@@ -57,7 +57,25 @@ from llama-server. Both still reject a system message appearing MID-conversation
 "unsloth's is permissive" is false in general -- try the shape, do not assume it.
 CONTEXT (v1.79.61): `ctx_size` absent = llama-server's `-c 0`, i.e. the model's training context then `--fit` shrinking unset args to device memory -- DeepSeek-V4-Flash got a 1,048,576-token slot that way; the admin row carries `context_length` (GGUF header, the ceiling) and `context_running` (`/props` at ready, what the process GOT), and `POST /v1/admin/models/{id}/reload?ctx_size=N` persists through the ONE config writer then loads (0 = Auto = drop the key; unchanged + resident = plain load, no restart). gguf-only: MLX has no fixed context allocation. always send max_tokens (server default is UNLIMITED); `-np 1` is our choice; MICRO-BATCH IS AUTO (v2.0.13, `n_ubatch` None): the provider sizes the model the way the fit panel does (`ram_fit`, weights + sidecars vs the live Metal working set) and spawns `-ub 2048` only when the headroom clears `ram_fit.THIN_HEADROOM_GB`, else inherits llama-server's 512, logging which -- 2048 is a measured prefill win on dense and MoE at no generation cost, but it is ~7 GiB more compute buffer on DeepSeek V4, and the Vision Q4 at 16 GiB headroom LOADED at 2048 (with `--fit` quietly trimming its context) and then died in its first decode with a Metal OOM that llama's pre-flight (which skips the drafter) never saw; a stored value wins both ways, and raising `iogpu.wired_limit_mb` (`scripts/gpu_wired_limit.sh`, root-only, the ONE lever that enlarges the working set) flips the big models to 2048 by itself. A llama-server error mid-stream is a `data: {"error":...}` FRAME after a 200 -- the adapter raises on it (v2.0.13; before, it was skipped for lacking `choices` and the run ended as a clean zero-token end_turn), and "Compute error." on Metal is almost always the working set running out, so the raised message carries the model's headroom and the sysctl. KV CACHE IS f16 BY DEFAULT and stays so -- `cache_type_k/v` exist for headroom emergencies, not as a default; spec decode
 (`spec_type = "draft-mtp"`) is per-model opt-in and should stay OFF unless you have
-checked it a win on YOUR model at YOUR context. NO PERFORMANCE NUMBERS IN TRACKED DOCS
+checked it a win on YOUR model at YOUR context. BUT `spec_type` IS NOT THE SWITCH, AND
+AN UNSET `spec_type` DOES NOT MEAN SPEC DECODE IS OFF (found 2026-09-19; the importer's
+comment asserted the opposite for a year). `draft_model_path` is the switch: the provider
+emits `-md` on that field ALONE, and llama.cpp infers the type from the DRAFTER'S OWN
+HEADER whenever `--spec-type` is absent (`common_speculative_types_from_gguf`: arch
+`dflash` + a `markov_w1.weight` tensor = draft-dspark, a trailing
+`blk.N.nextn.eh_proj.weight` = draft-mtp). `spec_type` only PINS the type, and is
+strictly required only for a SHARDED DRAFTER, where the header read sees the first split
+alone -- sharding of the TARGET is irrelevant, which is why DeepSeek-V4-Flash (5-shard
+target, single-file dspark sidecar) infers fine. The trap is DISCOVERY: it pairs
+`draft_model_path` automatically and leaves `spec_type` unset ON PURPOSE, so a model with
+an `mtp-`/`dspark-`/`dflash-`/`eagle3-` sidecar beside its weights runs spec decode at
+llama.cpp's own `spec_draft_*` defaults with NO models.toml entry anywhere and nothing on
+this side announcing it. Which models those are is DERIVED, not listed here: walk
+`merge_discovered(data, discover(data))` for a config carrying `draft_model_path`, and
+note that an EMBEDDED MTP head (Qwen3.6) pairs no sidecar, so it gets no `-md` and no spec
+decode at all -- the packaging difference decides it. "Default OFF" describes what we
+WRITE, never what a paired drafter DOES; to actually keep it off, the drafter must not be
+paired. NO PERFORMANCE NUMBERS IN TRACKED DOCS
 -- 2026-08-10 produced a string of figures that were each confidently wrong in turn,
 and the ones that survived were spot OBSERVATIONS, not performance testing: nothing
 controlled for quant version, which llama.cpp produced the quant, build flags, thermal

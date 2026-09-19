@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.44]
+
+### Fixed
+
+- **`spec_type` is not the speculative-decoding switch, and the importer's
+  comment said it was.** The provider emits `-md` on `draft_model_path`
+  alone, and llama.cpp infers the type from the drafter's own GGUF header
+  whenever `--spec-type` is absent (`common_speculative_types_from_gguf`),
+  so a model with a drafter sidecar beside its weights runs speculative
+  decoding whether or not `spec_type` was ever written. That makes it true
+  of DISCOVERED models, which pair the drafter path automatically and leave
+  `spec_type` unset by design -- spec decode at llama.cpp's own
+  `spec_draft_*` defaults, with no models.toml entry anywhere. No behaviour
+  changed here: the comment, the import log line and the CLAUDE.md paragraph
+  now describe what the code has been doing. `spec_type` still PINS the
+  type, and is strictly required only for a sharded drafter, whose header
+  read sees the first split alone.
+
 ## [2.0.43]
 
 ### Changed
