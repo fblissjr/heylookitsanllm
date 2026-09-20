@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.47]
+
+### Fixed
+
+- **Every vision request reported `input_tokens=1`.** The vision path prefills
+  the ENTIRE expanded prompt in the Phase-1 VLM forward -- `input_ids`, with
+  each image placeholder already widened to its hundreds or thousands of real
+  positions -- and then hands `run_generation` a ONE-TOKEN continuation seed,
+  because the KV cache already holds the prompt. mlx-lm reports `prompt.size`
+  on every response it yields, so the seed's 1 is what reached the wire, and
+  `ChunkTelemetry.absorb` keeps the LAST truthy value, so stamping only the
+  first chunk would have been overwritten. `prompt_tps` was wrong the same way
+  and for the same reason -- computed from that same 1 -- so it is now derived
+  from the timed Phase-1 prefill instead. The text path has no such split and
+  was always correct, which is why this was invisible until an image was
+  attached.
+
+  Verified live on `Qwen-Image-2.1-PE-T21-mlx`, and the arithmetic is
+  derivable rather than merely plausible: at `patch_size 16` / `merge_size 2`
+  a 448px image must contribute (448/16)^2/4 = 196 positions and an 896px one
+  784. Measured deltas against the same prompt with no image: exactly 196 and
+  exactly 784.
+
+  The gguf provider is unaffected (llama-server does its own accounting) and
+  so is the diffusion path, which yields `GenerationChunk.from_engine` off
+  mlx-vlm's own stream with no prompt/continuation split.
+
+### Changed
+
+- **mlx-lm pin moved to `36de4967b83ed0b4cb5b530a716284b55f3b1d65`** (upstream
+  main, was `28e9ccd9`, three commits back). Both engine pins now sit on their
+  upstream main. Of the three: gemma3n offset precompute, a mixed-bit
+  quantized load fix for sanitize()-derived MLA projections, and `qwen3.py`
+  accepting transformers-5 nested `rope_parameters`. That last one does NOT
+  reach `qwen3_5`, which is a standalone module and does not import from
+  `qwen3.py` -- worth stating because the names invite the opposite
+  assumption.
+
+### Added
+
+- `tests/smoke/` now checks on the mlx-vlm arm that an image's tokens reach
+  the usage report. Self-calibrating -- the same prompt with and without the
+  image, asserting the image arm is HIGHER -- because a fixed threshold would
+  need a number per model and per projector. It is also the stronger shape
+  here: under the bug the image arm reported 1, i.e. LOWER than the text arm,
+  so a bare `> 1` would have been the weaker check.
+
 ## [2.0.46]
 
 ### Fixed

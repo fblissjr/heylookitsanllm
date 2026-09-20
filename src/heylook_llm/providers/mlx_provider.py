@@ -680,6 +680,7 @@ class VLMVisionStrategy:
         # language model writes KV state directly into request_cache.
         # When cached_image_features is set, the vision tower is skipped
         # inside the model's get_input_embeddings().
+        prefill_tic = time.perf_counter()
         with wired_limit(model, [generation_stream]):
             if input_ids.ndim == 1:
                 input_ids = input_ids[None, :]
@@ -694,6 +695,19 @@ class VLMVisionStrategy:
             first_logprobs = last_logits - mx.logsumexp(last_logits, axis=-1, keepdims=True)
             first_token_id = sampler(first_logprobs).item()
             mx.eval(first_logprobs)
+        prefill_time = time.perf_counter() - prefill_tic
+
+        # THE PROMPT THIS RUN ACTUALLY READ. `input_ids` is the fully expanded
+        # sequence -- each image placeholder already widened to its hundreds or
+        # thousands of real positions -- and the Phase-1 forward above consumed
+        # all of it. Phase 2 is handed a ONE-TOKEN continuation seed (the cache
+        # already holds the prompt), and mlx-lm reports `prompt.size` on EVERY
+        # response it yields, so without this every vision request reported
+        # `prompt_tokens=1` and a `prompt_tps` computed from that same 1. The
+        # text path has no such split and was always right, which is why the
+        # bug was invisible until an image was attached.
+        prompt_token_count = int(input_ids.size)
+        prefill_tps = (prompt_token_count / prefill_time) if prefill_time > 0 else 0.0
 
         # Check abort before yielding
         if abort_event and abort_event.is_set():
@@ -708,11 +722,17 @@ class VLMVisionStrategy:
         yield GenerationChunk(
             text=first_text,
             token=first_token_id,
+            prompt_tokens=prompt_token_count,
+            prompt_tps=prefill_tps,
         )
 
         # Phase 2: Continue generation using the language model wrapper
         # with the pre-filled cache from the VLM forward pass.
-        yield from run_generation(
+        #
+        # Every chunk is re-stamped, not just the first: ChunkTelemetry.absorb
+        # keeps the LAST truthy value for both fields, so a single correct
+        # chunk followed by mlx-lm's own would be overwritten by the seed's 1.
+        for chunk in run_generation(
             model=self._cached_wrapper,
             tokenizer=tokenizer,
             prompt_tokens=[first_token_id],
@@ -721,7 +741,10 @@ class VLMVisionStrategy:
             processors=processors,
             abort_event=abort_event,
             pre_filled_cache=request_cache,
-        )
+        ):
+            chunk.prompt_tokens = prompt_token_count
+            chunk.prompt_tps = prefill_tps
+            yield chunk
 
     def _prepare_vlm_inputs_parallel(self, messages: List, processor, config, model=None,
                                      enable_thinking=None, reasoning_effort=None) -> Tuple[List[Image.Image], str, bool, List[str]]:

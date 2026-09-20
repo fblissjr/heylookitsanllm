@@ -408,7 +408,7 @@ requires-dist = [
     { name = "duckdb", specifier = ">=1.5.5" },
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "mlx", marker = "sys_platform == 'darwin'", specifier = ">=0.32.1" },
-    { name = "mlx-lm", marker = "sys_platform == 'darwin'", git = "https://github.com/ml-explore/mlx-lm?rev=28e9ccd9cb52d1d4a6f674b7914bae2de49d9aad" },
+    { name = "mlx-lm", marker = "sys_platform == 'darwin'", git = "https://github.com/ml-explore/mlx-lm?rev=36de4967b83ed0b4cb5b530a716284b55f3b1d65" },
     { name = "mlx-vlm", marker = "sys_platform == 'darwin'", git = "https://github.com/Blaizzy/mlx-vlm?rev=e79b0e041677ec4ca5333ba750376bb4e8c434cb" },
     { name = "numpy", specifier = ">=2.5.2" },
     { name = "orjson", specifier = ">=3.12.0" },
@@ -732,7 +732,7 @@ wheels = [
 [[package]]
 name = "mlx-lm"
 version = "0.32.0"
-source = { git = "https://github.com/ml-explore/mlx-lm?rev=28e9ccd9cb52d1d4a6f674b7914bae2de49d9aad#28e9ccd9cb52d1d4a6f674b7914bae2de49d9aad" }
+source = { git = "https://github.com/ml-explore/mlx-lm?rev=36de4967b83ed0b4cb5b530a716284b55f3b1d65#36de4967b83ed0b4cb5b530a716284b55f3b1d65" }
 dependencies = [
     { name = "jinja2" },
     { name = "mlx" },

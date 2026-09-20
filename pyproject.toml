@@ -116,7 +116,7 @@ override-dependencies = ["transformers>=5.15.0"]
 # the suite, name the new SHA in CHANGELOG. The pre-commit guard still blocks
 # these by default; committing one is HEYLOOK_ALLOW_CHANNEL_COMMIT=1, so the
 # act stays deliberate. `mlx` itself is a PyPI release, not pinned here.
-mlx-lm = { git = "https://github.com/ml-explore/mlx-lm", rev = "28e9ccd9cb52d1d4a6f674b7914bae2de49d9aad" }
+mlx-lm = { git = "https://github.com/ml-explore/mlx-lm", rev = "36de4967b83ed0b4cb5b530a716284b55f3b1d65" }
 mlx-vlm = { git = "https://github.com/Blaizzy/mlx-vlm", rev = "e79b0e041677ec4ca5333ba750376bb4e8c434cb" }
 
 # ── Pytest ──────────────────────────────────────────────────────────────────

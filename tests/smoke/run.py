@@ -695,6 +695,44 @@ def arm_checks(server, r, arm, model_id, load_timeout):
         r.check(f"{arm}: the reply persisted", bool(assistant_text(conv)),
                 "no assistant content" if conv is not None else "the run never went idle")
 
+        # -- an image's tokens are actually COUNTED ---------------------------
+        # The vision path prefills the whole expanded prompt in ONE forward and
+        # then hands run_generation a one-token continuation seed, so mlx-lm's
+        # own `prompt.size` describes the seed, not the prompt. Every vision
+        # request reported input_tokens=1 until v2.0.47.
+        #
+        # SELF-CALIBRATING on purpose: the same text, with and without the
+        # image, and the image arm must be HIGHER. A fixed threshold would need
+        # a number per model and per projector; the comparison needs neither,
+        # and it is what discriminates -- under the bug the image arm reported
+        # 1, i.e. LOWER than the text arm, so "> 1" alone would have been a
+        # weaker check than the one the bug actually fails.
+        if arm == "mlx-vlm":
+            probe = {"model": model_id, "max_tokens": 4, "stream": False}
+            say_it = {"type": "text", "text": "Reply with one short sentence."}
+            st_t, body_t = call(server, "POST", "/v1/messages",
+                                {**probe, "messages": [{"role": "user", "content": [say_it]}]})
+            st_i, body_i = call(server, "POST", "/v1/messages",
+                                {**probe, "messages": [{"role": "user", "content": [
+                                    say_it,
+                                    {"type": "image", "source": {
+                                        "type": "base64", "media_type": "image/png",
+                                        "data": base64.b64encode(SMOKE_PNG).decode()}},
+                                ]}]})
+            if st_t != 200 or st_i != 200:
+                r.skip(f"{arm}: an image's tokens reach the usage report",
+                       f"probe did not answer 200 (text={st_t} image={st_i})")
+            else:
+                text_in = (body_t.get("usage") or {}).get("input_tokens")
+                img_in = (body_i.get("usage") or {}).get("input_tokens")
+                r.check(f"{arm}: an image's tokens reach the usage report",
+                        isinstance(text_in, int) and isinstance(img_in, int)
+                        and img_in > text_in,
+                        f"same prompt, +1 image: input_tokens went {text_in} -> {img_in}. "
+                        f"An image is one placeholder in the text render but hundreds "
+                        f"of positions in input_ids; if the image arm is not higher, "
+                        f"the expansion is not being counted.")
+
         # -- THE walk-away check --------------------------------------------
         # Disconnect mid-stream. The run must DETACH and commit the WHOLE
         # answer. The discriminating comparison is against the prefix WE saw:
