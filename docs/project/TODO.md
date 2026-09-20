@@ -6,7 +6,8 @@ Cross-session task backlog organized by priority.
 docs-twins entry added 2026-08-31 without a full backlog pass; iOS keyboard
 entry added 2026-09-05 and corrected 2026-09-08 to match the harness's own
 header; frontend/backend state-boundary section and the E2E chat-suite failure
-added 2026-09-08*
+added 2026-09-08; chat-template-version entry added 2026-09-20 without a full
+backlog pass*
 
 ## Retire per-model entries from models.toml (2026-09-08) — START HERE
 
@@ -331,6 +332,34 @@ wrapper in `utils.js`. Backend suite green; `bun run e2e:render` green.
   modes and both routes under one rule. `generation_tps` stopped being
   synthesized, `queue_wait_ms` stopped hiding a measured zero, and
   `total_duration_ms` was retired for having two origins.
+
+## A checkout's bundled chat template is a VERSION (2026-09-20)
+
+Found while tracing "the system prompt is being ignored". Not urgent -- the
+one affected model has a local override -- but the failure mode is silent and
+will recur with the next download.
+
+mlx-vlm wraps system content in BLOCK form for every `LIST_WITH_*` format, so
+a template whose system branch is string-only renders a Python repr of the
+prompt into the model's context. `google_gemma-4-31B-it-mlx-mxfp8` ships such
+a template (`{{ messages[0]['content'] | trim }}`); the other seven gemma-4
+dirs here ship the canonical Google one (published 2026-07-09) which branches
+on `is string` / `is sequence`. Same base model, same family, different
+template version -- so "gemma-4 works" is a claim about a CHECKOUT, not a
+model. It hits text turns too, not just vision: an mlx-vlm-routed model
+renders through `vlm_apply_chat_template` on both paths.
+
+Worked around with `chat_template.heylook.jinja` in that model's folder
+(untracked, no config write, revert = delete the file).
+
+- [ ] Consider a LOAD-TIME check: render a probe message with block-form
+  system content and warn if the output contains `{'type':` . Cheap, catches
+  the whole class, and needs no per-model knowledge. The alternative --
+  noticing that a model has quietly been reading a Python repr of its own
+  system prompt -- is not something the current surfaces would ever show.
+- [ ] Decide whether `render_prompt`'s preview should surface it instead (it
+  would have made this visible immediately, since the preview shows the
+  rendered prompt).
 
 ## Batch + rlm MODEL_BUSY, OUT OF SCOPE by owner decision (2026-08-31)
 
