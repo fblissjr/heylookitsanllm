@@ -66,7 +66,7 @@ subprocess -- one API, one UI, per-model engine choice.
   the quant publisher; `chat_template_path` overrides both, and
   `use_sidecar_chat_template = false` keeps the embedded one without deleting
   the file. Every spawn logs which of the three it used. An
-  omitted `max_tokens` gets a 4096 default (an explicit value always wins);
+  omitted `max_tokens` gets a 16384 default (an explicit value always wins);
   llama-server's own "unlimited" default is never passed through.
 - **Telemetry is off by default** (`observability_level`, settable via
   `PUT /v1/admin/config`); raising it writes JSONL under `logs/`, local files

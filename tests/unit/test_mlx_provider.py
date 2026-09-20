@@ -184,7 +184,7 @@ class TestApplyModelDefaults:
         )
         effective = mock_mlx_provider._apply_model_defaults(req)
         assert effective["temperature"] == GLOBAL_SAMPLER_FLOOR["temperature"]  # global floor
-        assert effective["max_tokens"] == 4096
+        assert effective["max_tokens"] == GLOBAL_SAMPLER_FLOOR["max_tokens"]
 
     def test_request_overrides_defaults(self, mock_mlx_provider):
         req = ChatRequest(

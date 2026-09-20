@@ -589,7 +589,7 @@ class TestPayload:
         p = make_provider()
         payload = p._build_payload(req())
         assert payload["temperature"] == GLOBAL_SAMPLER_FLOOR["temperature"]
-        assert payload["max_tokens"] == 4096  # llama default is UNLIMITED; must always send
+        assert payload["max_tokens"] == GLOBAL_SAMPLER_FLOOR["max_tokens"]  # llama default is UNLIMITED; must always send
         assert payload["stream"] is True
         assert payload["stream_options"] == {"include_usage": True}
         assert payload["messages"] == [{"role": "user", "content": "hi"}]
@@ -609,7 +609,7 @@ class TestPayload:
         # Deleting this resurrects the dead-overlay bug (code-review
         # 2026-07-26): the floor pre-seeds max_tokens, so a guarded
         # "if not in merged" write could never fire and a model-level
-        # max_tokens silently fell back to 4096.
+        # max_tokens silently fell back to the floor.
         p = make_provider(max_tokens=8000)
         payload = p._build_payload(req())
         assert payload["max_tokens"] == 8000

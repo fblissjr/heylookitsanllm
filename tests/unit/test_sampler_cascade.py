@@ -85,7 +85,7 @@ class TestResolveEffectiveSampling:
 
         merged = resolve_effective_sampling(self._req(), {})
         assert merged["temperature"] == GLOBAL_SAMPLER_FLOOR["temperature"]
-        assert merged["max_tokens"] == 4096
+        assert merged["max_tokens"] == GLOBAL_SAMPLER_FLOOR["max_tokens"]
 
     def test_vendor_overlay_beats_floor(self):
         from heylook_llm.samplers import resolve_effective_sampling

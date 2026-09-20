@@ -819,7 +819,7 @@ class DiffusionStrategy:
             input_ids = input_ids[None, :]
 
         # Checkpoint defaults unless the CALLER set the knob. effective_request
-        # carries the AR sampler floor (temperature 0.7, max_tokens 4096),
+        # carries the AR sampler floor (its temperature and max_tokens),
         # which would silently override the checkpoint's own schedule and
         # 256-token canvas -- so read the raw request instead. max_tokens=0
         # makes the engine fall back to generation_config.max_new_tokens.

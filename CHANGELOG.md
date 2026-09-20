@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.45]
+
+### Changed
+
+- **`DEFAULT_MAX_TOKENS` is 16384, up from 4096.** The floor's max_tokens is
+  a safety stop, not a preference -- llama-server's own `n_predict` default is
+  UNLIMITED -- and 4096 was cutting long answers off mid-sentence on requests
+  that named no cap. Provider-agnostic by construction: both engines take the
+  value from the one `GLOBAL_SAMPLER_FLOOR`, so nothing per-provider changed.
+  An explicit request value or a models.toml `max_tokens` still wins.
+
 ## [2.0.44]
 
 ### Fixed

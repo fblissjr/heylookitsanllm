@@ -136,7 +136,7 @@ Do not put it in `models.toml`.)
 | `loader` | `auto`\|`mlx-vlm`\|`mlx-lm` | `auto` | Engine routing (within `provider="mlx"`). `auto`: mlx-vlm iff the model declares vision AND mlx-vlm registers its `model_type`, else mlx-lm (degrades only on positive non-support). Explicit forces the engine (e.g. run a dual-capable VLM as text via `mlx-lm`). |
 | `vision` | bool | `false` | **Derived mirror** of `"vision" in modalities`, retained for back-compat. Setting it seeds `modalities` when `modalities` is omitted; if both are set, `modalities` wins. Load routing goes through `loader`/`effective_loader`, not this flag. |
 | `context_length` | int (`gt=0`), none | none = read config.json | The model's context window when `config.json` does not tell the truth (a YaRN-scaled checkpoint ships the ORIGINAL `max_position_embeddings` with the factor in `rope_scaling`). Absent = `capabilities.model_context_length` reads the file. Read once at load into `MLXProvider.context_length`, the number `run_generation` refuses an over-length prompt against and the admin row / `/v1/models` report; requires a reload. MLX only -- gguf's window is what the process was spawned with (`ctx_size`). |
-| `max_tokens` | int | none | Default maximum tokens to generate. Unset falls through the effective-request cascade to `GLOBAL_SAMPLER_FLOOR['max_tokens']` (4096) -- see below. |
+| `max_tokens` | int | none | Default maximum tokens to generate. Unset falls through the effective-request cascade to `GLOBAL_SAMPLER_FLOOR['max_tokens']` (16384) -- see below. |
 | `temperature` | float | none | Default sampling temperature. Unset falls through to the cascade (0.7 floor). |
 | `top_p` | float | none | Nucleus sampling threshold |
 | `top_k` | int | none | Top-k sampling |
@@ -192,7 +192,7 @@ fallback only where all three are silent.
      that are an OPINION about sampling (v1.79.60 owner ruling: low
      temperature flattens generative prose; 0.7/1.0 before that, 0.1/512
      before that). They apply ONLY where the model's metadata is silent.
-   - `DEFAULT_MAX_TOKENS = 4096` -- not taste. llama-server's `n_predict`
+   - `DEFAULT_MAX_TOKENS = 16384` -- not taste. llama-server's `n_predict`
      default is UNLIMITED, so a request naming no cap runs to the end of the
      context. A stop, not a preference.
    - `KNOBS_OFF` (`top_k 0`, `min_p 0.0`, `repetition_penalty 1.0`,

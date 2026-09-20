@@ -259,7 +259,7 @@ documented on that route that are about the ENGINES rather than the wire still h
 - **Server-side defaults**: when the request and the model config are both silent, the cascade
   answers with the model's OWN published settings (generation_config.json on MLX, the GGUF header's
   `general.sampling.*` on gguf), and only where those are silent too with a two-value fallback
-  (`temperature 1.0, top_p 0.95`) plus a `max_tokens 4096` stop. Named sampler bundles and
+  (`temperature 1.0, top_p 0.95`) plus a `max_tokens 16384` stop. Named sampler bundles and
   `default_sampler` were removed in v2.0.30. The UI's null-means-cascade settings contract is
   unchanged -- and `sampler_defaults` on the admin row is what a blank field should PRINT.
 - **Thinking default.** Since v1.79.62 an omitted `thinking` resolves through the cascade

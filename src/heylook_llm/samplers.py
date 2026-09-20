@@ -41,7 +41,7 @@ FALLBACK_TOP_P = 0.95
 
 # NOT taste. llama-server's own `n_predict` default is UNLIMITED, so a request
 # naming no cap generates until the context runs out. A stop, not a preference.
-DEFAULT_MAX_TOKENS = 4096
+DEFAULT_MAX_TOKENS = 16384
 
 # Each of these means "this knob is OFF", not "we prefer this value" -- and
 # they are load-bearing for a reason that is easy to miss: the ENGINE's own
