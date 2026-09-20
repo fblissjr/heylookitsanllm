@@ -117,7 +117,7 @@ override-dependencies = ["transformers>=5.15.0"]
 # these by default; committing one is HEYLOOK_ALLOW_CHANNEL_COMMIT=1, so the
 # act stays deliberate. `mlx` itself is a PyPI release, not pinned here.
 mlx-lm = { git = "https://github.com/ml-explore/mlx-lm", rev = "28e9ccd9cb52d1d4a6f674b7914bae2de49d9aad" }
-mlx-vlm = { git = "https://github.com/Blaizzy/mlx-vlm", rev = "10db092733a416439fce874cd96a7835b700f43d" }
+mlx-vlm = { git = "https://github.com/Blaizzy/mlx-vlm", rev = "e79b0e041677ec4ca5333ba750376bb4e8c434cb" }
 
 # ── Pytest ──────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]

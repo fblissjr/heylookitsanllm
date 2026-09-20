@@ -257,7 +257,7 @@ function renderEditor(ctx) {
 // only what is genuinely this page's: which api function to call, and the
 // pre-create guard below.
 function putSystemPrompt(ctx, docId, value, opts) {
-  ctx.state.docWriter.putSystemPrompt(docId, value, opts);
+  return ctx.state.docWriter.putSystemPrompt(docId, value, opts);
 }
 
 // GENUINELY duplicated with chat.js (both written in the same commit, not

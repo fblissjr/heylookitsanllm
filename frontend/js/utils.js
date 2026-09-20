@@ -175,8 +175,14 @@ export function debounce(fn, ms) {
     clearTimeout(timer);
     timer = setTimeout(() => { timer = null; fn(...args); }, ms);
   };
+  // Returns whatever `fn` returns, so a caller that must SETTLE the write
+  // before acting on the server's copy (chat's Send, which generates from the
+  // stored document) can await it. Nothing pending is a no-op -> undefined.
   wrapped.flush = (...args) => {
-    if (timer !== null) { clearTimeout(timer); timer = null; fn(...args); }
+    if (timer === null) return undefined;
+    clearTimeout(timer);
+    timer = null;
+    return fn(...args);
   };
   wrapped.cancel = () => { clearTimeout(timer); timer = null; };
   return wrapped;

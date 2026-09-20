@@ -25,6 +25,9 @@ export function createDocumentWriter({ update, onError }) {
       const put = () => update(docId, { system_prompt: value }, { keepalive });
       const next = keepalive ? put() : (chain ?? Promise.resolve()).then(put);
       chain = next.catch((err) => onError(`System prompt save failed: ${err.message}`));
+      // Handed back so a caller can AWAIT the write. Already `.catch`ed, so it
+      // settles rather than rejecting -- a failed save must not stop a send.
+      return chain;
     },
 
     // Stamp which preset this document is RUNNING. Deliberately not chained

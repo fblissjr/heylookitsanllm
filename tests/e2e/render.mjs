@@ -3306,6 +3306,46 @@ async function main() {
       assert(out.after.join(',') === 'one,two', `writes landed as ${out.after.join(',')}`);
     });
 
+    await suite.check('a prompt flush can be AWAITED before a generation reads the store', async () => {
+      // chat's Send generates from the STORED document, so it flushes the
+      // pending writes first. That only means anything if the flush hands
+      // back the write: a flush returning undefined resolves instantly and
+      // the generation still races the PUT. The params binder has returned
+      // its promise since the 2026-08-13 review finding; the prompt did not.
+      const out = await md.evaluate(async (b) => {
+        const { createPromptSection } = await import(`${b}/js/prompt-section.js`);
+        let settlePersist;
+        const persisted = [];
+        const ctx = { onTeardown: () => {}, onHide: () => () => {} };
+        const section = createPromptSection(ctx, {
+          owner: () => 'd1',
+          get: () => '',
+          set: () => {},
+          persist: (v) => {
+            persisted.push(v);
+            return new Promise((r) => { settlePersist = r; });
+          },
+        });
+        const input = section.element.querySelector('textarea');
+        input.value = 'edited just before Send';
+        input.dispatchEvent(new Event('input'));
+
+        let settled = false;
+        const awaited = Promise.resolve(section.flush()).then(() => { settled = true; });
+        // Give any already-resolved promise every chance to settle.
+        await new Promise((r) => setTimeout(r, 0));
+        const settledBeforeWrite = settled;
+        settlePersist?.();
+        await awaited;
+        return { settledBeforeWrite, settledAfter: settled, persisted };
+      }, base);
+      assert(out.persisted.join(',') === 'edited just before Send',
+        `flush persisted ${JSON.stringify(out.persisted)}`);
+      assert(out.settledBeforeWrite === false,
+        'flush() settled before the write landed -- Send would race the PUT and the turn would run on the previous prompt');
+      assert(out.settledAfter === true, 'flush() never settled once the write landed');
+    });
+
     await md.close();
 
     // ---- clone is not double-fired ---------------------------------------

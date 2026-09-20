@@ -878,7 +878,7 @@ function currentCaps(ctx) {
 // only what is genuinely this page's: which api function to call, and the
 // pre-create guard below.
 function putSystemPrompt(ctx, docId, value, opts) {
-  ctx.state.docWriter.putSystemPrompt(docId, value, opts);
+  return ctx.state.docWriter.putSystemPrompt(docId, value, opts);
 }
 
 // GENUINELY duplicated with notebook.js (both written in the same commit, not
@@ -3083,13 +3083,21 @@ function startStream(ctx, opts = {}) {
       handleStreamError(ctx, stream, err);
     },
   });
-  // Flush the pending params PUT, then launch (usually an instant resolve).
+  // Flush the pending document PUTs, then launch (usually an instant resolve).
+  // BOTH of them: this route builds the request FROM THE STORE, so anything
+  // still sitting in a debounce window is a field the generation will not see.
+  // The params half has been here since the 2026-08-13 review finding (reset
+  // temperature + fast Send generated at the stored value); the system prompt
+  // is the same shape and was missed -- edit the prompt, Send inside the 400ms
+  // window, and the turn runs on the PREVIOUS prompt with nothing on screen
+  // saying so. allSettled because a failed save must not swallow the send;
+  // the writers report their own errors.
   // Guarded: a teardown/switch during the flush must not launch a stream
   // for a page state that no longer exists.
-  Promise.resolve(s.paramsBinder?.flush?.()).then(
-    () => { if (ctx.alive && s.stream === stream) launch(); },
-    () => { if (ctx.alive && s.stream === stream) launch(); },
-  );
+  Promise.allSettled([
+    Promise.resolve(s.paramsBinder?.flush?.()),
+    Promise.resolve(s.promptSection?.flush?.()),
+  ]).then(() => { if (ctx.alive && s.stream === stream) launch(); });
 }
 
 // Throttled painter (one per mount, created in setup): renders only the

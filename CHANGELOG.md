@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.46]
+
+### Fixed
+
+- **Send did not flush the pending system-prompt write.** Chat generates from
+  the STORED conversation, so a prompt edited inside the 400ms debounce window
+  ran the turn on the PREVIOUS prompt with nothing on screen saying so. The
+  sampler half of this has been guarded since the 2026-08-13 review finding
+  (reset temperature + fast Send generated at the stored value); the prompt is
+  the same shape and was missed. `startStream` now waits on both writes. That
+  required making the flush awaitable end to end -- `debounce.flush` returns
+  its function's value, `createDocumentWriter.putSystemPrompt` hands back its
+  (already-caught) chain, and both pages' adapters return it. The one that
+  actually bites is `prompt-section`'s debounced body: it had a block body and
+  DROPPED the promise, so the flush settled instantly and the await meant
+  nothing -- the new e2e check was red against the first version of this fix
+  for exactly that reason.
+
+### Changed
+
+- **mlx-vlm pin moved to `e79b0e041677ec4ca5333ba750376bb4e8c434cb`** (upstream
+  main, was `10db0927`, ten commits back). Nothing in those commits touches
+  `prompt_utils.py` or the `qwen3_5` path; they are llada_image (new),
+  moondream2/3, qwen3_vl + qwen3_vl_moe language, lfm2_vl and the mlx-vlm
+  server. Backend suite green, `e2e:render` 97/97. mlx-lm is three commits
+  behind its own upstream and was deliberately left alone.
+
+### Notes
+
+- A local template override (`chat_template.heylook.jinja`, untracked) was
+  installed for one gemma-4 checkout whose bundled template renders the FIRST
+  system turn as `{{ messages[0]['content'] | trim }}`. mlx-vlm wraps system
+  content in block form for the `LIST_WITH_*` formats, so that template
+  stringified the list and the model received a Python repr of its own system
+  prompt -- on every turn, text or vision, not just when an image is attached.
+  The canonical Google template (published 2026-07-09) branches on
+  `is string` / `is sequence` and renders it correctly. Worth knowing
+  generally: a checkout's bundled template is a version, and two quants of the
+  same model do not necessarily carry the same one.
+
 ## [2.0.45]
 
 ### Changed

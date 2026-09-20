@@ -55,11 +55,14 @@ export function createPromptSection(ctx, adapter) {
   // focus (drawer close via Escape/hashchange): a removed textarea never
   // fires `change`, and a preset saved in that window captured
   // system_prompt=null, so applying it later erased the prompt outright.
-  const schedulePersist = debounce((value, opts) => {
+  // RETURNS the persist's promise (adapter.persist returns one), so a flush
+  // is awaitable all the way down -- see flush() below. A block body that
+  // dropped it made the flush settle instantly and the await meaningless.
+  const schedulePersist = debounce((value, opts) => (
     // null: a pre-create draft, or -- for a reused instance -- no document
     // loaded yet. State rides along until something gives it a home.
-    if (builtFor != null) adapter.persist(value, builtFor, opts);
-  }, 400);
+    builtFor != null ? adapter.persist(value, builtFor, opts) : undefined
+  ), 400);
 
   const currentValue = () => normalize(input.value);
 
@@ -104,8 +107,11 @@ export function createPromptSection(ctx, adapter) {
     schedulePersist.cancel();
   }
 
+  // Returns the pending persist's promise (undefined when nothing is
+  // pending), so a caller that reads the document back from the server right
+  // after -- chat's Send -- can wait for it.
   function flush(opts) {
-    schedulePersist.flush(currentValue(), opts);
+    return schedulePersist.flush(currentValue(), opts);
   }
 
   // On teardown FLUSH, never cancel: navigating away within the debounce
