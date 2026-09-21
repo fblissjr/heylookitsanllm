@@ -167,7 +167,7 @@ The sampling and KV caching logic are ported directly from `mlx-lm`.
 
 ## 3. Known Issues and Trade-offs
 
-*   **Logits processors do not see the PROMPT on the vision path**: mlx-lm's token history starts from the one-token prompt it is handed, so a presence/repetition penalty counts only generated tokens there, while the text path counts the prompt too. (The older first-token asymmetry -- the strategy sampling token one itself, with no stop check or processors -- was removed in v2.0.55.)
+*   **A penalty counts generated tokens only, on every MLX path (v2.0.60, `generation_core.generated_only`)**. mlx-lm hands a processor whatever prompt IT prefilled plus the reply, which used to make the scope an accident of the path: whole prompt on a cold text request, the uncached suffix on a prompt-cache hit, nothing but the reply on an image request. The wrapper records the history length at the first processor call -- all prompt, since nothing is generated yet -- and slices it off thereafter, so it needs no token count and holds for the normal loop, the speculative loop and the vision path alike. gguf is NOT aligned and cannot be by request: llama.cpp's server feeds prompt tokens to its sampler and penalises over a recent-token window. (The older first-token asymmetry -- the strategy sampling token one itself, with no stop check or processors -- was removed in v2.0.55.)
 
 *   **No radix cache for vision**: Vision requests skip the radix-tree prompt cache because the pre-filled KV cache includes vision embeddings that can't be represented as token sequences. Each vision request does a full VLM forward pass.
 

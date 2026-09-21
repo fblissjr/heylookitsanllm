@@ -426,6 +426,16 @@ wire in v1.79.49 because it controlled nothing: Messages returns telemetry
 unconditionally in both modes. Sending it is harmless — unknown fields are
 ignored, not rejected — but it does nothing, and it never did.)
 
+`presence_penalty` and `repetition_penalty` **do not count the same tokens on
+the two engines**, and no request field can make them agree. On MLX (since
+v2.0.60) a penalty sees only what THIS reply has generated -- never the
+prompt, the system prompt or earlier turns -- which is what vendor-documented
+values assume. On gguf the engine is llama.cpp: its server feeds every prompt
+token into the sampler's history and penalises over a recent-token window, so
+the TAIL of your prompt is counted along with the reply. A value tuned on one
+engine will not behave identically on the other; on gguf in particular a long
+final user message is inside the window.
+
 `reasoning_effort` values are **model-specific** and the schema accepts the
 union of every model's set, so a wrong-for-this-model value reaches the
 template and comes back as a 500. Gate it on the `reasoning_effort`

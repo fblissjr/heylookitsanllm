@@ -162,7 +162,7 @@ class TestTheStrategyHandsMlxLmTheLastPromptToken:
 
     IMAGE_TOKEN = 99
 
-    def _drive(self, monkeypatch, ids, *, continuing=False, context_length=None):
+    def _drive(self, monkeypatch, ids, *, continuing=False, context_length=None, events=None):
         from contextlib import nullcontext
         from types import SimpleNamespace
 
@@ -182,9 +182,12 @@ class TestTheStrategyHandsMlxLmTheLastPromptToken:
         monkeypatch.setattr(mp, "make_prompt_cache", lambda m: [_Cache()])
         monkeypatch.setattr(mp, "wrap_language_model", lambda m: m.language_model)
         monkeypatch.setattr(mp, "wired_limit", lambda *a, **k: nullcontext())
-        prefilled = {}
-        monkeypatch.setattr(mp, "_prefill_language_model",
-                            lambda *a, **k: prefilled.update(k) or True)
+        def fake_prefill(*a, **k):
+            if events is not None:
+                events.append("prefill")
+            return True
+
+        monkeypatch.setattr(mp, "_prefill_language_model", fake_prefill)
 
         strategy = mp.VLMVisionStrategy(model_id="m", context_length=context_length)
         monkeypatch.setattr(strategy, "_prepare_vlm_inputs_parallel",
@@ -220,3 +223,32 @@ class TestTheStrategyHandsMlxLmTheLastPromptToken:
         from heylook_llm.providers.base import InvalidGenerationRequest
         with pytest.raises(InvalidGenerationRequest, match="context"):
             self._drive(monkeypatch, [5, 6, 7, 8], context_length=3)
+
+
+@pytest.mark.parametrize("prompt_len", [1, 3, 40])
+def test_a_penalty_sees_the_reply_and_never_the_prompt(prompt_len):
+    """The SAME reply must reach a processor the same way whatever mlx-lm
+    happened to prefill: one prompt token (the vision path), an uncached
+    suffix (a prompt-cache hit) or the whole prompt (a cold text request).
+    Before v2.0.60 those were three different penalty histories."""
+    from heylook_llm.providers.common.generation_core import generated_only
+
+    seen = []
+    (scoped,) = generated_only([lambda tokens, logits: seen.append(tokens.tolist()) or logits])
+
+    prompt, reply = list(range(100, 100 + prompt_len)), [7, 8, 9]
+    for n in range(len(reply) + 1):          # call n samples reply token n
+        scoped(mx.array(prompt + reply[:n]), mx.zeros((1, 16)))
+    assert seen == [[], [7], [7, 8], [7, 8, 9]]
+    assert generated_only([]) == [] and generated_only(None) is None
+
+
+def test_an_image_requests_peak_memory_includes_its_prefill(monkeypatch):
+    """The reset belongs BEFORE the prefill, once. It used to run inside
+    run_generation -- after the prefill -- so an image request reported the
+    peak of its decode and none of the prompt that usually dominates it."""
+    events = []
+    monkeypatch.setattr(mp.mx, "reset_peak_memory", lambda: events.append("reset"))
+    TestTheStrategyHandsMlxLmTheLastPromptToken()._drive(
+        monkeypatch, [5, 6, 7, 8], events=events)
+    assert events == ["reset", "prefill"]

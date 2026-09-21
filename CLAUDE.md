@@ -644,6 +644,23 @@ in git history; a contract test pins that `/v2` stays 404.)
   the match is exact, multi-chunk included. Continuation with image history was
   never an mlx-vlm limit: `vlm_apply_chat_template` always took
   `continue_final_message` and the strategy did not pass it.
+- A PENALTY COUNTS GENERATED TOKENS ONLY ON MLX (v2.0.60, owner decision),
+  enforced in ONE place: `run_generation` wraps every logits processor in
+  `generation_core.generated_only`. mlx-lm hands a processor whatever prompt
+  tokens IT prefilled plus the reply, so the scope used to be an accident of the
+  path -- the whole prompt (system prompt, earlier turns, their end-of-turn
+  tokens) on a cold text request, only the uncached suffix on a prompt-cache
+  hit, nothing but the reply on an image request -- and the same request could
+  sample differently depending on what ran before it. The wrapper assumes NO
+  token count: at the first processor call nothing has been generated, so the
+  history's length there IS the prompt part; it is recorded once and sliced off
+  every call, which is why it holds for the normal loop, the speculative loop,
+  a cache hit and the vision path without knowing which is running. A processor
+  added later gets this for free; one called BARE (a test, a script) penalises
+  whatever it is handed. gguf is NOT aligned and cannot be by request --
+  llama.cpp's server feeds every prompt token to its sampler and penalises over
+  a recent-token window -- so `presence_penalty` is not the same knob on the
+  two engines, and a value tuned on one does not transfer.
 - A PREVIEW THAT CANNOT SHOW MEDIA MUST SAY SO. `render_prompt` on MLX goes
   through the TEXT strategy (images stripped), so the preview is the text
   template alone. `PromptPreviewResponse.unrendered_media` (sent, not shown)

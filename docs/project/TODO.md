@@ -391,16 +391,23 @@ Verified by token parity against `mlx_vlm.generate.ar.generate_step`
   never affected (its mask does not reach attention). A parity-probe run of
   the OLD commit on gemma-4 would size it: expect a real divergence, not the
   one-quantum near-ties the qwen baseline showed.
-- [ ] **Logits processors do not see the PROMPT on the vision path.** mlx-lm's
-  token history starts from the one-token prompt it is handed, so a
-  presence/repetition penalty counts only generated tokens there, while the
-  text path counts the prompt too. Pre-existing (the old path had the same
-  shape) and not fixed in v2.0.55. Worth doing only if a penalty is observed to
-  behave differently with an image attached; the fix is to seed the processors'
-  history, not to change the prefill.
-- [ ] `mx.reset_peak_memory()` runs inside `run_generation`, i.e. AFTER the
-  vision prefill, so an image request's reported peak excludes its prefill.
-  Pre-existing; one line to move once someone wants the number.
+- [x] **Penalty scope differed by path** -- CLOSED v2.0.60, and not the way
+  this item first proposed. It was filed as "processors do not see the prompt
+  on the vision path", with seeding the prompt as the fix. Reading mlx-lm
+  showed the scope was an accident on EVERY path (whole prompt on a cold text
+  request, the uncached suffix on a prompt-cache hit, reply-only on vision), so
+  "make vision match text" would have spread the variant that penalises
+  end-of-turn tokens and a system prompt's vocabulary. Owner chose generated
+  tokens only, everywhere (`generation_core.generated_only`).
+- [x] `mx.reset_peak_memory()` ran after the vision prefill -- CLOSED v2.0.60;
+  the strategy resets before its prefill and `run_generation` no longer resets
+  again for a pre-filled cache.
+- [ ] **gguf penalties still count the tail of the prompt, and cannot be made
+  not to by request.** llama.cpp's server accepts every prompt token into the
+  sampler and penalises over its recent-token window (read in `coderef/`, not
+  measured). So `presence_penalty` is not the same knob on the two engines.
+  Documented in `docs/api_integration.md`; nothing to build unless upstream
+  grows a generated-only switch.
 
 ## Batch + rlm MODEL_BUSY, OUT OF SCOPE by owner decision (2026-08-31)
 

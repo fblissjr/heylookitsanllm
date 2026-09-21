@@ -396,7 +396,12 @@ class TestGenerateText:
         # Verify the built sampler was passed through to lm_stream_generate
         call_kwargs = mock_gen.call_args
         assert call_kwargs.kwargs['sampler'] is mock_sampler
-        assert call_kwargs.kwargs['logits_processors'] is mock_processors
+        # The built processor is the one that runs, SCOPED to generated tokens
+        # (v2.0.60): at its first call the whole history is prompt, so it is
+        # handed none of it.
+        (scoped,) = call_kwargs.kwargs['logits_processors']
+        scoped([11, 12, 13], "LOGITS")
+        mock_processors[0].assert_called_once_with([], "LOGITS")
 
     def test_forwards_draft_model(self, mock_mlx):
         from heylook_llm.providers.common.generation_core import generate_text

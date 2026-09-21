@@ -699,6 +699,12 @@ class VLMVisionStrategy:
         tokenizer = getattr(processor, "tokenizer", processor)
         sampler, processors = build_sampler(tokenizer, effective_request)
 
+        # Per-request peak-memory scoping, and it has to start HERE: image
+        # encoding and the prefill below are part of this request, and
+        # run_generation deliberately does not reset again for a pre-filled
+        # cache.
+        mx.reset_peak_memory()
+
         # Initialize batch vision processor for parallel image loading
         if self._batch_vision_processor is None:
             self._batch_vision_processor = BatchVisionProcessor(max_workers=4)

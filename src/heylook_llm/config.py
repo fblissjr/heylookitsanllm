@@ -520,7 +520,9 @@ class MLXModelConfig(BaseModel):
         description=(
             "Per-model repetition penalty over the recent token window. Off "
             "by default; reach for it on a model that loops. Not a vendor-"
-            "layer key, so unset means off rather than the publisher's value."),
+            "layer key, so unset means off rather than the publisher's value. "
+            "Counts only tokens THIS reply has generated, never the prompt "
+            "(v2.0.60) -- see presence_penalty."),
         json_schema_extra={"effect": EFFECT_PER_REQUEST,
                            "engines": ENGINES_MLX})
     presence_penalty: Optional[float] = Field(
@@ -529,7 +531,12 @@ class MLXModelConfig(BaseModel):
             "Per-model presence penalty. Off by default since v2.0.32, when "
             "the automatic thinking overlay that applied 1.5 to every "
             "thinking model was removed -- this field is how you ask for that "
-            "behaviour back on one model."),
+            "behaviour back on one model. Counts only tokens THIS reply has "
+            "generated (v2.0.60). Before that it depended on the path: a text "
+            "request penalised its whole prompt -- system prompt, earlier "
+            "turns and their end-of-turn tokens -- a prompt-cache hit only the "
+            "uncached suffix, an image request only the reply. gguf differs by "
+            "engine design: llama.cpp also counts the tail of the prompt."),
         json_schema_extra={"effect": EFFECT_PER_REQUEST,
                            "engines": ENGINES_MLX})
     # None = AUTO (6a derive-at-load): resolved at model load from actual
@@ -1385,7 +1392,11 @@ class GGUFModelConfig(BaseModel):
             "that applied 1.5 to every thinking model on both engines: MLX "
             "could already be tuned per model, gguf could not, and removing "
             "the global without leaving this lever would have been a "
-            "capability loss rather than a simplification."),
+            "capability loss rather than a simplification. llama.cpp "
+            "penalises over a recent-token window that INCLUDES the tail of "
+            "the prompt (its server feeds prompt tokens to the sampler), so "
+            "the same value is not equivalent to MLX, which counts only the "
+            "reply."),
         json_schema_extra={"effect": EFFECT_PER_REQUEST, "engines": [ENGINE_GGUF]})
     # Model-level default thinking DEPTH, mirroring the MLX config's field of
     # the same name. Reaches llama-server as a chat_template_kwargs entry, so

@@ -298,6 +298,49 @@ def _seeding_subclass(cls: type) -> type:
     return type(f"Seeded{cls.__name__}", (cls,), {"reset": reset})
 
 
+def generated_only(processors):
+    """Scope logits processors to the tokens THIS reply has generated.
+
+    mlx-lm hands a processor ``(tokens, logits)`` where ``tokens`` is every
+    prompt token mlx-lm ITSELF prefilled plus what it has generated. How much
+    prompt that is was an accident of the path, so until v2.0.60 a presence or
+    repetition penalty meant three different things on MLX:
+
+    - text request, cold cache: the WHOLE prompt -- system prompt, every
+      earlier turn, their end-of-turn tokens;
+    - text request that hit the prompt cache: only the uncached suffix, so the
+      same request sampled differently depending on what ran before it;
+    - image request: nothing but the reply, because the vision strategy
+      prefills the prompt itself and mlx-lm only ever sees its last token.
+
+    One rule now (owner decision 2026-09-21): generated tokens only. It is what
+    vendor-documented penalty values assume, it cannot depend on cache state,
+    and a long fixed system prompt no longer penalises most of the vocabulary
+    the answer needs.
+
+    No token COUNT is assumed, which is what makes it hold for the normal loop,
+    the speculative loop, a cache hit and the vision path alike: at the first
+    processor call nothing has been generated yet, so the history's length
+    there IS the prompt part. It is recorded once and sliced off every call.
+    Per generation by construction -- the closure is built inside
+    ``run_generation`` -- and an empty slice is fine: both penalty processors
+    return the logits untouched for an empty history.
+    """
+    if not processors:
+        return processors
+    prompt_len: int | None = None
+
+    def scope(processor):
+        def scoped(tokens, logits):
+            nonlocal prompt_len
+            if prompt_len is None:
+                prompt_len = len(tokens)
+            return processor(tokens[prompt_len:], logits)
+        return scoped
+
+    return [scope(p) for p in processors]
+
+
 @contextmanager
 def continuation_detokenizer(tokenizer, continuing: bool):
     """Keep the FIRST token's leading space when ``continuing`` (v1.79.64).
@@ -524,8 +567,13 @@ def run_generation(
     cached_count = len(prompt_tokens) - len(tokens_to_process)
 
     # Scope peak memory to this request so API can report per-request peak
-    # (not carry-over from a prior request's high-water mark).
-    mx.reset_peak_memory()
+    # (not carry-over from a prior request's high-water mark). With a
+    # pre-filled cache the REQUEST started earlier -- the vision strategy reset
+    # the peak before its own prefill, which is usually where an image request
+    # peaks (the whole expanded prompt, vision tower included). Resetting again
+    # here would report only the decode that follows, as it did until v2.0.60.
+    if pre_filled_cache is None:
+        mx.reset_peak_memory()
 
     # Snapshot server-wide KV cache byte total once at start; cheap enough to
     # attach to the first token so the streaming API picks it up via getattr.
@@ -549,7 +597,7 @@ def run_generation(
                 tokenizer=tokenizer,
                 prompt=tokens_to_process,
                 sampler=sampler,
-                logits_processors=processors,
+                logits_processors=generated_only(processors),
                 max_tokens=effective_request['max_tokens'],
                 draft_model=draft_model,
                 num_draft_tokens=num_draft_tokens,

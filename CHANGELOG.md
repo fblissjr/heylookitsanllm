@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.60]
+
+### Changed
+
+- **On MLX a presence or repetition penalty now counts only the tokens the
+  reply has generated -- never the prompt (owner decision).** What it counted
+  before was an accident of the path, because mlx-lm hands a logits processor
+  whatever prompt tokens it prefilled ITSELF plus the reply:
+
+  - a text request on a cold cache penalised the whole prompt: the system
+    prompt, every earlier turn, and their end-of-turn tokens;
+  - a text request that hit the prompt cache penalised only the uncached
+    suffix, so the same request could sample differently depending on what had
+    run before it;
+  - an image request penalised nothing but the reply, since the vision strategy
+    prefills the prompt itself.
+
+  This started as a narrower item -- "processors do not see the prompt on the
+  vision path", to be fixed by seeding it -- and reading mlx-lm turned it
+  around: matching vision to the cold text path would have spread the variant
+  that penalises stop tokens and, on a long fixed system prompt, most of the
+  vocabulary an answer needs. `generation_core.generated_only` wraps every
+  processor inside `run_generation`. It assumes no token count: at the first
+  processor call nothing has been generated, so the history's length there is
+  the prompt part, recorded once and sliced off thereafter. That is what makes
+  it hold for the normal loop, the speculative loop, a cache hit and the vision
+  path alike.
+
+  Dormant unless a penalty is set -- the sampler floor has both off and
+  `models.toml` sets neither -- but when one IS set, text-path output changes.
+  Checked on `Qwen3.5-0.8B` (text path, greedy, presence 1.5): output differs
+  from the old whole-prompt scope, matches a hand-built generated-only scope
+  exactly, is stable on repeat, and ends on its stop token in every arm. The
+  vision parity probe is unaffected (penalties off) and still exact.
+
+  **gguf is not aligned and cannot be by request.** llama.cpp's server feeds
+  every prompt token into its sampler and penalises over a recent-token window
+  (read in the llama.cpp source, not measured here), so the tail of the prompt
+  is counted there. `presence_penalty` is therefore not the same knob on the
+  two engines; `docs/api_integration.md` and both config field descriptions now
+  say so.
+
+### Fixed
+
+- **An image request's reported peak memory includes its prefill.**
+  `mx.reset_peak_memory()` ran inside `run_generation`, which for the vision
+  path is AFTER the image encode and the prompt prefill -- usually where such a
+  request peaks -- so the reported figure covered the decode alone. The vision
+  strategy now resets before its prefill and `run_generation` does not reset
+  again for a pre-filled cache.
+
 ## [2.0.59]
 
 ### Documentation
