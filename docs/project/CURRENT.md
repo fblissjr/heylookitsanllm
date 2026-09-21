@@ -1,55 +1,89 @@
 # Current Work
 
-**2026-09-21, branch `refactor/vision-prefill` (v2.0.53 - v2.0.59), NOT merged,
-NOT pushed.** Everything below this entry predates it and was not refreshed.
+Last updated: 2026-09-21, v2.0.62, `main`.
 
-What the branch does, in the order it was committed: moves the mlx-lm /
-mlx-vlm pins to current upstream; adds `scripts/vlm_parity_probe.py`; makes the
-MLX vision path prefill the way mlx-vlm's own loop does and hand mlx-lm the
-last prompt token (first token now gets the stop check, processors, exact
-`max_tokens`; image requests get `prefill_step_size`, prefill progress and
-mid-prefill cancel; no attention mask reaches the language model); gives routes
-ONE reasoning-parser factory; removes server-side batch inference; collapses
-MLX chat-template rendering to one function and deletes its silent fallbacks.
+This file is STATUS: what is verified, what is open, where to start. Mechanisms
+live in `CLAUDE.md`, the backlog in [TODO.md](./TODO.md), and what each release
+did in `CHANGELOG.md` -- which is the only narrative for the span between the
+history sections below (they stop at v1.79.78) and today. That span was never
+written up here and is not reconstructed.
 
-Verified: backend suite green at every commit; token parity with mlx-vlm's
-`generate_step` exact on Qwen3.5-0.8B, Qwen-Image-2.1-PE-I21, Qwen3.5-27B-8bit
-and Qwen3-VL-32B (single and multi-chunk); rendered prompts byte-identical
-across every served MLX model before/after the renderer change; `tests/smoke/`
-green on the mlx-lm and mlx-vlm arms; live checks on an isolated server.
+## Verification state
 
-NOT covered, named rather than passed over: **gemma-4 vision** (owner: another
-time -- its output changed on this branch unverified, and the old path ran
-non-causal attention there; see `TODO.md` "MLX vision prefill"); the **gguf
-smoke arm** was not re-run (no gguf provider code changed, only prose and the
-RLM loop it already used); `marked` is one patch release behind per
-`scripts/vendor_frontend.py --check` (frontend untouched here).
+Only what was actually run, and when. A suite not re-run is listed as such
+rather than carried forward as green.
 
-Before merging: decide whether to run the parity probe on gemma-4 first.
+| Suite | Result | As of |
+|---|---|---|
+| unit + contract | green | v2.0.61 |
+| `bun run e2e:render` (model-free) | green | v2.0.61, against `marked` 18.0.13 |
+| `tests/smoke/` mlx-lm arm | green; thinking depth and nested image source UNCOVERED on that arm's model | v2.0.59 |
+| `tests/smoke/` mlx-vlm arm | green, incl. the image-token usage check; thinking depth UNCOVERED | v2.0.59 |
+| `scripts/vlm_parity_probe.py` | exact token parity with mlx-vlm's `generate_step` on Qwen3.5-0.8B, Qwen-Image-2.1-PE-I21, Qwen3.5-27B-8bit, Qwen3-VL-32B; single- and multi-chunk prefill | v2.0.55; 0.8B re-run at v2.0.60 |
+| `tests/smoke/` gguf arm | NOT RE-RUN. Last recorded green at v1.79.43 | -- |
+| `bun run e2e` (chat + pages) | NOT RE-RUN. Last recorded at v1.79.78, when `e2e:chat` had behavioural failures open (see History). Its state today is UNKNOWN | -- |
+| `bun run e2e:ios` | see `TODO.md` and the harness's own header | -- |
+
+The standing uncovered mechanism is thinking DEPTH on both MLX arms: the only
+served MLX model advertising `reasoning_effort` is too large to be a smoke
+model.
+
+## Handoff -- start here
+
+1. **The backlog's own START HERE is untouched:** retiring per-model entries
+   from `models.toml` ([plan_registry_sidecars.md](./plan_registry_sidecars.md)).
+   Phase 0 (`served_diff`) has not started and nothing else in that plan may
+   start first. Two open questions must be decided before Phase 2.
+2. **gemma-4 vision is unverified on the v2.0.55 prefill path**, by owner
+   decision ("another time"). Its output changed with nothing having checked
+   it, and the path it replaced ran non-causal attention on gemma-4. The probe
+   to run and why gemma-4 is the interesting family: `TODO.md`, "MLX vision
+   prefill". Do not cite a gemma-4 vision observation from before v2.0.55
+   without that caveat.
+3. **`bun run e2e` needs a run before anyone cites it.** Many releases have
+   touched chat since its last recorded state. It spawns its own server and
+   loads a real model, so it is an explicit-ask run, not a routine one.
+4. **Penalties are not the same knob on the two engines** (v2.0.60): MLX counts
+   generated tokens only, llama.cpp also counts the tail of the prompt, and no
+   request field aligns them. Documented, nothing to build.
+
+Known-stale elsewhere: every section under History describes the repo as of
+its own version. Two claims in the previous top of this file were checked on
+2026-09-21 and found false, and are gone rather than corrected: that `uv.lock`
+is deliberately left dirty (the engine pins have been COMMITTED since
+2026-09-05 and the file is clean), and that the contract suite cannot run while
+a server holds the default database (it has isolated its own database at
+import time since v1.79.54 -- `tests/contract/conftest.py` -- so it never opens
+the real one).
+
+## What landed 2026-09-21 (v2.0.51 - v2.0.62)
+
+Started from one question -- why Save & Continue refused conversations with an
+image on MLX -- and followed what that path turned up.
+
+- Save & Continue with image history on MLX; `/v1/messages` files a mid-thought
+  resume as thinking.
+- mlx-lm / mlx-vlm pins moved to current upstream.
+- The vision path prefills the way mlx-vlm's own loop does and hands mlx-lm the
+  last prompt token. The first generated token now gets the stop check, the
+  logits processors, an exact `max_tokens` and the streaming detokenizer; image
+  requests get `prefill_step_size`, prefill progress and mid-prefill cancel; no
+  attention mask reaches the language model.
+- Routes take their reasoning parser from one factory.
+- Server-side batch inference removed (MLX-only; gguf never had one). RLM's
+  `llm_query_batched` is a sequential loop.
+- One MLX chat-template renderer; its silent fallback prompts are gone.
+- Penalties count generated tokens only on MLX; an image request's reported
+  peak memory includes its prefill.
+- Vendored `marked` updated.
 
 ---
 
-Last updated: 2026-09-06. v1.79.78 on the `frontend` branch.
+# History
 
-**Verification state, as of the last commit:**
+Not refreshed. Each section is accurate as of the version in its heading.
 
-| Suite | Result | When |
-|---|---|---|
-| unit + contract | 1859 passed | at v1.79.76 |
-| `bun run e2e:render` (model-free) | 106/106 | at v1.79.76 |
-| `tests/smoke/` mlx-lm arm | 26/26, 3 UNCOVERED | at `a274682` |
-| `tests/smoke/` mlx-vlm arm | 31/31, 2 UNCOVERED | at `a274682` |
-| `tests/smoke/` gguf arm | 30/30 on each of two models | at v1.79.43 |
-| `bun run e2e` | 76/76 (chat 48, pages 28) | at v1.79.78 |
-| `bun run e2e` mlx-lm arm | 42/42, 6 skipped | at v1.79.78 |
-| `bun run e2e:ios` | 3/7 UNCOVERED -- keyboard never opens | first run, v1.79.78 |
-
-NOTE ON RUNNING THE SUITE LOCALLY: `tests/contract/` opens the real
-`data/conversations.duckdb` and DuckDB takes an exclusive lock, so every
-contract test errors in setup while any server is running against the default
-DB. That is not a regression -- run them with an isolated
-`HEYLOOK_DB_PATH`, which needs an unsandboxed invocation (an env-var prefix
-does not match the sandbox's `uv run` exemption).
+## Handoff as it stood at v1.79.78 (SUPERSEDED -- kept for its e2e:chat diagnosis)
 
 HANDOFF (next session start here): two things are open; neither blocks work.
 

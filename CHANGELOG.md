@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.62]
+
+### Documentation
+
+- **`docs/project/CURRENT.md` refreshed from the repo as it is, not edited as
+  prose.** Its top still described v1.79.78 on another branch. The
+  verification table now lists only what was actually run and when, and says
+  NOT RE-RUN where that is the truth -- the gguf smoke arm and the full browser
+  `e2e` are both listed that way rather than carried forward as green. The
+  handoff is derived from `TODO.md`'s own START HERE plus what this day's work
+  left open. Everything older sits under a History heading, unrefreshed and
+  labelled so; the previous handoff is kept there for its `e2e:chat` diagnosis.
+
+  Two claims in the old top were checked and removed rather than corrected:
+  that `uv.lock` is deliberately left dirty (the engine pins have been
+  committed since 2026-09-05; the file is clean), and that the contract suite
+  cannot run while a server holds the default database (it has isolated its own
+  database at import time since v1.79.54).
+
+  The span between the history sections and today was never narrated in that
+  file and is not reconstructed; `CHANGELOG.md` is its record.
+
 ## [2.0.61]
 
 ### Changed
