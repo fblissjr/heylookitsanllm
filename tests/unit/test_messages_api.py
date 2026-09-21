@@ -733,3 +733,40 @@ class TestStopReasonHasOneMapper:
             for ln in src.splitlines()
             if ln.startswith(("from ", "    to_stop_reason", "import "))
         ), f"{path} calls to_stop_reason without importing it"
+
+
+class TestRoutesGetTheirParserFromOneFactory:
+    """No route selects a reasoning parser by hand.
+
+    Same class of defect as the stop-reason one above, and it shipped the same
+    way: `/v1/messages` and the generate route each assembled
+    `select_reasoning_parser`'s flags themselves, and until v2.0.52 the first
+    left `resumes_thinking` out -- an MLX mid-thought resume came back as a
+    text block with the closing marker showing, on one route only, with every
+    per-route test green. `parser_factory_for` reads every input off the
+    request the provider was handed, so a route cannot forget one.
+
+    Parsed, not grepped, for the reason spelled out above: the defect is a
+    CALL, and a comment or a docstring naming the function is not one.
+    """
+
+    def _calls(self, path):
+        import ast
+        tree = ast.parse(path.read_text())
+        return {
+            (node.func.id if isinstance(node.func, ast.Name) else node.func.attr)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, (ast.Name, ast.Attribute))
+        }
+
+    def test_no_route_module_calls_the_selector_directly(self):
+        src = _REPO_ROOT / "src" / "heylook_llm"
+        routes = sorted(src.glob("*_api.py")) + [src / "rlm.py"]
+        assert routes, "no route modules found -- the glob is wrong, not the code"
+        offenders = [p.name for p in routes if "select_reasoning_parser" in self._calls(p)]
+        assert offenders == []
+
+    def test_both_inference_routes_build_the_factory(self):
+        src = _REPO_ROOT / "src" / "heylook_llm"
+        for name in ("messages_api.py", "conversation_generate_api.py"):
+            assert "parser_factory_for" in self._calls(src / name), name

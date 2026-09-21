@@ -46,7 +46,8 @@ from heylook_llm.schema.content_blocks import ImageBlock
 from heylook_llm.reasoning_parser import (
     merge_presplit_thinking,
     parse_reasoning,
-    select_reasoning_parser,
+    PassThroughParser,
+    parser_factory_for,
 )
 from heylook_llm.thinking_parser import HybridThinkingParser
 
@@ -367,10 +368,10 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
     }
 
     # Resolved ONCE, here, where the converted ChatRequest still exists: the
-    # provider is the only honest source for "was this prompt built with
-    # thinking on", and the handlers below only carry the MessageCreateRequest
-    # (whose raw `thinking` field is missing the whole sampler layer).
-    thinking_enabled = provider.effective_thinking(chat_request) if provider else False
+    # handlers below only carry the MessageCreateRequest (whose raw `thinking`
+    # field is missing the whole sampler layer), so they are handed a parser
+    # FACTORY rather than the facts to build one from.
+    make_parser = parser_factory_for(provider, chat_request)
 
     if msg_request.stream:
         # Tracking lives INSIDE the async generator, not here: the response
@@ -378,7 +379,7 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
         # would unregister before a single token was produced.
         return StreamingResponse(
             tracked_stream(
-                _stream_messages(generator, msg_request, request_id, http_request=request, provider=provider, perf_ctx=perf_ctx, abort_event=abort_event, thinking_enabled=thinking_enabled, continuing=chat_request.is_continuation(), resumes_thinking=chat_request.resumes_thinking()),
+                _stream_messages(generator, msg_request, request_id, http_request=request, provider=provider, perf_ctx=perf_ctx, abort_event=abort_event, make_parser=make_parser),
                 request_id, abort_event),
             media_type="text/event-stream",
             headers={"X-Request-ID": request_id},
@@ -391,9 +392,7 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
         with track_request(request_id, abort_event):
             result = await _non_stream_messages(
                 generator, msg_request, request_id, request_start_time, perf_ctx=perf_ctx,
-                provider=provider, thinking_enabled=thinking_enabled,
-                continuing=chat_request.is_continuation(),
-                resumes_thinking=chat_request.resumes_thinking(),
+                provider=provider, make_parser=make_parser,
                 abort_event=abort_event,
             )
         # Echo the id the server actually tracked. This is the one path DELETE
@@ -420,13 +419,10 @@ async def _non_stream_messages(
     request_start_time: float,
     perf_ctx: dict | None = None,
     provider=None,
-    thinking_enabled: bool = False,
-    continuing: bool = False,
-    # The one continuation that starts INSIDE the thinking block (the final
-    # assistant message carries thinking and no content). Without it the
-    # parser starts in content state and files the resumed trace as text,
-    # closing marker and all -- MLX only, since gguf's split is llama-server's.
-    resumes_thinking: bool = False,
+    # Zero-arg parser factory from `parser_factory_for` (the route builds it
+    # where the ChatRequest exists). The default is the neutral one -- no
+    # provider facts means nothing to split on -- not a second way to select.
+    make_parser=PassThroughParser,
     abort_event=None,
 ) -> MessageResponse:
     """Consume the provider generator and build a MessageResponse."""
@@ -458,19 +454,7 @@ async def _non_stream_messages(
 
     # Parse thinking with the model's format-aware parser (harmony channels,
     # gemma channels, or <think> markers -- one selection for every route)
-    content_text, thinking = parse_reasoning(
-        full_text,
-        select_reasoning_parser(
-            provider.template_info() if provider else None,
-            thinking_enabled=thinking_enabled,
-            continuing=continuing,
-            resumes_thinking=resumes_thinking,
-            # Read off the request, not threaded as a kwarg: both handlers
-            # already carry msg_request, and a second spelling of a request
-            # field is a place for it to drift.
-            strip_specials=True,
-        ),
-    )
+    content_text, thinking = parse_reasoning(full_text, make_parser())
 
     thinking = merge_presplit_thinking(pre_thinking_parts, thinking)
 
@@ -578,26 +562,17 @@ async def _stream_messages(
     provider=None,
     perf_ctx: dict | None = None,
     abort_event=None,
-    thinking_enabled: bool = False,
-    continuing: bool = False,
-    # The one continuation that starts INSIDE the thinking block (the final
-    # assistant message carries thinking and no content). Without it the
-    # parser starts in content state and files the resumed trace as text,
-    # closing marker and all -- MLX only, since gguf's split is llama-server's.
-    resumes_thinking: bool = False,
+    # Zero-arg parser factory from `parser_factory_for` (the route builds it
+    # where the ChatRequest exists). The default is the neutral one -- no
+    # provider facts means nothing to split on -- not a second way to select.
+    make_parser=PassThroughParser,
 ) -> AsyncGenerator[str, None]:
     """Async SSE generator using StreamingEventTranslator."""
     message_id = f"msg_{uuid.uuid4().hex[:16]}"
     model = msg_request.model or "unknown"
     translator = StreamingEventTranslator(
         message_id, model,
-        thinking_parser=select_reasoning_parser(
-            provider.template_info() if provider else None,
-            thinking_enabled=thinking_enabled,
-            continuing=continuing,
-            resumes_thinking=resumes_thinking,
-            strip_specials=True,
-        ),
+        thinking_parser=make_parser(),
     )
 
     # Resolve abort event from provider (if MLX provider with abort support)

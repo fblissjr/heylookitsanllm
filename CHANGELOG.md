@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.56]
+
+### Changed
+
+- **Routes get their reasoning parser from one factory,
+  `reasoning_parser.parser_factory_for(provider, chat_request)`.** It reads
+  every input off the request the provider was handed -- the effective thinking
+  flag, `is_continuation()`, `resumes_thinking()` -- and returns a zero-argument
+  callable. `/v1/messages` and the conversation generate route used to thread
+  those as three kwargs through their handlers into four
+  `select_reasoning_parser` calls, which is how v2.0.52's bug existed: one route
+  left one out. The generate route also re-derived `continuing` from its DB row
+  rather than asking the request; it now asks the request, which is the thing
+  the provider acts on. A factory rather than a parser because parsers are
+  stateful and the generate route builds two (the streamed split, then a fresh
+  one over the accumulated text for the row it persists).
+
+  `select_reasoning_parser`'s own signature is unchanged. A structural test
+  (AST, in the style of `TestStopReasonHasOneMapper`) asserts no route module
+  calls it directly. No wire change.
+
 ## [2.0.55]
 
 ### Changed

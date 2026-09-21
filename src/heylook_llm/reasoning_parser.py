@@ -611,6 +611,44 @@ def select_reasoning_parser(
     return StripSpecials(parser, strip_tokens) if (strip_tokens and strip_specials) else parser
 
 
+def parser_factory_for(provider: Any, chat_request: Any):
+    """A zero-argument parser factory for ONE request -- the only way a route
+    gets a reasoning parser.
+
+    Everything the selection depends on is a fact about the request the
+    PROVIDER was handed, so it is read off that request here, once: the
+    effective thinking flag (``provider.effective_thinking``, the provider
+    being the only honest source for "was this prompt built with thinking on"),
+    ``is_continuation()`` and ``resumes_thinking()``. Routes used to thread
+    those as three separate kwargs through their handlers into four
+    ``select_reasoning_parser`` calls, and one route simply left one out: until
+    v2.0.52 ``/v1/messages`` never passed ``resumes_thinking``, so an MLX
+    mid-thought resume came back as a text block with the closing marker
+    showing, while the generate route -- same grammar, same translator -- was
+    fine. The generate route, for its part, re-derived ``continuing`` from its
+    DB row instead of asking the request.
+
+    A FACTORY, not a parser: parsers are stateful, and the generate route needs
+    two built identically (the streamed split, then a fresh one over the
+    accumulated text for the row it persists).
+
+    ``provider`` may be None (shutdown paths): pass-through, thinking off.
+    """
+    template_info = provider.template_info() if provider is not None else None
+    thinking_enabled = (
+        provider.effective_thinking(chat_request) if provider is not None else False)
+    continuing = chat_request.is_continuation()
+    resumes_thinking = chat_request.resumes_thinking()
+
+    def make_parser() -> ReasoningParser:
+        return select_reasoning_parser(
+            template_info, thinking_enabled=thinking_enabled,
+            continuing=continuing, resumes_thinking=resumes_thinking,
+            strip_specials=True)
+
+    return make_parser
+
+
 def parse_reasoning(
     text: str, parser: ReasoningParser
 ) -> tuple[str, str | None]:

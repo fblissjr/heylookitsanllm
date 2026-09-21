@@ -22,7 +22,9 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from heylook_llm.perf_collector import PerfCollector
-from heylook_llm.reasoning_parser import _compile_strip_pattern, select_reasoning_parser
+from heylook_llm.config import ChatRequest
+from heylook_llm.reasoning_parser import (
+    _compile_strip_pattern, parser_factory_for, select_reasoning_parser)
 from heylook_llm.schema.messages import MessageCreateRequest
 
 from _fake_chunk import fake_chunk as _chunk
@@ -47,6 +49,13 @@ def _msg_request():
     return MessageCreateRequest(model="m", messages=[{"role": "user", "content": "x"}])
 
 
+def _factory(provider):
+    """What the route hands its handlers: built from the provider and the
+    converted request, never from the provider's load-time parser."""
+    return parser_factory_for(provider, ChatRequest.model_validate(
+        {"model": "m", "messages": [{"role": "user", "content": "x"}]}))
+
+
 class TestStreamingUsesPerRequestParser:
     def _run(self, provider):
         from heylook_llm.messages_api import _stream_messages
@@ -60,6 +69,7 @@ class TestStreamingUsesPerRequestParser:
                 async for part in _stream_messages(
                     gen(), _msg_request(), "req-parser-1",
                     http_request=None, provider=provider,
+                    make_parser=_factory(provider),
                 )
             ]
 
@@ -90,6 +100,7 @@ class TestNonStreamingUsesPerRequestParser:
             response = asyncio.run(_non_stream_messages(
                 gen(), _msg_request(), "req-parser-2",
                 request_start_time=time.time(), provider=provider,
+                make_parser=_factory(provider),
             ))
 
         assert provider._reasoning_parser.process_chunk.call_count == 0
