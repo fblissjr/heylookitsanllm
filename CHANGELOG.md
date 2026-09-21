@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.50]
+
+### Fixed
+
+- **A wrong SPELLING of a live `/v1/messages` field is now a 422 instead of a
+  silent drop.** `enable_thinking`, `max_new_tokens` and `system_prompt` are
+  refused with the right name (`thinking`, `max_tokens`, `system`). Pydantic's
+  default `extra` policy is *ignore*, so each of these was dropped without a
+  word and the request answered a normal 200 carrying the cascade default --
+  the client asked for a control that exists under another name and was told
+  nothing.
+
+  Worse than the retired-field guards beside it, which refuse things that are
+  genuinely gone: here the capability is right there. Reported by a client
+  author who found `enable_thinking` is not a wire field only by reading the
+  live schema, and whose own observation is the reason this needed a guard
+  rather than documentation -- IT IS THE ONE FAILURE A TEST CANNOT EASILY
+  CATCH, BECAUSE THE REQUEST SUCCEEDS. A green integration suite is exactly
+  what a client in this state sees.
+
+  Each spelling is a habit with an origin, which is why they are named
+  individually rather than reached by `extra="forbid"`: `max_new_tokens` is
+  transformers' spelling and is what Qwen's own reference runners use,
+  `enable_thinking` is heylook's INTERNAL name (models.toml, the provider
+  configs, `chat_template_kwargs`), and `system_prompt` is what the preset
+  store calls it. A blanket forbid would additionally 422 an Anthropic SDK
+  sending fields this server simply does not implement, which is a different
+  and less useful failure.
+
+  The refusal names the correct spelling: telling a client its field is
+  invalid without saying what to send leaves it as stuck as the silent drop
+  did. Tested through the ROUTE, per the v1.79.74 scar -- a model-level test
+  passes whether or not any route binds the model it tests -- and run red
+  against the guard disabled.
+
 ## [2.0.49]
 
 ### Changed

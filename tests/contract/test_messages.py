@@ -339,3 +339,42 @@ def test_retired_request_fields_are_refused_not_ignored(client):
     r = client.post("/v1/messages", json={**body, "show_special_tokens": False})
     assert r.status_code != 422, \
         "show_special_tokens=false was refused, but it requests current behaviour"
+
+
+def test_internal_spellings_are_refused_not_silently_dropped(client):
+    """A WRONG SPELLING of a live field must 422, not be dropped.
+
+    Distinct from the retired-field guard above: nothing here was removed.
+    The capability exists under another name, so the silent drop is worse --
+    the client asked for a control that is present, got a normal 200, and
+    received the cascade default. There is no error and no hint anywhere.
+
+    Route-level for the same reason the sibling test is, and this one had a
+    second reason to be: it was reported by a client author (2026-09-20) who
+    only discovered `enable_thinking` is not a wire field by reading the live
+    schema, and whose own note was that this is the one failure a test cannot
+    easily catch, BECAUSE THE REQUEST SUCCEEDS. A green integration suite is
+    exactly what a client in this state sees.
+
+    Each spelling is a habit with an origin: `max_new_tokens` is transformers'
+    and is what Qwen's own reference runners use, `enable_thinking` is
+    heylook's internal name (models.toml, provider configs,
+    chat_template_kwargs), `system_prompt` is what the preset store calls it.
+    """
+    body = {"model": "m", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 8}
+    for wrong, right, value in (("enable_thinking", "thinking", True),
+                                ("max_new_tokens", "max_tokens", 256),
+                                ("system_prompt", "system", "be brief")):
+        r = client.post("/v1/messages", json={**body, wrong: value})
+        assert r.status_code == 422, f"{wrong} was accepted: {r.status_code}"
+        # The refusal has to NAME THE RIGHT SPELLING. Telling a client its
+        # field is invalid without saying what to send instead leaves it
+        # exactly as stuck as the silent drop did.
+        assert right in r.text, \
+            f"the {wrong} refusal does not name `{right}`: {r.text[:200]}"
+
+    # The correct spellings must still be accepted -- a guard that refuses the
+    # real field name would be a far worse bug than the one it fixes.
+    r = client.post("/v1/messages", json={
+        **body, "thinking": True, "system": "be brief"})
+    assert r.status_code != 422, f"correct spellings were refused: {r.text[:200]}"

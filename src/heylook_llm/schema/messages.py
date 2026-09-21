@@ -154,6 +154,38 @@ class MessageCreateRequest(BaseModel):
                 "sending false (or omitting it) is what this server does. See "
                 "docs/project/TODO.md for the design a correct version would take"
             )
+        # WRONG SPELLINGS of fields this wire really has. Not removals -- the
+        # capability is right here under another name -- which makes the silent
+        # drop worse than the removals above: the client asked for a control
+        # that exists, got a normal 200, and quietly received the cascade
+        # default instead. Found 2026-09-20 by a client author who had to read
+        # the live schema to discover `enable_thinking` is not a wire field;
+        # their note was that this is the one failure a test cannot easily
+        # catch, because the request SUCCEEDS.
+        #
+        # Each of these is a habit with an obvious origin, which is why they
+        # are worth naming rather than left to `extra="forbid"`: `max_new_tokens`
+        # is transformers' spelling and is what Qwen's own reference runners
+        # use, `enable_thinking` is heylook's INTERNAL name (models.toml, the
+        # provider configs, chat_template_kwargs), and `system_prompt` is what
+        # the preset store calls it. A blanket forbid would also 422 an
+        # Anthropic SDK sending fields we simply do not implement, which is a
+        # different and less helpful failure.
+        renamed = {
+            "enable_thinking": "thinking",
+            "max_new_tokens": "max_tokens",
+            "system_prompt": "system",
+        }
+        misspelt = [(k, v) for k, v in renamed.items() if k in data]
+        if misspelt:
+            raise ValueError(
+                "; ".join(
+                    f"`{k}` is not a field on this API -- send `{v}` instead "
+                    f"(`{k}` is the internal/config spelling, and pydantic would "
+                    f"otherwise DROP it silently and answer with the default)"
+                    for k, v in misspelt
+                )
+            )
         if "preset" in data or "sampler" in data:
             raise ValueError(
                 "named sampler bundles were removed in v2.0.30 -- send the "
