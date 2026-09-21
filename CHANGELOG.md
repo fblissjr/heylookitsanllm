@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.53]
+
+### Changed
+
+- **mlx-lm pin moved to `c69d1288440a0dc4e6401fc417098b07598dccd5`** and
+  **mlx-vlm to `b1a85530931b119fe0a6b2f6843e303023269f1d`** (both upstream
+  `main`, each a descendant of the previous pin). mlx-lm's only change is in
+  `evaluate.py`, which the server does not import. mlx-vlm adds model families
+  and server-side code the server does not use; the one change in a module it
+  does import is `prompt_utils.extract_text_from_content` accepting an
+  `output_text` item. `generate/ar.py`, `generate/common.py` and the qwen3_5 /
+  qwen3_vl model code are byte-identical across the move, which matters because
+  the vision prefill work that follows on this branch mirrors that loop.
+
 ## [2.0.52]
 
 ### Fixed
