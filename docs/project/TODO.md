@@ -710,6 +710,41 @@ open; each names what would settle it.
   same bank were clean. Related: the streaming_utils quarantine
   warnings. Needs its own investigation (candidate mitigations: detect
   the fault signature and refuse-with-restart-hint; py-spy needs sudo).
+- [ ] **`prefill_step_size` / `vision_tokens` are unmeasured** (P3, raised
+  2026-09-20): both are `per_request`, so trying either costs no reload, and
+  both are the plausible levers on a PREFILL-BOUND workload -- a long fixed
+  system prompt with a short answer, which is what the Qwen-Image prompt
+  encoders are. Nothing here has measured either at any value. `vision_tokens`
+  applies to the image-to-image encoder only; the text-to-image one takes no
+  image. Measure with the usual controls: match
+  prompt length, cache state, sampling and seed across arms, never at temp 0,
+  and keep the numbers out of tracked docs.
+
+  Do NOT reach for the prompt cache instead. On these models (`model_type:
+  qwen3_5`) it is blocked twice over: `_mrope_reuse_safe` gates the family
+  explicitly, and underneath that the slot stores the last generation, so a
+  new request is a TRIM -- which qwen3_5 refuses, because its `make_cache`
+  returns `ArraysCache` for the linear GDN layers and that inherits
+  `is_trimmable() -> False`. Lifting the gate alone buys nothing. Owner call
+  2026-09-20: leave prompt caching alone.
+
+- [ ] **`max_loaded_models`: keep it or force 1?** (P3, raised 2026-09-20,
+  priced and NOT done): the question was whether to remove the field so the
+  server only ever holds one model. Removal deletes less than it looks --
+  eviction and pinning are fully LIVE at 1 (a second model's request calls
+  `_evict_lru_model`, and `_pinned` is the only thing that can refuse it), so
+  what actually goes is the `AppConfig` field, the importer writes, the `>1`
+  branch and a test helper default. Eviction gets more frequent, not less.
+
+  The argument for KEEPING it is a real local workload: the two Qwen-Image
+  prompt encoders are ~18 GB each, ~36 GB for the pair on a 192 GB box, and a
+  consumer alternating text-to-image and image-to-image pays an 18 GB
+  evict-and-reload per switch at `max_loaded_models = 1`. Current
+  recommendation: keep the field, default 1; if anything, warn at load when a
+  `>1` combination exceeds the Metal working set, the way the fit panel does.
+  The stale `= 2` that prompted this was a dead default in `schema/system.py`,
+  deleted wholesale in v2.0.48.
+
 - [ ] **mRoPE cache gate: fail-open + no config escape** (P3, review
   finding 2026-08-18): the gate keys on two private upstream attribute
   names; a rename fails OPEN (reuse re-enabled on a broken family) and
