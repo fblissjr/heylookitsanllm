@@ -942,7 +942,8 @@ Errors go to the page's single status area.
 
 ### batch — DROPPED from v3 scope
 Not included (user decision). The backend endpoint (`/v1/batch/chat/completions`) was removed in
-v1.79.66 with the OpenAI route; if batch is wanted later it needs a server-side design first.
+v1.79.66 with the OpenAI route, and the batch internals behind it in v2.0.57; if batch is wanted
+later it needs a server-side design first.
 
 ### perf (v2: 212 lines) — dashboard, SIMPLIFIED, no constant polling
 Single-user tool — keep it very simple. Fetch `GET /v1/system/metrics` **on mount + a manual "Refresh"
@@ -982,7 +983,7 @@ v3 ships **5 pages**: chat, models, notebook, perf (simplified), token explorer.
 | notebook | 341 | **Keep** | Plain-text, no pretext. |
 | perf | 212 | **Keep — simplified** | On-demand only, no polling. See §5. |
 | explore | 378 | **Keep** | Only logprobs surface; simplify render per §5. |
-| batch | 219 | **DROP** | Endpoint stays; page not built. |
+| batch | 219 | **DROP** | Page not built. Endpoint removed v1.79.66, server internals v2.0.57. |
 
 ---
 

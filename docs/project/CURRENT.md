@@ -1140,8 +1140,10 @@ All in the plan with full rationale; one-liners here so nothing is missed:
   onset marker), layer-range slider + aggregation detail panel, provisional lens
   badge, matrix performance optimizations (v1.79.7 single-pass iterative min/max,
   fast cell lookup). Live streaming (SSE) and interactive interventions remain open.
-- **STUB -- batch page**: dropped from v3 scope on purpose (spec §6); the
-  backend endpoint remains.
+- **No batch page**: dropped from v3 scope on purpose (spec §6). Nothing
+  server-side either -- the endpoint went in v1.79.66, the batch internals
+  (`mlx_batch_text.py`, `schema/batch.py`, `create_batch_chat_completion`) in
+  v2.0.57.
 
 ## 2. Backend changes v3 depends on (all committed, v1.31.1-v1.32.0)
 

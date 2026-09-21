@@ -134,7 +134,8 @@ response = client.messages.create(
   `get_provider` the generate call makes, so it adds no work. Add
   `?warm=true` for a readiness call that also pays the first forward pass --
   it takes the generation gate, so keep it out of a per-request pre-flight.
-- One model resident by default, LRU eviction; batch work by model.
+- One model resident by default, LRU eviction; group your requests by model
+  so consecutive ones do not each pay a load.
 - Auth is opt-in and off by default: `HEYLOOK_API_KEY`
   (`Authorization: Bearer`, loopback-exempt unless
   `HEYLOOK_API_KEY_ENFORCE_LOOPBACK=true`) gates inference,

@@ -165,7 +165,7 @@ class TestAdminReload:
         # A pinned model (RLM job / j-space analysis) is a CONFLICT the caller
         # can act on -- previously the RuntimeError escaped as an opaque 500.
         def _pinned(model_id, force=False):
-            raise RuntimeError(f"Model '{model_id}' is pinned (batch job in progress).")
+            raise RuntimeError(f"Model '{model_id}' is pinned (an RLM run is using it).")
         monkeypatch.setattr(mock_router, "unload_model", _pinned)
         resp = client.post("/v1/admin/models/test-mlx-model/reload")
         assert resp.status_code == 409
@@ -184,7 +184,7 @@ class TestAdminReload:
     def test_unload_pinned_model_409s_too(self, client, mock_router, monkeypatch):
         # Ride-along: /unload shared the raw-500 mechanism.
         def _pinned(model_id, force=False):
-            raise RuntimeError(f"Model '{model_id}' is pinned (batch job in progress).")
+            raise RuntimeError(f"Model '{model_id}' is pinned (an RLM run is using it).")
         monkeypatch.setattr(mock_router, "unload_model", _pinned)
         resp = client.post("/v1/admin/models/test-mlx-model/unload")
         assert resp.status_code == 409

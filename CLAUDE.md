@@ -14,7 +14,7 @@ it moved out of `apps/` and off the `/v3` mount in v1.79.76).
 - **Status + backlog**: [docs/project/CURRENT.md](./docs/project/CURRENT.md) (graded done/left narrative), [docs/project/TODO.md](./docs/project/TODO.md). Read before starting.
 - **Engine coverage plan** -- why provider != engine (`"mlx"` is TWO upstream repos) and how live coverage stops being incidental: [docs/project/plan_engine_coverage.md](./docs/project/plan_engine_coverage.md). Phase 0 shipped as `tests/smoke/`.
 - **v3 frontend map** -- what's done/left + the backend<->v3 coupling: [docs/frontend_v3.md](./docs/frontend_v3.md) (git-tracked). Build contract: [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md) (§4 = API contract). USER-FACING behaviour (the three-layer settings model behind "preset vs ad-hoc change", the generation lifecycle, editing, and a standing rough-edges list): [docs/frontend_v3_user_guide.md](./docs/frontend_v3_user_guide.md) -- read it before changing chat UX, and update its rough-edges section when you close one.
-- Deep dives: **backend reference** is git-tracked in [docs/architecture/](./docs/architecture/) (config, mlx_provider, ecosystem_strategy -- design records + invariants only, the live surface is code + /openapi.json; see its [README](./docs/architecture/README.md)); crash **postmortems** (read before touching providers) are in [docs/architecture/postmortems/](./docs/architecture/postmortems/). Local-only in [internal/](./internal/): `log/`, `research/`, `thoughts/`, and stale subsystem notes (batch/logprobs/thinking) pending refresh. The old React-frontend docs are in `internal/frontend/archive/`.
+- Deep dives: **backend reference** is git-tracked in [docs/architecture/](./docs/architecture/) (config, mlx_provider, ecosystem_strategy -- design records + invariants only, the live surface is code + /openapi.json; see its [README](./docs/architecture/README.md)); crash **postmortems** (read before touching providers) are in [docs/architecture/postmortems/](./docs/architecture/postmortems/). Local-only in [internal/](./internal/): `log/`, `research/`, `thoughts/`, and stale subsystem notes (logprobs/thinking) pending refresh. The old React-frontend docs are in `internal/frontend/archive/`.
 - **Removed 2026-09-06 (v1.79.75): the Jacobian-lens ("j-space") feature** -- page, `/v1/jspace/*` router, the `jspace/` package, its tests and its lens-conversion script. Its three docs are in [docs/archive/](./docs/archive/) as the revival record. Fitted lenses under `adapters/jspace/` were LEFT ON DISK (they are gitignored and expensive to refit); delete them yourself if you want the space back. `jlens-mlx` is out of scope.
 - Setup/commands [README.md](./README.md) · tests [tests/README.md](./tests/README.md). (The v3 API contract is spec §4; the live schema is at `/openapi.json` + `/docs`.)
 - `internal/`, `models.toml`, `coderef/` are gitignored -- local-only, never committed.
@@ -296,7 +296,9 @@ A route added to api.py itself is the wrong place.
 ONE INFERENCE WIRE (v1.79.66): `/v1/messages` (Anthropic Messages-conformant plus the
 documented heylook extensions) and the conversation generate route that shares its
 grammar. The OpenAI-compatible `/v1/chat/completions` + `/v1/batch/chat/completions`
-routes, the route-level batch processor, the server-side image resize and the
+routes, the route-level batch processor (and in v2.0.57 the batch internals
+behind it: `mlx_batch_text.py`, `schema/batch.py`, `create_batch_chat_completion`
+-- `batch_vision.py` is parallel image LOADING and stays), the server-side image resize and the
 `: keepalive` SSE comment were REMOVED (owner call: v3 and the owner's other project
 speak Messages; nothing else that matters spoke OpenAI). Do not re-add an OpenAI
 wire. `ChatRequest` STAYS: it is the INTERNAL request every provider takes and still

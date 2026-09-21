@@ -357,7 +357,7 @@ if result["finish_reason"] == "error_threshold":
 
 ## Pattern: Batched sub-queries
 
-Use `llm_query_batched()` inside the REPL to process multiple sub-questions in one call. When the backend provider supports GPU batching, all queries run in a single GPU pass.
+Use `llm_query_batched()` inside the REPL to process multiple sub-questions in one call. The sub-queries run one after another and the answers come back in order; it is a convenience over writing the loop, not a faster path (server-side GPU batching was removed in v2.0.57).
 
 ```json
 {
@@ -380,9 +380,9 @@ for i, s in enumerate(summaries):
 FINAL("\n".join(summaries))
 ```
 
-This is faster than `for s in sections: llm_query(...)` because the backend can batch the GPU work. Falls back to sequential automatically if batching isn't available.
+This is equivalent to `for s in sections: llm_query(...)`, written as one call.
 
-`rlm_query_batched()` works the same way but spawns child RLMs (requires `max_depth >= 2`). Each child runs sequentially since they need their own REPL loops.
+`rlm_query_batched()` works the same way but spawns child RLMs (requires `max_depth >= 2`), also one after another.
 
 ## Pattern: Custom tools (programmatic use)
 

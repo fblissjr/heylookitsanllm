@@ -175,7 +175,7 @@ The sampling and KV caching logic are ported directly from `mlx-lm`.
 
 *   **No batched image processing**: VLM vision requests process images sequentially via `BatchVisionProcessor` (parallel image loading, but sequential vision tower passes). Batched vision tower passes are out of scope.
 
-*   **Generation failures surface uniformly by raising**: see 4.5 below. Providers raise typed `GenerationFailed`/`InvalidGenerationRequest`; every consumer (chat, messages, batch, RLM) fails loudly by default (v1.33.0 contract).
+*   **Generation failures surface uniformly by raising**: see 4.5 below. Providers raise typed `GenerationFailed`/`InvalidGenerationRequest`; every consumer (messages, the generate route, RLM) fails loudly by default (v1.33.0 contract).
 
 ## 4. Concurrency, Caching, and Dependency Notes (2026-07-05/06)
 
@@ -310,7 +310,7 @@ subclass `InvalidGenerationRequest` (client error, HTTP 400) -- defined in
 error-CHUNK mechanism (`MLXErrorChunk` + per-consumer `is_error` checks);
 that class no longer exists, and the owned `GenerationChunk` type
 (v1.40.0) deliberately carries NO error flag: raising means EVERY
-consumer -- including ones written later, and batch/RLM which once
+consumer -- including ones written later, and RLM (with the since-removed batch path) which once
 concatenated error text into results as if the model said it -- fails
 loudly by default. The generator's `finally` blocks (gate release,
 active-count decrement, cache cleanup) still run because the exception

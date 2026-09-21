@@ -32,6 +32,7 @@ provider / cache layers):
 | [postmortems/radix_thread_affinity.md](./postmortems/radix_thread_affinity.md) | "no Stream(gpu, N)" crash on radix cache reuse + the v1.32.0 eligibility gate |
 
 Still local-only in `internal/` (not refreshed for tracking): the stale
-subsystem notes (`internal/backend/{batch,logprobs,thinking}.md`). A few prose
+subsystem notes (`internal/backend/{logprobs,thinking}.md`; the batch note was
+archived when batch inference was removed in v2.0.57). A few prose
 references into `internal/` from these docs resolve for maintainers with the
 full checkout but dangle when browsing on GitHub.

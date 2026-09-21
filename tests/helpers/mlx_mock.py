@@ -44,7 +44,7 @@ def create_mlx_module_mocks() -> dict:
     heylook module reaches for needs its own key, because ``import a.b`` /
     ``from a.b import x`` looks up ``sys.modules['a.b']`` and a MagicMock ``a``
     is not a package. Plain attribute pulls off an already-mocked module
-    (``from mlx_lm.generate import BatchGenerator``) are free. A path missing
+    (``from mlx_lm.generate import wired_limit``) are free. A path missing
     here surfaces as "No module named 'X'; 'Y' is not a package" -- which is
     how ``mlx_lm.tokenizer_utils`` went missing until 2026-08-18. When you add
     a module-level MLX import to src/, add its path here.
@@ -106,6 +106,7 @@ def create_mlx_module_mocks() -> dict:
     mock_mlx_vlm = MagicMock()
     mock_mlx_vlm.utils = MagicMock()
     mock_mlx_vlm.generate = MagicMock()
+    mock_mlx_vlm.generate.common = MagicMock()
     mock_mlx_vlm.stream_generate = MagicMock()
     mock_mlx_vlm.prompt_utils = MagicMock()
     mock_mlx_vlm.prompt_utils.apply_chat_template = MagicMock(return_value="formatted prompt")
@@ -130,6 +131,7 @@ def create_mlx_module_mocks() -> dict:
         "mlx_vlm": mock_mlx_vlm,
         "mlx_vlm.utils": mock_mlx_vlm.utils,
         "mlx_vlm.generate": mock_mlx_vlm.generate,
+        "mlx_vlm.generate.common": mock_mlx_vlm.generate.common,
         "mlx_vlm.prompt_utils": mock_mlx_vlm.prompt_utils,
         # PIL
         "PIL": mock_pil,

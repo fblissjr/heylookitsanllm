@@ -144,7 +144,7 @@ js/
   pages/  chat.js  notebook.js  models.js  perf.js
 ```
 
-Batch was dropped from v3 scope on purpose (spec §6); the backend endpoint remains.
+Batch was dropped from v3 scope on purpose (spec §6). The backend has none either: the endpoint went in v1.79.66 and the batch internals behind it in v2.0.57.
 
 ## Status snapshot (grading is authoritative in CURRENT.md §1)
 

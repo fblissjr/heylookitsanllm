@@ -1074,9 +1074,6 @@ class MLXProvider(BaseProvider):
         # Pre-compile generation strategies (avoids runtime branching)
         self._strategies = {}
 
-        # Batch text processor (lazy-initialized)
-        self._batch_processor = None
-
         # Vendor sampling layer (generation_config.json), lazy-read + cached
         # in _apply_model_defaults. None = not read yet; {} = none found.
         self._vendor_sampling = None
@@ -1465,142 +1462,6 @@ class MLXProvider(BaseProvider):
 
         return merged_config
 
-    def _get_batch_processor(self):
-        """Lazy-initialize batch text processor."""
-        if self._batch_processor is None:
-            from .mlx_batch_text import TextBatchProcessor
-
-            tokenizer = getattr(self.processor, "tokenizer", self.processor)
-
-            # Get batch configuration from model config
-            batch_config = self.config.get('batch', {})
-            completion_batch_size = batch_config.get('completion_batch_size', 32)
-            prefill_batch_size = batch_config.get('prefill_batch_size', 8)
-            prefill_step_size = batch_config.get('prefill_step_size', 2048)
-
-            self._batch_processor = TextBatchProcessor(
-                model=self.model,
-                tokenizer=tokenizer,
-                max_tokens=self.config.get('max_tokens', GLOBAL_SAMPLER_FLOOR['max_tokens']),
-                completion_batch_size=completion_batch_size,
-                prefill_batch_size=prefill_batch_size,
-                prefill_step_size=prefill_step_size
-            )
-
-            logging.info(
-                f"[BATCH] Initialized batch processor for {self.model_id}: "
-                f"completion_batch_size={completion_batch_size}, "
-                f"prefill_batch_size={prefill_batch_size}"
-            )
-
-        return self._batch_processor
-
-    def create_batch_chat_completion(self, requests: List[ChatRequest]) -> List[Dict]:
-        """
-        Process batch of chat completion requests.
-
-        This uses mlx-lm's BatchGenerator for efficient parallel processing.
-        Only works for text-only models without streaming.
-
-        Args:
-            requests: List of ChatRequest objects
-
-        Returns:
-            List of completion dictionaries
-        """
-        if self.is_vlm:
-            raise ValueError("Batch processing is currently only supported for text-only models")
-
-        # Check all requests are compatible with batching
-        if any(req.stream for req in requests):
-            raise ValueError("Batch processing does not support streaming requests")
-
-        # Prepare all prompts
-        prompts = []
-        max_tokens_list = []
-
-        tokenizer = getattr(self.processor, "tokenizer", self.processor)
-
-        for req in requests:
-            # Apply chat template
-            messages_for_template = []
-            for msg in req.messages:
-                msg_dict = msg.model_dump(exclude_none=True)
-                # If content is a list, extract text
-                if isinstance(msg_dict.get('content'), list):
-                    text_parts = [part['text'] for part in msg_dict['content'] if part.get('type') == 'text']
-                    msg_dict['content'] = ' '.join(text_parts)
-                # Prior thinking, the way this template takes it (v1.79.63)
-                msg_dict = thinking_for_template(msg_dict, getattr(self, '_template_info', None))
-                messages_for_template.append(msg_dict)
-
-            # Same continuation resolution as the single-request path
-            # (is_continuation: auto trailing-assistant, or the explicit
-            # flag) -- before v1.61.1 this loop only suppressed the
-            # generation prompt, the closed-turn half-state the single path
-            # was cured of in v1.61.0.
-            continuing = req.is_continuation()
-            template_kwargs: dict = {"tokenize": False,
-                                     "add_generation_prompt": not continuing}
-            if continuing:
-                template_kwargs["continue_final_message"] = True
-
-            try:
-                prompt = tokenizer.apply_chat_template(
-                    messages_for_template, **template_kwargs,
-                )
-            except TypeError as te:
-                if continuing:
-                    raise InvalidGenerationRequest(
-                        "This model's template stack cannot continue the "
-                        "final message (continue_final_message unsupported)."
-                    ) from te
-                raise
-            except ValueError as e:
-                err = missing_template_error(tokenizer, self.model_id)
-                if err is not None:
-                    raise err from e
-                if continuing:
-                    raise InvalidGenerationRequest(
-                        f"Cannot continue the final message with this "
-                        f"model's chat template: {e}"
-                    ) from e
-                raise
-
-            tokens = tokenizer.encode(prompt)
-            prompts.append(tokens)
-            max_tokens_list.append(req.max_tokens or self.config.get('max_tokens', GLOBAL_SAMPLER_FLOOR['max_tokens']))
-
-        # Process batch
-        processor = self._get_batch_processor()
-
-        with self._active_lock:
-            self._active_generations += 1
-        # Share the generation gate with chat completions so batch and chat
-        # never run on the GPU concurrently. Batch is internal -- it queues
-        # (no capacity check / 503).
-        self._gen_gate.acquire()
-        try:
-            results = processor.process_batch(prompts, max_tokens_list)
-        finally:
-            self._gen_gate.release()
-            with self._active_lock:
-                self._active_generations -= 1
-
-        # Convert to API response format
-        completions = []
-        for result in results:
-            completion = {
-                'text': result.text,
-                'finish_reason': result.finish_reason,
-                'prompt_tokens': result.prompt_tokens,
-                'completion_tokens': result.generation_tokens,
-                'total_tokens': result.prompt_tokens + result.generation_tokens
-            }
-            completions.append(completion)
-
-        return completions
-
     def check_capacity(self) -> None:
         """Reject (ModelBusyError -> 503) when the FIFO queue is already full.
 
@@ -1620,7 +1481,7 @@ class MLXProvider(BaseProvider):
 
             ``abort_event`` is the per-request cooperative cancel signal. The HTTP
             routes create one per request and share it with the streaming layer
-            (which sets it on client disconnect); internal callers (batch, RLM)
+            (which sets it on client disconnect); internal callers (RLM)
             omit it and a fresh one is created. It is NOT a provider-level shared
             object -- that would let one client's disconnect abort another's
             in-flight generation.

@@ -138,7 +138,7 @@ The main model slices the text into chapters, then calls `llm_query(f"Summarize 
 
 The model also has:
 - `llm_query("sub-question")` -- call itself on smaller pieces of the context
-- `llm_query_batched(["q1", "q2"])` -- batch multiple sub-queries (uses GPU batching when available)
+- `llm_query_batched(["q1", "q2"])` -- several sub-queries in one call, run one after another, answers returned in order
 - `SHOW_VARS()` -- list all user-defined variables in the REPL
 
 ## Request fields

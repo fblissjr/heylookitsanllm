@@ -279,7 +279,7 @@ class BaseProvider(ABC):
         instead of letting the queue grow without bound. Default is a no-op
         (no admission limit). Providers that serialize generation (e.g. MLX)
         override this to raise ``ModelBusyError`` when their queue is full.
-        Internal orchestration (batch, RLM) intentionally skips this and queues.
+        Internal orchestration (RLM) intentionally skips this and queues.
         """
 
     def generation_queue_stats(self) -> Optional[Dict]:

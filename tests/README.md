@@ -89,7 +89,6 @@ Tests requiring a running heylookllm server (`heylookllm --port 8000`):
 
 - **test_hidden_states_api.py** -- Hidden states endpoints (raw + structured)
 - **test_api_integration.py** -- API endpoint validation, MLX provider
-- **test_batch_integration.py** -- Batch text processing
 - **test_keepalive.py** -- Keepalive and prompt caching
 
 **mlx_perf/** (2 files):
@@ -116,7 +115,6 @@ Tests requiring a running heylookllm server (`heylookllm --port 8000`):
 | Samplers | Basic | unit/test_samplers.py | 5 tests |
 | OpenAPI Conformance | Good | contract/test_openapi_conformance.py | Schema validation |
 | Admin API | Good | contract/test_admin.py | Config, profiles, scan |
-| Batch Processing | Basic | integration/test_batch_integration.py | Requires server |
 | Error Handling | Good | contract/test_generation_errors.py | |
 
 ## Testing Guidelines

@@ -1287,39 +1287,10 @@ class TestMaxTimeout:
 # ---------------------------------------------------------------------------
 
 class TestLlmQueryBatched:
-    def test_gpu_batch_used(self):
-        """llm_query_batched uses create_batch_chat_completion when available."""
-        router = MagicMock()
-        provider = MagicMock()
-        call_count = [0]
-
-        def fake_batch(reqs):
-            return [{"text": f"answer_{i}"} for i in range(len(reqs))]
-
-        provider.create_batch_chat_completion = MagicMock(side_effect=fake_batch)
-
-        def fake_completion(req):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                yield _make_chunk(
-                    '```repl\nresults = llm_query_batched(["q1", "q2"])\nFINAL(str(results))\n```'
-                )
-            else:
-                yield _make_chunk("fallback")
-
-        provider.create_chat_completion.side_effect = fake_completion
-        router.get_provider.return_value = provider
-
-        engine = RLMEngine(router)
-        req = RLMRequest(model="test", context="data", query="what?")
-        result = engine.run(req)
-
-        provider.create_batch_chat_completion.assert_called_once()
-        assert "answer_0" in result.answer
-        assert "answer_1" in result.answer
-
-    def test_sequential_fallback(self):
-        """Falls back to sequential when batch not available."""
+    def test_answers_come_back_one_sub_query_at_a_time(self):
+        """Each prompt is its own create_chat_completion call, in order.
+        (Until v2.0.57 this was the FALLBACK under a provider-level GPU batch;
+        the batch is gone and this is the whole behaviour.)"""
         router = MagicMock()
         provider = MagicMock()
         call_count = [0]
@@ -1335,18 +1306,13 @@ class TestLlmQueryBatched:
                 yield _make_chunk(f"seq_answer_{call_count[0]}")
 
         provider.create_chat_completion.side_effect = fake_completion
-        # No create_batch_chat_completion attribute
-        if hasattr(provider, "create_batch_chat_completion"):
-            del provider.create_batch_chat_completion
-        provider.spec = None
-
         router.get_provider.return_value = provider
 
         engine = RLMEngine(router)
         req = RLMRequest(model="test", context="data", query="what?")
         result = engine.run(req)
 
-        assert "seq_answer" in result.answer
+        assert "seq_answer_2" in result.answer and "seq_answer_3" in result.answer
 
     def test_counter_increments(self):
         """Counter increments by len(prompts) for batched calls."""
@@ -1391,7 +1357,6 @@ class TestLlmQueryBatched:
     def test_sub_params_used(self):
         """Batched calls use sub_* parameters."""
         router = MagicMock()
-        # Use spec to prevent auto-creating create_batch_chat_completion
         provider = MagicMock(spec=["create_chat_completion"])
         captured_reqs = []
 
@@ -1414,37 +1379,6 @@ class TestLlmQueryBatched:
         assert len(captured_reqs) == 1
         assert captured_reqs[0].max_tokens == 256
         assert captured_reqs[0].temperature == 0.0
-
-    def test_gpu_failure_falls_back(self):
-        """If GPU batch raises, falls back to sequential."""
-        router = MagicMock()
-        provider = MagicMock()
-        call_count = [0]
-
-        provider.create_batch_chat_completion = MagicMock(side_effect=RuntimeError("GPU fail"))
-
-        def fake_completion(req):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                yield _make_chunk(
-                    '```repl\nresults = llm_query_batched(["q1"])\nFINAL(str(results))\n```'
-                )
-            else:
-                yield _make_chunk("fallback_answer")
-
-        provider.create_chat_completion.side_effect = fake_completion
-        router.get_provider.return_value = provider
-
-        engine = RLMEngine(router)
-        req = RLMRequest(model="test", context="data", query="what?")
-        result = engine.run(req)
-
-        assert "fallback_answer" in result.answer
-
-
-# ---------------------------------------------------------------------------
-# rlm_query_batched
-# ---------------------------------------------------------------------------
 
 class TestRlmQueryBatched:
     def test_available_at_depth_2(self):

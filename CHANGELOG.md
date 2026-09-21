@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.57]
+
+### Removed
+
+- **Server-side batch inference, entirely (owner call: it is not used).** The
+  HTTP route went in v1.79.66; the code behind it had been sitting there since.
+  Gone: `providers/mlx_batch_text.py` (`TextBatchProcessor` and an already
+  caller-less `should_use_batching`), `schema/batch.py` (four models
+  documenting a route that no longer existed, imported by nothing but the
+  package `__init__`), and `MLXProvider.create_batch_chat_completion` with its
+  lazy `_get_batch_processor`. This was MLX-only: the gguf provider never had a
+  batch path, so nothing changes there.
+
+  That method was also the third hand-copy of "render a chat template and map
+  its continuation errors", and the one that had drifted furthest -- it passed
+  no `enable_thinking`, so mlx-lm silently injected `True`, and no
+  `reasoning_effort`. It is deleted rather than fixed.
+
+  **Kept, because the name collides and the thing does not:**
+  `BatchVisionProcessor` (`batch_vision.py`) is parallel image LOADING for the
+  vision path; llama-server's `n_batch`/`n_ubatch` micro-batch flags and
+  `_auto_ubatch`; `apps/batch-labeler/` (a standalone client); router model
+  pinning, whose one remaining caller is RLM.
+
+### Changed
+
+- **RLM's `llm_query_batched` runs its sub-queries one after another.** It was
+  the sole caller of the batch method, tried it first and fell back to a
+  sequential loop; the loop is now all there is. The sandbox tool keeps its
+  name because RLM programs call it by name. The RLM system prompt and
+  `docs/rlm_guide.md` / `docs/rlm_advanced.md` no longer promise GPU batching
+  or that it beats a `for` loop -- it no longer does. On gguf this is no change
+  at all: that provider had no batch method, so the loop was already what ran.
+- The router's pin refusal reads "an RLM run is using it" rather than "batch
+  job in progress".
+
+### Fixed
+
+- **`tests/helpers/mlx_mock.py` covers `mlx_vlm.generate.common`.** v2.0.55 added
+  a module-level import from it, and a dotted path missing from the mock tree
+  fails as "'mlx_vlm.generate' is not a package" wherever real MLX is absent.
+  Reproduced in a fresh interpreter under the mocks, then fixed.
+- Docs that were already wrong before this change: `docs/frontend_v3.md`,
+  `docs/project/CURRENT.md` and a `docs/frontend_v3_spec.md` table row said the
+  batch endpoint "remains"; `docs/project/plan_2026-07.md` said to keep
+  `mlx_batch_text.py`; `tests/README.md` pointed at a test file deleted in
+  v1.79.66.
+
 ## [2.0.56]
 
 ### Changed

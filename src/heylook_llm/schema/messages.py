@@ -2,7 +2,7 @@
 #
 # Message types and the core MessageCreateRequest model.
 # Inspired by Anthropic Messages API with extensions for heylookitsanllm
-# features (thinking, hidden states, batch).
+# features (thinking).
 
 from typing import Dict, List, Literal, Optional, Union
 

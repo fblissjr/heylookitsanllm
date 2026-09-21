@@ -442,8 +442,8 @@ class RLMEngine:
         prompt = RLM_SYSTEM_PROMPT
         prompt += "- `SHOW_VARS() -> str`: List all user-defined variables in the REPL (name: type)\n"
         prompt += (
-            "- `llm_query_batched(prompts: list[str]) -> list[str]`: Run multiple sub-queries. "
-            "Uses GPU batching when available. Faster than a for loop with llm_query().\n"
+            "- `llm_query_batched(prompts: list[str]) -> list[str]`: Run multiple sub-queries "
+            "in one call, one after another, and get the answers back in order.\n"
         )
         if max_depth > 1:
             prompt += (
@@ -635,7 +635,16 @@ class RLMEngine:
         return llm_query
 
     def _make_llm_query_batched(self, request: RLMRequest, counter: list[int]):
-        """Create the llm_query_batched() closure for batch sub-queries."""
+        """Create the llm_query_batched() closure: several sub-queries in one
+        call, run ONE AFTER ANOTHER.
+
+        The name is the sandbox API RLM programs call, kept for them. It used
+        to try a provider-level GPU batch first (MLX only; gguf never had one)
+        and fall back to this loop; server-side batch inference was removed in
+        v2.0.57 and the loop is all there is. Deliberately NOT a loop over
+        ``llm_query``: that closure fires the sub-call start/complete
+        callbacks, and these sub-queries never have.
+        """
         def llm_query_batched(prompts: list[str]) -> list[str]:
             if not prompts:
                 return []
@@ -643,25 +652,6 @@ class RLMEngine:
             model_id = request.sub_model or request.model
             provider = self.router.get_provider(model_id)
 
-            # Try GPU batching first
-            if hasattr(provider, "create_batch_chat_completion"):
-                try:
-                    chat_reqs = [
-                        ChatRequest(
-                            model=model_id,
-                            messages=[ChatMessage(role="user", content=p)],
-                            max_tokens=request.sub_max_tokens or request.max_tokens,
-                            temperature=request.sub_temperature if request.sub_temperature is not None else request.temperature,
-                            top_p=request.sub_top_p if request.sub_top_p is not None else request.top_p,
-                        )
-                        for p in prompts
-                    ]
-                    results = provider.create_batch_chat_completion(chat_reqs)  # type: ignore[attr-defined]
-                    return [r["text"] for r in results]
-                except (ValueError, RuntimeError):
-                    pass  # Fall through to sequential
-
-            # Sequential fallback (counter already incremented)
             results = []
             for p in prompts:
                 chat_req = ChatRequest(
