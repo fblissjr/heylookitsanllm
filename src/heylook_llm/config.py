@@ -624,7 +624,11 @@ class MLXModelConfig(BaseModel):
             "encoder, a classifier -- where raising it cuts kernel-launch "
             "overhead at the cost of higher peak memory during prefill. "
             "Per-request, so it costs no reload to try. Lowering it is a "
-            "memory-pressure lever, not a speed one. gguf's nearest "
+            "memory-pressure lever, not a speed one. Applies to IMAGE requests "
+            "too since v2.0.55 (the vision prefill was one un-chunked forward "
+            "before, so this field did nothing there) -- except on a family "
+            "whose own policy refuses to split a prompt carrying images "
+            "(gemma-4: its vision blocks attend bidirectionally). gguf's nearest "
             "equivalents are `n_ubatch`/`n_batch`, which are spawn flags."),
         json_schema_extra={"is_runtime_default": True,
                            "effect": EFFECT_PER_REQUEST,

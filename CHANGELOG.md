@@ -5,6 +5,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.55]
+
+### Changed
+
+- **The MLX vision path prefills all but the last prompt token and lets mlx-lm
+  generate from there**, following mlx-vlm's own loop (`generate/ar.py`):
+  `get_input_embeddings` once, the language model over embedding chunks, then
+  `run_generation` with the last prompt token as its whole prompt. It used to
+  run the full VLM forward over the entire prompt and sample the first
+  generated token ITSELF, outside the generation loop. That one token got none
+  of what the loop does, and each omission was a defect:
+
+  - **No stop check.** Continuing an already-finished answer ended cleanly on
+    the text path and generated past end-of-turn on the vision path (seen live
+    before the change; it now answers empty with `end_turn`).
+  - **No logits processors** on the first token.
+  - **One token more than `max_tokens`** on every image request.
+  - **A separate decode**, which is what cost every BPE (Qwen) image reply the
+    space after its first word until v2.0.51 worked around it. That workaround
+    and its sibling in `run_generation` are reverted here: the first token goes
+    through the streaming detokenizer like the rest.
+
+- **`prefill_step_size` now applies to image requests.** The vision prefill was
+  one un-chunked forward, so the field did nothing there. Chunking follows each
+  family's own `chunked_prefill_policy` (gemma-4 refuses to split a prompt
+  carrying images, and gets one call).
+- **Image requests report prefill progress and can be cancelled mid-prefill.**
+  Progress frames run `(0,N)` to `(N,N)`; `run_generation` takes a
+  `prefill_progress_offset` so mlx-lm's own one-token report cannot paint the
+  total collapsing to 1. Abort is honoured between chunks (checked live: a
+  `DELETE` during a many-image prefill ended the request with nothing
+  generated, and the next request ran at once).
+- The vision prefill runs inside the generation stream, as upstream's does.
+- A vision prompt over the model's context is refused before any compute; the
+  length is known up front now.
+
+### Fixed
+
+- **heylook no longer hands the language model an attention mask on image
+  requests.** It always passed one -- an int32 ones array -- into the full-VLM
+  forward. Each family builds its own causal, sliding-window and bidirectional
+  masks, and a caller-supplied mask REPLACES them on the families that honour
+  it; checked at the op level, that ones mask is equivalent to no mask at all,
+  i.e. non-causal attention over the prompt. It was inert on the qwen families
+  (the mask never reaches their attention) and live on gemma-4, gemma3, pixtral
+  and llava_next. mlx-vlm's own loop never passes one.
+
+### Verification
+
+`scripts/vlm_parity_probe.py` against mlx-vlm's `generate_step`, greedy, on
+`Qwen3.5-0.8B`, `Qwen-Image-2.1-PE-I21`, `Qwen3.5-27B-8bit` and `Qwen3-VL-32B`:
+exact token-for-token match on all four, vision after text and vision after
+vision -- where the old path diverged at rounding ties on three of them. Also
+exact with the step forced small enough to prefill in many chunks (0.8B, PE,
+Qwen3-VL, the last being the one with deepstack embeds to slice). Live on an
+isolated server, 0.8B and PE: the finished-answer case, exact `max_tokens`,
+monotone progress ending `(N,N)`, mid-prefill cancel, image reuse across
+turns, and both Save & Continue shapes through the conversation generate route.
+
+**Uncovered, by owner decision: gemma-4.** The new path is generic, so gemma-4
+image requests go through it too and their output WILL change -- toward what
+mlx-vlm itself produces and away from the non-causal mask -- with nothing here
+having checked it. Recorded in `docs/project/TODO.md`.
+
 ## [2.0.54]
 
 ### Added

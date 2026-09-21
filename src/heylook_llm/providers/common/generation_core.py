@@ -382,6 +382,7 @@ def run_generation(
     pre_filled_cache=None,
     continuing: bool = False,
     context_length: int | None = None,
+    prefill_progress_offset: int = 0,
 ) -> Generator:
     """Single generation loop for all text-based MLX generation.
 
@@ -391,7 +392,7 @@ def run_generation(
     - lm_stream_generate call with wired_limit scope
     - Abort checking (Python bool, no GPU sync)
     - Speculative decoding acceptance tracking (Python ints only)
-    - Leading space cleanup on first token (skipped for pre_filled_cache)
+    - Leading space cleanup on first token (skipped for a continuation)
     - KV snapshot storage in finally block
 
     Args:
@@ -405,8 +406,17 @@ def run_generation(
         draft_model: Draft model for speculative decoding (or None)
         cache_manager: PromptCacheManager instance (or None for default)
         abort_event: AbortEvent for cooperative cancellation
-        pre_filled_cache: Pre-populated KV cache from VLM vision forward pass.
-            When provided, skips prompt-cache setup and leading space cleanup.
+        pre_filled_cache: KV cache the vision strategy already prefilled with
+            every prompt token BUT THE LAST; ``prompt_tokens`` is then that one
+            last token, so the first generated token is sampled HERE like any
+            other. When provided, skips prompt-cache setup (no cross-request
+            reuse on the vision path) and the mRoPE position reset.
+        prefill_progress_offset: prompt tokens the caller already prefilled.
+            Added to both halves of every progress report so the vision
+            strategy's own ``(k, N)`` frames are followed by ``(N-1, N)`` and
+            ``(N, N)`` rather than by mlx-lm's bare ``(0, 1)`` -- the reader
+            emits a frame on any change, and a total collapsing from N to 1
+            would paint as progress going backwards.
         context_length: The model's context window (capabilities.
             model_context_length). A prompt longer than it is refused up
             front as the client's error, not generated into garbage; None =
@@ -429,8 +439,10 @@ def run_generation(
     # Qwen3.5-style models cache _position_ids and _rope_deltas on the
     # language_model instance. Stale values from a prior generation cause
     # broadcast shape mismatches in rotary embedding computation.
-    # Skip when pre_filled_cache is set -- the vision forward pass sets
-    # correct position state that must be preserved.
+    # Skip when pre_filled_cache is set -- the vision prefill reset this
+    # itself and then SEEDED the rope delta the decode steps below read.
+    # Resetting here would null it after the fact, and every decode step would
+    # recompute positions from a one-token input: fluent, wrong output.
     if pre_filled_cache is None:
         _reset_vlm_positions(model)
 
@@ -489,7 +501,8 @@ def run_generation(
     def prompt_progress_callback(processed: int, total: int):
         logging.debug(f"Prompt processing: {processed}/{total} tokens")
         if report_progress is not None:
-            report_progress(processed, total)
+            report_progress(prefill_progress_offset + processed,
+                            prefill_progress_offset + total)
 
     generation_stream = _get_generation_stream()
 
@@ -528,14 +541,8 @@ def run_generation(
         extra_generate_kwargs['prefill_step_size'] = prefill_step_size
 
     try:
-        # A pre-filled cache seeds the detokenizer TOO, continuation or not:
-        # the vision strategy samples and decodes the first token itself, so
-        # the detokenizer's "first" text is really the SECOND token, and its
-        # empty-buffer trim ate that token's leading space on every BPE
-        # (Qwen) image response -- "A stylized" arrived as "Astylized".
         with wired_limit(model, [generation_stream]), \
-                continuation_detokenizer(
-                    tokenizer, continuing or pre_filled_cache is not None):
+                continuation_detokenizer(tokenizer, continuing):
             first_token = True
             for response in lm_stream_generate(
                 model=model,
@@ -574,12 +581,13 @@ def run_generation(
                     chunk.draft_accepted = draft_accepted
 
                 # Leading space cleanup (first token only; skipped for a
-                # pre-filled vision cache AND for a continuation, where the
-                # first token completes prefilled text and its space is real
-                # -- see continuation_detokenizer) + cache stats snapshot
-                # (first chunk only; ChunkTelemetry latches them).
+                # continuation, where the first token completes prefilled text
+                # and its space is real -- see continuation_detokenizer) +
+                # cache stats snapshot (first chunk only; ChunkTelemetry
+                # latches them). The vision path needs no exemption: since
+                # v2.0.55 its first token is sampled and detokenized here too.
                 if first_token:
-                    if pre_filled_cache is None and not continuing and chunk.text.startswith(' '):
+                    if not continuing and chunk.text.startswith(' '):
                         chunk.text = chunk.text.lstrip()
                     chunk.cached_tokens = cached_count
                     chunk.kv_cache_bytes = kv_cache_bytes_snapshot

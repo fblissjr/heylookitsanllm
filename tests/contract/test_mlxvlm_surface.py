@@ -295,12 +295,12 @@ class TestEncodeImageCachedFeaturesPattern:
 # ---------------------------------------------------------------------------
 
 class TestLanguageModelOutput:
-    """Consumed at providers/common/model_wrappers.py:63-66
-    (LanguageModelLogitsWrapper.__call__: getattr(result, 'logits', None)) and
-    mlx_provider.py:452 (VLMVisionStrategy.generate:
-    output.logits if hasattr(output, 'logits') else output). Both sites read
-    ONLY the .logits field, defensively (getattr/hasattr), so pin that the
-    field exists and is required -- not the rest of the dataclass shape."""
+    """Consumed by providers/common/model_wrappers.py
+    (LanguageModelLogitsWrapper.__call__: getattr(result, 'logits', None)) --
+    the ONE reader since v2.0.55, when VLMVisionStrategy stopped sampling a
+    first token from the full-VLM forward's logits itself. It reads ONLY the
+    .logits field, defensively, so pin that the field exists and is required --
+    not the rest of the dataclass shape."""
 
     def test_is_dataclass_with_required_logits_field(self):
         assert dataclasses.is_dataclass(LanguageModelOutput)
@@ -323,6 +323,61 @@ class TestLanguageModelOutput:
 
         wrapper = wrap_language_model(_FakeVLM())
         assert wrapper(1, 2, foo="bar") == "LOGITS_SENTINEL"
+
+
+# ---------------------------------------------------------------------------
+# The prefill loop VLMVisionStrategy mirrors
+# ---------------------------------------------------------------------------
+
+class TestChunkedPrefillSurface:
+    """`mlx_provider._prefill_language_model` follows mlx-vlm's OWN loop
+    (`generate/ar.py`): embed once, then call `model.language_model` over
+    embedding slices, gated by the library's chunk policy. Two of the pieces it
+    leans on are upstream-PRIVATE (`_chunked_prefill_enabled`, the
+    `n_to_process` kwarg), on a SHA pin that moves. These make a pin bump that
+    breaks the contract fail HERE, by name, rather than as a TypeError inside
+    the first image request.
+
+    Whether the loop then produces the right tokens is not a surface question:
+    that is `scripts/vlm_parity_probe.py`, on a real model."""
+
+    def test_the_chunk_gate_takes_the_keywords_we_pass(self):
+        from mlx_vlm.generate.common import DEFAULT_PREFILL_STEP_SIZE, _chunked_prefill_enabled
+
+        params = inspect.signature(_chunked_prefill_enabled).parameters
+        for name in ("input_ids", "inputs_embeds", "prompt_cache",
+                     "draft_model", "draft_kind", "prefill_kwargs"):
+            assert params[name].kind is inspect.Parameter.KEYWORD_ONLY, name
+        assert isinstance(DEFAULT_PREFILL_STEP_SIZE, int)
+
+    def test_the_gate_asks_the_model_and_defaults_to_chunking(self):
+        from mlx_vlm.generate.common import _chunked_prefill_enabled
+
+        class _Refuses:
+            def chunked_prefill_policy(self, **kwargs):
+                return False
+
+        assert _chunked_prefill_enabled(_Refuses()) is False
+        assert _chunked_prefill_enabled(object()) is True
+
+    @pytest.mark.parametrize("module", [_qwen3_5_language_module,
+                                        "mlx_vlm.models.qwen3_vl.language"])
+    def test_language_models_take_embeddings_and_swallow_the_rest(self, module):
+        import importlib
+        if isinstance(module, str):
+            module = importlib.import_module(module)
+        params = inspect.signature(module.LanguageModel.__call__).parameters
+        assert {"inputs", "inputs_embeds", "cache"} <= set(params)
+        # `n_to_process`, `logits_to_keep` and every data kwarg ride **kwargs;
+        # a family that stopped accepting them would reject the prefill call.
+        assert any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+    def test_embedding_features_expose_their_extras(self):
+        from mlx_vlm.models.base import InputEmbeddingsFeatures
+
+        features = InputEmbeddingsFeatures(inputs_embeds="E")
+        assert features.inputs_embeds == "E"
+        assert "inputs_embeds" in features.to_dict()
 
 
 # ---------------------------------------------------------------------------

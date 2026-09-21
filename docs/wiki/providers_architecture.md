@@ -80,14 +80,14 @@ Handles all text-only inference.
 A third strategy, `DiffusionStrategy`, covers mlx-vlm diffusion models; its availability is probed at runtime and the absent-dependency branch is load-bearing.
 
 #### VLMVisionStrategy (Pre-Filled Cache Pattern)
-Multimodal requests containing images execute a two-stage forward pass:
-1. **Vision Forward Pass**:
+Multimodal requests containing images run in two stages:
+1. **Prefill (mirrors mlx-vlm's own loop)**:
    - `mlx_vlm.utils.prepare_inputs` tokenizes the prompt and processes image tensors.
-   - The full VLM executes a forward pass over image tokens, filling an initial KV cache.
-   - The first token is sampled from the resulting logits.
-2. **Continued Text Generation**:
-   - The pre-filled KV cache is passed directly to `generation_core.run_generation(pre_filled_cache=...)`.
-   - Remaining tokens stream through the exact same text-generation pipeline, gaining full support for samplers (min-p, top-k, repetition penalty), abort handling, and token metrics.
+   - `get_input_embeddings` runs once; the language model is then driven over embedding chunks, filling a request-local KV cache with every prompt token but the last.
+   - Prefill progress is reported and abort is honoured between chunks.
+2. **Generation**:
+   - `generation_core.run_generation(prompt_tokens=[last token], pre_filled_cache=...)`.
+   - Every generated token, the first included, streams through the same text-generation pipeline: samplers, logits processors, stop tokens, abort handling and token metrics.
 
 ### 2.3. Audio Input Is a Loud Refusal on MLX
 Audio towers are stripped at load on the MLX path, so `input_audio` content parts are **gguf-only**. The 400 guard lives in `MLXProvider.create_chat_completion` and must stay loud -- silently dropping an audio part would produce a confident answer about nothing.

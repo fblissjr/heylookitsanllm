@@ -610,20 +610,38 @@ in git history; a contract test pins that `/v2` stays 404.)
   marker at any role. OWNER DECISION 2026-09-07: NOT forking mlx-vlm for this
   -- assistant-turn media is gguf-only and that is the answer, not a backlog
   item. Do not re-open it without a new reason.
-- THE VISION PATH DECODES IN TWO PHASES AND THE SEAM IS TOKEN 1|2, NOT 0|1
-  (v2.0.51). `VLMVisionStrategy` samples and `tokenizer.decode`s the first
-  token itself, then hands mlx-lm a pre-filled cache -- so the streaming
-  detokenizer's "first" text is really the second token, and a BPE
-  detokenizer's empty-buffer trim ate its leading space on every Qwen image
-  response ("Astylized"). gemma's SPM one is built `trim_space=False`, which is
-  why a gemma-only check never saw it. `run_generation` seeds the detokenizer
-  for ANY pre-filled cache, continuation or not. Continuation itself was never
-  an mlx-vlm limit: `vlm_apply_chat_template` always took
-  `continue_final_message`, the strategy just did not pass it, and the guard
-  refusing "image history" was the only thing in the way. The one real hazard
-  it exposed is `prepare_vlm_inputs_parallel`'s catch-all fallback, which
-  renders a CLOSED turn plus a generation prompt -- a silent restart -- so a
-  continuing call raises instead of falling back.
+- THE VISION PATH PREFILLS ALL BUT THE LAST PROMPT TOKEN AND HANDS MLX-LM THE
+  REST (v2.0.55), mirroring mlx-vlm's OWN loop (`generate/ar.py`):
+  `get_input_embeddings` once, then `model.language_model` over embedding
+  chunks, then `run_generation(prompt_tokens=[last_token], pre_filled_cache=)`.
+  So the first generated token is sampled by the same code as every other.
+  Until then `VLMVisionStrategy` ran the full VLM forward and sampled token one
+  ITSELF, which cost it the stop check (continuing a finished answer ran past
+  end-of-turn), the logits processors, an exact `max_tokens`, and the
+  detokenizer -- the last being why every BPE (Qwen) image reply lost the space
+  after its first word ("Astylized") until v2.0.51 papered over it. Five things
+  that are each a bug if undone: NO `mask` goes to the language model (a
+  caller's mask REPLACES the family's own causal/sliding/bidirectional masks
+  where it is honoured, and the int32 ones mask heylook used to pass is "no
+  mask", i.e. non-causal -- inert on qwen, live on gemma-4/gemma3/pixtral/
+  llava_next); `_reset_vlm_positions` runs BEFORE the prefill and stays SKIPPED
+  inside `run_generation` (direct language-model calls never clear mRoPE state,
+  and a reset after the prefill nulls the rope delta the decode steps read --
+  fluent wrong output); unchunked, the `_PER_TOKEN_PREFILL_KWARGS` allowlist is
+  cut to N-1 (gemma-4's bidirectional overlay silently no-ops on a length
+  mismatch) while chunked they go whole, as upstream passes them; the split is
+  refused when the prompt ENDS on a media placeholder; and `run_generation`
+  takes `prefill_progress_offset` so mlx-lm's own `(0,1)` cannot paint progress
+  going backwards after the strategy's `(k,N)` frames. It leans on two
+  upstream-PRIVATE pieces (`_chunked_prefill_enabled`, the `n_to_process`
+  kwarg), pinned by `TestChunkedPrefillSurface`. THE INSTRUMENT IS
+  `scripts/vlm_parity_probe.py`: it replays the exact tensors heylook built
+  through mlx-vlm's `generate_step` and compares token ids at greedy. Read a
+  NEAR-TIE there as drift -- the old all-N prefill diverged from upstream only
+  at one-quantum bf16 margins (0.125), and once both sides prefill the same way
+  the match is exact, multi-chunk included. Continuation with image history was
+  never an mlx-vlm limit: `vlm_apply_chat_template` always took
+  `continue_final_message` and the strategy did not pass it.
 - A PREVIEW THAT CANNOT SHOW MEDIA MUST SAY SO. `render_prompt` on MLX goes
   through the TEXT strategy (images stripped), so the preview is the text
   template alone. `PromptPreviewResponse.unrendered_media` (sent, not shown)

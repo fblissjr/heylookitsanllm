@@ -15,6 +15,7 @@ from mlx_lm.generate import wired_limit
 from mlx_lm.models.cache import make_prompt_cache
 from mlx_vlm.utils import load as vlm_load, prepare_inputs as vlm_prepare_inputs
 from mlx_vlm.prompt_utils import apply_chat_template as mlx_vlm_apply_chat_template
+from mlx_vlm.generate.common import _chunked_prefill_enabled, DEFAULT_PREFILL_STEP_SIZE
 
 from ..config import ChatRequest, ModelMetrics, MLX_RUNTIME_DEFAULT_FIELDS
 from .abort import AbortEvent
@@ -27,7 +28,8 @@ from ..samplers import GLOBAL_SAMPLER_FLOOR, load_vendor_sampling, resolve_effec
 from .common.samplers import build as build_sampler
 from .common.vlm_inputs import thinking_for_template
 from .common.model_wrappers import wrap_language_model
-from .common.generation_core import ensure_gen_tokenizer, generate_text, run_generation
+from .common.generation_core import (
+    _reset_vlm_positions, ensure_gen_tokenizer, generate_text, run_generation)
 from .common.batch_vision import BatchVisionProcessor
 from .common.prompt_cache import get_global_cache_manager
 from .common.vision_feature_cache import VisionFeatureCache
@@ -550,6 +552,133 @@ def _non_user_image_roles(messages) -> list[str]:
     return roles
 
 
+# Per-token kwargs that must be cut to the prefill length when the WHOLE
+# prefill is one language-model call. In chunked mode upstream passes them at
+# full length and each family aligns them by cache offset, so they are left
+# alone there (slicing would diverge from the loop this mirrors).
+_PER_TOKEN_PREFILL_KWARGS = (
+    "mm_token_type_ids", "token_type_ids", "position_ids",
+    "visual_pos_masks", "per_layer_inputs",
+)
+# Config attributes naming a media placeholder token. The prompt is split after
+# its LAST token, which is only sound while that token is text.
+_MEDIA_TOKEN_CONFIG_ATTRS = (
+    "image_token_index", "image_token_id", "video_token_index",
+    "video_token_id", "audio_token_index", "audio_token_id",
+)
+
+
+def _slice_per_token_kwargs(kwargs: dict, n_total: int, n_keep: int) -> dict:
+    """Cut the allowlisted per-token kwargs from ``n_total`` to ``n_keep``.
+
+    An allowlist, never "anything with a dimension of N": `image_grid_thw` and
+    image features are not per-token and a shape coincidence would corrupt
+    them. The price of an allowlist is a NEW per-token kwarg upstream going
+    unsliced -- and gemma-4's bidirectional overlay silently no-ops on a length
+    mismatch -- so an unlisted array SHAPED like a per-token input is refused
+    loudly instead.
+    """
+    out = dict(kwargs)
+    for key, value in kwargs.items():
+        if not isinstance(value, mx.array):
+            continue
+        if key in _PER_TOKEN_PREFILL_KWARGS:
+            # The token axis is the LAST one for mRoPE position_ids
+            # (3, B, N) and axis 1 for everything batch-first (B, N, ...).
+            axis = value.ndim - 1 if key == "position_ids" else 1
+            if value.ndim > axis and value.shape[axis] == n_total:
+                index = [slice(None)] * value.ndim
+                index[axis] = slice(0, n_keep)
+                out[key] = value[tuple(index)]
+        elif value.ndim >= 2 and value.shape[0] == 1 and value.shape[1] == n_total:
+            # Batch-first with a prompt-length axis 1 is what a per-token
+            # input looks like. (Deliberately NOT "N anywhere in the shape":
+            # cached image features are (tokens, hidden) and a hidden size can
+            # equal a prompt length by coincidence.)
+            raise GenerationFailed(
+                f"Vision prefill: '{key}' {tuple(value.shape)} looks per-token "
+                f"but is not a known per-token input. Add it to "
+                f"_PER_TOKEN_PREFILL_KWARGS (mlx_provider.py) after checking "
+                f"how the model consumes it.")
+    return out
+
+
+def _prefill_language_model(model, wrapper, input_ids, pixel_values, mask, extras,
+                            cache, *, step_size, abort_event=None) -> bool:
+    """Fill ``cache`` with every prompt token BUT THE LAST, the way mlx-vlm's
+    own loop does (`mlx_vlm/generate/ar.py`), and return False if aborted.
+
+    The last prompt token is left for mlx-lm: `run_generation` is handed it as
+    a one-token prompt, so the FIRST GENERATED token is sampled by the same
+    code as every other one -- stop check, logits processors, `max_tokens`
+    accounting and the streaming detokenizer included. Before v2.0.55 this
+    strategy ran the whole prompt through the full VLM forward and sampled that
+    token itself, and it got none of those.
+
+    Structure, each step upstream's: embed ONCE (the only place pixel values
+    and cached image features are consumed), then drive `model.language_model`
+    over embedding slices. NO `mask` reaches the language model -- every family
+    builds its own causal / sliding-window / bidirectional masks, and a
+    caller-supplied one REPLACES them on the families that honour it (an int32
+    ones mask is "no mask", i.e. non-causal attention).
+    """
+    n_total = int(input_ids.shape[1])
+    n_prefill = n_total - 1
+    report = getattr(abort_event, "set_prefill_progress", None)
+    if report is not None:
+        report(0, n_total)
+
+    # Direct language-model calls never clear the mRoPE instance state the way
+    # the full VLM forward did (it nulled them on seeing pixel_values), so
+    # without this the decode step's rope path depends on what ran BEFORE this
+    # request. `rope_deltas` below re-seeds it for this one.
+    _reset_vlm_positions(wrapper)
+
+    with mx.stream(generation_stream):
+        embedding_output = model.get_input_embeddings(
+            input_ids, pixel_values, mask=mask, **extras)
+        inputs_embeds = embedding_output.inputs_embeds
+        lm_kwargs = {
+            **extras,
+            **{k: v for k, v in embedding_output.to_dict().items()
+               if k != "inputs_embeds" and v is not None},
+        }
+
+        chunked = _chunked_prefill_enabled(
+            model, input_ids=input_ids, inputs_embeds=inputs_embeds,
+            prompt_cache=cache, draft_model=None, draft_kind=None,
+            prefill_kwargs=lm_kwargs)
+        if chunked:
+            step = step_size
+        else:
+            # A family that refuses chunking (gemma-4 with images: its vision
+            # blocks attend bidirectionally and must not be split) still gets
+            # the one-token holdback -- the last token is text, so every image
+            # block stays whole inside this single call.
+            step = n_prefill
+            lm_kwargs = _slice_per_token_kwargs(lm_kwargs, n_total, n_prefill)
+
+        done = 0
+        while done < n_prefill:
+            n = min(step, n_prefill - done)
+            # The output is deliberately never evaluated: qwen ignores
+            # logits_to_keep, and evaluating it would materialize a
+            # (1, n, vocab) logits tensor only to drop it. The cache state is
+            # what this call is for.
+            model.language_model(
+                inputs=input_ids[:, done:done + n],
+                inputs_embeds=inputs_embeds[:, done:done + n],
+                cache=cache, n_to_process=n, logits_to_keep=1, **lm_kwargs)
+            mx.eval([c.state for c in cache])
+            mx.clear_cache()
+            done += n
+            if report is not None:
+                report(done, n_total)
+            if abort_event is not None and abort_event.is_set():
+                return False
+    return True
+
+
 class VLMVisionStrategy:
     """Strategy for VLM requests with images.
 
@@ -570,9 +699,12 @@ class VLMVisionStrategy:
     MLX generation.
     """
 
-    def __init__(self, model_config=None, template_info=None):
+    def __init__(self, model_config=None, template_info=None, model_id=None,
+                 context_length=None):
         self.model_config = model_config or {}
         self.template_info = template_info  # how history thinking is rendered
+        self.model_id = model_id
+        self.context_length = context_length  # the provider's, for the over-length guard
         self._batch_vision_processor = None
         self._cached_wrapper = None
         self._vision_cache = VisionFeatureCache(max_entries=20)
@@ -643,15 +775,12 @@ class VLMVisionStrategy:
             if k not in ("input_ids", "pixel_values", "attention_mask")
         }
 
-        # Build kwargs for VLM forward pass
-        vlm_kwargs = dict(extra_kwargs)
-        if pixel_values is not None:
-            vlm_kwargs["pixel_values"] = pixel_values
-        # VLM models expect `mask` (not `attention_mask`). Default to all-ones
-        # so models with a required mask positional arg (mistral3, pixtral, llava_next) don't fail.
-        if mask is None:
-            mask = mx.ones(input_ids.shape, dtype=mx.int32)
-        vlm_kwargs["mask"] = mask
+        # What the EMBEDDING step takes beside ids/pixels/mask. `mask` goes to
+        # get_input_embeddings only and never to the language model (see
+        # _prefill_language_model); it may be None, as it is upstream.
+        extras = dict(extra_kwargs)
+        if input_ids.ndim == 1:
+            input_ids = input_ids[None, :]
 
         # Vision feature caching: reuse cached vision encoder outputs across turns.
         # Follows mlx-vlm's generate pattern (now mlx_vlm/generate/ package):
@@ -671,7 +800,7 @@ class VLMVisionStrategy:
             # base64/PIL images that don't have a stable URL.
             cached_features = self._vision_cache.get(cache_key, pixel_values=pixel_values, variant=budget_variant)
             if cached_features is not None:
-                vlm_kwargs["cached_image_features"] = cached_features
+                extras["cached_image_features"] = cached_features
                 logging.info("[VLM VISION] Using cached vision features (skipping vision encoder)")
             else:
                 # Compute and cache vision features separately
@@ -679,7 +808,7 @@ class VLMVisionStrategy:
                     features = model.encode_image(pixel_values)
                     mx.async_eval(features)
                 self._vision_cache.put(cache_key, features, pixel_values=pixel_values, variant=budget_variant)
-                vlm_kwargs["cached_image_features"] = features
+                extras["cached_image_features"] = features
                 logging.info("[VLM VISION] Computed and cached vision features")
 
         # Ensure wrapper is cached for language model generation
@@ -689,59 +818,55 @@ class VLMVisionStrategy:
         # Create KV cache sized for the language model
         request_cache = make_prompt_cache(self._cached_wrapper)
 
-        # Phase 1: Vision encoding -- run full VLM forward pass.
-        # The VLM passes cache= through to model.language_model(), so the
-        # language model writes KV state directly into request_cache.
-        # When cached_image_features is set, the vision tower is skipped
-        # inside the model's get_input_embeddings().
+        # THE PROMPT THIS RUN ACTUALLY READS. `input_ids` is the fully expanded
+        # sequence -- each image placeholder already widened to its hundreds or
+        # thousands of real positions. mlx-lm is handed a ONE-TOKEN prompt
+        # below (the cache holds the rest) and reports `prompt.size` on every
+        # response, so without the restamp at the bottom every vision request
+        # would report `prompt_tokens=1` and a `prompt_tps` computed from it.
+        prompt_token_count = int(input_ids.shape[1])
+
+        # Guards, all BEFORE any compute -- the length is known up front now.
+        if prompt_token_count < 2:
+            raise GenerationFailed("Vision prompt rendered to fewer than two tokens.")
+        if self.context_length and prompt_token_count > self.context_length:
+            raise InvalidGenerationRequest(
+                f"Prompt is {prompt_token_count} tokens; {self.model_id or 'this model'} "
+                f"has a context of {self.context_length} tokens. Shorten the "
+                f"conversation, remove an image, or lower vision_tokens.")
+        last_prompt_token = int(input_ids[0, -1].item())
+        media_tokens = {
+            getattr(model.config, attr) for attr in _MEDIA_TOKEN_CONFIG_ATTRS
+            if isinstance(getattr(model.config, attr, None), int)}
+        if last_prompt_token in media_tokens:
+            # The prompt is split after its last token, which is only sound
+            # while that token is TEXT (every image block must sit wholly
+            # inside the prefill). A template ending on a placeholder is one
+            # this strategy does not know how to drive.
+            raise GenerationFailed(
+                f"Vision prompt ends on a media placeholder token "
+                f"({last_prompt_token}); cannot split the prefill there.")
+
+        # Phase 1: prefill every prompt token but the last into request_cache
+        # (chunked by prefill_step_size where the family allows it, reporting
+        # progress and honouring abort between chunks).
         prefill_tic = time.perf_counter()
         with wired_limit(model, [generation_stream]):
-            if input_ids.ndim == 1:
-                input_ids = input_ids[None, :]
-
-            output = model(input_ids, cache=request_cache, **vlm_kwargs)
-
-            # Extract logits (may be LanguageModelOutput or raw tensor)
-            logits = output.logits if hasattr(output, 'logits') else output
-
-            # Sample first token
-            last_logits = logits[:, -1, :]
-            first_logprobs = last_logits - mx.logsumexp(last_logits, axis=-1, keepdims=True)
-            first_token_id = sampler(first_logprobs).item()
-            mx.eval(first_logprobs)
+            completed = _prefill_language_model(
+                model, self._cached_wrapper, input_ids, pixel_values, mask, extras,
+                request_cache,
+                step_size=effective_request.get('prefill_step_size') or DEFAULT_PREFILL_STEP_SIZE,
+                abort_event=abort_event)
         prefill_time = time.perf_counter() - prefill_tic
-
-        # THE PROMPT THIS RUN ACTUALLY READ. `input_ids` is the fully expanded
-        # sequence -- each image placeholder already widened to its hundreds or
-        # thousands of real positions -- and the Phase-1 forward above consumed
-        # all of it. Phase 2 is handed a ONE-TOKEN continuation seed (the cache
-        # already holds the prompt), and mlx-lm reports `prompt.size` on EVERY
-        # response it yields, so without this every vision request reported
-        # `prompt_tokens=1` and a `prompt_tps` computed from that same 1. The
-        # text path has no such split and was always right, which is why the
-        # bug was invisible until an image was attached.
-        prompt_token_count = int(input_ids.size)
+        if not completed:
+            logging.info("Generation aborted during vision prefill")
+            return
         prefill_tps = (prompt_token_count / prefill_time) if prefill_time > 0 else 0.0
 
-        # Check abort before yielding
-        if abort_event and abort_event.is_set():
-            logging.info("Generation aborted during vision encoding")
-            return
-
-        # Yield the first token RAW (skip_special_tokens=False): the first
-        # sampled token after a vision prefill can be a structural marker
-        # (gemma-4 opens thinking with <|channel>) that the reasoning parser
-        # must see; parsers strip non-structural specials from routed text.
-        first_text = tokenizer.decode([first_token_id], skip_special_tokens=False)
-        yield GenerationChunk(
-            text=first_text,
-            token=first_token_id,
-            prompt_tokens=prompt_token_count,
-            prompt_tps=prefill_tps,
-        )
-
-        # Phase 2: Continue generation using the language model wrapper
-        # with the pre-filled cache from the VLM forward pass.
+        # Phase 2: mlx-lm takes the LAST prompt token as its whole prompt and
+        # samples the first generated token itself -- so that token gets the
+        # stop check, the logits processors, the max_tokens count and the
+        # streaming detokenizer like every other one.
         #
         # Every chunk is re-stamped, not just the first: ChunkTelemetry.absorb
         # keeps the LAST truthy value for both fields, so a single correct
@@ -749,12 +874,14 @@ class VLMVisionStrategy:
         for chunk in run_generation(
             model=self._cached_wrapper,
             tokenizer=tokenizer,
-            prompt_tokens=[first_token_id],
+            prompt_tokens=[last_prompt_token],
             effective_request=effective_request,
             sampler=sampler,
             processors=processors,
             abort_event=abort_event,
             pre_filled_cache=request_cache,
+            continuing=request.is_continuation(),
+            prefill_progress_offset=prompt_token_count - 1,
         ):
             chunk.prompt_tokens = prompt_token_count
             chunk.prompt_tps = prefill_tps
@@ -1255,7 +1382,8 @@ class MLXProvider(BaseProvider):
         )
         if self.is_vlm:
             self._strategies['vision'] = VLMVisionStrategy(
-                model_config=self.config, template_info=getattr(self, "_template_info", None))
+                model_config=self.config, template_info=getattr(self, "_template_info", None),
+                model_id=self.model_id, context_length=self.context_length)
         # Diffusion handles BOTH its text and vision requests -- the denoising
         # loop takes pixel_values directly, so there is no separate vision
         # split. 'text' stays registered regardless: warmup resolves its

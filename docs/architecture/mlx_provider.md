@@ -48,9 +48,9 @@ As of v1.16.0, the provider uses two strategies instead of three. Previously, `T
 MLXProvider.create_chat_completion()
   |-- has_images --> VLMVisionStrategy.generate()
   |                    |-- mlx_vlm.utils.prepare_inputs (tokenize + pixel values)
-  |                    |-- VLM forward pass -> fills KV cache
-  |                    |-- Sample first token from logits
-  |                    |-- run_generation(pre_filled_cache=...) [lm_stream_generate]
+  |                    |-- get_input_embeddings once (pixels + cached features consumed here)
+  |                    |-- language_model over embedding chunks -> fills KV cache with all but the LAST token
+  |                    |-- run_generation(prompt=[last token], pre_filled_cache=...) [lm_stream_generate]
   |
   |-- no images  --> UnifiedTextStrategy.generate()   [lm_stream_generate via generation_core]
                        |-- is_vlm=true:  VLM chat template + LanguageModelLogitsWrapper
@@ -83,12 +83,19 @@ trace lands in `content`. The flag now has ONE owner,
 
 Everything else -- message prep, cache config, prompt cache lookup, generation loop, acceptance tracking, KV snapshot storage -- lives in `generation_core`, shared across both paths.
 
-**`VLMVisionStrategy`** (v1.18.0) uses the pre-filled cache pattern inspired by vllm-mlx:
+**`VLMVisionStrategy`** prefills a request-local cache and hands mlx-lm the rest. Since v2.0.55 the prefill follows mlx-vlm's OWN loop (`mlx_vlm/generate/ar.py`) rather than calling the full VLM forward:
 1. Prepare inputs via `mlx_vlm.utils.prepare_inputs` (handles image grid dimensions per model, e.g. Qwen `image_grid_thw`)
 2. Create KV cache for the language model via `make_prompt_cache(LanguageModelLogitsWrapper)`
-3. Run full VLM forward pass (`model(input_ids, cache=request_cache, pixel_values=...)`), filling the cache
-4. Sample first token from output logits
-5. Continue generation via `run_generation(pre_filled_cache=request_cache)` -- the same code path as text-only
+3. `_prefill_language_model`: reset mRoPE state, `model.get_input_embeddings(...)` ONCE, then `model.language_model(inputs=, inputs_embeds=, cache=, ...)` over slices covering every prompt token **but the last** -- chunked by `prefill_step_size` where the family's `chunked_prefill_policy` allows, one call otherwise -- reporting prefill progress and honouring abort between chunks
+4. `run_generation(prompt_tokens=[last_prompt_token], pre_filled_cache=request_cache)` -- mlx-lm samples the first generated token itself, so it is the same code path as text-only from the FIRST token on
+
+Invariants worth holding:
+- **No `mask` reaches the language model.** Each family builds its own causal / sliding-window / bidirectional masks; a caller-supplied one replaces them on the families that honour it, and an int32 ones mask is "no mask" (non-causal). Before v2.0.55 heylook passed exactly that on every image request.
+- **The split is sound only while the last prompt token is text** (every image block inside the prefill); a prompt ending on a media placeholder is refused.
+- **Unchunked, the allowlisted per-token kwargs are cut to N-1** (`_PER_TOKEN_PREFILL_KWARGS`); chunked, they are passed whole as upstream does. An unlisted array shaped like a per-token input is refused, because gemma-4's bidirectional overlay silently no-ops on a length mismatch.
+- **`_reset_vlm_positions` runs BEFORE the prefill and is skipped inside `run_generation`.** Direct language-model calls never clear mRoPE state the way the full forward did, and resetting after the prefill would null the rope delta the decode steps read.
+- **No cross-request prompt-cache reuse on this path** (mRoPE + non-trimmable hybrid caches): `run_generation` sets `prompt_cache = None` for a pre-filled cache.
+- The instrument for any change here is `scripts/vlm_parity_probe.py` (token parity with mlx-vlm's loop on a real model). Fakes cannot see cache or position state.
 
 This gives vision requests the full sampler suite (top_k, min_p, presence_penalty, logit_bias, XTC), abort support, speculative decoding acceptance tracking, and the DraftTuner. Image loading is parallelized via `BatchVisionProcessor`.
 
@@ -160,7 +167,7 @@ The sampling and KV caching logic are ported directly from `mlx-lm`.
 
 ## 3. Known Issues and Trade-offs
 
-*   **First-token asymmetry for vision**: The first token in a vision request is sampled directly from VLM forward pass logits (outside `run_generation()`). Subsequent tokens go through the full generation loop. This means the first token lacks DraftTuner integration. (It also carried a separate logprobs path until v1.79.74 removed logprobs entirely; the log-softmax there remains because the sampler needs it.)
+*   **Logits processors do not see the PROMPT on the vision path**: mlx-lm's token history starts from the one-token prompt it is handed, so a presence/repetition penalty counts only generated tokens there, while the text path counts the prompt too. (The older first-token asymmetry -- the strategy sampling token one itself, with no stop check or processors -- was removed in v2.0.55.)
 
 *   **No radix cache for vision**: Vision requests skip the radix-tree prompt cache because the pre-filled KV cache includes vision embeddings that can't be represented as token sequences. Each vision request does a full VLM forward pass.
 
