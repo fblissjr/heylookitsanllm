@@ -229,8 +229,10 @@ documented on that route that are about the ENGINES rather than the wire still h
   llama-server always continues). The response carries ONLY the continuation
   text on every provider (llama-server's prefill echo is stripped
   server-side; an all-text parts-list prefill is flattened with the same
-  ' '-join rule as MLX and works -- v1.61.1). Not supported with image
-  history or diffusion models (400). STREAMING caveat (v1.61.1): these
+  ' '-join rule as MLX and works -- v1.61.1). Image history continues on both
+  providers (MLX since v2.0.51: the vision strategy leaves the final turn open
+  through the same template kwarg as the text path, mid-thought resume
+  included). Not supported on diffusion models (400). STREAMING caveat (v1.61.1): these
   refusals fire after HTTP 200 + headers have flushed, so they surface as an
   in-band SSE error frame: an Anthropic `error` event typed `invalid_request_error` (code
   `invalid_request`) -- never `server_error`. Clients should treat that frame as a 400.

@@ -528,8 +528,14 @@ def run_generation(
         extra_generate_kwargs['prefill_step_size'] = prefill_step_size
 
     try:
+        # A pre-filled cache seeds the detokenizer TOO, continuation or not:
+        # the vision strategy samples and decodes the first token itself, so
+        # the detokenizer's "first" text is really the SECOND token, and its
+        # empty-buffer trim ate that token's leading space on every BPE
+        # (Qwen) image response -- "A stylized" arrived as "Astylized".
         with wired_limit(model, [generation_stream]), \
-                continuation_detokenizer(tokenizer, continuing):
+                continuation_detokenizer(
+                    tokenizer, continuing or pre_filled_cache is not None):
             first_token = True
             for response in lm_stream_generate(
                 model=model,

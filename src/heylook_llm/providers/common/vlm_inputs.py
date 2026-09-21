@@ -14,6 +14,8 @@ from typing import List, Tuple
 
 from PIL import Image
 
+from ..base import InvalidGenerationRequest
+
 
 def thinking_for_template(msg_dict: dict, template_info=None) -> dict:
     """Hand an assistant message's ``thinking`` to the chat template the way
@@ -108,6 +110,7 @@ def prepare_vlm_inputs_parallel(
     enable_thinking=None,
     reasoning_effort=None,
     template_info=None,
+    continue_final_message: bool = False,
 ) -> Tuple[List[Image.Image], str, bool, List[str]]:
     """Prepare VLM inputs with parallel image loading.
 
@@ -120,6 +123,11 @@ def prepare_vlm_inputs_parallel(
         model: Optional model instance (unused currently, reserved for future)
         enable_thinking: Template thinking toggle forwarded to the template
             function (None = leave the template to its default)
+        continue_final_message: leave the final message's turn OPEN so
+            generation finishes it. A template failure then RAISES
+            InvalidGenerationRequest -- both fallbacks below render a closed
+            turn plus a fresh generation prompt, which would silently RESTART
+            the message the caller asked to continue.
 
     Returns:
         Tuple of (images, formatted_prompt, has_images, image_urls)
@@ -210,8 +218,15 @@ def prepare_vlm_inputs_parallel(
             processor, config, safe_messages, num_images=len(images),
             enable_thinking=enable_thinking,
             reasoning_effort=reasoning_effort,
+            continue_final_message=continue_final_message,
         )
+    except InvalidGenerationRequest:
+        raise
     except Exception as e:
+        if continue_final_message:
+            raise InvalidGenerationRequest(
+                f"Cannot continue the final message with this model's chat "
+                f"template: {e}") from e
         logging.error(f"Chat template error: {e}")
         logging.error(f"Text messages: {text_messages}")
         # Fallback: apply the tokenizer's own chat template with string content

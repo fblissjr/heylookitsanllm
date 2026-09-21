@@ -144,6 +144,37 @@ class TestPrepareVlmInputsParallel:
         assert prompt == "tokenizer fallback"
         mock_processor.tokenizer.apply_chat_template.assert_called_once()
 
+    def test_continuation_reaches_the_template(self, mock_mlx):
+        from heylook_llm.providers.common.vlm_inputs import prepare_vlm_inputs_parallel
+
+        template_fn = MagicMock(return_value="open turn")
+        prepare_vlm_inputs_parallel(
+            [FakeMessage("user", "hi"), FakeMessage("assistant", "The goat is")],
+            MagicMock(), MagicMock(), MagicMock(), template_fn,
+            continue_final_message=True,
+        )
+        assert template_fn.call_args.kwargs["continue_final_message"] is True
+
+    def test_a_failed_continuation_never_falls_back(self, mock_mlx):
+        """Both fallbacks render a CLOSED turn plus a fresh generation prompt,
+        which would restart the message the caller asked to continue."""
+        import pytest
+        from heylook_llm.providers.base import InvalidGenerationRequest
+        from heylook_llm.providers.common.vlm_inputs import prepare_vlm_inputs_parallel
+
+        mock_processor = MagicMock()
+
+        def failing_template(proc, cfg, msgs, **kwargs):
+            raise ValueError("template rewrote the final message")
+
+        with pytest.raises(InvalidGenerationRequest):
+            prepare_vlm_inputs_parallel(
+                [FakeMessage("user", "hi"), FakeMessage("assistant", "The goat is")],
+                mock_processor, MagicMock(), MagicMock(), failing_template,
+                continue_final_message=True,
+            )
+        mock_processor.tokenizer.apply_chat_template.assert_not_called()
+
     def test_template_total_fallback(self, mock_mlx):
         """When all template calls fail, fall back to manual formatting."""
         from heylook_llm.providers.common.vlm_inputs import prepare_vlm_inputs_parallel

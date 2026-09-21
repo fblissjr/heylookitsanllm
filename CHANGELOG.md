@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.51]
+
+### Added
+
+- **Save & Continue works on MLX conversations that contain an image.** It was
+  refused with "continue_final_message is not supported with image history",
+  which read as an engine limit and was not one: the template function the
+  vision strategy renders through already took the flag, and the strategy never
+  passed it. Both continuation shapes now work there -- a content prefill leaves
+  the final turn open, and a mid-thought resume renders everything before the
+  resumed message with thinking on and appends the partial trace after the
+  family's opener, the same construction the text path uses. Nothing is lost by
+  dropping that final message from the render: it is an assistant turn, and MLX
+  already refuses media anywhere but a user turn. The image marker stays on the
+  user turn that carried it (checked at the rendered prompt on qwen3_5,
+  qwen3_vl and gemma4). Diffusion models still refuse, because a denoising
+  engine has no open turn to continue.
+
+  Verified live through the conversation generate route -- the path chat
+  actually uses -- on `Qwen3.5-0.8B-MLX-8bit` and
+  `gemma-4-26B-A4B-it-qat-4bit-g32-mlx`, both shapes, with the continuation
+  describing the picture's real colours.
+
+### Fixed
+
+- **Every MLX image response on a BPE-tokenizer model lost the space after its
+  first token** ("A stylized flag" arrived as "Astylized flag"). The vision
+  strategy samples and decodes the first token itself, then hands the rest to
+  mlx-lm with a pre-filled cache -- so the streaming detokenizer's "first" text
+  is really the SECOND token, and its empty-buffer trim ate that token's leading
+  space. Qwen-family models are BPE and were affected on every image request;
+  gemma's SPM detokenizer is built with the trim off and was not, which is how
+  it went unseen. `run_generation` now seeds the detokenizer for any pre-filled
+  cache, the mechanism continuation already used. Reproduced live before the
+  change and confirmed gone after.
+- **A failed continuation on the vision path can no longer restart the message
+  silently.** `prepare_vlm_inputs_parallel` catches every template exception
+  and falls back to renders that close the turn and add a fresh generation
+  prompt. Unreachable while continuation was refused upstream; with it enabled,
+  a template that cannot continue now raises the same 400 the text path does.
+
+### Known limits
+
+- `/v1/messages` does not arm its reasoning parser for a mid-thought resume on
+  ANY path, text or vision: the continuation generates correctly but is filed
+  as text with the closing marker visible. Chat is unaffected (the generate
+  route passes `resumes_thinking`). Pre-existing, found while checking this.
+- The 4-bit QAT gemma degenerates into repetition on some content prefills
+  ("Speaking as a goat, the circle is") on the TEXT path, deterministically,
+  while a plainer prefill continues cleanly. Same seed twice gives the same
+  output, so it is not cache state. Not caused by this change and not chased.
+
 ## [2.0.50]
 
 ### Documentation

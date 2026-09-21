@@ -589,11 +589,25 @@ class VLMVisionStrategy:
         # reasoning_effort rides the VISION path too. Without it the setting
         # worked on a text turn and silently reverted to the template default
         # the moment an image was attached -- same model, same conversation.
+        #
+        # Continuation takes the SAME two shapes as the text path
+        # (UnifiedTextStrategy.build_prompt): a content prefill leaves the
+        # final turn open through the template, and a mid-thought resume
+        # renders everything BEFORE the message being resumed as a fresh
+        # generation prompt with thinking on, then appends the partial trace
+        # after the family's opener. Dropping that final message costs no
+        # image: it is an assistant turn, and _non_user_image_roles has
+        # already refused media anywhere but a user turn.
+        resume = _thinking_resume(request)
         images, formatted_prompt, _, image_urls = self._prepare_vlm_inputs_parallel(
-            request.messages, processor, model.config, model,
-            enable_thinking=_resolve_enable_thinking(effective_request),
+            request.messages[:-1] if resume is not None else request.messages,
+            processor, model.config, model,
+            enable_thinking=True if resume is not None else _resolve_enable_thinking(effective_request),
             reasoning_effort=effective_request.get("reasoning_effort"),
+            continue_final_message=request.is_continuation() and resume is None,
         )
+        if resume is not None:
+            formatted_prompt = _append_thinking_resume(formatted_prompt, resume, self.template_info)
 
         num_images = len(images) if images else 0
         model_type = getattr(model.config, 'model_type', 'unknown')
@@ -747,13 +761,15 @@ class VLMVisionStrategy:
             yield chunk
 
     def _prepare_vlm_inputs_parallel(self, messages: List, processor, config, model=None,
-                                     enable_thinking=None, reasoning_effort=None) -> Tuple[List[Image.Image], str, bool, List[str]]:
+                                     enable_thinking=None, reasoning_effort=None,
+                                     continue_final_message: bool = False) -> Tuple[List[Image.Image], str, bool, List[str]]:
         """Prepare VLM inputs with parallel image loading. Delegates to standalone function."""
         from .common.vlm_inputs import prepare_vlm_inputs_parallel
         return prepare_vlm_inputs_parallel(
             messages, processor, config, self._batch_vision_processor,
             vlm_apply_chat_template, model=model, enable_thinking=enable_thinking,
             reasoning_effort=reasoning_effort, template_info=self.template_info,
+            continue_final_message=continue_final_message,
         )
 
 
@@ -1542,16 +1558,16 @@ class MLXProvider(BaseProvider):
                             f"gguf model to put an image on that turn."
                         )
 
-                    # Continuation is a TEXT-path feature: the vision strategy
-                    # renders through mlx-vlm's prepare_inputs (no open-turn
-                    # spelling there yet), and a denoising engine has no turn
-                    # to leave open at all. Refuse rather than silently
-                    # restart the message.
-                    if request.is_continuation() and (self.is_diffusion or (self.is_vlm and has_images)):
+                    # A denoising engine has no turn to leave open at all.
+                    # Refuse rather than silently restart the message. (Image
+                    # history continues fine: VLMVisionStrategy leaves the
+                    # final turn open through the same template kwarg the
+                    # text path uses.)
+                    if request.is_continuation() and self.is_diffusion:
                         raise InvalidGenerationRequest(
-                            "continue_final_message is not supported with image "
-                            "history or diffusion models yet -- text-only "
-                            "continuation works on every MLX chat model."
+                            "continue_final_message is not supported on "
+                            "diffusion models -- a denoising engine has no "
+                            "open turn to continue."
                         )
 
                     # Diffusion first: the AR text/vision split does not apply

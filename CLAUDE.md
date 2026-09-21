@@ -610,6 +610,20 @@ in git history; a contract test pins that `/v2` stays 404.)
   marker at any role. OWNER DECISION 2026-09-07: NOT forking mlx-vlm for this
   -- assistant-turn media is gguf-only and that is the answer, not a backlog
   item. Do not re-open it without a new reason.
+- THE VISION PATH DECODES IN TWO PHASES AND THE SEAM IS TOKEN 1|2, NOT 0|1
+  (v2.0.51). `VLMVisionStrategy` samples and `tokenizer.decode`s the first
+  token itself, then hands mlx-lm a pre-filled cache -- so the streaming
+  detokenizer's "first" text is really the second token, and a BPE
+  detokenizer's empty-buffer trim ate its leading space on every Qwen image
+  response ("Astylized"). gemma's SPM one is built `trim_space=False`, which is
+  why a gemma-only check never saw it. `run_generation` seeds the detokenizer
+  for ANY pre-filled cache, continuation or not. Continuation itself was never
+  an mlx-vlm limit: `vlm_apply_chat_template` always took
+  `continue_final_message`, the strategy just did not pass it, and the guard
+  refusing "image history" was the only thing in the way. The one real hazard
+  it exposed is `prepare_vlm_inputs_parallel`'s catch-all fallback, which
+  renders a CLOSED turn plus a generation prompt -- a silent restart -- so a
+  continuing call raises instead of falling back.
 - A PREVIEW THAT CANNOT SHOW MEDIA MUST SAY SO. `render_prompt` on MLX goes
   through the TEXT strategy (images stripped), so the preview is the text
   template alone. `PromptPreviewResponse.unrendered_media` (sent, not shown)
