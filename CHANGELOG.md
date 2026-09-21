@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.61]
+
+### Changed
+
+- **Vendored `marked` 18.0.12 -> 18.0.13** via `scripts/vendor_frontend.py
+  --update`; `dompurify` was already current. v2.0.59 named this as one patch
+  release behind. `marked` is what the renderer's URL-scheme allowlist and the
+  incremental stream renderer sit on, so the check that matters is the
+  model-free browser suite (`bun run e2e:render`): green, including "no
+  markdown spelling renders a dangerous URL", "a refused URL leaves no anchor"
+  and "an incrementally grown document renders identically to a whole one".
+
 ## [2.0.60]
 
 ### Changed
