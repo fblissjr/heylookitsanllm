@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.59]
+
+### Documentation
+
+- **The contract docs' "prefill progress comes from both engines" is now true
+  on purpose.** `docs/frontend_v3_spec.md` and `docs/api_integration.md` both
+  said it; for an MLX image request it was false until v2.0.55 (one opaque
+  forward, nothing to report). Both now say what an image request's frames
+  carry: `total` is the expanded prompt with image positions included, frames
+  only move forward, and a cancel lands between chunks. The spec also records
+  that `max_tokens` is exact on that path now.
+- `docs/project/TODO.md`: the follow-ups v2.0.55 left open -- gemma-4 vision
+  unverified on the new path, the unmeasured cost of the non-causal mask the
+  OLD path ran on gemma-4, logits processors not seeing the prompt on the
+  vision path, and the vision prefill being outside the reported peak memory.
+- `docs/project/CURRENT.md`: a dated entry for this branch. The rest of that
+  file predates it and was not refreshed.
+
+### Release checks for this branch (v2.0.53 - v2.0.59)
+
+- **OpenAPI.** `app.openapi()` exported from `main` and from the branch tip,
+  each run printing the `heylook_llm` it imported, and diffed structurally:
+  the same paths and the same component schemas, with exactly two differences
+  -- the version string, and the narrative's "batch work by model" reworded to
+  "group your requests by model so consecutive ones do not each pay a load".
+  Deleting `schema/batch.py` was schema-neutral, as expected of models no route
+  bound. No committed schema artifact exists, deliberately.
+- **`tests/smoke/`** green on the mlx-lm and mlx-vlm arms against an isolated
+  server, including the image-token usage check. Skipped and therefore
+  UNCOVERED, as before: thinking depth on both MLX arms (no small served MLX
+  model advertises `reasoning_effort`).
+- **Not re-run: the gguf smoke arm.** No gguf provider code changed on this
+  branch -- prose, and RLM's sub-query loop, which is what gguf already ran.
+- **Uncovered by owner decision: gemma-4 vision** (see v2.0.55).
+- **`scripts/vendor_frontend.py --check`: `marked` is one patch release behind**
+  (18.0.13 available, 18.0.12 vendored); `dompurify` current. The frontend is
+  untouched on this branch, so it is named here and not updated.
+
 ## [2.0.58]
 
 ### Changed

@@ -463,7 +463,10 @@ after roughly five
 seconds of silence wherever that silence falls: a long prefill, or a stall
 between tokens. `heylook_progress` is prefill progress in prompt tokens,
 cached prefix excluded, one event per change, from both engines; it only
-ever precedes the first content block. Neither carries content, so a
+ever precedes the first content block. On an MLX image request `total` is
+the expanded prompt -- each image already widened to its real positions --
+and the events arrive per prefill chunk (v2.0.55; before that an image
+request's prefill was silent). Neither carries content, so a
 client that dispatches on event type and drops what it does not know needs
 no change; a client that treats an unknown event as an error does.
 

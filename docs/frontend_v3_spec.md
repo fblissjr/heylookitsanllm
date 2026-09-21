@@ -164,7 +164,11 @@ backend):**
   OpenAI route in v1.79.66) -- emitted after ~5s of silence wherever it falls, prefill or a mid-generation stall. It
   reaches `onEvent` like any event and the dispatch drops it, as it drops every unknown type.
   `event: heylook_progress` `data:{type,prefill:{processed,total}}` is prefill progress (both engines,
-  cached prefix excluded, only before the first block) and routes to `onProgress`.
+  cached prefix excluded, only before the first block) and routes to `onProgress`. MLX IMAGE requests
+  report it too since v2.0.55 (the vision prefill was one opaque forward before): `total` is the
+  EXPANDED prompt, image positions included, frames only move forward and end at `(total,total)`, and a
+  cancel lands between prefill chunks. The same release made `max_tokens` exact on that path (it
+  emitted one token more).
 - Neither Messages-grammar wire sends `data: [DONE]`: `message_stop` ends a `/v1/messages` stream and
   `heylook_saved` follows it on the generate route. Telemetry rides `message_stop.performance` with no
   opt-in flag.

@@ -7,6 +7,7 @@ docs-twins entry added 2026-08-31 without a full backlog pass; iOS keyboard
 entry added 2026-09-05 and corrected 2026-09-08 to match the harness's own
 header; frontend/backend state-boundary section and the E2E chat-suite failure
 added 2026-09-08; chat-template-version entry added 2026-09-20 without a full
+backlog pass; MLX vision prefill follow-ups added 2026-09-21 without a full
 backlog pass*
 
 ## Retire per-model entries from models.toml (2026-09-08) — START HERE
@@ -361,11 +362,54 @@ Worked around with `chat_template.heylook.jinja` in that model's folder
   would have made this visible immediately, since the preview shows the
   rendered prompt).
 
+## MLX vision prefill: what v2.0.55 left open (2026-09-21)
+
+The vision path now prefills the way mlx-vlm's own loop does and lets mlx-lm
+sample the first token (`docs/architecture/mlx_provider.md`, `VLMVisionStrategy`).
+Verified by token parity against `mlx_vlm.generate.ar.generate_step`
+(`scripts/vlm_parity_probe.py`) on qwen3_5 and qwen3_vl. Open:
+
+- [ ] **gemma-4 vision is UNVERIFIED on the new path** (owner call: "an outlier,
+  another time"). The path is generic, so gemma-4 image requests go through it
+  and their output changed with nothing having checked it. Run the parity probe
+  on `gemma-4-26b-a4b-it-8bit-mlx`. Two things make gemma-4 the interesting
+  family rather than a formality: upstream REFUSES to chunk its prefill when
+  images are present (bidirectional vision blocks), so it takes the single-call
+  branch the qwen runs never exercise, including the `_PER_TOKEN_PREFILL_KWARGS`
+  slice of `mm_token_type_ids`; and see the next item.
+- [ ] **The pre-v2.0.55 gemma-4 vision path ran NON-CAUSAL attention over the
+  prompt, and nobody has measured what that cost.** heylook always passed an
+  int32 ones `mask` into the full-VLM forward; gemma-4's language model uses a
+  caller's mask INSTEAD of building its own causal + sliding-window +
+  bidirectional masks (`mlx_vlm/models/gemma4/language.py`, the
+  `if mask is None` branch), and at the op level that ones mask equals no mask.
+  Read from code and checked on the attention op alone -- never on a loaded
+  model. It is fixed by construction now (no mask reaches the language model),
+  but "gemma-4 vision quality before v2.0.55" is an open question, and any
+  earlier gemma-4 vision observation in `internal/research/` was taken under
+  it. The same exposure applied to gemma3, pixtral and llava_next; qwen was
+  never affected (its mask does not reach attention). A parity-probe run of
+  the OLD commit on gemma-4 would size it: expect a real divergence, not the
+  one-quantum near-ties the qwen baseline showed.
+- [ ] **Logits processors do not see the PROMPT on the vision path.** mlx-lm's
+  token history starts from the one-token prompt it is handed, so a
+  presence/repetition penalty counts only generated tokens there, while the
+  text path counts the prompt too. Pre-existing (the old path had the same
+  shape) and not fixed in v2.0.55. Worth doing only if a penalty is observed to
+  behave differently with an image attached; the fix is to seed the processors'
+  history, not to change the prefill.
+- [ ] `mx.reset_peak_memory()` runs inside `run_generation`, i.e. AFTER the
+  vision prefill, so an image request's reported peak excludes its prefill.
+  Pre-existing; one line to move once someone wants the number.
+
 ## Batch + rlm MODEL_BUSY, OUT OF SCOPE by owner decision (2026-08-31)
 
 The two batch items below CLOSED in v1.79.66 by deletion: the OpenAI route,
 its batch sibling and `batch_processor.py`'s processing modes are gone. Only
-the rlm item remains open; the batch text is kept as record.
+the rlm item remains open; the batch text is kept as record. (v2.0.57 then
+removed the batch INTERNALS too -- `mlx_batch_text.py`, `schema/batch.py`,
+`create_batch_chat_completion` -- so RLM's `llm_query_batched` is a plain
+sequential loop and there is no server-side batch inference of any kind.)
 
 - [x] **`processing_mode: "parallel"` still returns 200 with the busy sentence
   in a per-group `error` field** (P2): `batch_processor.py:413`'s broad handler

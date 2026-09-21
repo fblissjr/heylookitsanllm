@@ -1,5 +1,34 @@
 # Current Work
 
+**2026-09-21, branch `refactor/vision-prefill` (v2.0.53 - v2.0.59), NOT merged,
+NOT pushed.** Everything below this entry predates it and was not refreshed.
+
+What the branch does, in the order it was committed: moves the mlx-lm /
+mlx-vlm pins to current upstream; adds `scripts/vlm_parity_probe.py`; makes the
+MLX vision path prefill the way mlx-vlm's own loop does and hand mlx-lm the
+last prompt token (first token now gets the stop check, processors, exact
+`max_tokens`; image requests get `prefill_step_size`, prefill progress and
+mid-prefill cancel; no attention mask reaches the language model); gives routes
+ONE reasoning-parser factory; removes server-side batch inference; collapses
+MLX chat-template rendering to one function and deletes its silent fallbacks.
+
+Verified: backend suite green at every commit; token parity with mlx-vlm's
+`generate_step` exact on Qwen3.5-0.8B, Qwen-Image-2.1-PE-I21, Qwen3.5-27B-8bit
+and Qwen3-VL-32B (single and multi-chunk); rendered prompts byte-identical
+across every served MLX model before/after the renderer change; `tests/smoke/`
+green on the mlx-lm and mlx-vlm arms; live checks on an isolated server.
+
+NOT covered, named rather than passed over: **gemma-4 vision** (owner: another
+time -- its output changed on this branch unverified, and the old path ran
+non-causal attention there; see `TODO.md` "MLX vision prefill"); the **gguf
+smoke arm** was not re-run (no gguf provider code changed, only prose and the
+RLM loop it already used); `marked` is one patch release behind per
+`scripts/vendor_frontend.py --check` (frontend untouched here).
+
+Before merging: decide whether to run the parity probe on gemma-4 first.
+
+---
+
 Last updated: 2026-09-06. v1.79.78 on the `frontend` branch.
 
 **Verification state, as of the last commit:**
