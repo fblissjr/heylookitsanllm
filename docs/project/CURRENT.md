@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-21, v2.0.62, `main`.
+Last updated: 2026-09-21, v2.0.63, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `CLAUDE.md`, the backlog in [TODO.md](./TODO.md), and what each release
@@ -21,7 +21,7 @@ rather than carried forward as green.
 | `tests/smoke/` mlx-vlm arm | green, incl. the image-token usage check; thinking depth UNCOVERED | v2.0.59 |
 | `scripts/vlm_parity_probe.py` | exact token parity with mlx-vlm's `generate_step` on Qwen3.5-0.8B, Qwen-Image-2.1-PE-I21, Qwen3.5-27B-8bit, Qwen3-VL-32B; single- and multi-chunk prefill | v2.0.55; 0.8B re-run at v2.0.60 |
 | `tests/smoke/` gguf arm | NOT RE-RUN. Last recorded green at v1.79.43 | -- |
-| `bun run e2e` (chat + pages) | NOT RE-RUN. Last recorded at v1.79.78, when `e2e:chat` had behavioural failures open (see History). Its state today is UNKNOWN | -- |
+| `bun run e2e` (chat + pages) | green, nothing skipped, on `E2E_MODEL=Qwen3.5-0.8B-MLX-8bit` (mlx-vlm arm). The behavioural failures recorded at v1.79.78 are gone. NOT run on the default gemma-4 model, nor on the mlx-lm or gguf arms | v2.0.63 |
 | `bun run e2e:ios` | see `TODO.md` and the harness's own header | -- |
 
 The standing uncovered mechanism is thinking DEPTH on both MLX arms: the only
@@ -40,9 +40,13 @@ model.
    to run and why gemma-4 is the interesting family: `TODO.md`, "MLX vision
    prefill". Do not cite a gemma-4 vision observation from before v2.0.55
    without that caveat.
-3. **`bun run e2e` needs a run before anyone cites it.** Many releases have
-   touched chat since its last recorded state. It spawns its own server and
-   loads a real model, so it is an explicit-ask run, not a routine one.
+3. **`bun run e2e` is green on one arm only.** It ran at v2.0.63 on
+   `Qwen3.5-0.8B-MLX-8bit`: a vision-capable qwen3_5, so it took the prefill
+   path verified that day, and a failure there would have pointed at the app.
+   The default `E2E_MODEL` is a gemma-4, whose vision path is item 2's open
+   question -- run the parity probe on gemma-4 BEFORE reading an image-check
+   failure there as a frontend bug. The mlx-lm and gguf arms (`E2E_ARMS`) were
+   not run.
 4. **Penalties are not the same knob on the two engines** (v2.0.60): MLX counts
    generated tokens only, llama.cpp also counts the tail of the prompt, and no
    request field aligns them. Documented, nothing to build.
@@ -56,7 +60,7 @@ a server holds the default database (it has isolated its own database at
 import time since v1.79.54 -- `tests/contract/conftest.py` -- so it never opens
 the real one).
 
-## What landed 2026-09-21 (v2.0.51 - v2.0.62)
+## What landed 2026-09-21 (v2.0.51 - v2.0.63)
 
 Started from one question -- why Save & Continue refused conversations with an
 image on MLX -- and followed what that path turned up.

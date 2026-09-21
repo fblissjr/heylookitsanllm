@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.63]
+
+### Tests
+
+- **Two browser checks for the editor flows nothing drove** (`tests/e2e/suites/chat.mjs`):
+  - *Edited thinking plus a partial response, then Save & Continue.* The
+    two-box flow: rewrite the thinking, leave a partial in the response box,
+    continue. Asserts the edited thinking is stored verbatim and NOT resumed,
+    the response is extended in place with the partial as its prefix, no
+    thinking marker leaks into it, and no message row is added.
+  - *Save & Continue when the conversation contains an image.* Refused
+    outright on MLX until v2.0.51 and never exercised through the UI. Asserts
+    the row AND the status line, because that refusal arrived in-band after the
+    truncate; and that the user turn keeps its image. Skips, rather than
+    passes, if the model answers the image with an immediate end-of-turn.
+
+- **`bun run e2e` run for the first time since v1.79.78: chat and pages both
+  green with nothing skipped**, on `E2E_MODEL=Qwen3.5-0.8B-MLX-8bit`. The
+  mid-thought resume check really ran rather than taking its legal early exit,
+  and the streaming-cadence guard passes on that model. The behavioural
+  failures `CURRENT.md` recorded in the chat suite at v1.79.78 (the preset
+  chain, conversation switching, the mid-stream disconnect partial, the image
+  round-trip) no longer reproduce; nothing here fixed them, so they were closed
+  by intervening releases and only now observed.
+
+  Scope, stated rather than implied: ONE arm. That model is a vision-capable
+  qwen3_5, chosen because it takes the vision prefill path verified on
+  2026-09-21 -- so a failure would have pointed at the app. Not run: the
+  default gemma-4 `E2E_MODEL` (its vision path is unverified on the new
+  prefill), the mlx-lm arm, the gguf arm.
+
 ## [2.0.62]
 
 ### Documentation

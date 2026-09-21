@@ -1715,4 +1715,132 @@ export async function runChatSuite({ suite, ctx, config }) {
     await waitFor(async () => (await count(page, '.message--user .message-image')) === 1,
       { message: 'the edited row stopped rendering its image' });
   });
+
+  // Fill an open assistant editor. The RESPONSE box is the textarea that is
+  // not the thinking one; the thinking box exists only when the row has any.
+  const fillEditor = (pg, { thinking, response }) => pg.evaluate((t, r) => {
+    const set = (el, v) => { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); };
+    if (t !== null) set(document.querySelector('.message-edit__thinking'), t);
+    set(document.querySelector('.message-edit textarea:not(.message-edit__thinking)'), r);
+  }, thinking ?? null, response);
+
+  const setThinkingAndCap = async (thinking, cap) => {
+    await openDrawer(page);
+    await setSettingsInput(page, 'Max tokens', String(cap));
+    await page.evaluate((v) => {
+      const sel = document.querySelector('#set-enable_thinking');
+      sel.value = v;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    }, thinking ? 'on' : 'off');
+    await closeDrawer(page);
+  };
+
+  await suite.check('edited thinking plus a partial response: Save & Continue keeps the thought and finishes the answer', async () => {
+    await requireCap(page, config.model, 'thinking');
+    // The editor's TWO-BOX flow, which no check drove: rewrite the thinking,
+    // leave a partial in the response box, Save & Continue. Contract: the
+    // edited thinking is stored VERBATIM and is not resumed (a response is
+    // present, so the thought is rendered as finished), the response is
+    // extended in place with the partial as its verbatim prefix, and no
+    // thinking marker leaks into it.
+    await page.select(MODEL_SELECT, config.model);
+    const convId = await newFreshConversation(page);
+    await setThinkingAndCap(true, STOP_TEST_MAX_TOKENS);
+    await waitFor(async () => {
+      const p = (await serverGet(page, `/v1/conversations/${convId}`))?.params ?? {};
+      return p.max_tokens === STOP_TEST_MAX_TOKENS && p.enable_thinking === true;
+    }, { message: 'params never landed server-side' });
+
+    // Any reply that carries thinking will do -- both boxes get overwritten --
+    // so stop as soon as some has streamed rather than waiting out the cap.
+    await sendText(page, 'Reason step by step, at length, about why the sky is blue before you answer.');
+    await waitFor(async () => {
+      const t = await textOf(page, '.message--streaming .thinking__body');
+      return Boolean(t && t.trim().length > 40);
+    }, { message: 'no thinking streamed', timeout: 60000 });
+    await page.click(SEND_BTN); // Stop
+    let before = null;
+    await waitFor(async () => {
+      before = (await conversationStateById(page, convId)).lastAssistant;
+      return Boolean(before?.thinking);
+    }, { message: 'the stopped reply did not persist its thinking' });
+    await waitIdle(page);
+
+    const THOUGHT = 'The user is asking why I sound like a goat. I should acknowledge that.';
+    const PREFIX = 'I sound like a goat because';
+    await clickByText(page, '.message--assistant .message__actions button', 'Edit');
+    await page.waitForSelector('.message-edit__thinking');
+    await fillEditor(page, { thinking: THOUGHT, response: PREFIX });
+    await clickByText(page, '.message-edit__buttons button', 'Save & Continue');
+    await waitFor(async () => {
+      const a = (await conversationStateById(page, convId)).lastAssistant;
+      return a?.id === before.id && (a.content ?? '').startsWith(PREFIX)
+        && (a.content ?? '').length > PREFIX.length;
+    }, { message: 'the response was not extended in place from the partial', timeout: 120000 });
+    await waitIdle(page, 180000);
+
+    const after = (await conversationStateById(page, convId)).lastAssistant;
+    assert(after.thinking === THOUGHT,
+      `the edited thinking was not kept verbatim: ${JSON.stringify((after.thinking ?? '').slice(0, 120))}`);
+    assert(!/<\/?think>/.test(after.content),
+      `a thinking marker leaked into the response: ${JSON.stringify(after.content.slice(0, 120))}`);
+    assert((await assistantCount(page)) === 1, 'the continuation must not add a message row');
+    assert(!/generation failed/i.test((await textOf(page, '.chat__status')) || ''),
+      'the status line reports a failed generation');
+    await setThinkingAndCap(false, config.maxTokens);
+  });
+
+  await suite.check('Save & Continue works when the conversation contains an image', async () => {
+    await requireCap(page, config.model, 'vision');
+    // Refused outright on MLX until v2.0.51 ("continue_final_message is not
+    // supported with image history") and never driven through the UI. The
+    // status line is asserted as well as the row: the refusal arrived as an
+    // in-band error AFTER the truncate, so the row alone could look plausible.
+    await page.select(MODEL_SELECT, config.model);
+    const convId = await newFreshConversation(page);
+    await page.waitForSelector('.chat__composer input[type="file"]', { timeout: 5000 });
+    await page.evaluate(async () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 64;
+      canvas.height = 64;
+      const c2d = canvas.getContext('2d');
+      c2d.fillStyle = 'rgb(30,120,200)';
+      c2d.fillRect(0, 0, 64, 64);
+      c2d.fillStyle = 'rgb(240,60,40)';
+      c2d.fillRect(16, 16, 32, 32);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+      const dt = new DataTransfer();
+      dt.items.add(new File([blob], 'continue-with-image.png', { type: 'image/png' }));
+      const input = document.querySelector('.chat__composer input[type="file"]');
+      input.files = dt.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await waitFor(async () => (await count(page, '.attach-thumb')) === 1, { message: 'the image did not stage' });
+    await sendText(page, 'Describe this picture in one sentence.');
+    await waitFor(async () => (await conversationStateById(page, convId)).lastUser !== null,
+      { message: 'the user message with its image never persisted' });
+    await waitIdle(page);
+
+    const before = (await conversationStateById(page, convId)).lastAssistant;
+    if (!before) {
+      skip('the model answered the image with an immediate end-of-turn, so there is no assistant row to continue');
+    }
+    const PREFIX = 'The picture shows a small';
+    await clickByText(page, '.message--assistant .message__actions button', 'Edit');
+    await page.waitForSelector('.message-edit textarea');
+    await fillEditor(page, { thinking: null, response: PREFIX });
+    await clickByText(page, '.message-edit__buttons button', 'Save & Continue');
+    await waitFor(async () => {
+      const a = (await conversationStateById(page, convId)).lastAssistant;
+      return a?.id === before.id && (a.content ?? '').startsWith(PREFIX)
+        && (a.content ?? '').length > PREFIX.length;
+    }, { message: 'the continuation did not extend the message (an image-history refusal lands here)', timeout: 120000 });
+    await waitIdle(page);
+    const status = (await textOf(page, '.chat__status')) || '';
+    assert(!/generation failed|not supported/i.test(status),
+      `the status line reports a refusal: ${JSON.stringify(status)}`);
+    const state = await conversationStateById(page, convId);
+    assert((state.lastUser.content_blocks ?? []).some((b) => b.type === 'image'),
+      'the continuation cost the user turn its image');
+  });
 }
