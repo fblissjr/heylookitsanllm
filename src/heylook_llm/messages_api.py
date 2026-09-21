@@ -378,7 +378,7 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
         # would unregister before a single token was produced.
         return StreamingResponse(
             tracked_stream(
-                _stream_messages(generator, msg_request, request_id, http_request=request, provider=provider, perf_ctx=perf_ctx, abort_event=abort_event, thinking_enabled=thinking_enabled, continuing=chat_request.is_continuation()),
+                _stream_messages(generator, msg_request, request_id, http_request=request, provider=provider, perf_ctx=perf_ctx, abort_event=abort_event, thinking_enabled=thinking_enabled, continuing=chat_request.is_continuation(), resumes_thinking=chat_request.resumes_thinking()),
                 request_id, abort_event),
             media_type="text/event-stream",
             headers={"X-Request-ID": request_id},
@@ -393,6 +393,7 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
                 generator, msg_request, request_id, request_start_time, perf_ctx=perf_ctx,
                 provider=provider, thinking_enabled=thinking_enabled,
                 continuing=chat_request.is_continuation(),
+                resumes_thinking=chat_request.resumes_thinking(),
                 abort_event=abort_event,
             )
         # Echo the id the server actually tracked. This is the one path DELETE
@@ -421,6 +422,11 @@ async def _non_stream_messages(
     provider=None,
     thinking_enabled: bool = False,
     continuing: bool = False,
+    # The one continuation that starts INSIDE the thinking block (the final
+    # assistant message carries thinking and no content). Without it the
+    # parser starts in content state and files the resumed trace as text,
+    # closing marker and all -- MLX only, since gguf's split is llama-server's.
+    resumes_thinking: bool = False,
     abort_event=None,
 ) -> MessageResponse:
     """Consume the provider generator and build a MessageResponse."""
@@ -458,6 +464,7 @@ async def _non_stream_messages(
             provider.template_info() if provider else None,
             thinking_enabled=thinking_enabled,
             continuing=continuing,
+            resumes_thinking=resumes_thinking,
             # Read off the request, not threaded as a kwarg: both handlers
             # already carry msg_request, and a second spelling of a request
             # field is a place for it to drift.
@@ -573,6 +580,11 @@ async def _stream_messages(
     abort_event=None,
     thinking_enabled: bool = False,
     continuing: bool = False,
+    # The one continuation that starts INSIDE the thinking block (the final
+    # assistant message carries thinking and no content). Without it the
+    # parser starts in content state and files the resumed trace as text,
+    # closing marker and all -- MLX only, since gguf's split is llama-server's.
+    resumes_thinking: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Async SSE generator using StreamingEventTranslator."""
     message_id = f"msg_{uuid.uuid4().hex[:16]}"
@@ -583,6 +595,7 @@ async def _stream_messages(
             provider.template_info() if provider else None,
             thinking_enabled=thinking_enabled,
             continuing=continuing,
+            resumes_thinking=resumes_thinking,
             strip_specials=True,
         ),
     )

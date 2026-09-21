@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.52]
+
+### Fixed
+
+- **`/v1/messages` files a mid-thought resume as thinking on MLX.** A trailing
+  assistant message with thinking and no content resumes INSIDE the thinking
+  block, so the parser has to start in thinking state. The generate route always
+  passed `resumes_thinking`; this route passed only `continuing`, at both its
+  streaming and non-streaming parser sites, so the resumed trace came back as a
+  TEXT block with the closing marker visible. MLX only, both loaders: on gguf
+  the split is llama-server's and heylook's parser is a pass-through, confirmed
+  live on `Muse-Glimmer-30B-Q8-official` (one thinking block, stream and
+  non-stream agreeing) before anything was changed. Pinned through the route
+  with a marker-template provider, since the fake provider's pass-through
+  parser cannot observe a start state.
+
+  Verified live on `Qwen-Image-2.1-PE-I21-mlx` with an image in the
+  conversation: fresh turn, content prefill, thinking-plus-content prefill and
+  mid-thought resume over `/v1/messages` (stream and non-stream), then append
+  and both Save & Continue shapes over the conversation generate route.
+
 ## [2.0.51]
 
 ### Added

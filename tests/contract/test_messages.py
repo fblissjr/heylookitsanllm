@@ -226,6 +226,63 @@ class TestDeclaredSpecialsAreStrippedOnThisWire:
         assert "Hello world" in text, "the strip ate the surrounding text too"
 
 
+class TestMidThoughtResumeIsFiledAsThinking:
+    """A trailing assistant message with thinking and NO content resumes INSIDE
+    the thinking block, so the model's first token continues the reasoning and
+    the parser must start in thinking state. The generate route always armed
+    it; this one did not until v2.0.52, and the resumed trace came back as a
+    TEXT block with the closing marker visible (found live on Qwen3.5).
+
+    Needs a marker-template provider for the same reason the class above needs
+    a declaring one: FakeProvider's ``template_info() -> None`` selects the
+    pass-through parser, where the start state is unobservable. Through the
+    ROUTE, because the defect was the route not forwarding a request field."""
+
+    @pytest.fixture
+    def marker_model(self, mock_router):
+        from helpers.mlx_mock import FakeChunk
+        from heylook_llm.providers.common.template_info import ModelTemplateInfo
+
+        model_id = "test-mlx-model"
+        base = type(mock_router.get_provider(model_id))
+
+        class MarkerProvider(base):
+            def template_info(self):
+                return ModelTemplateInfo(
+                    chat_template="",
+                    special_tokens=frozenset(),
+                    template_source="jinja",
+                    has_thinking_markers=True,
+                )
+
+            def create_chat_completion(self, request, abort_event=None):
+                yield FakeChunk(" rest of the thought", token_id=1)
+                yield FakeChunk("</think>\n\nThe answer.", token_id=2)
+
+        previous = mock_router.providers.get(model_id)
+        mock_router.providers[model_id] = MarkerProvider(model_id)
+        try:
+            yield model_id
+        finally:
+            if previous is None:
+                mock_router.providers.pop(model_id, None)
+            else:
+                mock_router.providers[model_id] = previous
+
+    def test_the_resumed_trace_is_a_thinking_block(self, client, marker_model):
+        resp = client.post("/v1/messages", json={
+            "model": marker_model, "max_tokens": 64, "thinking": True,
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": [
+                    {"type": "thinking", "thinking": "The start of the thought, then the"}]},
+            ]})
+        assert resp.status_code == 200
+        blocks = {b["type"]: (b.get("thinking") or b.get("text")) for b in resp.json()["content"]}
+        assert blocks.get("thinking", "").strip() == "rest of the thought"
+        assert blocks.get("text", "").strip() == "The answer."
+
+
 class TestNonStreamingPerformance:
     """What a NON-STREAMING client can actually read off `performance`.
 
