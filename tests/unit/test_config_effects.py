@@ -338,7 +338,7 @@ def test_declared_engines_are_valid(provider):
 
 @pytest.mark.parametrize("provider", PROVIDERS)
 def test_every_field_has_a_description(provider):
-    """/openapi.json and /v1/admin/model-options publish nothing else."""
+    """/v1/admin/model-options is the only surface that publishes this."""
     undocumented = sorted(
         name for name, f in _PCC[provider].model_fields.items()
         if not (f.description or "").strip()

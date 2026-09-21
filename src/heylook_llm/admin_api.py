@@ -970,10 +970,18 @@ def _field_options(cls) -> list[dict]:
         # `shape` ("flag" = a bare flag, no value), and `reason` (why a
         # load_time_only field is not editable, which the class cannot imply).
         #
-        # These ride the SAME derivation as `effect` on purpose: this endpoint
-        # and /openapi.json are the only places the facts are published, and
-        # docs link here rather than restating them. A hand-maintained table
-        # of field applicability is this repo's named defect class.
+        # These ride the SAME derivation as `effect` on purpose: THIS
+        # ENDPOINT IS THE ONLY PLACE THEY ARE PUBLISHED, and docs link here
+        # rather than restating them. A hand-maintained table of field
+        # applicability is this repo's named defect class.
+        #
+        # Not /openapi.json: no route binds a provider config class as a
+        # typed body -- `ModelUpdateRequest.config` is deliberately a loose
+        # dict, because which class validates it depends on a model lookup --
+        # so the classes never appear in the served spec and their field
+        # descriptions never reach it. The classes' own
+        # `model_json_schema()` does carry both, which is exactly the trap:
+        # checking the model and concluding the WIRE has it.
         for key in ("description", "engines", "arg", "ui", "shape", "reason"):
             if key in prop:
                 entry[key] = prop[key]

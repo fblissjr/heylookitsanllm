@@ -15,10 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   answer. `description` is what the field does and why you would reach for it;
   `engines` is which of `mlx-lm` / `mlx-vlm` / `gguf` it actually applies to.
   Both ride the existing `_field_options` pass-through, so
-  `GET /v1/admin/model-options` and `/openapi.json` carry them with no route
-  change, and `docs/wiki/providers_architecture.md` §3.5 links there rather
-  than restating them -- a hand-maintained table of the same facts is this
-  repo's named defect class.
+  `GET /v1/admin/model-options` carries them with no route change, and
+  `docs/wiki/providers_architecture.md` §3.5 links there rather than
+  restating them -- a hand-maintained table of the same facts is this repo's
+  named defect class. That endpoint is the ONLY surface that publishes them:
+  no route binds a provider config class as a typed body
+  (`ModelUpdateRequest.config` is a loose dict, since which class validates
+  it depends on a model lookup), so they do not reach `/openapi.json`. The
+  classes' own `model_json_schema()` does carry both, which is the trap
+  rather than the carrying path.
 
   Every field shipped with NO description at all. The cost was not
   hypothetical: a consumer reading the option list recommended `max_kv_size`

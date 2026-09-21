@@ -1501,11 +1501,14 @@ def _validate_documentation_declarations() -> None:
     degradation is silent in the safe-looking direction.
 
     ``description`` -- what the field does and why you would reach for it.
-    It is not decoration: it is the ONLY text ``/openapi.json`` and
-    ``/v1/admin/model-options`` publish, so a field without one is a knob
-    nobody outside this file can use correctly. Sixty of them shipped that
-    way, which is how a consumer came to recommend two cache knobs that are
-    inert on the model they were recommended for.
+    It is not decoration: ``/v1/admin/model-options`` is the ONLY surface
+    that publishes it, so a field without one is a knob nobody outside this
+    file can use correctly. Sixty of them shipped that way, which is how a
+    consumer came to recommend two cache knobs that are inert on the model
+    they were recommended for. (NOT ``/openapi.json``: no route binds these
+    classes as a typed body, so they never appear in the served spec --
+    their ``model_json_schema()`` carries both facts, which is the trap, not
+    the carrying path.)
 
     ``engines`` -- which of mlx-lm / mlx-vlm / gguf the field actually
     reaches. The class a field is declared on does NOT answer this: provider
@@ -1528,8 +1531,9 @@ def _validate_documentation_declarations() -> None:
                 )
             if not (field.description or "").strip():
                 problems.append(
-                    f"  {provider}.{name}: no `description` -- it is the only "
-                    f"text /openapi.json and /v1/admin/model-options publish"
+                    f"  {provider}.{name}: no `description` -- "
+                    f"/v1/admin/model-options is the only surface that "
+                    f"publishes it"
                 )
     if problems:
         raise RuntimeError(
