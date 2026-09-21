@@ -962,11 +962,19 @@ def _field_options(cls) -> list[dict]:
         for key in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "enum"):
             if key in inner:
                 entry[key] = inner[key]
-        # Pass-through hints declared on the field: `arg` (the flag actually
-        # emitted -- pinned to the argv builder by a test), `ui`, `shape`
-        # ("flag" = a bare flag, no value), and `reason` (why a
+        # Pass-through hints declared on the field: `description` (what it
+        # does and why you would reach for it), `engines` (which of mlx-lm /
+        # mlx-vlm / gguf it actually reaches -- the provider key above is NOT
+        # that answer, since provider "mlx" is two engines), `arg` (the flag
+        # actually emitted -- pinned to the argv builder by a test), `ui`,
+        # `shape` ("flag" = a bare flag, no value), and `reason` (why a
         # load_time_only field is not editable, which the class cannot imply).
-        for key in ("arg", "ui", "shape", "reason"):
+        #
+        # These ride the SAME derivation as `effect` on purpose: this endpoint
+        # and /openapi.json are the only places the facts are published, and
+        # docs link here rather than restating them. A hand-maintained table
+        # of field applicability is this repo's named defect class.
+        for key in ("description", "engines", "arg", "ui", "shape", "reason"):
             if key in prop:
                 entry[key] = prop[key]
         out.append(entry)
@@ -982,8 +990,21 @@ def _field_options(cls) -> list[dict]:
         "(re-read while loaded), requires_reload (needs a respawn -- confirm "
         "and name the cost), load_time_only (cannot be changed, not even by "
         "reloading), descriptive (changes what we advertise, not the process). "
+        "Each field also carries `description` -- what it does and why you "
+        "would reach for it -- and `engines`, WHICH ENGINE it actually "
+        "reaches: one or more of mlx-lm, mlx-vlm, gguf. "
+        "READ `engines`, NOT THE PROVIDER KEY. Provider `mlx` is TWO upstream "
+        "engines on separate release trains, so a field listed under it may "
+        "reach only one of them (`vision_tokens` is mlx-vlm only), and one "
+        "field governs every engine from a single provider\'s config "
+        "(`max_queue_depth`: the generation gate is process-global). "
+        "`engines` is per-ENGINE and cannot express a per-ARCHITECTURE "
+        "exception -- the MLX KV-cache knobs are silently inert on any model "
+        "that defines its own make_cache -- so where that is true the field\'s "
+        "own `description` says so. "
         "Derived from the provider config classes, so a new field appears here "
-        "without touching this route."
+        "without touching this route, and cannot be added without declaring "
+        "all three."
     ),
 )
 async def get_model_options():

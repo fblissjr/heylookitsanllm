@@ -294,3 +294,150 @@ def test_validator_derived_fields_do_not_report_as_stored():
         model_path="/fake/nonexistent", modalities=["text", "vision"]
     ).model_dump(exclude_unset=True)
     assert explicit.get("modalities") == ["text", "vision"]
+
+
+# ---------------------------------------------------------------------------
+# `engines` + `description`: the same self-maintaining guard, for the question
+# `effect` does not answer. `effect` says WHEN a change lands; these say WHERE
+# it lands and WHY you would make it.
+#
+# The motivating drift is the same shape as the three above, and it happened
+# to a reader rather than to the code: every provider-config field shipped
+# with no description at all, so the only way to learn what a knob did was to
+# read the provider source. A consumer reading the option list recommended
+# `max_kv_size` and `cache_type` for a model where both are swallowed whole by
+# `create_kv_cache`'s make_cache early return -- a recommendation that would
+# have validated, reloaded clean, and changed nothing.
+# ---------------------------------------------------------------------------
+from heylook_llm.config import (  # noqa: E402
+    ENGINES,
+    PROVIDER_CONFIG_CLASSES as _PCC,
+    _validate_documentation_declarations,
+    field_engines,
+    invalid_engines,
+)
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_every_field_declares_its_engines(provider):
+    """A field that does not say where it applies cannot be used correctly."""
+    undeclared = sorted(
+        name for name, f in _PCC[provider].model_fields.items()
+        if field_engines(f) is None
+    )
+    assert not undeclared, (
+        f"{provider} fields with no `engines`: {undeclared}. The class a field "
+        f"is declared on is NOT the answer -- provider 'mlx' is two engines."
+    )
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_declared_engines_are_valid(provider):
+    assert invalid_engines(_PCC[provider]) == {}
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_every_field_has_a_description(provider):
+    """/openapi.json and /v1/admin/model-options publish nothing else."""
+    undocumented = sorted(
+        name for name, f in _PCC[provider].model_fields.items()
+        if not (f.description or "").strip()
+    )
+    assert not undocumented, f"{provider} fields with no description: {undocumented}"
+
+
+def test_an_empty_engines_list_is_refused_not_treated_as_all():
+    """"Applies nowhere" is never what an author means -- it is a typo or a
+    field that should have been deleted. Reading it as "applies everywhere"
+    would be the silent, safe-looking degradation this metadata exists to
+    stop."""
+    from pydantic import BaseModel, Field
+
+    class Bogus(BaseModel):
+        x: int = Field(
+            default=1, description="d",
+            json_schema_extra={"effect": EFFECT_PER_REQUEST, "engines": []})
+
+    assert "x" in invalid_engines(Bogus)
+
+
+def test_the_provider_name_is_not_an_engine_name():
+    """'mlx' is a PROVIDER and the likeliest wrong value to write here. It
+    must not validate, because accepting it would re-collapse exactly the
+    mlx-lm/mlx-vlm distinction the tag exists to make."""
+    from pydantic import BaseModel, Field
+
+    class Bogus(BaseModel):
+        x: int = Field(
+            default=1, description="d",
+            json_schema_extra={"effect": EFFECT_PER_REQUEST, "engines": ["mlx"]})
+
+    assert "x" in invalid_engines(Bogus)
+    assert "mlx" not in ENGINES
+
+
+def test_bad_documentation_fails_at_import_not_just_under_test():
+    """Same argument as the effect validator: a suite that has not run yet
+    protects nobody, and static developer data is the case where fail-fast is
+    proportionate."""
+    from pydantic import BaseModel, Field
+
+    import heylook_llm.config as cfg
+
+    original = dict(cfg.PROVIDER_CONFIG_CLASSES)
+
+    class Undocumented(BaseModel):
+        x: int = Field(
+            default=1,
+            json_schema_extra={"effect": EFFECT_PER_REQUEST,
+                               "engines": [cfg.ENGINE_GGUF]})
+
+    cfg.PROVIDER_CONFIG_CLASSES["_probe"] = Undocumented
+    try:
+        with pytest.raises(RuntimeError, match="no `description`"):
+            _validate_documentation_declarations()
+    finally:
+        cfg.PROVIDER_CONFIG_CLASSES.clear()
+        cfg.PROVIDER_CONFIG_CLASSES.update(original)
+
+
+def test_engine_vocabulary_matches_the_live_harness_taxonomy():
+    """`tests/helpers/engines.ARMS` is what the smoke and eval harnesses call
+    these, derived from `effective_loader` on the admin row. Two spellings of
+    one taxonomy is the drift this repo keeps paying for, so the two are
+    pinned to each other rather than to a comment claiming they agree."""
+    from helpers.engines import ARMS
+
+    assert tuple(ENGINES) == tuple(ARMS)
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_model_options_publishes_both_facts(provider):
+    """The route is the only surface these reach, so the pass-through is the
+    load-bearing half -- declaring the metadata and not serving it would leave
+    every consumer exactly as badly off as before."""
+    from heylook_llm.admin_api import _field_options
+
+    for entry in _field_options(_PCC[provider]):
+        assert entry.get("description"), f"{provider}.{entry['name']} lost its description"
+        assert entry.get("engines"), f"{provider}.{entry['name']} lost its engines"
+
+
+def test_vision_tokens_is_declared_mlx_vlm_only():
+    """The tag earns its keep on the fields where the two MLX engines DIFFER.
+    If this ever reads as both, the tag has been filled in by rote and stopped
+    carrying information."""
+    from heylook_llm.config import ENGINE_MLX_VLM
+
+    assert field_engines(_PCC["mlx"].model_fields["vision_tokens"]) == [ENGINE_MLX_VLM]
+
+
+def test_kv_cache_knobs_disclose_the_make_cache_blind_spot():
+    """These three are declared for both MLX engines and are nonetheless inert
+    on any architecture defining its own make_cache -- silently, with no error
+    and no log. The engines tag cannot express a per-ARCHITECTURE exception,
+    so the description has to, and a description that stops saying so is worse
+    than none: it reads as an assurance."""
+    for name in ("cache_type", "max_kv_size", "kv_bits"):
+        text = _PCC["mlx"].model_fields[name].description or ""
+        assert "make_cache" in text, f"{name} no longer discloses the blind spot"

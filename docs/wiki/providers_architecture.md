@@ -112,6 +112,71 @@ Audio towers are stripped at load on the MLX path, so `input_audio` content part
 
 ---
 
+## 3.5. Which Config Fields Apply to Which Engine
+
+Do not look for that answer here, and do not write a table of it anywhere.
+It is declared at each field and served, derived, from
+[`GET /v1/admin/model-options`](../../src/heylook_llm/admin_api.py):
+
+```
+GET /v1/admin/model-options
+  providers.<provider>.fields[]
+    name          the config key
+    effect        WHEN a change lands (per_request, requires_reload, ...)
+    engines       WHERE it lands: mlx-lm | mlx-vlm | gguf
+    description   what it does and why you would reach for it
+    arg, ui, shape, reason, type, default, bounds, enum
+```
+
+**Read `engines`, not the provider key.** Provider is not engine: provider
+`mlx` is two upstream repos on separate release trains (mlx-lm for text,
+mlx-vlm for vision), which is the same split
+[`effective_loader`](#21-library-routing-via-effective_loader) reports on the
+admin row. Two consequences the provider key cannot express:
+
+- a field declared on the MLX config may reach only ONE of the two engines
+  (`vision_tokens` is mlx-vlm only -- there is nothing for it to do on a text
+  model);
+- a field declared on ONE provider may govern every engine (`max_queue_depth`
+  configures the process-global generation gate that gguf generations queue in
+  too, and the gguf provider looks for the same key on its own config, where
+  no such field exists, and so always contributes the default).
+
+**`engines` is per-engine and cannot express a per-ARCHITECTURE exception.**
+The MLX KV-cache knobs (`cache_type`, `max_kv_size`, `kv_bits`,
+`kv_group_size`) are declared for both MLX engines and are nonetheless inert
+on any architecture that defines its own `make_cache` -- qwen3_5, gemma3, the
+mamba family and others -- because
+[`create_kv_cache`](../../src/heylook_llm/providers/common/cache_helpers.py)
+returns the model's own cache before it reads any of them. No error, no
+warning, no log above debug: the setting validates, the model reloads clean,
+and nothing happens. Where that is true the field's own `description` says so,
+because the tag cannot.
+
+Fields that exist on one engine and have no counterpart on the other are the
+common case, and the descriptions name the counterpart where one exists. The
+pair worth knowing before reasoning about either:
+
+- gguf `ctx_size` is a REAL allocation -- llama-server sizes the KV slot at
+  spawn, so lowering it reclaims memory and can make a model load that
+  otherwise would not.
+- MLX `context_length` allocates nothing. The MLX KV cache grows lazily in
+  256-token steps and is constructed per generation, not at load, so the field
+  cannot reduce load time, time-to-first-token or memory. Its only consumers
+  are the over-length refusal and the admin row.
+
+Importing the gguf intuition into MLX is the specific mistake this section
+exists to stop.
+
+**Adding a field.** Declare `effect`, `engines` and `description` on it.
+`config.py` refuses to import otherwise, and
+`tests/unit/test_config_effects.py` covers the same ground for the suite. Do
+not add the facts to this page instead: a hand-maintained second copy of what
+the config classes already know is this repo's named defect class, and it has
+already cost it the reload set, the import allowlist and three more.
+
+---
+
 ## 4. Reasoning Parsers & Stream Separation
 
 Models format their internal reasoning in diverse, vendor-specific ways. The parser subsystem ([`reasoning_parser.py`](../../src/heylook_llm/reasoning_parser.py)) separates reasoning thoughts from final assistant content:

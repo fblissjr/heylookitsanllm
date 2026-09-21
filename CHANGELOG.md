@@ -5,6 +5,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.48]
+
+### Added
+
+- **Every provider-config field now documents itself, and says which ENGINE it
+  reaches.** Two annotations declared at the field, derived everywhere else --
+  the same rule `effect` already follows, for the two questions it does not
+  answer. `description` is what the field does and why you would reach for it;
+  `engines` is which of `mlx-lm` / `mlx-vlm` / `gguf` it actually applies to.
+  Both ride the existing `_field_options` pass-through, so
+  `GET /v1/admin/model-options` and `/openapi.json` carry them with no route
+  change, and `docs/wiki/providers_architecture.md` §3.5 links there rather
+  than restating them -- a hand-maintained table of the same facts is this
+  repo's named defect class.
+
+  Every field shipped with NO description at all. The cost was not
+  hypothetical: a consumer reading the option list recommended `max_kv_size`
+  and `cache_type: rotating` for a `qwen3_5` model, where `create_kv_cache`
+  returns the architecture's own `make_cache` before reading either one. The
+  recommendation would have validated, reloaded clean, and changed nothing.
+
+  Read `engines`, not the provider key. Provider is not engine: provider `mlx`
+  is two upstream repos on separate release trains, so a field under it may
+  reach only ONE (`vision_tokens` is mlx-vlm only), and one field governs every
+  engine from a single provider's config -- `max_queue_depth` configures the
+  process-global generation gate that gguf generations queue in too, while the
+  gguf provider looks for the same key on its own config, where no such field
+  exists, and so always contributes the default.
+
+  `engines` is per-ENGINE and CANNOT express a per-ARCHITECTURE exception. The
+  MLX KV-cache knobs are declared for both MLX engines and are silently inert
+  on any architecture defining its own `make_cache` (qwen3_5, gemma3, the mamba
+  family), so those fields say it in their own `description`, and a test
+  asserts they keep saying it. The pair most worth reading: gguf `ctx_size` is
+  a real allocation sized at spawn, while MLX `context_length` allocates
+  nothing -- the MLX cache grows lazily in 256-token steps and is built per
+  generation, not at load, so it cannot reduce load time, TTFT or memory, and
+  its only consumers are the over-length refusal and the admin row.
+
+  `config.py` refuses to import if a field omits either, matching the existing
+  `effect` guard and for the same stated reason: developer-authored static
+  data, where fail-fast is proportionate. `tests/unit/test_config_effects.py`
+  covers the same ground for the suite, pins `ENGINES` against
+  `tests/helpers/engines.ARMS` so one taxonomy cannot acquire two spellings,
+  and refuses both an empty `engines` list and the PROVIDER name `"mlx"` as an
+  engine -- accepting either would re-collapse the distinction the tag exists
+  to make.
+
+### Removed
+
+- **`src/heylook_llm/schema/system.py`**, entirely dead. Every model in it
+  (`SystemCapabilities`, `SystemPerformance`, `ProviderCapability`,
+  `ModelPerformanceSnapshot`, `SystemResourceSnapshot`) described
+  `GET /v1/system/capabilities` and `GET /v1/system/performance`, neither of
+  which exists; nothing constructed any of them and the only importer was the
+  package's own re-export block. The live routes are `/v1/capabilities` and
+  `/v1/system/metrics`, whose response model lives in `config.py`.
+
+  It carried a `max_loaded_models: int = 2` default that disagreed with the
+  real one. That field is `AppConfig.max_loaded_models`, `Field(default=1,
+  ge=1)`, read by the router at construction -- so the fix is deleting the dead
+  copy, not correcting it. Editing a dead default to agree with a live one is
+  worse than leaving it: it makes the dead code look maintained.
+
 ## [2.0.47]
 
 ### Fixed

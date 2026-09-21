@@ -34,11 +34,6 @@ from heylook_llm.schema.batch import (
     BatchResult,
     BatchResponse,
 )
-from heylook_llm.schema.system import (
-    SystemCapabilities,
-    SystemPerformance,
-)
-
 __all__ = [
     # Content blocks
     "TextBlock",
@@ -65,7 +60,4 @@ __all__ = [
     "BatchRequest",
     "BatchResult",
     "BatchResponse",
-    # System
-    "SystemCapabilities",
-    "SystemPerformance",
 ]

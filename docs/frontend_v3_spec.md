@@ -696,10 +696,17 @@ bulk-default-sampler routes were removed in v2.0.30; out of scope unless a
 trimmed feature needs them.)
 
 **Per-model config editing** (consumed since 2026-08-11, backend v1.52-1.53):
-`GET /v1/admin/model-options` → `{providers:{[provider]:{fields:[{name,effect,type,
-default,required,minimum?,maximum?,exclusiveMinimum?,exclusiveMaximum?,enum?,arg?,ui?,
-shape?,reason?}]}}}` — every settable models.toml key per provider, derived from the
-provider config classes (a new backend field appears in the UI with no frontend change).
+`GET /v1/admin/model-options` → `{providers:{[provider]:{fields:[{name,effect,engines,
+description,type,default,required,minimum?,maximum?,exclusiveMinimum?,exclusiveMaximum?,
+enum?,arg?,ui?,shape?,reason?}]}}}` — every settable models.toml key per provider, derived
+from the provider config classes (a new backend field appears in the UI with no frontend
+change). `description` is the field's own help text and the only such text published
+anywhere; `engines` is which of `mlx-lm`/`mlx-vlm`/`gguf` it actually reaches, which the
+PROVIDER KEY DOES NOT ANSWER — provider `mlx` is two engines, so a field under it may
+reach only one (`vision_tokens` is mlx-vlm only), and `max_queue_depth` reaches all three
+from the mlx config because the generation gate is process-global. Both are required on
+every field (the backend refuses to import otherwise), so a UI may render them
+unconditionally.
 NOT under `/v1/admin/models` (its `{model_id:path}` catch-all would eat the path).
 `effect` says WHEN a change lands and drives the editor's layout:
 `per_request`/`applies_live`/`descriptive` = immediate; `requires_reload` = saved to
