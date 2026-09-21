@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.49]
+
+### Changed
+
+- **At most ONE engine family is resident at a time, enforced in the router
+  rather than implied by a default.** `max_loaded_models` is a COUNT, so at 2
+  it admits an MLX model and a gguf model together -- and that pair
+  specifically is the unsafe one. MLX holds weights in THIS process's Metal
+  working set and treats `max_recommended_working_set_size` as HARD (over the
+  line is a refusal, and a Metal fault can poison the process), while a gguf
+  model is a llama-server SUBPROCESS whose engine checks the same number as a
+  debug warning and merely degrades into paging. `mx.set_wired_limit` is set
+  ONCE at startup to the full recommendation and never shrinks when a
+  subprocess takes residency, so MLX keeps believing it owns the whole budget.
+  The mixed pair degrades one side gently and can kill the other outright.
+
+  A load whose provider differs from what is resident now evicts the other
+  family first (`_evict_foreign_providers`), before the count is consulted.
+  EVICTING, not refusing: a cross-engine switch should cost a load, not return
+  an error -- load cost is disclosed, never confirmed.
+
+  The rule is per PROVIDER, not a blunt `max_loaded_models = 1`. Two MLX models
+  are the case the accounting gets right -- one process, one wired limit, and
+  `usable_gb()` sees both -- so `max_loaded_models = 2` remains usable for a
+  same-engine pair, which is what alternating between two MLX prompt encoders
+  needs to avoid a full evict-and-reload per switch. mlx-lm and mlx-vlm are one
+  process and therefore one family.
+
+  Two states the rule will not silently resolve: a PINNED foreign model refuses
+  the load naming the pin (pinning must not be a back door into the state the
+  rule forbids), and a GENERATING one raises `MODEL_BUSY`, the existing
+  backpressure contract, rather than destroying a running request.
+
+  The resident family is stamped on the provider INSTANCE at construction, not
+  looked up in config at decision time: a reload can change a model's provider
+  in models.toml while it is resident, and the rule must reason about what is
+  in memory. It dies with the object, so no teardown path can leave a stale
+  entry. `ModelRouter._loading` became `{model_id: provider}` for the same
+  reason -- exclusivity has to see in-flight loads, or two concurrent loads of
+  different engines both pass the check. A foreign in-flight load WAITS for
+  that load to publish rather than evicting a same-family model to wait faster.
+
 ## [2.0.48]
 
 ### Added

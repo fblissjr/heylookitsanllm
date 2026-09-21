@@ -375,3 +375,119 @@ class TestConfiguredPathAudit:
             {"id": "solo", "config": {"model_path": "/synthetic/gone/solo"}},
         ]}, caplog)
         assert "takes this id and nothing else" in text
+
+
+# --------------------------------------------------------------------------
+# One engine family resident at a time (v2.0.49).
+#
+# `max_loaded_models` is a COUNT, so at 2 it happily admits an MLX model and a
+# gguf model together -- and that specific pair is the unsafe one. MLX holds
+# weights in THIS process's Metal working set and treats the recommended size
+# as HARD; a gguf model is a llama-server subprocess whose engine treats the
+# same number as a debug warning and degrades into paging. `mx.set_wired_limit`
+# is set once at startup and never shrinks when the subprocess takes residency,
+# so MLX keeps believing it owns the whole budget. The mixed pair degrades one
+# side gently and can kill the other outright.
+#
+# Two MLX models are NOT that case (one process, one wired limit, and the RAM
+# gate sees both), which is why the rule is per PROVIDER rather than a blunt
+# max_loaded_models = 1.
+# --------------------------------------------------------------------------
+_MIXED_TOML = textwrap.dedent("""
+    max_loaded_models = 3
+
+    [[models]]
+    id = "m-mlx-a"
+    provider = "mlx"
+    enabled = true
+    config = {{ model_path = "{root}/model1" }}
+
+    [[models]]
+    id = "m-mlx-b"
+    provider = "mlx"
+    enabled = true
+    config = {{ model_path = "{root}/model2" }}
+
+    [[models]]
+    id = "m-gguf"
+    provider = "gguf"
+    enabled = true
+    config = {{ model_path = "{root}/model3/w.gguf" }}
+""").strip()
+
+
+@patch('heylook_llm.router.MLXProvider', new=MockProvider)
+@patch('heylook_llm.providers.llama_server_provider.LlamaServerProvider', new=MockProvider)
+class TestOneEngineFamilyResident(unittest.TestCase):
+    def setUp(self):
+        open(os.path.join(_MODEL_ROOT, "model3", "w.gguf"), "a").close()
+        self.f = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.toml')
+        self.f.write(_MIXED_TOML.format(root=_MODEL_ROOT))
+        self.f.close()
+
+    def tearDown(self):
+        os.unlink(self.f.name)
+
+    def _router(self):
+        return ModelRouter(config_path=self.f.name, log_level=logging.DEBUG,
+                           initial_model_id=None)
+
+    def test_loading_gguf_evicts_a_resident_mlx_model(self):
+        """The count has room (3), so only the engine rule can do this."""
+        r = self._router()
+        r.get_provider('m-mlx-a')
+        assert set(r.providers) == {'m-mlx-a'}
+
+        r.get_provider('m-gguf')
+        assert set(r.providers) == {'m-gguf'}, (
+            f"an MLX model stayed resident alongside gguf: {sorted(r.providers)}")
+
+    def test_loading_mlx_evicts_a_resident_gguf_model(self):
+        """Symmetry matters: the hazard is the PAIR, not a direction."""
+        r = self._router()
+        r.get_provider('m-gguf')
+        r.get_provider('m-mlx-a')
+        assert set(r.providers) == {'m-mlx-a'}
+
+    def test_two_models_of_the_SAME_engine_stay_resident_together(self):
+        """The rule must not collapse into max_loaded_models = 1. This is the
+        case the memory accounting gets right, and the one the two Qwen-Image
+        prompt encoders need -- alternating them otherwise costs a full
+        evict-and-reload per switch."""
+        r = self._router()
+        r.get_provider('m-mlx-a')
+        r.get_provider('m-mlx-b')
+        assert set(r.providers) == {'m-mlx-a', 'm-mlx-b'}
+
+    def test_a_pinned_foreign_model_refuses_the_load_rather_than_mixing(self):
+        """Pinning cannot be a back door into the state the rule forbids. The
+        honest answer is a refusal naming the pin, not a silent mix."""
+        r = self._router()
+        r.get_provider('m-mlx-a')
+        r.pin_model('m-mlx-a')
+
+        with pytest.raises(RuntimeError, match="pinned"):
+            r.get_provider('m-gguf')
+        assert set(r.providers) == {'m-mlx-a'}, "the pinned model was evicted anyway"
+
+    def test_a_generating_foreign_model_is_backpressure_not_a_kill(self):
+        """Evicting mid-generation would destroy a running request. MODEL_BUSY
+        is the existing contract for 'ask again shortly'."""
+        from heylook_llm.providers.common.generation_gate import ModelBusyError
+        r = self._router()
+        r.get_provider('m-mlx-a')
+        # active_generations is a read-only property over this backing field
+        r.providers['m-mlx-a']._active_generations = 1
+
+        with pytest.raises(ModelBusyError):
+            r.get_provider('m-gguf')
+        assert set(r.providers) == {'m-mlx-a'}
+
+    def test_the_resident_kind_comes_from_the_LOADED_object_not_the_config(self):
+        """A reload can change a model's provider in models.toml while it is
+        resident. The rule must reason about what is IN MEMORY, so the kind is
+        stamped on the instance at construction."""
+        r = self._router()
+        r.get_provider('m-mlx-a')
+        assert r._provider_kind('m-mlx-a') == 'mlx'
+        assert getattr(r.providers['m-mlx-a'], '_heylook_provider_kind') == 'mlx'

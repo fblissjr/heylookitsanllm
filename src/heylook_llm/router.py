@@ -78,7 +78,10 @@ class ModelRouter:
         # _pinned) rather than a sentinel inside self.providers, so
         # self.providers always means "real, loaded providers" and reader
         # APIs need no filtering discipline.
-        self._loading: set[str] = set()
+        # model_id -> PROVIDER KIND ('mlx' / 'gguf'). A set until v2.0.49:
+        # provider exclusivity has to see in-flight loads too, or two
+        # concurrent loads of different engines both pass the check.
+        self._loading: dict[str, str] = {}
         # Ceiling on how long a loader waits for another thread's in-flight
         # load to free capacity. Must exceed the slowest legitimate load
         # (100GB+ giants take minutes); its job is to turn a WEDGED load
@@ -359,6 +362,72 @@ class ModelRouter:
         # mocked provider as permanently generating and un-unloadable.
         return isinstance(count, int) and count > 0
 
+    def _provider_kind(self, model_id: str) -> Optional[str]:
+        """The engine family holding ``model_id``'s weights, or None."""
+        return getattr(self.providers.get(model_id), "_heylook_provider_kind", None)
+
+    def _evict_foreign_providers(self, kind: str) -> bool:
+        """Drop every resident model that is NOT of engine family ``kind``.
+
+        Must be called with cache_lock held. Returns True if it evicted
+        anything, so the caller re-runs its capacity check.
+
+        WHY THIS IS A RULE AND NOT A TUNING CHOICE. MLX holds weights in THIS
+        process's Metal working set; a gguf model is a llama-server SUBPROCESS
+        with its own. The two engines do not agree on what the working-set
+        ceiling means -- ram_fit's header spells it out: MLX treats
+        ``max_recommended_working_set_size`` as HARD (over the line is a
+        refusal, and a Metal fault can poison this process), while llama.cpp
+        checks it as a debug warning and merely degrades into paging. Worse,
+        ``mx.set_wired_limit`` is set ONCE at startup to the full
+        recommendation and never shrinks when a subprocess takes residency, so
+        MLX keeps believing it owns the whole budget. A mixed pair therefore
+        degrades the gguf side gently and can kill the MLX side outright.
+
+        ``max_loaded_models`` cannot express that: it is a COUNT, and at 2 it
+        admits any pair. Two MLX models are the case the accounting gets right
+        (one process, one wired limit, and usable_gb() sees both), so the rule
+        is per PROVIDER -- mlx-lm and mlx-vlm are one process and one kind.
+
+        EVICTING, not refusing: a cross-engine switch should cost a load, not
+        return an error. Load cost is disclosed here, never confirmed.
+        """
+        foreign = [mid for mid in self.providers if self._provider_kind(mid) not in (kind, None)]
+        if not foreign:
+            return False
+
+        pinned = [m for m in foreign if m in self._pinned]
+        if pinned:
+            raise RuntimeError(
+                f"Cannot load a '{kind}' model while {pinned} "
+                f"{'is' if len(pinned) == 1 else 'are'} pinned: heylook keeps at most one "
+                f"engine family resident, and a pinned model cannot be evicted. "
+                f"Unpin it first."
+            )
+        busy = [m for m in foreign if self._is_generating(m)]
+        if busy:
+            from heylook_llm.providers.common.generation_gate import ModelBusyError
+            raise ModelBusyError(
+                f"MODEL_BUSY: loading a '{kind}' model needs {busy} unloaded "
+                f"(one engine family at a time), but "
+                f"{'it is' if len(busy) == 1 else 'they are'} generating. "
+                f"Stop the generation or wait for it to finish."
+            )
+
+        for mid in foreign:
+            was = self._provider_kind(mid) or "other"   # read BEFORE the pop
+            provider = self.providers.pop(mid)
+            self._last_used_ts.pop(mid, None)
+            logging.info(f"Engine switch to '{kind}': evicting {was} model {mid}")
+            diag_event("model_evict", model=mid)
+            observability.record_event(
+                "model_unload", tier="events", min_level="minimal",
+                fields={"model": mid, "reason": "provider_switch"})
+            from heylook_llm.memory import safe_mm_call
+            safe_mm_call(self.memory_manager, "register_model_unload", mid, reason="provider_switch")
+            self._teardown_provider(provider)
+        return True
+
     def _evict_lru_model(self):
         """Evict least recently used non-pinned, non-generating model.
 
@@ -495,18 +564,38 @@ class ModelRouter:
                 reservation_wait_start = time.time()
                 while True:
                     with self.cache_lock:
-                        if len(self.providers) + len(self._loading) < self.max_loaded_models:
-                            self._loading.add(model_id)
+                        # ONE ENGINE FAMILY AT A TIME, checked before the count:
+                        # max_loaded_models is a count and at 2 would admit an
+                        # MLX + gguf pair. See _evict_foreign_providers for why
+                        # that pair specifically is unsafe.
+                        self._evict_foreign_providers(model_config.provider)
+                        # A foreign load already in flight cannot be evicted --
+                        # it owns no provider object yet. Wait for it to publish
+                        # (then it is evictable) rather than racing it.
+                        foreign_inflight = sorted(
+                            m for m, k in self._loading.items()
+                            if k != model_config.provider and m != model_id
+                        )
+                        if (not foreign_inflight
+                                and len(self.providers) + len(self._loading) < self.max_loaded_models):
+                            self._loading[model_id] = model_config.provider
                             break
-                        if any(mid not in self._pinned for mid in self.providers):
+                        if foreign_inflight:
+                            # Nothing to evict our way out of -- evicting a
+                            # SAME-kind model here would throw away a model we
+                            # want in order to wait for one we are about to
+                            # evict anyway. Just wait for it to publish.
+                            inflight = foreign_inflight
+                        elif any(mid not in self._pinned for mid in self.providers):
                             self._evict_lru_model()
                             continue
-                        if not self._loading:
+                        elif not self._loading:
                             raise RuntimeError(
                                 f"All {len(self.providers)} loaded models are pinned. "
                                 f"Cannot evict to make room. Pinned: {self._pinned}"
                             )
-                        inflight = sorted(self._loading)
+                        else:
+                            inflight = sorted(self._loading)
                     if time.time() - reservation_wait_start > self._reservation_wait_timeout:
                         raise RuntimeError(
                             f"Timed out after {self._reservation_wait_timeout:.0f}s waiting "
@@ -521,6 +610,13 @@ class ModelRouter:
                     model_config.config.model_dump(),
                     self.log_level <= logging.DEBUG
                 )
+                # Which ENGINE FAMILY holds this model's weights, stamped on the
+                # instance rather than looked up later: a reload can change a
+                # model's provider in models.toml while it is resident, and the
+                # exclusivity rule must reason about what is IN MEMORY, not what
+                # the config now says. Stamped once here, and it dies with the
+                # object -- no teardown path can leave a stale entry behind.
+                new_provider._heylook_provider_kind = model_config.provider
 
                 logging.info(f"Initializing {model_config.provider.upper()} provider...")
 
@@ -535,7 +631,7 @@ class ModelRouter:
 
                 # Publish: the reservation becomes the real provider.
                 with self.cache_lock:
-                    self._loading.discard(model_id)
+                    self._loading.pop(model_id, None)
                     self.providers[model_id] = new_provider
                     self._last_used_ts[model_id] = time.time()
 
@@ -572,7 +668,7 @@ class ModelRouter:
                 # Release the reservation so the failed load doesn't hold
                 # capacity forever.
                 with self.cache_lock:
-                    self._loading.discard(model_id)
+                    self._loading.pop(model_id, None)
                 load_time = time.time() - load_start_time
                 logging.error(f"Failed to load model '{model_id}' after {load_time:.2f}s: {e}")
                 raise e

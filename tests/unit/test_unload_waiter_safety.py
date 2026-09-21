@@ -123,7 +123,11 @@ class TestReservationWaitBounded(unittest.TestCase):
         router = self._router()
         router._reservation_wait_timeout = 0.2
         # Simulate another thread's load that never publishes (wedged).
-        router._loading.add("ghost-model")
+        # `_loading` maps id -> PROVIDER KIND since v2.0.49 (engine exclusivity
+        # has to see in-flight loads too). Same kind as model-a on purpose:
+        # a FOREIGN wedged load takes the engine-switch wait path instead, and
+        # this check is about the capacity wait being bounded.
+        router._loading["ghost-model"] = "mlx"
 
         start = time.monotonic()
         with self.assertRaises(RuntimeError) as ctx:
