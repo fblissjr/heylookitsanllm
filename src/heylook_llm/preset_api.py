@@ -26,16 +26,35 @@ preset_router = APIRouter(
 )
 
 
+# `params` uses the INTERNAL sampler spellings, the same ones the conversation
+# generate route's `overrides` takes -- `enable_thinking`, not `thinking`.
+# That is deliberate and not a drift: `/v1/messages` is the odd one out
+# because it is Anthropic-conformant, and the rename happens at that boundary
+# the same way `stop_reason` does. The consequence for a client is real
+# though, and it is stated on every one of these models rather than only on
+# the read one: a preset's params forwarded VERBATIM to /v1/messages is a 422
+# on `enable_thinking` (v2.0.50 -- before that it was silently dropped and the
+# request answered with the cascade default). Found by a client author who
+# hit it on the presets people actually use.
+_PARAMS_DOC = (
+    "Sampler knobs the preset pins, in the INTERNAL spellings (`enable_thinking`, "
+    "not `thinking`). The server never applies them -- a client copies each key "
+    "onto the request itself. They go verbatim into the conversation generate "
+    "route's `overrides`; on /v1/messages, `enable_thinking` must be renamed to "
+    "`thinking` or the request is refused. Absent keys stay unset."
+)
+
+
 class PresetCreate(BaseModel):
     name: str
     system_prompt: str | None = None
-    params: dict = {}
+    params: dict = Field(default_factory=dict, description=_PARAMS_DOC)
 
 
 class PresetUpdate(BaseModel):
     name: str | None = None
     system_prompt: str | None = None
-    params: dict | None = None
+    params: dict | None = Field(default=None, description=_PARAMS_DOC)
 
 
 class Preset(BaseModel):
@@ -47,12 +66,7 @@ class Preset(BaseModel):
         description="Null or empty means the preset carries no prompt: applying it "
                     "leaves the document's prompt alone rather than blanking it.",
     )
-    params: dict = Field(
-        default_factory=dict,
-        description="Sampler knobs the preset pins. The server never applies them: a "
-                    "client copies each key onto the request itself (on /v1/messages, "
-                    "`enable_thinking` is spelled `thinking`). Absent keys stay unset.",
-    )
+    params: dict = Field(default_factory=dict, description=_PARAMS_DOC)
     created_at: str = Field(description="ISO-8601 UTC timestamp")
     updated_at: str = Field(description="ISO-8601 UTC timestamp")
 

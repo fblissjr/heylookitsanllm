@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.0.50]
 
+### Documentation
+
+- **All three preset models now state that `params` uses the INTERNAL sampler
+  spellings**, from one shared string so they cannot drift. `PresetCreate` and
+  `PresetUpdate` carried no description at all; the read model already said it,
+  which is why a client author retrieving presets had the information and got
+  it right. The dialect split is deliberate -- preset `params` match the
+  conversation generate route's `overrides`, and `/v1/messages` is the odd one
+  out because it is Anthropic-conformant, with the rename happening at that
+  boundary exactly as `stop_reason`'s does. The consequence is worth stating
+  at every entry point regardless: a preset's params forwarded VERBATIM to
+  `/v1/messages` is a 422 on `enable_thinking`, and before the guard below it
+  was a silent drop answered with the cascade default.
+
 ### Fixed
 
 - **A wrong SPELLING of a live `/v1/messages` field is now a 422 instead of a
