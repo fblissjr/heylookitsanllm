@@ -179,9 +179,83 @@ def _append_thinking_resume(prompt: str, thinking: str, template_info) -> str:
     return prompt + opener + thinking.lstrip()
 
 
+def _apply_chat_template(tokenizer, messages, *, enable_thinking, reasoning_effort,
+                         continuing: bool, model_id=None):
+    """Render ``messages`` through the tokenizer's chat template -- the ONE
+    place that builds the kwargs and maps the failures, for the text path and
+    the vision/VLM path alike.
+
+    There were three hand-copies of this (text, VLM, batch) and they had
+    drifted: only the text copy retried a narrow wrapper, only the text and
+    batch copies named a missing template, the batch copy passed no
+    ``enable_thinking`` at all (so mlx-lm silently injected True), and the VLM
+    copy answered a TypeError by returning a ``role: content`` join -- a prompt
+    with no template in it, handed to the model as if nothing had happened.
+
+    ``enable_thinking`` None = omit the key (the template's own default);
+    a bool is always sent. Both engines' callers pass a bool in practice, and
+    that matters on the mlx-lm side: ``TokenizerWrapper.apply_chat_template``
+    injects ``enable_thinking=True`` when the kwarg is ABSENT.
+
+    ``continuing`` leaves the final message's turn OPEN so generation finishes
+    it. transformers refuses ``continue_final_message`` together with
+    ``add_generation_prompt``, hence the flip. A template stack that cannot
+    continue is refused LOUDLY (400): rendering a closed turn instead would
+    silently restart the message the caller asked to continue.
+    """
+    base_kwargs: dict = {"tokenize": False, "add_generation_prompt": not continuing}
+    if continuing:
+        base_kwargs["continue_final_message"] = True
+
+    # Deliberately NOT in base_kwargs: the TypeError retry below re-passes
+    # base_kwargs verbatim and drops only what is spelled out here, so a
+    # wrapper with a narrow signature must be able to lose reasoning_effort the
+    # same way it loses enable_thinking. In base_kwargs it would survive the
+    # retry and fail it again. It is sent WHENEVER SET, never gated on
+    # thinking: gpt-oss/harmony reads it unconditionally and has no
+    # enable_thinking at all.
+    template_kwargs: dict = {} if enable_thinking is None else {"enable_thinking": enable_thinking}
+    if reasoning_effort:
+        template_kwargs["reasoning_effort"] = reasoning_effort
+
+    try:
+        try:
+            return tokenizer.apply_chat_template(messages, **template_kwargs, **base_kwargs)
+        except TypeError:
+            # Can't tell WHICH kwarg the wrapper rejected; retry without the
+            # template variables only. If continue_final_message itself is the
+            # problem the retry fails the same way, and that is a refusal.
+            try:
+                return tokenizer.apply_chat_template(messages, **base_kwargs)
+            except TypeError as te:
+                if continuing:
+                    raise InvalidGenerationRequest(
+                        "This model's template stack cannot continue the "
+                        "final message (continue_final_message unsupported)."
+                    ) from te
+                raise
+    except ValueError as e:
+        # transformers raises a raw ValueError when the tokenizer has no chat
+        # template at all; that message surfaces verbatim as the HTTP error
+        # detail, so make it name the model and the fix. Decided from
+        # tokenizer state, not upstream error prose.
+        err = missing_template_error(tokenizer, model_id)
+        if err is not None:
+            raise err from e
+        if continuing:
+            # transformers also ValueErrors when the template rewrites the
+            # final message so its content no longer ends the rendered text
+            # -- user-actionable, not a server fault.
+            raise InvalidGenerationRequest(
+                f"Cannot continue the final message with this model's "
+                f"chat template: {e}"
+            ) from e
+        raise
+
+
 def vlm_apply_chat_template(processor, config, messages, num_images=None, enable_thinking=None,
                             reasoning_effort=None,
-                            continue_final_message=False):
+                            continue_final_message=False, model_id=None):
     """
     Apply chat template using mlx-vlm's prompt_utils.
 
@@ -233,40 +307,16 @@ def vlm_apply_chat_template(processor, config, messages, num_images=None, enable
                     parts.append(item)
             msg["content"] = " ".join(parts).strip() if parts else ""
 
-    # Step 3: apply the tokenizer's own chat template. Continuation leaves
-    # the final turn OPEN (continue_final_message trims the closing markup;
-    # add_generation_prompt must be False with it -- transformers refuses
-    # the combination).
-    template_kwargs = {} if enable_thinking is None else {"enable_thinking": enable_thinking}
-    # Whenever set, NOT gated on thinking: gpt-oss/harmony reads
-    # reasoning_effort unconditionally and has no enable_thinking, so a gate
-    # here makes the knob unreachable for that whole family. transformers
-    # forwards unknown kwargs as template variables, so a template that
-    # ignores it is unaffected.
-    if reasoning_effort:
-        template_kwargs["reasoning_effort"] = reasoning_effort
-    if continue_final_message:
-        template_kwargs["continue_final_message"] = True
-    try:
-        return tokenizer.apply_chat_template(
-            formatted_messages, tokenize=False,
-            add_generation_prompt=not continue_final_message,
-            **template_kwargs,
-        )
-    except TypeError:
-        if continue_final_message:
-            # The role-joined fallback below cannot leave a turn open --
-            # a silent fall-through would RESTART the message instead of
-            # continuing it. Refuse loudly.
-            raise InvalidGenerationRequest(
-                "This model's template stack cannot continue the final "
-                "message (continue_final_message unsupported)."
-            )
-        # Tokenizer template still can't handle the messages -- manual fallback
-        return "\n".join(
-            f"{msg.get('role', 'user')}: {msg.get('content', '')}"
-            for msg in formatted_messages
-        )
+    # Step 3: the tokenizer's own chat template, through the shared renderer.
+    # A template that still cannot take these messages RAISES. (It used to
+    # return a "role: content" join here -- a prompt with no template in it.
+    # Checked before removing, 2026-09-21: no installed mlx-vlm-routed model
+    # reaches that branch, across image, multi-turn and thinking-history
+    # shapes.)
+    return _apply_chat_template(
+        tokenizer, formatted_messages, enable_thinking=enable_thinking,
+        reasoning_effort=reasoning_effort, continuing=continue_final_message,
+        model_id=model_id)
 
 
 def resolve_add_generation_prompt(messages) -> bool:
@@ -405,78 +455,17 @@ class UnifiedTextStrategy:
         reasoning_effort = effective_request.get("reasoning_effort")
 
         if self.is_vlm:
-            try:
-                prompt = vlm_apply_chat_template(
-                    processor, model.config, messages, num_images=0,
-                    enable_thinking=enable_thinking,
-                    reasoning_effort=reasoning_effort,
-                    continue_final_message=continuing,
-                )
-            except ValueError as e:
-                # Same mapping as the text branch below: a template that
-                # rewrites the final message during continuation is a
-                # user-actionable 400, not a 500 (transformers raises a raw
-                # ValueError for it).
-                if continuing:
-                    raise InvalidGenerationRequest(
-                        f"Cannot continue the final message with this "
-                        f"model's chat template: {e}"
-                    ) from e
-                raise
+            prompt = vlm_apply_chat_template(
+                processor, model.config, messages, num_images=0,
+                enable_thinking=enable_thinking,
+                reasoning_effort=reasoning_effort,
+                continue_final_message=continuing, model_id=self.model_id,
+            )
         else:
-            base_kwargs: dict = {"tokenize": False,
-                                 "add_generation_prompt": not continuing}
-            if continuing:
-                # transformers refuses the True/True combination, hence the
-                # add_generation_prompt flip above.
-                base_kwargs["continue_final_message"] = True
-
-            # Deliberately NOT in base_kwargs: the TypeError retry below
-            # re-passes base_kwargs verbatim and drops only what is spelled
-            # out here, so a wrapper with a narrow signature must be able to
-            # lose reasoning_effort the same way it loses enable_thinking.
-            # In base_kwargs it would survive the retry and fail it again.
-            template_kwargs = {"enable_thinking": enable_thinking}
-            if reasoning_effort:
-                template_kwargs["reasoning_effort"] = reasoning_effort
-
-            try:
-                try:
-                    prompt = tokenizer.apply_chat_template(
-                        messages, **template_kwargs, **base_kwargs,
-                    )
-                except TypeError:
-                    if continuing:
-                        # Can't tell WHICH kwarg the wrapper rejected; retry
-                        # without enable_thinking only. If continue_final_message
-                        # itself is the problem, refuse rather than silently
-                        # render a closed turn that would restart the message.
-                        try:
-                            prompt = tokenizer.apply_chat_template(messages, **base_kwargs)
-                        except TypeError as te:
-                            raise InvalidGenerationRequest(
-                                "This model's template stack cannot continue the "
-                                "final message (continue_final_message unsupported)."
-                            ) from te
-                    else:
-                        prompt = tokenizer.apply_chat_template(messages, **base_kwargs)
-            except ValueError as e:
-                # transformers raises a raw ValueError when the tokenizer has
-                # no chat template at all; that message surfaces verbatim as
-                # the HTTP error detail, so make it name the model and the fix.
-                # Decided from tokenizer state, not upstream error prose.
-                err = missing_template_error(tokenizer, self.model_id)
-                if err is not None:
-                    raise err from e
-                if continuing:
-                    # transformers also ValueErrors when the template rewrites
-                    # the final message so its content no longer ends the
-                    # rendered text -- user-actionable, not a server fault.
-                    raise InvalidGenerationRequest(
-                        f"Cannot continue the final message with this model's "
-                        f"chat template: {e}"
-                    ) from e
-                raise
+            prompt = _apply_chat_template(
+                tokenizer, messages, enable_thinking=enable_thinking,
+                reasoning_effort=reasoning_effort, continuing=continuing,
+                model_id=self.model_id)
 
         if resume_thinking is not None:
             if not isinstance(prompt, str):
@@ -543,10 +532,7 @@ def _non_user_image_roles(messages) -> list[str]:
         if not isinstance(content, list):
             continue
         for part in content:
-            ptype = getattr(part, 'type', None)
-            if ptype is None and isinstance(part, dict):
-                ptype = part.get('type')
-            if ptype == 'image_url':
+            if getattr(part, 'type', None) == 'image_url':
                 roles.append(str(role))
                 break
     return roles
@@ -733,7 +719,7 @@ class VLMVisionStrategy:
         resume = _thinking_resume(request)
         images, formatted_prompt, _, image_urls = self._prepare_vlm_inputs_parallel(
             request.messages[:-1] if resume is not None else request.messages,
-            processor, model.config, model,
+            processor, model.config,
             enable_thinking=True if resume is not None else _resolve_enable_thinking(effective_request),
             reasoning_effort=effective_request.get("reasoning_effort"),
             continue_final_message=request.is_continuation() and resume is None,
@@ -887,14 +873,14 @@ class VLMVisionStrategy:
             chunk.prompt_tps = prefill_tps
             yield chunk
 
-    def _prepare_vlm_inputs_parallel(self, messages: List, processor, config, model=None,
+    def _prepare_vlm_inputs_parallel(self, messages: List, processor, config,
                                      enable_thinking=None, reasoning_effort=None,
                                      continue_final_message: bool = False) -> Tuple[List[Image.Image], str, bool, List[str]]:
         """Prepare VLM inputs with parallel image loading. Delegates to standalone function."""
         from .common.vlm_inputs import prepare_vlm_inputs_parallel
         return prepare_vlm_inputs_parallel(
             messages, processor, config, self._batch_vision_processor,
-            vlm_apply_chat_template, model=model, enable_thinking=enable_thinking,
+            vlm_apply_chat_template, enable_thinking=enable_thinking,
             reasoning_effort=reasoning_effort, template_info=self.template_info,
             continue_final_message=continue_final_message,
         )
@@ -968,7 +954,7 @@ class DiffusionStrategy:
         from .common.vlm_inputs import prepare_vlm_inputs_parallel
         images, formatted_prompt, has_images, _ = prepare_vlm_inputs_parallel(
             request.messages, processor, model.config, self._batch_vision_processor,
-            vlm_apply_chat_template, model=model,
+            vlm_apply_chat_template,
             enable_thinking=_resolve_enable_thinking(effective_request),
             reasoning_effort=effective_request.get("reasoning_effort"),
             template_info=self.template_info,
@@ -1394,10 +1380,7 @@ class MLXProvider(BaseProvider):
         for msg in messages:
             if isinstance(msg.content, list):
                 for part in msg.content:
-                    if hasattr(part, 'type'):
-                        if part.type == 'image_url':
-                            return True
-                    elif isinstance(part, dict) and part.get('type') == 'image_url':
+                    if part.type == 'image_url':
                         return True
         return False
 

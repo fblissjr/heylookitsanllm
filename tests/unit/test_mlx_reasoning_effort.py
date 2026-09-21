@@ -89,7 +89,7 @@ class TestVisionPathForwardsEffort:
 
         prepare_vlm_inputs_parallel(
             [Msg()], FakeProcessor(), FakeConfig(), None, fake_template,
-            model=None, enable_thinking=True, reasoning_effort="low",
+            enable_thinking=True, reasoning_effort="low",
         )
         assert seen == {"reasoning_effort": "low", "enable_thinking": True}
 
@@ -118,13 +118,36 @@ class TestTextTemplateRetry:
             "in base_kwargs the TypeError retry re-passes it and fails again")
 
     def test_a_narrow_wrapper_still_renders_after_the_retry(self):
-        """A processor that rejects the kwarg must not take the whole request
-        down -- the retry drops template kwargs and renders without them."""
+        """A tokenizer that rejects a template variable must not take the
+        request down: the shared renderer retries WITHOUT the template
+        variables and renders. Driven through `_apply_chat_template` itself --
+        the one renderer both the text and the VLM path use since v2.0.58."""
+        from heylook_llm.providers.mlx_provider import _apply_chat_template
+
         p = FakeProcessor(reject={"reasoning_effort"})
+        out = _apply_chat_template(p, _msgs(), enable_thinking=True,
+                                   reasoning_effort="low", continuing=False)
+        assert out == "PROMPT"
+        (kwargs,) = p.calls
+        assert "reasoning_effort" not in kwargs and "enable_thinking" not in kwargs
+        assert kwargs["add_generation_prompt"] is True
+
+    def test_a_stack_that_cannot_continue_is_refused_not_restarted(self):
+        """When `continue_final_message` itself is what the wrapper rejects,
+        the retry fails the same way. A continuation is then a 400; rendering
+        a closed turn would silently restart the message. A NON-continuing
+        request has nothing to refuse on the client's behalf, so the TypeError
+        propagates -- it used to become a "role: content" join on the VLM
+        path, a prompt with no template in it."""
+        from heylook_llm.providers.base import InvalidGenerationRequest
+        from heylook_llm.providers.mlx_provider import _apply_chat_template
+
+        with pytest.raises(InvalidGenerationRequest, match="cannot continue"):
+            _apply_chat_template(FakeProcessor(reject={"continue_final_message"}), _msgs(),
+                                 enable_thinking=True, reasoning_effort=None, continuing=True)
         with pytest.raises(TypeError):
-            p.apply_chat_template(_msgs(), reasoning_effort="low")
-        # ...and the same processor renders fine once it is dropped.
-        assert p.apply_chat_template(_msgs(), enable_thinking=True) == "PROMPT"
+            _apply_chat_template(FakeProcessor(reject={"tokenize"}), _msgs(),
+                                 enable_thinking=True, reasoning_effort=None, continuing=False)
 
 
 @pytest.mark.unit

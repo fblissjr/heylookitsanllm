@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.58]
+
+### Changed
+
+- **One chat-template renderer for MLX, `mlx_provider._apply_chat_template`.**
+  The text path and the VLM path each built the template kwargs and mapped the
+  failures themselves, and had drifted: only the text copy retried a tokenizer
+  wrapper with a narrow signature, only the text copy turned "this tokenizer
+  has no chat template" into a message naming the model and the fix, and the
+  VLM copy answered a TypeError by returning a bare `role: content` join. (The
+  third copy, in the batch path, went with it in v2.0.57.) Both paths now get
+  the retry, the missing-template message and the continuation 400.
+- **A chat template that cannot render a vision request now fails the request.**
+  `prepare_vlm_inputs_parallel` caught EVERY exception and walked a ladder --
+  the tokenizer's template with a fresh generation prompt, then a bare
+  `role: content` join -- and `vlm_apply_chat_template` had its own role-joined
+  return on top. A broken template therefore produced a confident answer to a
+  prompt the model was never trained on, with one ERROR line in the log to show
+  for it. Before removing them: rendered image, multi-turn-with-thinking and
+  two-image shapes through every installed mlx-vlm-routed model with thinking
+  on and off, and none reached either rung.
+
+### Removed
+
+- The dict-form content-part branches in `prepare_vlm_inputs_parallel`,
+  `_non_user_image_roles` and `_detect_images_optimized`. `ChatMessage`
+  validates dicts into `ContentPart` objects at construction and every
+  production path builds a request that way, so only tests could reach them;
+  two of the three had no test at all.
+- The `model=` parameter of `prepare_vlm_inputs_parallel` ("unused currently,
+  reserved for future") and of the strategy wrapper that only forwarded it.
+
+### Verification
+
+A refactor of prompt rendering, so checked as one: the same message shapes
+(image, history with thinking, image continuation, plain text, text
+continuation; thinking on and off) rendered through every served MLX model on
+the previous commit and on this one, each run printing the `heylook_llm` it
+actually imported. Every prompt byte-identical.
+
+A test that could not fail was replaced on the way:
+`test_a_narrow_wrapper_still_renders_after_the_retry` exercised only its own
+fake and called no server code; it now drives the shared renderer.
+
 ## [2.0.57]
 
 ### Removed

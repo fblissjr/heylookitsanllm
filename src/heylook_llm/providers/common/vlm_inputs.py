@@ -9,12 +9,9 @@ and dict formats, with error recovery for template failures.
 Previously embedded as VLMVisionStrategy._prepare_vlm_inputs_parallel().
 """
 
-import logging
 from typing import List, Tuple
 
 from PIL import Image
-
-from ..base import InvalidGenerationRequest
 
 
 def thinking_for_template(msg_dict: dict, template_info=None) -> dict:
@@ -62,15 +59,6 @@ def _reconstruct_thinking(msg_dict: dict) -> dict:
     return msg_dict
 
 
-def _flatten_for_log(content) -> str:
-    """Block-form or string content as plain text, for the no-template fallback
-    and for error logs. Never used to build a real prompt."""
-    if isinstance(content, list):
-        return " ".join(b.get("text") or "" for b in content
-                        if isinstance(b, dict) and b.get("type") == "text")
-    return content if isinstance(content, str) else str(content)
-
-
 def content_for_template(text: str, num_images: int):
     """Content for ONE message, in the shape mlx-vlm allocates media from.
 
@@ -106,7 +94,6 @@ def prepare_vlm_inputs_parallel(
     config,
     batch_vision_processor,
     vlm_apply_chat_template_fn,
-    model=None,
     enable_thinking=None,
     reasoning_effort=None,
     template_info=None,
@@ -120,14 +107,19 @@ def prepare_vlm_inputs_parallel(
         config: Model config (model_type, etc.)
         batch_vision_processor: BatchVisionProcessor for parallel image loading
         vlm_apply_chat_template_fn: Function to apply VLM chat template
-        model: Optional model instance (unused currently, reserved for future)
         enable_thinking: Template thinking toggle forwarded to the template
             function (None = leave the template to its default)
         continue_final_message: leave the final message's turn OPEN so
-            generation finishes it. A template failure then RAISES
-            InvalidGenerationRequest -- both fallbacks below render a closed
-            turn plus a fresh generation prompt, which would silently RESTART
-            the message the caller asked to continue.
+            generation finishes it.
+
+    A template that cannot render these messages RAISES (whatever
+    ``vlm_apply_chat_template_fn`` raises; it maps a continuation failure to a
+    400 itself). Until v2.0.58 this function caught every exception and walked
+    a ladder instead -- the tokenizer's template with a fresh generation
+    prompt, then a bare ``role: content`` join -- so a broken template produced
+    a confident answer to a prompt the model was never trained on, with one
+    ERROR line in the log to show for it. Checked before removing: no installed
+    mlx-vlm-routed model reached either rung.
 
     Returns:
         Tuple of (images, formatted_prompt, has_images, image_urls)
@@ -145,30 +137,15 @@ def prepare_vlm_inputs_parallel(
             # each image render its marker on the turn it was attached to.
             msg_images = 0
 
+            # Parts are ContentPart OBJECTS: ChatMessage validates dicts into
+            # them at construction, on every path that builds a request.
             for part in content:
-                # Handle both object and dict formats
-                if hasattr(part, 'type'):
-                    # Object format (ContentPart)
-                    if part.type == 'text':
-                        text_parts.append(part.text)
-                    elif part.type == 'image_url':
-                        image_urls.append(part.image_url.url)
-                        msg_images += 1
-                        has_images = True
-                elif isinstance(part, dict):
-                    # Dict format
-                    if part.get('type') == 'text':
-                        text_parts.append(part.get('text', ''))
-                    elif part.get('type') == 'image_url':
-                        image_url = part.get('image_url', {})
-                        if isinstance(image_url, dict):
-                            url = image_url.get('url', '')
-                        else:
-                            url = image_url.url if hasattr(image_url, 'url') else ''
-                        if url:
-                            image_urls.append(url)
-                            msg_images += 1
-                            has_images = True
+                if part.type == 'text':
+                    text_parts.append(part.text)
+                elif part.type == 'image_url':
+                    image_urls.append(part.image_url.url)
+                    msg_images += 1
+                    has_images = True
 
             # Combine text parts. `image_urls` is appended in message order and
             # the markers are placed in that same order, so the flat image list
@@ -212,38 +189,12 @@ def prepare_vlm_inputs_parallel(
             safe["content"] = str(safe.get("content"))
         safe_messages.append(safe)
 
-    try:
-        # vlm_apply_chat_template performs the enable_thinking None-guard itself
-        formatted_prompt = vlm_apply_chat_template_fn(
-            processor, config, safe_messages, num_images=len(images),
-            enable_thinking=enable_thinking,
-            reasoning_effort=reasoning_effort,
-            continue_final_message=continue_final_message,
-        )
-    except InvalidGenerationRequest:
-        raise
-    except Exception as e:
-        if continue_final_message:
-            raise InvalidGenerationRequest(
-                f"Cannot continue the final message with this model's chat "
-                f"template: {e}") from e
-        logging.error(f"Chat template error: {e}")
-        logging.error(f"Text messages: {text_messages}")
-        # Fallback: apply the tokenizer's own chat template with string content
-        tokenizer = processor.tokenizer if hasattr(processor, "tokenizer") else processor
-        try:
-            template_kwargs = {} if enable_thinking is None else {"enable_thinking": enable_thinking}
-            formatted_prompt = tokenizer.apply_chat_template(
-                safe_messages, tokenize=False, add_generation_prompt=True,
-                **template_kwargs,
-            )
-        except Exception as fallback_error:
-            logging.error(f"Fallback template error: {fallback_error}")
-            # Last ditch, no template at all. Block-form content has to be
-            # flattened by hand here -- interpolating the list would put its
-            # repr in the prompt.
-            formatted_prompt = "\n".join(
-                f"{msg['role']}: {_flatten_for_log(msg['content'])}" for msg in text_messages
-            )
+    # vlm_apply_chat_template performs the enable_thinking None-guard itself
+    formatted_prompt = vlm_apply_chat_template_fn(
+        processor, config, safe_messages, num_images=len(images),
+        enable_thinking=enable_thinking,
+        reasoning_effort=reasoning_effort,
+        continue_final_message=continue_final_message,
+    )
 
     return images, formatted_prompt, has_images, image_urls

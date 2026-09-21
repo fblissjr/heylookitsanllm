@@ -2,10 +2,10 @@
 """Tests for standalone VLM input preparation.
 
 Covers:
-- Image URL extraction from ContentPart objects and dict formats
+- Image URL extraction from ContentPart objects
 - Text-only messages (no images)
 - Thinking reconstruction in assistant messages
-- Error recovery in chat template application
+- A chat-template failure raises (no fallback render)
 - Parallel image loading delegation
 """
 
@@ -75,27 +75,6 @@ class TestPrepareVlmInputsParallel:
         assert len(images) == 1
         mock_batch.load_images_parallel.assert_called_once_with(["http://example.com/img.png"])
 
-    def test_image_url_extraction_dict_format(self, mock_mlx):
-        from heylook_llm.providers.common.vlm_inputs import prepare_vlm_inputs_parallel
-
-        messages = [FakeMessage("user", [
-            {"type": "text", "text": "what is this?"},
-            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
-        ])]
-        mock_processor = MagicMock()
-        mock_config = MagicMock()
-        mock_batch = MagicMock()
-        mock_batch.load_images_parallel.return_value = [MagicMock()]
-        mock_template_fn = MagicMock(return_value="formatted")
-
-        images, prompt, has_images, image_urls = prepare_vlm_inputs_parallel(
-            messages, mock_processor, mock_config, mock_batch, mock_template_fn
-        )
-
-        assert has_images is True
-        assert len(images) == 1
-        mock_batch.load_images_parallel.assert_called_once_with(["data:image/png;base64,abc"])
-
     def test_thinking_reconstruction(self, mock_mlx):
         from heylook_llm.providers.common.vlm_inputs import prepare_vlm_inputs_parallel
 
@@ -124,26 +103,6 @@ class TestPrepareVlmInputsParallel:
         assert "my reasoning" in assistant_msg["content"]
         assert "answer" in assistant_msg["content"]
 
-    def test_template_error_recovery(self, mock_mlx):
-        """When vlm template fails, fall back to tokenizer.apply_chat_template."""
-        from heylook_llm.providers.common.vlm_inputs import prepare_vlm_inputs_parallel
-
-        messages = [FakeMessage("user", "hello")]
-        mock_processor = MagicMock()
-        mock_processor.tokenizer.apply_chat_template.return_value = "tokenizer fallback"
-        mock_config = MagicMock()
-        mock_batch = MagicMock()
-
-        def failing_template(proc, cfg, msgs, **kwargs):
-            raise ValueError("template error")
-
-        images, prompt, has_images, image_urls = prepare_vlm_inputs_parallel(
-            messages, mock_processor, mock_config, mock_batch, failing_template
-        )
-
-        assert prompt == "tokenizer fallback"
-        mock_processor.tokenizer.apply_chat_template.assert_called_once()
-
     def test_continuation_reaches_the_template(self, mock_mlx):
         from heylook_llm.providers.common.vlm_inputs import prepare_vlm_inputs_parallel
 
@@ -155,44 +114,27 @@ class TestPrepareVlmInputsParallel:
         )
         assert template_fn.call_args.kwargs["continue_final_message"] is True
 
-    def test_a_failed_continuation_never_falls_back(self, mock_mlx):
-        """Both fallbacks render a CLOSED turn plus a fresh generation prompt,
-        which would restart the message the caller asked to continue."""
+    def test_a_template_failure_raises_and_nothing_is_rendered_in_its_place(self, mock_mlx):
+        """Until v2.0.58 any template exception was swallowed and a ladder
+        walked instead: the tokenizer's template with a fresh generation
+        prompt, then a bare "role: content" join. A broken template then
+        produced a confident answer to a prompt with no template in it -- and,
+        on a continuation, silently RESTARTED the message. Continuing or not,
+        the failure now reaches the caller and the tokenizer is never asked."""
         import pytest
-        from heylook_llm.providers.base import InvalidGenerationRequest
         from heylook_llm.providers.common.vlm_inputs import prepare_vlm_inputs_parallel
-
-        mock_processor = MagicMock()
 
         def failing_template(proc, cfg, msgs, **kwargs):
-            raise ValueError("template rewrote the final message")
+            raise ValueError("template error")
 
-        with pytest.raises(InvalidGenerationRequest):
-            prepare_vlm_inputs_parallel(
-                [FakeMessage("user", "hi"), FakeMessage("assistant", "The goat is")],
-                mock_processor, MagicMock(), MagicMock(), failing_template,
-                continue_final_message=True,
-            )
-        mock_processor.tokenizer.apply_chat_template.assert_not_called()
-
-    def test_template_total_fallback(self, mock_mlx):
-        """When all template calls fail, fall back to manual formatting."""
-        from heylook_llm.providers.common.vlm_inputs import prepare_vlm_inputs_parallel
-
-        messages = [FakeMessage("user", "hello")]
-        mock_processor = MagicMock()
-        mock_processor.tokenizer.apply_chat_template.side_effect = TypeError("also fails")
-        mock_config = MagicMock()
-        mock_batch = MagicMock()
-
-        def always_failing(proc, cfg, msgs, **kwargs):
-            raise ValueError("always fails")
-
-        images, prompt, has_images, image_urls = prepare_vlm_inputs_parallel(
-            messages, mock_processor, mock_config, mock_batch, always_failing
-        )
-
-        assert "user: hello" in prompt
+        for continuing in (False, True):
+            processor = MagicMock()
+            with pytest.raises(ValueError, match="template error"):
+                prepare_vlm_inputs_parallel(
+                    [FakeMessage("user", "hi"), FakeMessage("assistant", "The goat is")],
+                    processor, MagicMock(), MagicMock(), failing_template,
+                    continue_final_message=continuing)
+            processor.tokenizer.apply_chat_template.assert_not_called()
 
     def test_multiple_images(self, mock_mlx):
         from heylook_llm.providers.common.vlm_inputs import prepare_vlm_inputs_parallel
@@ -258,25 +200,31 @@ class TestMediaAttribution:
             return 0
         return sum(1 for b in content if isinstance(b, dict) and b.get("type") == "image")
 
+    # ContentPart-shaped OBJECTS, as every production path hands them over
+    # (ChatMessage validates dicts into them); the dict-form branch these used
+    # to exercise was test-only surface and went in v2.0.58.
     def _img(self, url):
-        return {"type": "image_url", "image_url": {"url": url}}
+        return FakeContentPart("image_url", image_url=FakeImageUrl(url))
+
+    def _txt(self, text):
+        return FakeContentPart("text", text=text)
 
     def test_markers_land_on_the_message_that_carried_the_image(self, mock_mlx):
         # Image on turn 1, a later user turn with none -- the shape that used
         # to move the marker to the end.
         messages = [
-            FakeMessage("user", [self._img("a.png"), {"type": "text", "text": "what is this?"}]),
+            FakeMessage("user", [self._img("a.png"), self._txt("what is this?")]),
             FakeMessage("assistant", "a cat"),
-            FakeMessage("user", [{"type": "text", "text": "and now?"}]),
+            FakeMessage("user", [self._txt("and now?")]),
         ]
         seen = self._capture(messages)
         assert [self._markers(m["content"]) for m in seen["messages"]] == [1, 0, 0]
 
     def test_two_images_stay_on_their_own_turns(self, mock_mlx):
         messages = [
-            FakeMessage("user", [self._img("a.png"), {"type": "text", "text": "first"}]),
+            FakeMessage("user", [self._img("a.png"), self._txt("first")]),
             FakeMessage("assistant", "ok"),
-            FakeMessage("user", [self._img("b.png"), {"type": "text", "text": "second"}]),
+            FakeMessage("user", [self._img("b.png"), self._txt("second")]),
         ]
         seen = self._capture(messages)
         assert [self._markers(m["content"]) for m in seen["messages"]] == [1, 0, 1]
