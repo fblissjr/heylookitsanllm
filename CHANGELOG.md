@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.54]
+
+### Added
+
+- **`scripts/vlm_parity_probe.py` -- does the MLX vision path generate what
+  mlx-vlm's own loop generates?** Opt-in, loads a real model, one model per
+  process, no server. It drives the vision path through `MLXProvider` while
+  recording the tensors `vlm_prepare_inputs` built, then replays those SAME
+  tensors through `mlx_vlm.generate.ar.generate_step` and compares token ids at
+  greedy (an equality check, which is the one thing temp 0 is for). Identical
+  inputs mean the chat template, the vision-token budget and the stop set
+  cannot enter the comparison. It carries a negative control (a second image
+  must change the output, or the run is vacuous), runs vision after text AND
+  after vision in one process because position state survives between requests,
+  and reports the top-1/top-2 margin at a divergence so a rounding tie is not
+  read as a bug.
+
+  This is the instrument the August cache postmortem asked for and nobody
+  wrote: there is no unit test of `VLMVisionStrategy.generate`, fakes cannot see
+  cache or position-state bugs, and the eval bank is blind to them.
+
+  Recorded against the CURRENT path before changing it (`Qwen3.5-0.8B`,
+  `Qwen-Image-2.1-PE-I21`, `Qwen3.5-27B-8bit`, `Qwen3-VL-32B`): the 0.8B matches
+  upstream exactly; the three larger models diverge mid-reply only at margins of
+  zero, one or two bf16 quanta -- ties broken by rounding, consistent with
+  today's all-N prefill being a different float path from upstream's
+  N-1-then-step. Every run also shows the known off-by-one: one token more than
+  `max_tokens`.
+
 ## [2.0.53]
 
 ### Changed
