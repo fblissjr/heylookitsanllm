@@ -119,7 +119,6 @@ This gives vision requests the full sampler suite (top_k, min_p, presence_penalt
 | `providers/common/prompt_cache.py` | Radix-tree prompt cache manager |
 | `providers/common/samplers.py` | Sampler/processor construction |
 | `providers/common/stop_tokens.py` | `extend_eos_from_generation_config` -- load-time EOS union (4.6) |
-| `providers/common/vision_budget.py` | `vision_budget_kwargs` -- per-image visual token budget mapping (4.7) |
 
 ### 1.5. LanguageModelLogitsWrapper
 
@@ -356,29 +355,19 @@ built from `ModelTemplateInfo.special_tokens` and applied by every parser
 one fewer module, same guarantee, applied at the point where routed text
 (content vs. thinking) is already being assembled.
 
-### 4.7. Vision token budget (`vision_tokens`, 2026-07-20)
+### 4.7. Vision token budget (`vision_tokens`, 2026-07-20; REMOVED v2.0.64)
 
-A model-agnostic per-image visual token budget, resolved through the same
-effective-request cascade as sampler fields (request `vision_tokens` field
--> per-model `models.toml` default -> unset). `VLMVisionStrategy` maps the
-resolved value onto whatever budget parameter the loaded processor exposes
-via `providers/common/vision_budget.vision_budget_kwargs()`, duck-typed on
-processor attributes rather than model name:
-
-- gemma-4 (`image_processor.max_soft_tokens`): snaps to the nearest
-  supported discrete bucket (ties prefer the smaller/cheaper).
-- qwen2/3-VL (`patch_size` + `merge_size`): continuous budget, converted to
-  `max_pixels = vision_tokens * (patch * merge) ** 2`.
-- Anything else: `{}` -- the request degrades to the processor's own
-  default silently, not an error.
-
-The resulting kwargs are passed through `mlx_vlm.utils.prepare_inputs` into
-the transformers processor, which validates them itself. Because different
-budgets produce different-shaped vision features, the vision feature cache
-key is tagged with the budget (`vision_budget[max_soft_tokens=280]`-style
-prefix) whenever `budget_kwargs` is non-empty -- otherwise a cached
-full-budget encode could be served for a request that asked for a smaller
-one, or vice versa.
+A per-image visual token budget mapped onto the processor's own knob
+(gemma-4 `max_soft_tokens` buckets, qwen `max_pixels`). Removed after a live
+measurement on 2026-09-22 showed it a silent no-op on every Qwen-family
+model: the mapping was right and the Qwen3VL processor honoured `max_pixels`
+when called directly, but mlx-vlm's `process_inputs` forwards only kwargs
+NAMED in the processor's `__call__` signature, and Qwen3VLProcessor's is
+`**kwargs`. The unit tests covered the mapping alone and stayed green over
+the dead lever. The client-side pixel cap does the same job honestly (tokens
+scale linearly with area), so the field, the budget module, the v3 control
+and the cache-key variant it needed all went. Gemma's bucket path was never
+verified either way.
 
 ## 5. Token-Level Data and Logprobs (REMOVED v1.79.74)
 

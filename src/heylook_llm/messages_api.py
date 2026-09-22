@@ -40,7 +40,6 @@ from heylook_llm.perf_collector import (
     get_perf_collector,
     build_performance,
     headline_tps,
-    net_ttft_ms,
 )
 from heylook_llm.schema.content_blocks import ImageBlock
 from heylook_llm.reasoning_parser import (
@@ -431,18 +430,50 @@ async def _non_stream_messages(
     pre_thinking_parts: list = []  # chunk.thinking -- engine pre-split reasoning
     telemetry = ChunkTelemetry()  # per-chunk counters/rates tagged by the engine (mlx-lm or llama-server)
 
+    # Thinking/content spans, the way the streaming translator keeps them:
+    # the first thinking output opens the thinking span, the first content
+    # output closes it and opens the content span. This mode parses the text
+    # once at the end, so a SECOND parser instance (same selection, so the
+    # same split) watches the chunks as they land purely for the clock. It
+    # sees engine pre-split reasoning (`chunk.thinking`) as thinking too.
+    # Before this the non-streaming `performance` carried both durations as
+    # null while the stream filled them -- the schema promises the two modes
+    # the same telemetry.
+    timing_parser = make_parser()
+    thinking_start = thinking_end = content_start = None
+
+    def _saw(kind: str, at: float) -> None:
+        nonlocal thinking_start, thinking_end, content_start
+        if kind == "thinking":
+            if thinking_start is None:
+                thinking_start = at
+        else:
+            if thinking_start is not None and thinking_end is None:
+                thinking_end = at
+            if content_start is None:
+                content_start = at
+
     def consume():
         nonlocal full_text, token_count
         # closing() runs the provider generator's finally now (releases the
         # generation gate) even if consumption raised -- not at GC.
         with closing(generator):
             for chunk in generator:
+                at = time.time()
                 chunk_thinking = getattr(chunk, 'thinking', None)
                 if chunk_thinking:
                     pre_thinking_parts.append(chunk_thinking)
+                    _saw("thinking", at)
                 full_text += chunk.text
                 token_count += 1
                 telemetry.absorb(chunk)
+                for kind, text in timing_parser.process_chunk(chunk.text):
+                    if text:
+                        _saw(kind, at)
+            at = time.time()
+            for kind, text in timing_parser.flush():
+                if text:
+                    _saw(kind, at)
 
     generation_start = time.time()
     try:
@@ -503,11 +534,19 @@ async def _non_stream_messages(
     elapsed = time.time() - request_start_time
     total_tokens = (telemetry.completion_tokens or token_count)
     if elapsed > 0 and total_tokens > 0:
+        end_time = time.time()
+        thinking_ms = content_ms = None
+        if thinking_start is not None:
+            thinking_ms = int(((thinking_end or end_time) - thinking_start) * 1000)
+        if content_start is not None:
+            content_ms = int((end_time - content_start) * 1000)
         openai_dict["performance"] = build_performance(
             telemetry,
             request_duration_ms=int(elapsed * 1000),
-            generation_duration_ms=(int((time.time() - generation_start) * 1000)
+            generation_duration_ms=(int((end_time - generation_start) * 1000)
                                     if generation_start is not None else None),
+            thinking_duration_ms=thinking_ms,
+            content_duration_ms=content_ms,
         )
 
     response = from_openai_response_dict(
@@ -531,11 +570,8 @@ async def _non_stream_messages(
             model=msg_request.model or "unknown",
             success=True,
             total_ms=elapsed * 1000,
-            queue_ms=p_get_ms,
             model_load_ms=p_get_ms if p_get_ms >= 100 else 0.0,
-            image_processing_ms=0.0,
             token_generation_ms=elapsed * 1000 - p_get_ms,
-            first_token_ms=0.0,
             prompt_tokens=telemetry.prompt_tokens,
             completion_tokens=total_tokens,
             tokens_per_second=tps,
@@ -673,22 +709,13 @@ async def _stream_messages(
         p_get_ms = perf_ctx["provider_get_ms"]
         had_imgs = perf_ctx.get("had_images", False)
 
-        # Real TTFT: translator-tracked first output token, net of FIFO
-        # queue wait.
-        first_output = translator.thinking_start or translator.content_start
-        raw_ttft_ms = (first_output - translator.start_time) * 1000 if first_output else 0.0
-        ttft_ms = net_ttft_ms(raw_ttft_ms, telemetry.queue_wait_ms)
-
         get_perf_collector().record_request(RequestEvent(
             timestamp=now,
             model=model,
             success=True,
             total_ms=total_ms,
-            queue_ms=p_get_ms,
             model_load_ms=p_get_ms if p_get_ms >= 100 else 0.0,
-            image_processing_ms=0.0,
             token_generation_ms=gen_time_s * 1000,
-            first_token_ms=ttft_ms,
             prompt_tokens=translator.prompt_tokens,
             completion_tokens=gen_tokens,
             tokens_per_second=tps,

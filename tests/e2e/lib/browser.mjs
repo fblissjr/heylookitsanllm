@@ -154,7 +154,7 @@ export function createPageContext(page, { base, maxTokens }) {
     // live 2026-07-23; it was reintroduced here and caught in review.
     //
     // THROWS rather than returning {} when it cannot resolve. Two of its callers
-    // assert ABSENCE (`!('vision_tokens' in ...)`), which an empty answer
+    // assert ABSENCE (`!(key in ...)`), which an empty answer
     // satisfies for free -- an oracle that returns empty on failure turns those
     // into checks that cannot fail. Debounced (400ms), so callers poll.
     async readSettings(kind = 'conversations') {

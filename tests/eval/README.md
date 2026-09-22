@@ -9,8 +9,8 @@ last updated: 2026-07-20
 > this yet.
 
 An OPTIONAL eval pass for code changes that can alter LLM *behavior* --
-chat template changes, parser/stop-token changes, vision pipeline changes,
-`vision_tokens` budget plumbing. Generalizes two ad-hoc debugging scripts
+chat template changes, parser/stop-token changes, vision pipeline changes.
+Generalizes two ad-hoc debugging scripts
 (`full_matrix.py`, `repro_multiimage.py`) that used to get rewritten from
 scratch every time someone needed to re-check this stuff.
 
@@ -48,8 +48,8 @@ not meant to run in CI.
   `chat_template_source` changes).
 - After stop-token or sampler changes (`providers/common/stop_tokens.py`,
   `generation_core.py`).
-- After vision pipeline / `vision_tokens` budget changes (vision feature
-  cache, VLM prompt formatting).
+- After vision pipeline changes (vision feature cache, VLM prompt
+  formatting).
 - Before a release that touches `generation_core.py` or the `providers/`
   tree.
 

@@ -423,14 +423,6 @@ def test_model_options_publishes_both_facts(provider):
         assert entry.get("engines"), f"{provider}.{entry['name']} lost its engines"
 
 
-def test_vision_tokens_is_declared_mlx_vlm_only():
-    """The tag earns its keep on the fields where the two MLX engines DIFFER.
-    If this ever reads as both, the tag has been filled in by rote and stopped
-    carrying information."""
-    from heylook_llm.config import ENGINE_MLX_VLM
-
-    assert field_engines(_PCC["mlx"].model_fields["vision_tokens"]) == [ENGINE_MLX_VLM]
-
 
 def test_kv_cache_knobs_disclose_the_make_cache_blind_spot():
     """These three are declared for both MLX engines and are nonetheless inert

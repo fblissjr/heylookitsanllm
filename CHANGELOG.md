@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.64]
+
+### Removed
+
+- **`vision_tokens`** -- the request field (`/v1/messages`, the internal
+  `ChatRequest`), the per-model `models.toml` default, the v3 advanced
+  control, `providers/common/vision_budget.py`, the vision-feature-cache key
+  variant that existed for it, its eval tasks and its unit tests. Measured
+  live on 2026-09-22: a silent no-op on every Qwen-family MLX model. The
+  mapping to `max_pixels` was right and the Qwen3VL processor honours that
+  kwarg when called directly, but mlx-vlm's `process_inputs` forwards only
+  kwargs NAMED in the processor's `__call__` signature, and Qwen3VLProcessor's
+  is `**kwargs`, so nothing arrived; the unit tests covered the mapping alone
+  and stayed green over the dead lever. The client-side pixel cap does the
+  same job honestly (visual tokens scale linearly with area), so the field
+  goes rather than gets a workaround. Gemma's bucket path was never verified
+  either way. A request still sending it is now a 422 like any unknown field.
+- **Three rows of `GET /v1/performance/profile`** that nothing measured:
+  `image_processing` (a literal `0.0` on every path), `first_token` (`0.0`
+  on non-streaming, so the per-model mean read as near-zero on any mixed
+  window) and `queue` (the same number as `model_load`, unrounded). The
+  timing breakdown is now `model_load` / `token_generation` / `other`, the
+  per-model breakdown `queue_wait` / `model_load` / `token_generation`.
+  `RequestEvent` lost the three fields, and `net_ttft_ms` -- whose only
+  consumer was the dropped `first_token_ms` -- went with them. The v3 perf
+  page renders whatever rows arrive and needed no change.
+
+### Added
+
+- **Non-streaming `performance` carries `thinking_duration_ms` and
+  `content_duration_ms`**, which the stream already filled and this mode
+  answered with `null`. A second parser instance (the same selection, so the
+  same split) clocks the chunks as they land; engine pre-split reasoning
+  counts as thinking. The clock is the span the streaming translator keeps:
+  first thinking output opens it, first content output closes it. Both
+  modes stamp what the parser EMITS, so a marker parser's holdback (it
+  withholds up to a closing tag's length inside thinking) starts the
+  thinking span one delta late on the stream and here alike.
+- `scripts/dev_server.sh` takes `--host` (default `127.0.0.1`; `0.0.0.0` for
+  a LAN-reachable isolated server) and `--log-level` (default `WARNING`).
+
+### Fixed
+
+- The `/v1/admin/model-options` narrative, `docs/frontend_v3_spec.md` and the
+  providers wiki named `vision_tokens` as the mlx-vlm-only example; they now
+  say no field carries a single-MLX-engine tag today.
+
 ## [2.0.63]
 
 ### Tests

@@ -157,9 +157,9 @@ composer focus is worth building.
   Escape-close survival), preset save/apply round-trip (inert selection,
   explicit Apply, drift states), the applied-preset chip (shows/(edited)/
   clears-on-delete), conversation CRUD, 390px mobile, and a capability/
-  thinking/image section: gating (thinking toggle + vision_tokens track the
-  selected model's capabilities, negative model discovered from /v1/models
-  and never loaded), vision_tokens localStorage round-trip, the thinking
+  thinking/image section: gating (the thinking toggle tracks the selected
+  model's capabilities, negative model discovered from /v1/models and never
+  loaded), the thinking
   toggle's wire contract (enable_thinking absent when off -- never false --
   true when on), the thinking block UI on a real thinking generation,
   attach-cap (9 files -> 8 thumbs + aria-live message), the paste path,

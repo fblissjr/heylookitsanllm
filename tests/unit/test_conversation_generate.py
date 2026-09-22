@@ -461,14 +461,13 @@ class TestCapGating:
         # fake-model: vision False, no enable_thinking -> no thinking/vision caps
         conv = await db.create_conversation(
             store, title="t", model_id="fake-model",
-            params={"enable_thinking": True, "vision_tokens": 512, "temperature": 0.5})
+            params={"enable_thinking": True, "temperature": 0.5})
         res = await client.post(f"/v1/conversations/{conv['id']}/generate",
                                 json={"mode": "append", "user_content": "hi"})
         assert res.status_code == 200
         req = provider.last_request
         assert req is not None
         assert req.enable_thinking is None, "enable_thinking leaked to a non-thinking model"
-        assert req.vision_tokens is None, "vision_tokens leaked to a non-vision model"
         assert req.temperature == 0.5  # ungated keys still flow
 
     @pytest.mark.asyncio
@@ -476,14 +475,13 @@ class TestCapGating:
         client, store, provider = ctx
         conv = await db.create_conversation(
             store, title="t", model_id="fake-capable",
-            params={"enable_thinking": True, "vision_tokens": 512})
+            params={"enable_thinking": True})
         res = await client.post(f"/v1/conversations/{conv['id']}/generate",
                                 json={"mode": "append", "user_content": "hi"})
         assert res.status_code == 200
         req = provider.last_request
         assert req is not None
         assert req.enable_thinking is True
-        assert req.vision_tokens == 512
 
     @pytest.mark.asyncio
     async def test_overrides_are_cap_gated_too(self, ctx):

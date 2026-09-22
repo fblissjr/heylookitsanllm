@@ -135,8 +135,8 @@ mlx-vlm for vision), which is the same split
 admin row. Two consequences the provider key cannot express:
 
 - a field declared on the MLX config may reach only ONE of the two engines
-  (`vision_tokens` is mlx-vlm only -- there is nothing for it to do on a text
-  model);
+  (none does today -- `vision_tokens` was the example until its removal in
+  v2.0.64 -- but the tag is per engine so one can);
 - a field declared on ONE provider may govern every engine (`max_queue_depth`
   configures the process-global generation gate that gguf generations queue in
   too, and the gguf provider looks for the same key on its own config, where

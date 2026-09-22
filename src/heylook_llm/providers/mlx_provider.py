@@ -737,16 +737,6 @@ class VLMVisionStrategy:
         model_type = getattr(model.config, 'model_type', 'unknown')
         logging.info(f"[VLM VISION] Processing {num_images} image(s) | Model: {model_type}")
 
-        # Model-agnostic visual token budget: mapped onto the processor's own
-        # knob (gemma buckets / qwen pixel budget) as call-time kwargs; {}
-        # when unset or the family exposes no budget parameter.
-        from .common.vision_budget import vision_budget_kwargs
-        budget_kwargs = vision_budget_kwargs(
-            processor, effective_request.get('vision_tokens')
-        )
-        if budget_kwargs:
-            logging.info(f"[VLM VISION] vision_tokens={effective_request.get('vision_tokens')} -> {budget_kwargs}")
-
         # Tokenize and prepare pixel values via mlx_vlm.utils.prepare_inputs.
         # This handles image_grid_thw for Qwen models automatically.
         image_token_index = getattr(model.config, 'image_token_index', None)
@@ -755,7 +745,6 @@ class VLMVisionStrategy:
             images=images if images else None,
             prompts=formatted_prompt,
             image_token_index=image_token_index,
-            **budget_kwargs,
         )
 
         input_ids = inputs["input_ids"]
@@ -781,16 +770,10 @@ class VLMVisionStrategy:
         #   get_input_embeddings() method
         has_encode_image = hasattr(model, 'encode_image')
         cache_key = image_urls if image_urls else None
-        # budget_kwargs is 0-or-1 entries by construction (vision_budget.py);
-        # the variant namespaces URL-keyed entries per budget (feature shapes
-        # differ; pixel-hash keys change with the pixels anyway).
-        budget_variant = (
-            "=".join(map(str, next(iter(budget_kwargs.items())))) if budget_kwargs else None
-        )
         if has_encode_image and pixel_values is not None:
             # Try URL-based key first; fall back to pixel content hash for
             # base64/PIL images that don't have a stable URL.
-            cached_features = self._vision_cache.get(cache_key, pixel_values=pixel_values, variant=budget_variant)
+            cached_features = self._vision_cache.get(cache_key, pixel_values=pixel_values)
             if cached_features is not None:
                 extras["cached_image_features"] = cached_features
                 logging.info("[VLM VISION] Using cached vision features (skipping vision encoder)")
@@ -799,7 +782,7 @@ class VLMVisionStrategy:
                 with wired_limit(model, [generation_stream]):
                     features = model.encode_image(pixel_values)
                     mx.async_eval(features)
-                self._vision_cache.put(cache_key, features, pixel_values=pixel_values, variant=budget_variant)
+                self._vision_cache.put(cache_key, features, pixel_values=pixel_values)
                 extras["cached_image_features"] = features
                 logging.info("[VLM VISION] Computed and cached vision features")
 
@@ -825,7 +808,7 @@ class VLMVisionStrategy:
             raise InvalidGenerationRequest(
                 f"Prompt is {prompt_token_count} tokens; {self.model_id or 'this model'} "
                 f"has a context of {self.context_length} tokens. Shorten the "
-                f"conversation, remove an image, or lower vision_tokens.")
+                f"conversation, remove an image, or send a smaller one.")
         last_prompt_token = int(input_ids[0, -1].item())
         media_tokens = {
             getattr(model.config, attr) for attr in _MEDIA_TOKEN_CONFIG_ATTRS

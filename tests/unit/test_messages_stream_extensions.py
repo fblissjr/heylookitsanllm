@@ -164,13 +164,13 @@ class TestMessageStopTiming:
 @pytest.mark.unit
 class TestExtensionSamplerFields:
     @pytest.mark.asyncio
-    async def test_sampler_and_vision_tokens_reach_the_provider(self, client_factory):
+    async def test_extension_sampler_fields_reach_the_provider(self, client_factory):
         client, provider = await client_factory(token_chunks())
         res = await client.post("/v1/messages", json={
             "model": "fake-model", "stream": True,
-            "vision_tokens": 256,
+            "presence_penalty": 1.5,
             "messages": [{"role": "user", "content": "hi"}],
         })
         assert res.status_code == 200
         assert provider.last_request is not None
-        assert provider.last_request.vision_tokens == 256
+        assert provider.last_request.presence_penalty == 1.5

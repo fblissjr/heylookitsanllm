@@ -1003,7 +1003,7 @@ def _field_options(cls) -> list[dict]:
         "reaches: one or more of mlx-lm, mlx-vlm, gguf. "
         "READ `engines`, NOT THE PROVIDER KEY. Provider `mlx` is TWO upstream "
         "engines on separate release trains, so a field listed under it may "
-        "reach only one of them (`vision_tokens` is mlx-vlm only), and one "
+        "reach only one of them (no field does today; the tag can say so), and one "
         "field governs every engine from a single provider\'s config "
         "(`max_queue_depth`: the generation gate is process-global). "
         "`engines` is per-ENGINE and cannot express a per-ARCHITECTURE "

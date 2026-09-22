@@ -164,7 +164,8 @@ hardening** (2026-07-20, v1.34.60-.61: attach + thinking-toggle are now
 with an aria-live announcement + per-image "Remove image N" labels); **vision
 token budget** (2026-07-20, v1.34.64: `vision_tokens` drawer control,
 cap-gated on the model's `vision` capability, mapped server-side by
-duck-typing the loaded processor -- gemma-4 buckets / qwen pixel budget);
+duck-typing the loaded processor -- gemma-4 buckets / qwen pixel budget;
+REMOVED v2.0.64 with the field, which never reached the Qwen processor);
 **thinking now actually works broadly** (2026-07-20, v1.34.60-.64: gemma-4's
 canonical template thinking channel and Qwen3.5's prefilled-`<think>` template
 both split into the collapsible thinking block correctly; the checkbox/icon

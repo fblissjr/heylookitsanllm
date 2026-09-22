@@ -354,14 +354,16 @@ class TestNonStreamingPerformance:
         for key in ("kv_cache_bytes", "queue_wait_ms", "draft_acceptance"):
             assert key in perf, key
 
-    def test_thinking_and_content_durations_are_streaming_only(self, client):
-        """Pinned as ABSENT deliberately, not overlooked: the translator times
-        those blocks as it emits them, so nothing non-streaming can produce
-        them. Documented in api_integration.md §3 as streaming-only; if this
-        goes green with a value, the doc is what needs updating."""
+    def test_phase_durations_are_measured_non_streaming_too(self, client):
+        """Until v2.0.64 both were pinned ABSENT here on the claim that only
+        the stream translator could time them. This mode now clocks the
+        chunks as they land through a second parser instance. The fake emits
+        plain text, so the content span is filled and the thinking span --
+        which nothing opened -- stays null: absent means "not seen", never
+        "not measured"."""
         perf = self._perf(client)
+        assert isinstance(perf["content_duration_ms"], int) and perf["content_duration_ms"] >= 0
         assert perf["thinking_duration_ms"] is None
-        assert perf["content_duration_ms"] is None
 
 
 def test_retired_request_fields_are_refused_not_ignored(client):

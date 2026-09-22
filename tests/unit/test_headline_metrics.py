@@ -40,11 +40,8 @@ def _base_event_kwargs(**overrides) -> dict[str, Any]:
         model="m",
         success=True,
         total_ms=1000.0,
-        queue_ms=10.0,
         model_load_ms=0.0,
-        image_processing_ms=0.0,
         token_generation_ms=950.0,
-        first_token_ms=50.0,
         prompt_tokens=20,
         completion_tokens=100,
         tokens_per_second=100.0,
@@ -213,9 +210,3 @@ class TestMessagesStreamingRecordsNativeTps:
         assert event.tokens_per_second == 87.6
         assert event.prompt_tps == 123.4
 
-    def test_ttft_excludes_queue_wait(self):
-        # Queue wait far exceeds actual wall time -> honest TTFT clamps to 0
-        # instead of reporting queue pressure as model latency.
-        event = self._run([_chunk(queue_wait_ms=1_000_000.0)])
-        assert event.first_token_ms == 0.0
-        assert event.queue_wait_ms == 1_000_000.0

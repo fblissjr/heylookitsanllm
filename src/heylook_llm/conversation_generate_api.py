@@ -65,7 +65,6 @@ from heylook_llm.perf_collector import (
     RequestEvent,
     get_perf_collector,
     headline_tps,
-    net_ttft_ms,
 )
 from heylook_llm.providers.abort import AbortEvent
 from heylook_llm.providers.base import GenerationFailed, InvalidGenerationRequest
@@ -186,8 +185,7 @@ async def _subscribe(run: _Run):
 # conversation, sent it, and silently dropped it (2026-08-17).
 _SAMPLER_KEYS = REQUEST_SAMPLER_FIELDS
 # Cap-gated keys (the server-side twin of v3's PARAM_META requiresCap).
-_CAP_GATED = {"enable_thinking": "thinking", "vision_tokens": "vision",
-              "reasoning_effort": "reasoning_effort"}
+_CAP_GATED = {"enable_thinking": "thinking", "reasoning_effort": "reasoning_effort"}
 
 
 class GenerateRequest(BaseModel):
@@ -1006,18 +1004,13 @@ def _record_perf(perf_ctx, translator, telemetry, model_id):
     total_ms = (now - perf_ctx["request_start_time"]) * 1000
     gen_tokens = translator.completion_tokens or (translator.thinking_tokens + translator.content_tokens)
     gen_time_s = now - translator.start_time
-    first_output = translator.thinking_start or translator.content_start
-    raw_ttft_ms = (first_output - translator.start_time) * 1000 if first_output else 0.0
     get_perf_collector().record_request(RequestEvent(
         timestamp=now,
         model=model_id,
         success=True,
         total_ms=total_ms,
-        queue_ms=perf_ctx["provider_get_ms"],
         model_load_ms=perf_ctx["provider_get_ms"] if perf_ctx["provider_get_ms"] >= 100 else 0.0,
-        image_processing_ms=0.0,
         token_generation_ms=gen_time_s * 1000,
-        first_token_ms=net_ttft_ms(raw_ttft_ms, telemetry.queue_wait_ms),
         prompt_tokens=translator.prompt_tokens,
         completion_tokens=gen_tokens,
         tokens_per_second=headline_tps(telemetry.generation_tps, gen_tokens, gen_time_s, telemetry.queue_wait_ms),

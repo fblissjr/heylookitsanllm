@@ -1082,18 +1082,12 @@ export async function runChatSuite({ suite, ctx, config }) {
 
   await closeDrawer(page); // defensive: a prior failure could have left it open
 
-  await suite.check('capability gating: thinking toggle and vision_tokens track the selected model', async () => {
+  await suite.check('capability gating: thinking toggle tracks the selected model', async () => {
     await requireCap(page, config.model, 'vision');
     await requireCap(page, config.model, 'thinking');   // it asserts on BOTH
     await page.select(MODEL_SELECT, config.model);
     const posThinkHidden = await page.$eval(THINK_BTN, (b) => b.hidden);
     assert(posThinkHidden === false, `thinking toggle hidden for ${config.model} (expected thinking-capable per E2E config)`);
-    await openDrawer(page);
-    const posVision = await page.$('#set-vision_tokens');
-    assert(posVision, `#set-vision_tokens absent for ${config.model} (expected vision-capable per E2E config)`);
-    const [min, max] = await page.$eval('#set-vision_tokens', (el) => [el.min, el.max]);
-    assert(min === '16' && max === '16384', `#set-vision_tokens min/max = ${min}/${max}, expected 16/16384`);
-    await closeDrawer(page);
   });
 
   // SPLIT from the check above, and not cosmetically. The negative half needs a
@@ -1133,10 +1127,6 @@ export async function runChatSuite({ suite, ctx, config }) {
       assert(negThinkHidden === true, `thinking toggle still visible for non-thinking model ${negative.id}`);
     }
     await openDrawer(page);
-    if (!hasCap(negative, 'vision')) {
-      const negVision = await page.$('#set-vision_tokens');
-      assert(!negVision, `#set-vision_tokens still present for non-vision model ${negative.id}`);
-    }
     await closeDrawer(page);
 
     // restore the capable model for the checks below
@@ -1167,31 +1157,6 @@ export async function runChatSuite({ suite, ctx, config }) {
     const val = await page.$eval(MODEL_SELECT, (el) => el.value);
     assert(val === config.model, `Cancel did not revert the select (now on ${val})`);
     assert((await count(page, '.chat__switch-warning')) === 0, 'warning still up after Cancel');
-  });
-
-  await suite.check('vision_tokens control round-trips through the document', async () => {
-    await requireCap(page, config.model, 'vision');
-    await page.select(MODEL_SELECT, config.model);
-    await openDrawer(page);
-    await page.waitForSelector('#set-vision_tokens', { timeout: 5000 });
-    await page.evaluate(() => {
-      const el = document.querySelector('#set-vision_tokens');
-      el.value = '512';
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    await waitFor(async () => (await ctx.readSettings()).vision_tokens === 512,
-      { message: 'vision_tokens=512 never reached the document' });
-    // clear back to the cascade default so it doesn't leak into later generations
-    await page.evaluate(() => {
-      const el = document.querySelector('#set-vision_tokens');
-      el.value = '';
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    // ABSENT, not null: snapshotSettings() omits a null key entirely, which is
-    // how "use the cascade" is spelled on the wire and in the store.
-    await waitFor(async () => !('vision_tokens' in (await ctx.readSettings())),
-      { message: 'vision_tokens never cleared back to the cascade (still stored)' });
-    await closeDrawer(page);
   });
 
   await suite.check('thinking button reflects the model default and writes an explicit value', async () => {
@@ -1302,7 +1267,7 @@ export async function runChatSuite({ suite, ctx, config }) {
   });
 
   await suite.check('cap-gated params are dropped for a model lacking the capability', async () => {
-    // The settings cache legitimately KEEPS enable_thinking/vision_tokens
+    // The settings cache legitimately KEEPS enable_thinking
     // when the panel hides their controls (switch back and they return);
     // what must not happen is those values riding a request to a model
     // that lacks the cap. Phase 2 moved the gate SERVER-side
@@ -1355,10 +1320,10 @@ export async function runChatSuite({ suite, ctx, config }) {
     // model -- so on a non-thinking/non-vision target the gated keys must
     // be absent even from overrides (and the server gate behind that is
     // unit-pinned in test_conversation_generate.py::TestCapGating).
-    for (const key of ['enable_thinking', 'vision_tokens', 'temperature', 'max_tokens']) {
+    for (const key of ['enable_thinking', 'temperature', 'max_tokens']) {
       assert(!(key in body), `${key} rode the top-level generate body: ${bodies.at(-1)}`);
     }
-    for (const key of ['enable_thinking', 'vision_tokens']) {
+    for (const key of ['enable_thinking']) {
       assert(!(body.overrides && key in body.overrides),
         `cap-gated ${key} rode overrides to ${negative.id}: ${bodies.at(-1)}`);
     }

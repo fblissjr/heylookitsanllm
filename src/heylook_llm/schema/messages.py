@@ -89,15 +89,6 @@ class MessageCreateRequest(BaseModel):
                     "low|medium|high). Absent = the template's own default.",
     )
 
-    # heylook extensions (Phase 3b namespace) -- same semantics and bounds as
-    # the internal ChatRequest, so no sampler knob exists that this wire cannot
-    # reach. `vision_tokens` is the per-image visual token budget.
-    vision_tokens: Optional[int] = Field(
-        default=None, ge=16, le=16384,
-        description="Target visual tokens per image; snapped to what the "
-                    "model's processor supports",
-    )
-
     # NO `include_performance` here, deliberately (removed v1.79.49). This wire
     # returns telemetry UNCONDITIONALLY in both modes -- streaming emits
     # `message_stop.performance`, non-streaming carries a `performance` object

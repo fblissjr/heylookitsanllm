@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Isolated heylookllm dev server for live verification.
-#   server.sh start [--port N] [--model ID] [--headroom-gb N] [--no-warm]
+#   server.sh start [--port N] [--model ID] [--headroom-gb N] [--no-warm] [--host H] [--log-level L]
 #   server.sh stop  [--port N]
 #   server.sh status [--port N]
 #
@@ -39,6 +39,12 @@ PORT=8991
 MODEL=""
 HEADROOM_GB=12
 WARM=1
+# --host 0.0.0.0 makes the isolated server reachable from another box on the
+# LAN (the readiness probes stay on loopback, which a 0.0.0.0 bind answers).
+# --log-level INFO is what shows the provider's own per-request lines; the
+# WARNING default kept them out of the log for an hour on 2026-09-22.
+HOST=127.0.0.1
+LOG_LEVEL=WARNING
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -46,6 +52,8 @@ while [ $# -gt 0 ]; do
     --model) MODEL="$2"; shift 2 ;;
     --headroom-gb) HEADROOM_GB="$2"; shift 2 ;;
     --no-warm) WARM=0; shift ;;
+    --host) HOST="$2"; shift 2 ;;
+    --log-level) LOG_LEVEL="$2"; shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -161,7 +169,7 @@ case "$CMD" in
     : > "$LOG"
     cd "$REPO_ROOT"
     HEYLOOK_DB_PATH="$STATE/db.duckdb" nohup uv run heylookllm \
-      --host 127.0.0.1 --port "$PORT" --model-id "$MODEL" --log-level WARNING \
+      --host "$HOST" --port "$PORT" --model-id "$MODEL" --log-level "$LOG_LEVEL" \
       >> "$LOG" 2>&1 &
     echo $! > "$PIDFILE"
     echo "spawned pid $(cat "$PIDFILE"), waiting for readiness (log: $LOG)"

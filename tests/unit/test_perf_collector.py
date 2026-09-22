@@ -23,11 +23,8 @@ def _make_event(
     model: str = "test-model",
     success: bool = True,
     total_ms: float = 1000.0,
-    queue_ms: float = 10.0,
     model_load_ms: float = 0.0,
-    image_processing_ms: float = 0.0,
     token_generation_ms: float = 950.0,
-    first_token_ms: float = 50.0,
     prompt_tokens: int = 20,
     completion_tokens: int = 100,
     tokens_per_second: float = 100.0,
@@ -39,11 +36,8 @@ def _make_event(
         model=model,
         success=success,
         total_ms=total_ms,
-        queue_ms=queue_ms,
         model_load_ms=model_load_ms,
-        image_processing_ms=image_processing_ms,
         token_generation_ms=token_generation_ms,
-        first_token_ms=first_token_ms,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         tokens_per_second=tokens_per_second,
@@ -120,7 +114,7 @@ class TestBuildProfileEmpty:
         profile = c.build_profile("1h")
 
         assert profile["time_range"] == "1h"
-        assert len(profile["timing_breakdown"]) == 5
+        assert len(profile["timing_breakdown"]) == 3
         assert profile["resource_timeline"] == []
         assert profile["bottlenecks"] == []
         assert profile["trends"] == []
@@ -129,7 +123,7 @@ class TestBuildProfileEmpty:
         c = PerfCollector()
         profile = c.build_profile("1h")
         ops = {item["operation"] for item in profile["timing_breakdown"]}
-        assert ops == {"queue", "model_load", "image_processing", "token_generation", "other"}
+        assert ops == {"model_load", "token_generation", "other"}
 
 
 # ---------------------------------------------------------------------------
@@ -139,19 +133,19 @@ class TestBuildProfileEmpty:
 class TestTimingBreakdown:
     def test_averages_across_events(self):
         c = PerfCollector()
-        c.record_request(_make_event(queue_ms=10, token_generation_ms=90, total_ms=100))
-        c.record_request(_make_event(queue_ms=20, token_generation_ms=80, total_ms=100))
+        c.record_request(_make_event(model_load_ms=10, token_generation_ms=90, total_ms=100))
+        c.record_request(_make_event(model_load_ms=20, token_generation_ms=80, total_ms=100))
 
         profile = c.build_profile("1h")
         breakdown = {item["operation"]: item for item in profile["timing_breakdown"]}
 
-        assert breakdown["queue"]["avg_time_ms"] == 15.0
+        assert breakdown["model_load"]["avg_time_ms"] == 15.0
         assert breakdown["token_generation"]["avg_time_ms"] == 85.0
-        assert breakdown["queue"]["count"] == 2
+        assert breakdown["model_load"]["count"] == 2
 
     def test_percentages_sum_to_approximately_one(self):
         c = PerfCollector()
-        c.record_request(_make_event(queue_ms=10, model_load_ms=0, image_processing_ms=0, token_generation_ms=90, total_ms=100))
+        c.record_request(_make_event(model_load_ms=10, token_generation_ms=90, total_ms=100))
 
         profile = c.build_profile("1h")
         total_pct = sum(item["percentage"] for item in profile["timing_breakdown"])
@@ -182,15 +176,12 @@ class TestBottlenecks:
 
     def test_breakdown_fields_present(self):
         c = PerfCollector()
-        c.record_request(_make_event(model="m", first_token_ms=50))
+        c.record_request(_make_event(model="m"))
 
         profile = c.build_profile("1h")
         breakdown = profile["bottlenecks"][0]["breakdown"]
-        assert "queue" in breakdown
-        assert "model_load" in breakdown
-        assert "image_processing" in breakdown
-        assert "token_generation" in breakdown
-        assert "first_token" in breakdown
+        # Exactly the measured rows: a key here is a promise something fills it.
+        assert set(breakdown) == {"queue_wait", "model_load", "token_generation"}
 
 
 # ---------------------------------------------------------------------------

@@ -100,10 +100,6 @@ class ChatRequest(BaseModel):
                     "default.",
     )
 
-    # Visual token budget per image (model-agnostic; mapped onto the loaded
-    # model's own processor knob -- gemma-4 buckets / qwen pixel budget)
-    vision_tokens: Optional[int] = Field(default=None, ge=16, le=16384, description="Target visual tokens per image; snapped to what the model's processor supports")
-
     # Additional sampler parameters
     presence_penalty: Optional[float] = Field(default=None, ge=0.0, le=2.0, description="Reduce repetition (0-2, recommended 1.5 for Qwen3 thinking)")
 
@@ -671,21 +667,6 @@ class MLXModelConfig(BaseModel):
             "nothing, leaving the template's own default."),
         json_schema_extra={"effect": EFFECT_PER_REQUEST,
                            "engines": ENGINES_MLX})
-    # Per-model default visual token budget per image (request vision_tokens
-    # overrides; None = the processor's own default). Mapped per family by
-    # providers/common/vision_budget.py.
-    vision_tokens: Optional[int] = Field(
-        default=None, ge=16, le=16384,
-        description=(
-            "Target visual tokens per image, snapped to what the model's "
-            "processor supports. Unset = the processor's own default. Lower "
-            "it to cut prefill and memory on image requests -- those tokens "
-            "are prompt tokens, so this REMOVES work rather than caching it "
-            "-- at the cost of visual detail. mlx-vlm only: it is mapped per "
-            "family by providers/common/vision_budget.py and there is nothing "
-            "for it to do on a text model."),
-        json_schema_extra={"effect": EFFECT_PER_REQUEST,
-                           "engines": [ENGINE_MLX_VLM]})
     # NOTE: no supports_thinking here (removed v1.46.0) -- MLX thinking
     # capability is DERIVED (template probe / enable_thinking / the explicit
     # ModelConfig.capabilities override). GGUFModelConfig keeps its flag:

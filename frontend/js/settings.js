@@ -38,7 +38,6 @@ export const PARAM_META = {
                              note: 'Accepted values differ by model — a rejected one fails the request. "auto" always works.' },
   // Target visual tokens per image; the backend snaps to what the model's
   // processor supports (gemma-4 buckets 70..1120, qwen continuous).
-  vision_tokens:           { label: 'Vision tokens / image', type: 'number', min: 16, max: 16384, step: 1, section: 'advanced', requiresCap: 'vision' },
 };
 
 function emptySettings() {

@@ -166,33 +166,6 @@ TASK_VISION_LARGE_HEATMAP_SANITY = EvalTask(
 )
 
 
-def _judge_budget(color: str, vt: int) -> Callable[[dict], Verdict]:
-    def judge(ctx: dict) -> Verdict:
-        v = color_mention(ctx["content"], [color])
-        return Verdict(passed=v.passed, evidence=f"vision_tokens={vt}: {v.evidence}")
-    return judge
-
-
-TASK_VISION_BUDGET_LOW_TOKENS = EvalTask(
-    name="vision_budget_low_tokens",
-    category="vision",
-    required_capabilities=("vision",),
-    description="Same fixture as the single-color task but with vision_tokens=70 (low budget); paired with vision_budget_high_tokens -- see README for why these are two tasks, not one.",
-    build_request=lambda: _vision_body([_RED], "What color is this image?", max_tokens=60, vision_tokens=70, enable_thinking=False),
-    judge=_judge_budget("red", 70),
-    timeout=300,
-)
-
-TASK_VISION_BUDGET_HIGH_TOKENS = EvalTask(
-    name="vision_budget_high_tokens",
-    category="vision",
-    required_capabilities=("vision",),
-    description="Same fixture as vision_budget_low_tokens but with vision_tokens=1120 (high budget); both must pass independently, differences are recorded not hard-failed.",
-    build_request=lambda: _vision_body([_RED], "What color is this image?", max_tokens=60, vision_tokens=1120, enable_thinking=False),
-    judge=_judge_budget("red", 1120),
-    timeout=300,
-)
-
 
 def _judge_vision_thinking_off(ctx: dict) -> Verdict:
     return combine_verdicts(color_mention(ctx["content"], ["blue"]), marker_leak(ctx["content"]))
@@ -436,8 +409,6 @@ TASKS: list[EvalTask] = [
     TASK_VISION_SINGLE_COLOR_LETTER,
     TASK_VISION_TWO_IMAGE_DISCRIMINATION,
     TASK_VISION_LARGE_HEATMAP_SANITY,
-    TASK_VISION_BUDGET_LOW_TOKENS,
-    TASK_VISION_BUDGET_HIGH_TOKENS,
     TASK_VISION_THINKING_OFF_PURITY,
     TASK_THINKING_REQUESTED_SPLIT,
     TASK_THINKING_OFF_PURITY,

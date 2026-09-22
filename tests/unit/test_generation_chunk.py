@@ -135,8 +135,8 @@ class TestTelemetryLatch:
         def event(**kw):
             base = dict(
                 timestamp=_time.time(), model="m", success=True, total_ms=100.0,
-                queue_ms=0.0, model_load_ms=0.0, image_processing_ms=0.0,
-                token_generation_ms=90.0, first_token_ms=10.0, prompt_tokens=10,
+                model_load_ms=0.0,
+                token_generation_ms=90.0, prompt_tokens=10,
                 completion_tokens=50, tokens_per_second=40.0, had_images=False,
                 was_streaming=True,
             )

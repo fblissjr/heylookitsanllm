@@ -171,7 +171,7 @@ first token) returns `"performance": null`. The response model declares it
 
 It carries `prompt_tps`, `generation_tps`, `request_duration_ms`,
 `generation_duration_ms`, `peak_memory_gb`, `kv_cache_bytes`, `queue_wait_ms`
-and `draft_acceptance`, plus the two streaming-only phase durations.
+and `draft_acceptance`, plus the two phase durations.
 
 **As of v1.79.58 there is ONE rule, and it replaces the per-field table this
 section used to carry:**
@@ -229,11 +229,11 @@ is the point.
   that it rescued a measurement on idle servers; measurement showed the idle
   case was never zero, so the release was inverting a correct behaviour.
   Restored in .59.)
-- **`thinking_duration_ms` and `content_duration_ms` are streaming only, by
-  design.** The block translator times them as it emits; there is nothing
-  non-streaming to measure. This is the one asymmetry left, and under the rule
-  above it is not an exception — it is a span that mode genuinely cannot
-  measure.
+- **`thinking_duration_ms` and `content_duration_ms` are filled in both
+  modes** (non-streaming since v2.0.64; before that it answered `null` for
+  both while the stream filled them). Each is the span from that channel's
+  first output to its end, so a null means the channel never opened, not
+  that the mode could not measure it.
 - **`peak_memory_gb` is MLX-only** (see below), so absent there means gguf,
   not "not measured this time".
 
@@ -260,17 +260,14 @@ provider never sets it, because the generation happens inside a
 have different remedies and only one is a version question. If you see it
 null on an MLX model, that is the version question.
 
-What is not there at all is time-to-first-token, and non-streaming it is not
-merely unreturned — it is **never measured**. The non-streaming path records
-`first_token_ms = 0.0` as a literal; nothing computes it. So it is genuinely
-unobservable, which matters because it stops you deriving it from
-`request_duration_ms` (arrival to done) or `generation_duration_ms`.
-
-Do not reach for `GET /v1/performance/profile/{1h|6h|24h|7d}` to recover it
-either. That aggregate averages `first_token_ms` across every request in the
-window with no streaming filter, so on a mixed workload the zeros from
-non-streaming requests pull the reported figure toward zero. It is a real
-number only if everything in the window streamed. If you need TTFT, stream.
+What is not there at all is time-to-first-token: non-streaming it is
+**never measured**, and nothing derives it from `request_duration_ms`
+(arrival to done) or `generation_duration_ms`. If you need TTFT, stream.
+`GET /v1/performance/profile/{1h|6h|24h|7d}` will not recover it either — as
+of v2.0.64 that aggregate reports only what is measured on every request
+(`model_load`, `token_generation`, `queue_wait`, and the remainder as
+`other`); the `first_token` and `image_processing` rows it used to carry were
+a mean dragged to zero by non-streaming requests and a literal `0.0`.
 
 `stop_reason` is Anthropic's vocabulary. A non-streaming failure does not
 produce a response at all — it is an HTTP 4xx/5xx — so there is no error
@@ -398,16 +395,18 @@ decode delivers a sideways image.
 How much resolution a vision model can use is a model question, not a
 transport one. Dynamic-resolution towers consume what you give them and
 charge you in vision tokens and prefill; fixed-input towers discard the
-surplus. If you want to cap the cost rather than the pixels, use
-**`vision_tokens`** (per-image visual token budget, snapped to what the
-model's processor supports) — it is available on `/v1/messages` and is the
-more direct lever.
+surplus. The lever is the pixels you send: on a Qwen-family tower the count
+scales linearly with area (about a thousand tokens per megapixel), so a cap
+on the client side is the direct control. There is no server-side budget
+field — `vision_tokens` existed until v2.0.64 and was removed after it was
+measured to do nothing on Qwen-family models (mlx-vlm drops the processor
+kwarg it mapped to).
 
 ### Knobs
 
 `max_tokens`, `temperature`, `top_p`, `top_k`, `min_p`, `repetition_penalty`,
 `repetition_context_size`, `presence_penalty`, `seed`,
-`vision_tokens`, `thinking`, `reasoning_effort`,
+`thinking`, `reasoning_effort`,
 `stream`, `stream_options`, `metadata`.
 
 Every one is optional and **absent means the server's cascade decides**.
@@ -705,7 +704,7 @@ rather than a guarantee, for reasons the closing note gives:
 - **Extensions**: some request fields have no Anthropic equivalent —
   the sampling knobs (`min_p`, `repetition_penalty`,
   `repetition_context_size`, `presence_penalty`, `seed`), plus
-  `vision_tokens`, `reasoning_effort`, `stream_options`. All are listed
+  `reasoning_effort`, `stream_options`. All are listed
   under [Knobs](#knobs) and enumerated authoritatively in `/openapi.json`,
   which is the only list that cannot go stale — this bullet carried a COUNT
   and was wrong twice (v1.79.41, then v1.79.49 dropping

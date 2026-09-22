@@ -23,19 +23,23 @@ class RequestEvent:
     model: str
     success: bool
     total_ms: float
-    queue_ms: float  # time in get_provider() call
-    model_load_ms: float  # 0 if cache hit, else ~= queue_ms
-    image_processing_ms: float  # 0 if text-only
+    # get_provider() time when it loaded something (>= 100 ms), else 0.
+    # This used to sit beside a `queue_ms` that was the SAME number unrounded,
+    # an `image_processing_ms` every caller set to 0.0, and a `first_token_ms`
+    # that non-streaming set to 0.0 -- three profile rows that could only
+    # ever read as equal-to-model_load, zero, and a mean dragged to zero.
+    # Deleted 2026-09-22 rather than backfilled: a row nothing measures is a
+    # number that lies.
+    model_load_ms: float
     token_generation_ms: float  # generation loop time
-    first_token_ms: float  # TTFT (streaming only, else 0)
     prompt_tokens: int
     completion_tokens: int
     tokens_per_second: float
     had_images: bool
     was_streaming: bool
     # Time blocked in the FIFO generation queue waiting for an in-flight
-    # generation to finish (distinct from queue_ms, which is get_provider /
-    # model-load time). Defaulted for back-compat with older event records.
+    # generation to finish (distinct from model_load_ms, which is
+    # get_provider time). Defaulted for back-compat with older event records.
     queue_wait_ms: float = 0.0
     # mlx-lm's own prefill rate, measured tightly around the prefill loop
     # (chunk.prompt_tps). Defaulted for back-compat with older event records.
@@ -178,7 +182,7 @@ def build_performance(
     # v1.79.58 set out to remove, reproduced inside the field built to remove
     # it. Netted centrally rather than at each caller because a span whose
     # meaning depends on which call site produced it is the whole thing this
-    # function exists to end. Clamped at 0, the same shape as `net_ttft_ms`.
+    # function exists to end. Clamped at 0.
     if generation_duration_ms is not None and telemetry.queue_wait_ms:
         generation_duration_ms = max(
             0, generation_duration_ms - int(telemetry.queue_wait_ms))
@@ -223,15 +227,6 @@ def build_performance(
         )
         perf = {k: v for k, v in perf.items() if k in declared}
     return perf
-
-
-def net_ttft_ms(raw_ttft_ms: float, queue_wait_ms: float) -> float:
-    """TTFT with FIFO queue wait excluded (clamped at 0).
-
-    Admission pressure is not model latency; it stays visible in the
-    separate queue_wait_ms field.
-    """
-    return max(0.0, raw_ttft_ms - queue_wait_ms)
 
 
 def headline_tps(
@@ -344,14 +339,12 @@ class PerfCollector:
     def _timing_breakdown(events: list[RequestEvent]) -> list[dict]:
         """Per-operation average times + percentage of total."""
         if not events:
-            ops = ["queue", "model_load", "image_processing", "token_generation", "other"]
+            ops = ["model_load", "token_generation", "other"]
             return [{"operation": op, "avg_time_ms": 0, "count": 0, "percentage": 0.0} for op in ops]
 
         n = len(events)
         sums = {
-            "queue": sum(e.queue_ms for e in events),
             "model_load": sum(e.model_load_ms for e in events),
-            "image_processing": sum(e.image_processing_ms for e in events),
             "token_generation": sum(e.token_generation_ms for e in events),
         }
         total_accounted = sum(sums.values())
@@ -400,12 +393,9 @@ class PerfCollector:
                 "model": model_id,
                 "avg_total_ms": round(sum(e.total_ms for e in model_events) / n, 1),
                 "breakdown": {
-                    "queue": round(sum(e.queue_ms for e in model_events) / n, 1),
                     "queue_wait": round(sum(e.queue_wait_ms for e in model_events) / n, 1),
                     "model_load": round(sum(e.model_load_ms for e in model_events) / n, 1),
-                    "image_processing": round(sum(e.image_processing_ms for e in model_events) / n, 1),
                     "token_generation": round(sum(e.token_generation_ms for e in model_events) / n, 1),
-                    "first_token": round(sum(e.first_token_ms for e in model_events) / n, 1),
                 },
                 "request_count": n,
             })

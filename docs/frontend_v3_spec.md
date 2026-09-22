@@ -188,9 +188,8 @@ backend):**
   `thinking`; unchecking sets `null` not `false`); reasoning_effort (advanced SELECT, v1.71.1, shown only if
   model caps include `reasoning_effort` — a capability distinct from `thinking`, because the two come apart:
   Qwen3.5's template reads enable_thinking and never reasoning_effort, gpt-oss/harmony the exact reverse.
-  Empty option = send nothing, leaving the template's own default); vision_tokens (advanced number, shown only if model caps
-  include `vision`; target visual tokens per image, backend snaps to the model's own processor support —
-  gemma-4 buckets 70/140/280/560/1120, qwen continuous pixel budget; null = processor default).
+  Empty option = send nothing, leaving the template's own default). `vision_tokens` was an advanced control
+  here until v2.0.64; it was removed with the field (it never reached the Qwen-family processor).
 
 ### 3f. utils / markdown — keep
 - `utils.js`: `createEl`, `createUnloadGuard`, `throttleToFrame`, `statCard`, `formatBytes`. (v3 folds
@@ -289,10 +288,9 @@ Phase 3b; chat uses its conversation-scoped sibling below; the OpenAI-compatible
 - Body: `{model?, messages:[{role:"user"|"assistant", content}], system?,
   max_tokens?, temperature?, top_p?, top_k?, min_p?, repetition_penalty?,
   repetition_context_size?, presence_penalty?, seed?, thinking?,
-  reasoning_effort?, vision_tokens?, stream?}`. `system` is TOP-LEVEL (no system role in the array); `thinking`
+  reasoning_effort?, stream?}`. `system` is TOP-LEVEL (no system role in the array); `thinking`
   is the Messages spelling of `enable_thinking` (same tri-state — v3 derives
-  the rename in `messagesParams()`, settings.js, never a second bag);
-  `vision_tokens` is a heylook extension with ChatRequest semantics; a
+  the rename in `messagesParams()`, settings.js, never a second bag); a
   request still sending `sampler` (or `preset`) gets a 422 naming the v2.0.30
   removal rather than a silent drop, and one sending `show_special_tokens`
   gets the same treatment for the v2.0.38 removal (below). `max_tokens` is deliberately OPTIONAL unlike Anthropic's:
@@ -709,7 +707,7 @@ from the provider config classes (a new backend field appears in the UI with no 
 change). `description` is the field's own help text and the only such text published
 anywhere; `engines` is which of `mlx-lm`/`mlx-vlm`/`gguf` it actually reaches, which the
 PROVIDER KEY DOES NOT ANSWER — provider `mlx` is two engines, so a field under it may
-reach only one (`vision_tokens` is mlx-vlm only), and `max_queue_depth` reaches all three
+reach only one (none does today; the tag can say so), and `max_queue_depth` reaches all three
 from the mlx config because the generation gate is process-global. Both are required on
 every field (the backend refuses to import otherwise), so a UI may render them
 unconditionally.

@@ -10,27 +10,6 @@ added 2026-09-08; chat-template-version entry added 2026-09-20 without a full
 backlog pass; MLX vision prefill follow-ups added 2026-09-21 without a full
 backlog pass*
 
-## `vision_tokens` is dead on Qwen-family MLX (2026-09-22)
-
-Measured live on the I21 edit encoder: `vision_tokens=256` left the image at
-its full token count. The mapping is right (`vision_budget_kwargs` ->
-`max_pixels`, and the Qwen3VL processor honours that kwarg when called
-directly) — the loss is mlx-vlm's `process_inputs`, which forwards only
-kwargs NAMED in the processor's `__call__` signature; Qwen3VLProcessor takes
-`**kwargs`, so `max_pixels` is dropped silently. `test_vision_budget.py`
-covers the mapping alone and stays green over a dead lever (the per-path
-blind spot again). Gemma's `max_soft_tokens` path was NOT checked.
-
-- [ ] Owner call: FIX or REMOVE. Fix = pre-resize the PIL images to the
-  budget in `VLMVisionStrategy` before `prepare_inputs` (Qwen's grid math is
-  `patch*merge` = 32 px), or an upstream mlx-vlm PR to pass kwargs through
-  when the signature has `**kwargs` — check its open PRs first. Remove =
-  the field, the budget module, the v3 advanced control, the spec §4 line.
-  A client-side pixel cap already does the same job and WORKS (the ComfyUI
-  node has one), which is the argument for removal.
-- [ ] Either way, a test that goes through `prepare_inputs` with a real
-  Qwen-shaped processor stub, not through `vision_budget_kwargs` alone.
-
 ## Retire per-model entries from models.toml (2026-09-08) — START HERE
 
 Owner decision, planned but NOT started. The plan is
