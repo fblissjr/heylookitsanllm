@@ -728,9 +728,9 @@ updates in the same commit as any contract change.
 - **W5: align with Anthropic.** `usage.input_tokens` = processed tokens and
   `usage.cache_read_input_tokens` = cached tokens. heylook's detail rides in
   `performance.cache`. **This is a contract change**: the number existing
-  clients read changes meaning. Before shipping, check v3's readers and the
-  owner's other project, and record it in `docs/api_integration.md` and spec
-  §4.
+  clients read changes meaning. The owner confirmed (2026-09-23) that nothing
+  outside this repo reads `usage`; move v3's own readers in the same commit,
+  and record it in `docs/api_integration.md` and spec §4.
 - **Muse-Glimmer's hand-written `supports_thinking = true` removed from
   `models.toml`.** Its template reads no thinking switch.
 
