@@ -1155,6 +1155,10 @@ class LlamaServerProvider(BaseProvider):
         # contract exists to prevent, arriving by a different route -- it
         # shows up as one "Exception ignored while calling deallocator" line
         # in the suite and nothing else.
+        # The log FILE only. Never close self._proc.stdout here: the pump
+        # owns it, and closing a reader another thread is blocked in
+        # readline() on waits for the buffer lock until llama-server writes
+        # or exits -- on the destructor path, a GC thread hung on a live child.
         if getattr(self, "_log_handle", None) is not None:
             try:
                 self._log_handle.close()

@@ -82,21 +82,38 @@ def test_fingerprint_is_per_message_and_keeps_no_text():
 
 
 @pytest.mark.unit
-def test_pump_drains_everything_even_after_the_tee_closes():
-    """A pipe nobody reads blocks llama-server: the pump must read to EOF
-    whatever happens to the log file."""
-    lines = [b"plain line\n", (SKIP + "\n").encode(), b"\xff not utf-8\n", (EVICT + "\n").encode()]
+def test_pump_never_wedges_a_real_child():
+    """A pipe nobody reads fills, and then llama-server blocks mid-write.
+    Only a real child can show that: several MB past the pipe buffer, one
+    very long line with no newline at the end, and a tee that dies mid-run.
+    The child must exit promptly and the pump must end."""
+    import subprocess
+    import sys
+    import threading
 
-    class ClosingTee(io.BytesIO):
+    script = (
+        "import sys\n"
+        f"sys.stdout.write({SKIP + chr(10)!r})\n"
+        "for i in range(40000): sys.stdout.write('srv  slot: filler line %d\\n' % i)\n"
+        f"sys.stdout.write({EVICT + chr(10)!r})\n"
+        "sys.stdout.write('x' * 3_000_000)\n"
+    )
+    proc = subprocess.Popen([sys.executable, "-c", script],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    class DyingTee(io.BytesIO):
         def write(self, b):
-            if self.tell() > 0:
+            if self.tell() > 4096:
                 raise ValueError("I/O operation on closed file")
             return super().write(b)
 
-    stream, tee, w = io.BytesIO(b"".join(lines)), ClosingTee(), CacheWitness()
-    llama_mod._pump_output(stream, tee, w)
-    assert stream.closed
-    assert tee.getvalue() == lines[0]
+    w = CacheWitness()
+    pump = threading.Thread(target=llama_mod._pump_output, args=(proc.stdout, DyingTee(), w))
+    pump.start()
+    assert proc.wait(timeout=30) == 0
+    pump.join(timeout=30)
+    assert not pump.is_alive()
+    assert proc.stdout.closed
     assert [kind for _, kind in w._events] == ["budget_skipped", "evicted"]
 
 

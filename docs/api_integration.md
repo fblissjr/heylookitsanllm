@@ -202,6 +202,8 @@ It carries `prompt_tps`, `generation_tps`, `request_duration_ms`,
   on MLX; `cold`, `no_common_prefix`, `probable_template_diverged`,
   `probable_budget_skipped`, `probable_evicted` on gguf, where `probable_`
   marks heylook's inference (llama-server reports only the cached count).
+  Best-effort: the log lines behind it are read asynchronously, so an event
+  can be attributed to the request after the one it happened during.
 - `speculative` (v2.0.78), when a drafter ran: `{drafted, accepted, emitted,
   acceptance_rate, draft_share}`. `acceptance_rate` is accepted out of
   drafted (gguf only, the drafter's proposals are known there);
