@@ -521,7 +521,7 @@ running small models locally and falling back to heylook). It is a capability
 track, not a server speedup, and mlx-swift-lm has the small vision families it
 would need.
 
-### W13. One engine contract (first cut shipped v2.0.73)
+### W13. One engine contract (shipped v2.0.73 - v2.0.77; capability inference moves with W2)
 
 **The goal.** Every engine answers the same questions through its provider,
 and everything else consumes one shape. Today's single request type,
@@ -668,10 +668,10 @@ display touch stored config. So W0 runs in parallel instead of blocking.
    /v1/messages"). Steps 3-5 change exactly the subsystems unit tests cannot
    certify (templates, thinking, cache state), and the bank is dead until it
    speaks the Messages wire.
-3. **W13 (first cut shipped v2.0.73), then W5.** Finish W13's remaining
-   items (its section, in order: narrow capabilities move, micro-batch
-   function, cache warming, generic renderer), then build W5 backend and wire,
-   then frontend. This comes first so every later change is observable in the
+3. **W13 (shipped v2.0.73 - v2.0.77), then W5.** W13 is done except
+   capability inference, which moves with W2. Next: W5 backend and wire, then
+   frontend (its cache report fills `engine.cache`, which the renderer already
+   shows generically). This comes first so every later change is observable in the
    product, not only in a harness, and so W2/W4/W1 extend one contract rather
    than adding per-engine branches.
 4. **W10**, moved up. On MLX every turn of a conversation with an image

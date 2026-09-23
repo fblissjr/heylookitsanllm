@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-23, v2.0.73, `main`.
+Last updated: 2026-09-23, v2.0.77, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `CLAUDE.md`, the backlog in [TODO.md](./TODO.md), and what each release
@@ -35,8 +35,8 @@ model.
 1. **The approved plan is [plan_runtime_visibility.md](./plan_runtime_visibility.md)**,
    and its "Sequencing" section is the order. W8 + W9 shipped in v2.0.70 (the
    non-causal image-token guard and the Metal residency keep-alive, both at
-   spawn), and the eval-bank port in v2.0.71. The next step is W13 (the one
-   engine contract), then W5 cache/spec reporting as its first member, which includes the live cache-reuse smoke check that
+   spawn), the eval-bank port in v2.0.71, and W13 (the one engine contract)
+   in v2.0.73 - v2.0.77. The next step is W5 cache/spec reporting, which includes the live cache-reuse smoke check that
    is also W10's acceptance test. The evidence behind every step is
    [../testing/gguf_runtime_audit_2026-09-23.md](../testing/gguf_runtime_audit_2026-09-23.md).
 2. **Retiring per-model entries from `models.toml`** ([plan_registry_sidecars.md](./plan_registry_sidecars.md))
@@ -69,7 +69,7 @@ a server holds the default database (it has isolated its own database at
 import time since v1.79.54 -- `tests/contract/conftest.py` -- so it never opens
 the real one).
 
-## What landed 2026-09-23 (v2.0.65 - v2.0.73)
+## What landed 2026-09-23 (v2.0.65 - v2.0.77)
 
 Started from "is llama-server built and spawned optimally for vision and
 thinking models". The build was already right; what turned up was mostly
@@ -103,10 +103,12 @@ things happening where nothing could see them.
 - `heylookllm import` and the admin `/scan` + `/import` routes retired
   (v2.0.72, owner call): every model lives in a watch folder. The served set
   is unchanged.
-- Plan W13, first cut (v2.0.73): one `engine` object on both model lists,
-  replacing `effective_loader`/`context_length`/`context_running`. Still to
-  come in W13: moving the remaining per-engine branches out of
-  `capabilities.py`, and the frontend's generic renderer.
+- Plan W13 (v2.0.73 - v2.0.77): one `engine` object on both model lists,
+  replacing `effective_loader`/`context_length`/`context_running`; vendor
+  sampling and context length behind the engine describers; one effective
+  micro-batch function; background warming of the model-list derivation; and
+  the UI renderer (a per-row Engine panel on the models page, an engine chip
+  in chat). Capability inference moves with W2.
 
 ## What landed 2026-09-21 (v2.0.51 - v2.0.63)
 
