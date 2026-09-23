@@ -583,6 +583,28 @@ implementations of one contract instead.
 Define the contract with W5's report as its first member, then W2/W4/W1
 extend it. The types are sketched for the owner's review before any code.
 
+**Shipped (v2.0.73):** the contract (`providers/contract.py`), one static
+describer per engine, `describe_observed()` on both providers, `engine` on
+both model lists replacing `effective_loader`/`context_length`/
+`context_running`, "configured" meaning stored and different from derived,
+and the route-level conformance test.
+
+**Remaining, in order:**
+1. Move vendor sampling and context length out of `capabilities.py` into the
+   describers, with one registry still naming which engine reads which vendor
+   layer. Checked by byte-identical route output before and after.
+2. One effective micro-batch function (both llama.cpp clamps) that the spawn
+   argv, the image-cap decision and the report all call.
+3. Warm the static describe cache in the background after each config load
+   (never fatal; stamp-keyed, so a warm that races a reload is ignored).
+4. The generic frontend renderer: the full panel on the models page row (all
+   settings, grouped by `effect`, with provenance), a compact chat popover
+   (runtime, context, template origin; room for W5's cache line). Schema
+   `ui:"hidden"` fields are omitted only when not configured; a configured one
+   shows read-only.
+- **Capability inference moves with W2**, which changes its answers (the
+  `reasoning_effort` capability becomes `engine.thinking.depth != null`).
+
 ### W14. Activation steering (gated on the research track)
 
 A research track lives outside the repo (`internal/claude/steering/`, local).
@@ -632,8 +654,9 @@ display touch stored config. So W0 runs in parallel instead of blocking.
    /v1/messages"). Steps 3-5 change exactly the subsystems unit tests cannot
    certify (templates, thinking, cache state), and the bank is dead until it
    speaks the Messages wire.
-3. **W13 then W5.** Define the one engine contract with W5's cache and
-   speculative report as its first member, then build W5 backend and wire,
+3. **W13 (first cut shipped v2.0.73), then W5.** Finish W13's remaining
+   items (its section, in order: narrow capabilities move, micro-batch
+   function, cache warming, generic renderer), then build W5 backend and wire,
    then frontend. This comes first so every later change is observable in the
    product, not only in a harness, and so W2/W4/W1 extend one contract rather
    than adding per-engine branches.

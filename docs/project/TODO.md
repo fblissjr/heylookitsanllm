@@ -79,6 +79,13 @@ about.
 - [ ] Three dead entries warn at every startup and are safe to remove once
   Phase 0 can show what removing them does.
 
+## e2e: audit for clicks or seeds before an async list lands (2026-09-23)
+
+Races of this shape surfaced at v2.0.73 (the panel seed before capabilities
+landed; the danger-zone click during the model-list layout shift). Audit
+only the checks the next workstream touching the chat or models page
+touches, not the whole suite.
+
 ## Frontend coverage gaps found mapping chat.js (2026-09-06)
 
 Surfaced by a full structural map of `frontend/js/pages/chat.js` (3078 lines).
