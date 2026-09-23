@@ -57,6 +57,57 @@ def _engine_build() -> str:
     return " ".join(parts)
 
 
+# Context-length keys in transformers' priority order: max_position_embeddings
+# is the canonical decoder-only field; the rest are the spellings Llama /
+# Mistral / Qwen forks and the GPT-2 lineage use.
+_CONTEXT_LENGTH_KEYS = (
+    "max_position_embeddings",
+    "max_seq_len",
+    "max_seq_length",
+    "seq_length",
+    "n_positions",
+)
+
+
+@lru_cache(maxsize=64)
+def _config_json_context_length(model_path: str) -> int | None:
+    """The context window an MLX checkpoint declares in its config.json:
+    a top-level key first, then the nested ``text_config`` /
+    ``language_config`` block VLM wrappers and Qwen-style MoE configs put
+    the language head in. Cached per path: one file read per model per
+    listing adds up, and checkpoints change only with a restart in practice."""
+    import json
+    try:
+        with open(Path(model_path) / "config.json", encoding="utf-8") as f:
+            config = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(config, dict):
+        return None
+    blocks = [config] + [config.get(k) for k in ("text_config", "language_config")]
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        for key in _CONTEXT_LENGTH_KEYS:
+            value = block.get(key)
+            if isinstance(value, int) and value > 0:
+                return value
+    return None
+
+
+def vendor_sampling(model_path: Path) -> dict:
+    """The model's own recommended decode settings: MLX keeps them in the
+    model dir's generation_config.json. Called through the samplers MODULE
+    (not a from-import) so a patch on the source reader reaches it."""
+    from heylook_llm import samplers
+    return samplers.load_vendor_sampling(str(model_path))
+
+
+def file_context_length(model_path: Path) -> Optional[int]:
+    """The context window the checkpoint's config.json declares, or None."""
+    return _config_json_context_length(str(model_path))
+
+
 def _model_dir(cfg: dict) -> Path:
     return Path(str(cfg.get("model_path") or "")).expanduser()
 

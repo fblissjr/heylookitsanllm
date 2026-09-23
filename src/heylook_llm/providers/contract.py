@@ -250,6 +250,11 @@ def _describers() -> dict:
     return {"mlx": mlx_describe, "gguf": gguf_describe}
 
 
+def describer_for(provider: str):
+    """The engine describer for a provider key, or None for an unknown one."""
+    return _describers().get(provider)
+
+
 _STATIC_CACHE: Dict[tuple, tuple] = {}
 _STATIC_LOCK = threading.Lock()
 

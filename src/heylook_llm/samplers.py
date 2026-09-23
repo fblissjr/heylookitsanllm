@@ -201,8 +201,9 @@ def sampler_defaults(model_config: dict, *, thinking_capable: bool,
     temperature/top_p/top_k are precisely the vendor keys, so omitting it for
     an engine that has one reports the global floor for every model that
     overrides it -- the models where the number matters most.
-    ``capabilities._vendor_sampling_pairs`` is the one place that pairing
-    lives; it drifted once already, within a commit.
+    ``capabilities._vendor_sampling_pairs`` is the one entry point for that
+    pairing, dispatching to each engine describer's ``vendor_sampling``; it
+    drifted once already, within a commit.
     """
     merged = resolve_effective_sampling(
         _NoRequest(), model_config, vendor, thinking_capable=thinking_capable)

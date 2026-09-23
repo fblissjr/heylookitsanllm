@@ -34,6 +34,20 @@ def _provider():
     return LlamaServerProvider
 
 
+def vendor_sampling(model_path: Path) -> dict:
+    """The model's own recommended decode settings: gguf keeps them in the
+    header's general.sampling.* (written from the same generation_config)."""
+    from heylook_llm import gguf_metadata
+    return gguf_metadata.vendor_sampling(model_path)
+
+
+def file_context_length(model_path: Path):
+    """The training context in the GGUF header (<arch>.context_length), the
+    number llama-server sizes from when ctx_size is unset; None if absent."""
+    from heylook_llm import gguf_metadata
+    return gguf_metadata.context_length(model_path)
+
+
 def static_inputs(model_id: str, cfg: dict, written: bool,
                   derived: dict) -> StaticInputs:
     from heylook_llm.providers.common.template_info import HEYLOOK_TEMPLATE_FILENAME

@@ -15,7 +15,8 @@ import json
 
 import pytest
 
-from heylook_llm.capabilities import _mlx_context_length, model_context_length
+from heylook_llm.capabilities import model_context_length
+from heylook_llm.providers.mlx_describe import _config_json_context_length as _mlx_context_length
 
 
 def _checkpoint(tmp_path, config: dict):

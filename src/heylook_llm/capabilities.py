@@ -24,8 +24,7 @@ from pathlib import Path
 
 from heylook_llm.providers.common.loader_routing import effective_loader_for_config
 from heylook_llm.providers.contract import EngineDescription, describe
-from heylook_llm import gguf_metadata
-from heylook_llm.samplers import load_vendor_sampling, sampler_defaults, thinking_default
+from heylook_llm.samplers import sampler_defaults, thinking_default
 
 
 def config_dict(config, *, exclude_unset: bool = False) -> dict:
@@ -265,45 +264,6 @@ def effective_capabilities(model_config, effective_loader: str | None = None) ->
     return infer_model_capabilities(model_config, effective_loader)
 
 
-# Context-length keys in transformers' priority order: max_position_embeddings
-# is the canonical decoder-only field; the rest are the spellings Llama /
-# Mistral / Qwen forks and the GPT-2 lineage use.
-_CONTEXT_LENGTH_KEYS = (
-    "max_position_embeddings",
-    "max_seq_len",
-    "max_seq_length",
-    "seq_length",
-    "n_positions",
-)
-
-
-@lru_cache(maxsize=64)
-def _mlx_context_length(model_path: str) -> int | None:
-    """The context window an MLX checkpoint declares in its config.json:
-    a top-level key first, then the nested ``text_config`` /
-    ``language_config`` block VLM wrappers and Qwen-style MoE configs put
-    the language head in. Cached per path like the template probes above,
-    for the same reason (one file read per model per /v1/models call adds
-    up; checkpoints change only with a restart in practice)."""
-    import json
-    try:
-        with open(Path(model_path) / "config.json", encoding="utf-8") as f:
-            config = json.load(f)
-    except (OSError, ValueError):
-        return None
-    if not isinstance(config, dict):
-        return None
-    blocks = [config] + [config.get(k) for k in ("text_config", "language_config")]
-    for block in blocks:
-        if not isinstance(block, dict):
-            continue
-        for key in _CONTEXT_LENGTH_KEYS:
-            value = block.get(key)
-            if isinstance(value, int) and value > 0:
-                return value
-    return None
-
-
 def model_context_length(provider: str, model_path: str | None,
                          override: int | None = None) -> int | None:
     """The model's context window in tokens, or None when unknown.
@@ -326,13 +286,13 @@ def model_context_length(provider: str, model_path: str | None,
         return override
     if not model_path:
         return None
-    path = Path(str(model_path)).expanduser()
-    if provider == "gguf":
-        from heylook_llm import gguf_metadata
-        return gguf_metadata.context_length(path)
-    if provider == "mlx":
-        return _mlx_context_length(str(path))
-    return None
+    # Where the number lives is each engine's own answer (its describer's
+    # file_context_length); this function only owns the override rule.
+    from heylook_llm.providers.contract import describer_for
+    describer = describer_for(provider)
+    if describer is None:
+        return None
+    return describer.file_context_length(Path(str(model_path)).expanduser())
 
 
 @dataclass(frozen=True, slots=True)
@@ -368,12 +328,12 @@ def _vendor_sampling_pairs(provider: str, model_path: str) -> tuple:
     edit poison every later row (the trap the Metal device-info cache
     carries its own comment about).
     """
-    if provider == "mlx":
-        vendor = load_vendor_sampling(model_path)
-    elif provider == "gguf":
-        vendor = gguf_metadata.vendor_sampling(Path(model_path))
-    else:
-        vendor = {}
+    # WHERE each engine keeps its vendor layer is that engine's describer's
+    # answer (vendor_sampling); this stays the one cached entry point every
+    # caller goes through, so the pairing still has exactly one home.
+    from heylook_llm.providers.contract import describer_for
+    describer = describer_for(provider)
+    vendor = describer.vendor_sampling(Path(model_path)) if describer else {}
     return tuple(sorted(vendor.items()))
 
 

@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.74]
+
+### Changed
+
+- **Plan W13, remaining item 1: vendor sampling and context length moved
+  behind the engine describers.** `mlx_describe`/`gguf_describe` each declare
+  `vendor_sampling(path)` and `file_context_length(path)`;
+  `capabilities._vendor_sampling_pairs` and `capabilities.model_context_length`
+  stay the single entry points (the override rule stays in the latter) and
+  dispatch through `contract.describer_for`, so neither names an engine any
+  more. Checked by comparing everything both model lists serialize, for
+  every model on the live models.toml, before and after: byte-identical.
+  - `test_vendor_layer_reaches_the_report_on_every_engine`: same assertion;
+    its mocks now patch the source readers (`samplers.load_vendor_sampling`,
+    `gguf_metadata.vendor_sampling`), which the describers call through the
+    module.
+
 ## [2.0.73]
 
 ### Changed (breaking, /v1/models and /v1/admin/models)

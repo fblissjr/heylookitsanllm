@@ -438,10 +438,11 @@ also retired one of the two copies of the thinking resolver (`chat.js
 effectiveThinking` is the survivor).
 
 The report takes each engine's vendor layer exactly where that engine's
-provider takes it, and `capabilities._vendor_sampling_pairs` is the one place
-naming which engine reads what: MLX `load_vendor_sampling`
-(generation_config.json), gguf `gguf_metadata.vendor_sampling` (the header's
-`general.sampling.*`), cached per row. temperature/top_p/top_k are the vendor
+provider takes it. Since v2.0.74 each engine's describer says where
+(`mlx_describe.vendor_sampling`: generation_config.json via
+`load_vendor_sampling`; `gguf_describe.vendor_sampling`: the header's
+`general.sampling.*`), and `capabilities._vendor_sampling_pairs` stays the one
+cached entry point that dispatches to them, per row. temperature/top_p/top_k are the vendor
 keys, so an engine present in its provider and absent there reports the
 global floor while generation uses the vendor values; gemma and Qwen3.6 must
 each report their own header top-k, not the floor's. That drifted within one

@@ -254,7 +254,7 @@ class TestSamplerDefaultsReporting:
         Sentinels rather than real files: the claim is about the WIRING, and a
         fixture model would only prove it for whichever engine the fixture used.
         """
-        from heylook_llm import capabilities
+        from heylook_llm import capabilities, gguf_metadata, samplers
         from heylook_llm.config import ModelConfig
 
         cases = {
@@ -263,9 +263,11 @@ class TestSamplerDefaultsReporting:
         }
         for provider, (_, path, sentinel) in cases.items():
             capabilities._vendor_sampling_pairs.cache_clear()
-            with mock.patch.object(capabilities, "load_vendor_sampling",
+            # Patched at the SOURCE readers (v2.0.74), which each engine's
+            # describer calls through the module: any caller is caught.
+            with mock.patch.object(samplers, "load_vendor_sampling",
                                    return_value={"top_k": sentinel}), \
-                 mock.patch.object(capabilities.gguf_metadata, "vendor_sampling",
+                 mock.patch.object(gguf_metadata, "vendor_sampling",
                                    return_value={"top_k": sentinel}):
                 mc = ModelConfig(id=f"t-{provider}", provider=provider,
                                  config={"model_path": path})
