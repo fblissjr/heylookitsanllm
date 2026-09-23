@@ -1,5 +1,7 @@
 # tests/unit/test_config.py
 """Unit tests for Pydantic config models."""
+from typing import Any, ClassVar
+
 import pytest
 from pydantic import ValidationError
 
@@ -222,7 +224,10 @@ class TestMLXModelConfigValidation:
     """Config typos and impossible values must fail at load time, not at
     first generation (audit 2026-07-06)."""
 
-    BASE = {"model_path": "/fake/model"}
+    # dict[str, Any], not the inferred dict[str, str]: this is splatted into
+    # config constructors with int/float/bool fields, and pyright flags every
+    # call site otherwise.
+    BASE: ClassVar[dict[str, Any]] = {"model_path": "/fake/model"}
 
     def test_unknown_key_rejected(self):
         # extra="forbid": a typo like `temperatue` must not silently vanish.
@@ -274,7 +279,10 @@ class TestModalitiesAndLoader:
     demoted to a derived mirror of ``"vision" in modalities`` for back-compat.
     """
 
-    BASE = {"model_path": "/fake/model"}
+    # dict[str, Any], not the inferred dict[str, str]: this is splatted into
+    # config constructors with int/float/bool fields, and pyright flags every
+    # call site otherwise.
+    BASE: ClassVar[dict[str, Any]] = {"model_path": "/fake/model"}
 
     def test_defaults_are_text_only(self):
         cfg = MLXModelConfig(**self.BASE)
