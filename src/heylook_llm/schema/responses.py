@@ -25,12 +25,19 @@ StopReason = Literal["end_turn", "max_tokens", "stop_sequence"]
 
 
 class Usage(BaseModel):
-    """Token usage statistics.
+    """Token usage statistics, in Anthropic's sense (plan W5).
 
-    Extends OpenAI's usage with thinking-specific token counts.
+    ``input_tokens`` is what this request PROCESSED; the part of the prompt
+    reused from a previous request is ``cache_read_input_tokens``, so the
+    whole prompt is their sum. Null cache_read means the engine reported
+    nothing about reuse, never a claimed zero.
     """
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_read_input_tokens: Optional[int] = Field(
+        default=None,
+        description="Prompt tokens reused from a previous request (not in "
+                    "input_tokens). Null when the engine reported no cache count.")
     thinking_tokens: Optional[int] = Field(
         default=None, description="Tokens used in thinking blocks (Qwen3)"
     )
@@ -41,6 +48,28 @@ class Usage(BaseModel):
     @property
     def total_tokens(self) -> int:
         return self.input_tokens + self.output_tokens
+
+
+class CacheInfo(BaseModel):
+    """providers.base.CacheReport on the wire."""
+    prompt_tokens: int = Field(description="The whole prompt")
+    cached_tokens: int = Field(description="Reused from a previous request")
+    processed_tokens: int = Field(description="prompt_tokens minus cached_tokens")
+    outcome: Literal["reused", "miss", "ineligible"] = Field(
+        description="reused: some of the prompt came from cache; miss: reuse "
+                    "was possible but nothing matched; ineligible: this "
+                    "request could not reuse (reason says why)")
+    reason: Optional[str] = Field(default=None, description="Why, when known")
+
+
+class SpeculativeInfo(BaseModel):
+    """providers.base.SpecReport on the wire. The two rates are different
+    quantities and are never merged."""
+    drafted: Optional[int] = Field(default=None, description="Tokens the drafter proposed (gguf only)")
+    accepted: int = Field(description="Drafted tokens accepted")
+    emitted: Optional[int] = Field(default=None, description="Tokens produced while drafting")
+    acceptance_rate: Optional[float] = Field(default=None, description="accepted / drafted")
+    draft_share: Optional[float] = Field(default=None, description="accepted / emitted")
 
 
 class PerformanceInfo(BaseModel):
@@ -132,9 +161,10 @@ class PerformanceInfo(BaseModel):
     queue_wait_ms: Optional[float] = Field(
         default=None, description="Time spent waiting in the FIFO generation queue"
     )
-    draft_acceptance: Optional[float] = Field(
-        default=None, description="Speculative-decoding acceptance rate, when a drafter ran"
-    )
+    cache: Optional[CacheInfo] = Field(
+        default=None, description="What this request reused of its prompt (plan W5)")
+    speculative: Optional[SpeculativeInfo] = Field(
+        default=None, description="Speculative decoding for this request, when a drafter ran")
 
 
 class MessageResponse(BaseModel):

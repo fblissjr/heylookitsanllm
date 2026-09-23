@@ -8,6 +8,67 @@ from typing import Any, Generator, Dict, Optional
 from ..config import ChatRequest, ModelMetrics
 
 
+@dataclass(slots=True, frozen=True)
+class CacheReport:
+    """What one request reused of its prompt (plan W5), on every engine.
+
+    ``prompt_tokens`` is the WHOLE prompt and ``cached_tokens`` the part
+    reused from a previous request; processed is the difference. Engines
+    count differently at the source (mlx-lm is handed only the uncached tail;
+    llama-server reports the whole prompt beside its cached count), so each
+    provider normalizes into this shape at its boundary and nothing
+    downstream re-derives it.
+
+    ``outcome``: "reused" (some of the prompt came from cache), "miss" (the
+    engine could reuse but nothing matched), "ineligible" (this request could
+    not reuse at all; ``reason`` says why).
+    """
+
+    prompt_tokens: int
+    cached_tokens: int
+    outcome: str
+    reason: Optional[str] = None
+
+    @property
+    def processed_tokens(self) -> int:
+        return max(0, self.prompt_tokens - self.cached_tokens)
+
+    def to_wire(self) -> dict:
+        return {
+            "prompt_tokens": self.prompt_tokens,
+            "cached_tokens": self.cached_tokens,
+            "processed_tokens": self.processed_tokens,
+            "outcome": self.outcome,
+            "reason": self.reason,
+        }
+
+
+@dataclass(slots=True, frozen=True)
+class SpecReport:
+    """Speculative decoding for one request (plan W5), CUMULATIVE totals.
+
+    The two engines count different things, so neither is forced into the
+    other's number: ``drafted`` (tokens the drafter proposed) is known on
+    gguf only; ``emitted`` (tokens this request produced while drafting) on
+    both. ``acceptance_rate`` = accepted / drafted and ``draft_share`` =
+    accepted / emitted are therefore separate fields -- one
+    ``draft_acceptance`` name used to carry either, depending on the engine.
+    """
+
+    accepted: int
+    drafted: Optional[int] = None
+    emitted: Optional[int] = None
+
+    def to_wire(self) -> dict:
+        return {
+            "drafted": self.drafted,
+            "accepted": self.accepted,
+            "emitted": self.emitted,
+            "acceptance_rate": (self.accepted / self.drafted) if self.drafted else None,
+            "draft_share": (self.accepted / self.emitted) if self.emitted else None,
+        }
+
+
 @dataclass(slots=True)
 class GenerationChunk:
     """The one chunk type providers yield -- heylook-owned, engine-neutral.
@@ -37,16 +98,14 @@ class GenerationChunk:
     prompt_tps: float = 0.0
     generation_tps: float = 0.0
     peak_memory: float = 0.0
-    cached_tokens: int = 0
     kv_cache_bytes: int = 0
     queue_wait_ms: float = 0.0
-    # Spec-decode acceptance, CUMULATIVE running totals for the request
-    # (llama-server reports them on the final timings frame; MLX stamps the
-    # running counters on every chunk). How a consumer folds them across
-    # chunks is perf_collector.ChunkTelemetry.absorb()'s call, not this
-    # field's -- see the rule stated there.
-    draft_tokens: int = 0
-    draft_accepted: int = 0
+    # Per-request reports (plan W5). None = this chunk does not carry one;
+    # ChunkTelemetry.absorb latches the latest not-None value. MLX stamps the
+    # cache report on the first chunk and the running spec totals on every
+    # chunk; llama-server reports both on its final usage/timings frames.
+    cache: Optional[CacheReport] = None
+    spec: Optional[SpecReport] = None
 
     @classmethod
     def from_engine(cls, r: Any) -> "GenerationChunk":

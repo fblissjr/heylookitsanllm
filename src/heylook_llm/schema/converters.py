@@ -175,8 +175,13 @@ def from_openai_response_dict(
 
     # Usage
     usage_dict = response_dict.get("usage", {})
+    # `input_tokens` / `cache_read_input_tokens` are already in Anthropic's
+    # sense when the caller computed them (messages_api, via
+    # perf_collector.usage_counts); a bare OpenAI-shaped dict's prompt_tokens
+    # is taken as-is, with nothing known about reuse.
     usage = Usage(
-        input_tokens=usage_dict.get("prompt_tokens", 0),
+        input_tokens=usage_dict.get("input_tokens", usage_dict.get("prompt_tokens", 0)),
+        cache_read_input_tokens=usage_dict.get("cache_read_input_tokens"),
         output_tokens=usage_dict.get("completion_tokens", 0),
         thinking_tokens=usage_dict.get("thinking_tokens"),
         content_tokens=usage_dict.get("content_tokens"),
@@ -191,18 +196,11 @@ def from_openai_response_dict(
         # indistinguishable from a measured zero -- and that is exactly what
         # made `test_rates_and_duration_are_present` unable to fail (v1.79.51).
         # Absent now means None, which the model declares and a client can see.
-        performance = PerformanceInfo(
-            prompt_tps=perf_dict.get("prompt_tps"),
-            generation_tps=perf_dict.get("generation_tps"),
-            peak_memory_gb=perf_dict.get("peak_memory_gb"),
-            thinking_duration_ms=perf_dict.get("thinking_duration_ms"),
-            content_duration_ms=perf_dict.get("content_duration_ms"),
-            request_duration_ms=perf_dict.get("request_duration_ms"),
-            generation_duration_ms=perf_dict.get("generation_duration_ms"),
-            kv_cache_bytes=perf_dict.get("kv_cache_bytes"),
-            queue_wait_ms=perf_dict.get("queue_wait_ms"),
-            draft_acceptance=perf_dict.get("draft_acceptance"),
-        )
+        # Validated WHOLE, never re-listed: build_performance already emits
+        # only PerformanceInfo's declared fields, and a field list here was a
+        # hand copy that silently dropped every field added after it (the W5
+        # cache/speculative reports, found by their route test).
+        performance = PerformanceInfo.model_validate(perf_dict)
 
     # Determine stop reason
     finish_reason = to_stop_reason(

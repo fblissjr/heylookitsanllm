@@ -351,7 +351,7 @@ class TestNonStreamingPerformance:
         streaming_response` is the one that follows a value end to end.
         """
         perf = self._perf(client)
-        for key in ("kv_cache_bytes", "queue_wait_ms", "draft_acceptance"):
+        for key in ("kv_cache_bytes", "queue_wait_ms", "cache", "speculative"):
             assert key in perf, key
 
     def test_phase_durations_are_measured_non_streaming_too(self, client):
@@ -437,3 +437,43 @@ def test_internal_spellings_are_refused_not_silently_dropped(client):
     r = client.post("/v1/messages", json={
         **body, "thinking": True, "system": "be brief"})
     assert r.status_code != 422, f"correct spellings were refused: {r.text[:200]}"
+
+
+class TestUsageIsAnthropicShaped:
+    """Plan W5 (owner decision): `input_tokens` is what the request
+    PROCESSED and `cache_read_input_tokens` what it reused, on both modes of
+    /v1/messages, taken from the provider's CacheReport through one helper
+    (perf_collector.usage_counts)."""
+
+    def _serve_a_cache_hit(self, mock_router, monkeypatch):
+        from heylook_llm.providers.base import CacheReport, GenerationChunk
+
+        provider = mock_router.get_provider("test-mlx-model")
+        report = CacheReport(prompt_tokens=100, cached_tokens=60, outcome="reused")
+
+        def generate(request, abort_event=None):
+            yield GenerationChunk(text="Hi", token=1, prompt_tokens=100,
+                                  generation_tokens=1, cache=report)
+            yield GenerationChunk(text="!", token=2, prompt_tokens=100,
+                                  generation_tokens=2, finish_reason="stop")
+
+        monkeypatch.setattr(provider, "create_chat_completion", generate)
+
+    def test_both_modes_report_processed_and_reused(self, client, mock_router, monkeypatch):
+        self._serve_a_cache_hit(mock_router, monkeypatch)
+        body = {"model": "test-mlx-model", "max_tokens": 8,
+                "messages": [{"role": "user", "content": "hi"}]}
+
+        plain = client.post("/v1/messages", json=body).json()
+        assert plain["usage"]["input_tokens"] == 40
+        assert plain["usage"]["cache_read_input_tokens"] == 60
+        assert plain["performance"]["cache"]["processed_tokens"] == 40
+        assert plain["performance"]["cache"]["outcome"] == "reused"
+
+        with client.stream("POST", "/v1/messages", json={**body, "stream": True}) as resp:
+            lines = [line for line in resp.iter_lines()]
+        deltas = [json.loads(line[len("data: "):]) for line in lines
+                  if line.startswith("data: ") and '"message_delta"' in line]
+        assert deltas, "no message_delta on the stream"
+        usage = deltas[-1]["usage"]
+        assert (usage["input_tokens"], usage["cache_read_input_tokens"]) == (40, 60)

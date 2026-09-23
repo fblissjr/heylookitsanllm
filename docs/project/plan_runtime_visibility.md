@@ -274,6 +274,8 @@ Extends the existing template panel (`GET/PUT/DELETE
 
 ### W5. Cache and speculative reporting, end to end
 
+**Progress:** commit 1 shipped v2.0.78 (per-request `CacheReport`/`SpecReport`, Anthropic-shaped `usage`, `performance.cache`/`performance.speculative`). Remaining: the `engine.cache` slot, gguf "why", per-message stats storage and the frontend, and the live cache-reuse smoke check.
+
 - **Per request.** `GenerationChunk` gains slotted `cache: CacheReport` and
   `spec: SpecReport` fields, which `ChunkTelemetry.absorb` latches on
   not-None.

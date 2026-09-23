@@ -23,7 +23,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from heylook_llm.providers.base import BaseProvider, GenerationChunk
+from heylook_llm.providers.base import BaseProvider, CacheReport, GenerationChunk, SpecReport
 from heylook_llm.perf_collector import ChunkTelemetry
 
 
@@ -43,7 +43,7 @@ class TestGenerationChunkShape:
         assert c.prompt_tps == 0.0
         assert c.generation_tps == 0.0
         assert c.peak_memory == 0.0
-        assert c.cached_tokens == 0
+        assert c.cache is None and c.spec is None
         assert c.kv_cache_bytes == 0
         assert c.queue_wait_ms == 0.0
 
@@ -89,7 +89,8 @@ class TestGenerationChunkShape:
 class TestTelemetryLatch:
     def test_first_chunk_snapshot_fields_survive_later_zeros(self):
         t = ChunkTelemetry()
-        t.absorb(GenerationChunk(text="a", cached_tokens=7, kv_cache_bytes=1024,
+        report = CacheReport(prompt_tokens=10, cached_tokens=7, outcome="reused")
+        t.absorb(GenerationChunk(text="a", cache=report, kv_cache_bytes=1024,
                                  queue_wait_ms=5.5, prompt_tokens=10,
                                  generation_tokens=1, prompt_tps=100.0,
                                  generation_tps=50.0))
@@ -98,7 +99,7 @@ class TestTelemetryLatch:
         t.absorb(GenerationChunk(text="b", prompt_tokens=10,
                                  generation_tokens=2, prompt_tps=100.0,
                                  generation_tps=51.0))
-        assert t.cached_tokens == 7
+        assert t.cache is report
         assert t.kv_cache_bytes == 1024
         assert t.queue_wait_ms == 5.5
         assert t.completion_tokens == 2
@@ -154,15 +155,16 @@ class TestTelemetryLatch:
         (row2,) = c2.build_profile("1h")["trends"]
         assert row2["draft_acceptance"] is None
 
-    def test_draft_acceptance_latches(self):
-        # Spec-decode counters are cumulative running totals; the final
-        # chunk carries the request's totals and zeros must not reset them.
+    def test_spec_report_latches_the_latest(self):
+        # Spec-decode reports are cumulative running totals; the final chunk
+        # carries the request's totals and a chunk without one must not
+        # reset them.
         t = ChunkTelemetry()
-        t.absorb(GenerationChunk(text="a", draft_tokens=10, draft_accepted=4))
-        t.absorb(GenerationChunk(text="b", draft_tokens=20, draft_accepted=9))
+        t.absorb(GenerationChunk(text="a", spec=SpecReport(accepted=4, emitted=10)))
+        t.absorb(GenerationChunk(text="b", spec=SpecReport(accepted=9, emitted=20)))
         t.absorb(GenerationChunk(text=""))
-        assert t.draft_tokens == 20
-        assert t.draft_accepted == 9
+        assert (t.spec.accepted, t.spec.emitted) == (9, 20)
+        assert t.draft_counts() == (20, 9)
 
 
 # ---------------------------------------------------------------------------

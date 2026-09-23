@@ -153,8 +153,17 @@ Response (non-streaming):
                 { "type": "text", "text": "..." } ],
   "stop_reason": "end_turn" | "max_tokens" | "stop_sequence",
   "usage": { "input_tokens": 0, "output_tokens": 0,
+             "cache_read_input_tokens": null,
              "thinking_tokens": null, "content_tokens": null } }
 ```
+
+**`usage` is Anthropic-shaped (v2.0.78).** `input_tokens` is what the request
+PROCESSED; the part of the prompt reused from a previous request is
+`cache_read_input_tokens`, so the whole prompt is their sum.
+`cache_read_input_tokens` is null when the engine reported nothing about
+reuse, never a claimed zero. Until v2.0.78 `input_tokens` meant different
+things on different engines (processed on MLX text, the whole prompt on gguf
+and MLX vision); it now means one thing everywhere.
 
 `content` is a **list of blocks**, not a string. A thinking model returns a
 `thinking` block before the `text` block. Concatenate only the `text` blocks
@@ -182,8 +191,19 @@ first token) returns `"performance": null`. The response model declares it
 "always" and was wrong.
 
 It carries `prompt_tps`, `generation_tps`, `request_duration_ms`,
-`generation_duration_ms`, `peak_memory_gb`, `kv_cache_bytes`, `queue_wait_ms`
-and `draft_acceptance`, plus the two phase durations.
+`generation_duration_ms`, `peak_memory_gb`, `kv_cache_bytes`, `queue_wait_ms`,
+`cache` and `speculative`, plus the two phase durations.
+
+- `cache` (v2.0.78): `{prompt_tokens, cached_tokens, processed_tokens,
+  outcome, reason}`. `outcome` is `reused`, `miss` (reuse was possible but
+  nothing matched) or `ineligible` (this request could not reuse; `reason`
+  says why, e.g. an MLX request with an image).
+- `speculative` (v2.0.78), when a drafter ran: `{drafted, accepted, emitted,
+  acceptance_rate, draft_share}`. `acceptance_rate` is accepted out of
+  drafted (gguf only, the drafter's proposals are known there);
+  `draft_share` is accepted out of emitted (both engines). They are different
+  quantities and are never merged; the old `draft_acceptance` carried either
+  one depending on the engine and is gone.
 
 **As of v1.79.58 there is ONE rule, and it replaces the per-field table this
 section used to carry:**
@@ -502,7 +522,7 @@ a `thinking` block, closes it, then opens a `text` block. Key on
 Besides `heylook_progress`, one heylook extension rides the same stream: extra
 telemetry merged into `message_stop.performance` — `prompt_tps`,
 `generation_tps` (both since v1.79.54), `peak_memory_gb`, `kv_cache_bytes`,
-`queue_wait_ms`, `draft_acceptance`. Absent telemetry is **omitted, never
+`queue_wait_ms`, `cache`, `speculative`. Absent telemetry is **omitted, never
 null** here; the non-streaming response spells the same absence as an
 explicit `null`, because its fields are declared on a model. Treat missing
 and null as one condition.

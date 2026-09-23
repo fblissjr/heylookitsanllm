@@ -63,6 +63,7 @@ from heylook_llm.optimizations import fast_json as json
 from heylook_llm.perf_collector import (
     ChunkTelemetry,
     RequestEvent,
+    build_performance,
     get_perf_collector,
     headline_tps,
 )
@@ -884,6 +885,7 @@ async def _stream_generate(conn, conv_id, generator, http_request, *,
                     translator.stop_reason = to_stop_reason(chunk_finish)
                 telemetry.absorb(chunk)
                 translator.prompt_tokens = telemetry.prompt_tokens
+                translator.cache = telemetry.cache
                 translator.completion_tokens = telemetry.completion_tokens
                 chunk_thinking = getattr(chunk, "thinking", None)
                 if chunk_thinking:
@@ -951,13 +953,10 @@ async def _stream_generate(conn, conv_id, generator, http_request, *,
             "end_reason": end_reason,
             "messages": saved_rows,
             "dropped_media": dropped,
-            "timing": {
-                "peak_memory_gb": telemetry.peak_memory_gb or None,
-                "kv_cache_bytes": telemetry.kv_cache_bytes or None,
-                "queue_wait_ms": telemetry.queue_wait_ms or None,
-                "draft_acceptance": (telemetry.draft_accepted / telemetry.draft_tokens)
-                if telemetry.draft_tokens else None,
-            },
+            # The SAME builder message_stop uses (plan W5): the per-message
+            # stats the client adopts with these rows are the performance
+            # object's fields, not a hand-kept second copy.
+            "timing": build_performance(telemetry),
         }
         if error_message:
             payload["error"] = error_message
@@ -1018,6 +1017,6 @@ def _record_perf(perf_ctx, translator, telemetry, model_id):
         was_streaming=True,
         queue_wait_ms=round(telemetry.queue_wait_ms, 1),
         prompt_tps=telemetry.prompt_tps,
-        draft_tokens=telemetry.draft_tokens,
-        draft_accepted=telemetry.draft_accepted,
+        draft_tokens=telemetry.draft_counts()[0],
+        draft_accepted=telemetry.draft_counts()[1],
     ))

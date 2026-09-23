@@ -396,6 +396,9 @@ def process_prompt_with_cache(
     # (Historical name: the gate outlived the radix it was written for.)
     gate, why = reuse_verdict(cache_config, model, allow_reuse)
     prompt_cache._radix_eligible = gate is None
+    # Read back by run_generation for the request's CacheReport, so the
+    # reported outcome is the verdict this request actually ran under.
+    prompt_cache._reuse_verdict = (gate, why)
     manager0 = get_global_cache_manager()
     if gate == "draft":
         manager0._log_verdict_once(model_id, f"Prompt-cache reuse disabled for {model_id}: {why}")

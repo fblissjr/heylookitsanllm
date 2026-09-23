@@ -801,12 +801,15 @@ class TestSSEAdapter:
         final = chunks[-1]
         assert final.prompt_tokens == 7
         assert final.generation_tokens == 3
-        assert final.cached_tokens == 2
+        # llama-server's prompt_tokens is the whole prompt; its cached part
+        # rides beside it, already the CacheReport shape.
+        assert (final.cache.prompt_tokens, final.cache.cached_tokens,
+                final.cache.processed_tokens, final.cache.outcome) == (7, 2, 5, "reused")
         assert final.prompt_tps == 100.5
         assert final.generation_tps == 42.0
-        # spec-decode counters (present only when MTP/draft was active)
-        assert final.draft_tokens == 12
-        assert final.draft_accepted == 5
+        # spec decode (present only when MTP/draft was active): drafted and
+        # accepted are llama-server's own counts
+        assert (final.spec.drafted, final.spec.accepted) == (12, 5)
 
     def test_abort_stops_stream(self):
         class Abort:

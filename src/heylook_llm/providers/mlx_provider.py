@@ -19,7 +19,7 @@ from mlx_vlm.generate.common import _chunked_prefill_enabled, DEFAULT_PREFILL_ST
 
 from ..config import ChatRequest, ModelMetrics, MLX_RUNTIME_DEFAULT_FIELDS
 from .abort import AbortEvent
-from .base import BaseProvider, GenerationChunk, GenerationFailed, InvalidGenerationRequest
+from .base import BaseProvider, CacheReport, GenerationChunk, GenerationFailed, InvalidGenerationRequest
 # Layer-1 sampler floor -- provider-shared, defined in heylook_llm.samplers
 # (the llama-server provider applies the same floor).
 from ..cache_defaults import resolve_cache_config
@@ -846,6 +846,13 @@ class VLMVisionStrategy:
         # Every chunk is re-stamped, not just the first: ChunkTelemetry.absorb
         # keeps the LAST truthy value for both fields, so a single correct
         # chunk followed by mlx-lm's own would be overwritten by the seed's 1.
+        # The vision path builds a fresh cache for every request, so nothing
+        # of the prompt is reused -- reported as such, not as a plain miss.
+        vision_cache_report = CacheReport(
+            prompt_tokens=prompt_token_count, cached_tokens=0,
+            outcome="ineligible",
+            reason=("a request with an image builds a fresh cache, so nothing "
+                    "is reused (plan W10)"))
         for chunk in run_generation(
             model=self._cached_wrapper,
             tokenizer=tokenizer,
@@ -860,6 +867,9 @@ class VLMVisionStrategy:
         ):
             chunk.prompt_tokens = prompt_token_count
             chunk.prompt_tps = prefill_tps
+            if vision_cache_report is not None:
+                chunk.cache = vision_cache_report
+                vision_cache_report = None  # first chunk only; telemetry latches
             yield chunk
 
     def _prepare_vlm_inputs_parallel(self, messages: List, processor, config,

@@ -285,6 +285,15 @@ documented on that route that are about the ENGINES rather than the wire still h
 **Messages** `POST /v1/messages` (v1.74.0: THE wire notebook and explore speak —
 Phase 3b; chat uses its conversation-scoped sibling below; the OpenAI-compatible
 /v1/chat/completions was removed in v1.79.66):
+- Usage (v2.0.78, plan W5, owner decision): Anthropic-shaped on both modes
+  and on the generate route. `input_tokens` = PROCESSED,
+  `cache_read_input_tokens` = reused (null when the engine reported no cache
+  count), from the provider's `CacheReport` through
+  `perf_collector.usage_counts`. `performance.cache` =
+  `{prompt_tokens, cached_tokens, processed_tokens, outcome:"reused"|"miss"|
+  "ineligible", reason}`; `performance.speculative` = `{drafted, accepted,
+  emitted, acceptance_rate, draft_share}` (replaces `draft_acceptance`, which
+  meant accepted/drafted on gguf and accepted/emitted on MLX).
 - Body: `{model?, messages:[{role:"user"|"assistant", content}], system?,
   max_tokens?, temperature?, top_p?, top_k?, min_p?, repetition_penalty?,
   repetition_context_size?, presence_penalty?, seed?, thinking?,
@@ -433,8 +442,10 @@ truncate→stream→persist sequences):**
     extension event, always LAST:
     `event: heylook_saved` `data: {type, conversation_id, mode,
     end_reason:"complete"|"aborted"|"error", messages:[<full stored rows>],
-    dropped_media:{images,audio}, timing:{peak_memory_gb, kv_cache_bytes,
-    queue_wait_ms, draft_acceptance}}` — the client's post-stream state is
+    dropped_media:{images,audio}, timing:<the performance object, from the
+    same builder as message_stop.performance (v2.0.78): peak_memory_gb,
+    kv_cache_bytes, queue_wait_ms, prompt_tps, cache, speculative, ...>}` —
+    the client's post-stream state is
     ASSIGNMENT from `messages`, never position arithmetic. An ABORTED run also
     reports `stop_reason:"max_tokens"` on `message_delta` (v1.79.40): it used
     to say `end_turn`, positively asserting the model finished, on the same

@@ -40,6 +40,7 @@ from heylook_llm.perf_collector import (
     get_perf_collector,
     build_performance,
     headline_tps,
+    usage_counts,
 )
 from heylook_llm.schema.content_blocks import ImageBlock
 from heylook_llm.reasoning_parser import (
@@ -85,8 +86,9 @@ class StreamingEventTranslator:
         # Counters
         self.thinking_tokens = 0
         self.content_tokens = 0
-        self.prompt_tokens = 0
+        self.prompt_tokens = 0  # the WHOLE prompt (ChunkTelemetry's)
         self.completion_tokens = 0
+        self.cache = None  # the request's CacheReport, copied from telemetry
         self.stop_reason: str = "end_turn"
 
         # Timing
@@ -184,10 +186,13 @@ class StreamingEventTranslator:
     def message_delta_event(self) -> str:
         """Emit message_delta with stop reason and usage."""
         output_tokens = self.completion_tokens or (self.thinking_tokens + self.content_tokens)
+        input_tokens, cache_read = usage_counts(self.prompt_tokens, self.cache)
         usage = {
-            "input_tokens": self.prompt_tokens,
+            "input_tokens": input_tokens,
             "output_tokens": output_tokens,
         }
+        if cache_read is not None:
+            usage["cache_read_input_tokens"] = cache_read
         if self.thinking_tokens:
             usage["thinking_tokens"] = self.thinking_tokens
             usage["content_tokens"] = self.content_tokens
@@ -516,11 +521,13 @@ async def _non_stream_messages(
         message["thinking"] = thinking
 
     choice: dict = {"message": message, "index": 0, "finish_reason": finish_reason}
+    input_tokens, cache_read = usage_counts(telemetry.prompt_tokens, telemetry.cache)
     openai_dict = {
         "model": msg_request.model or "unknown",
         "choices": [choice],
         "usage": {
-            "prompt_tokens": telemetry.prompt_tokens,
+            "input_tokens": input_tokens,
+            "cache_read_input_tokens": cache_read,
             "completion_tokens": telemetry.completion_tokens or token_count,
         },
     }
@@ -579,8 +586,8 @@ async def _non_stream_messages(
             was_streaming=False,
             queue_wait_ms=round(telemetry.queue_wait_ms, 1),
             prompt_tps=telemetry.prompt_tps,
-            draft_tokens=telemetry.draft_tokens,
-            draft_accepted=telemetry.draft_accepted,
+            draft_tokens=telemetry.draft_counts()[0],
+            draft_accepted=telemetry.draft_counts()[1],
         ))
 
     return response
@@ -639,6 +646,7 @@ async def _stream_messages(
             # message_delta/usage events.
             translator.prompt_tokens = telemetry.prompt_tokens
             translator.completion_tokens = telemetry.completion_tokens
+            translator.cache = telemetry.cache
 
             # Pre-split reasoning (chunk.thinking) goes straight to the
             # thinking block; the parser only ever sees chunk.text.
@@ -723,6 +731,6 @@ async def _stream_messages(
             was_streaming=True,
             queue_wait_ms=round(telemetry.queue_wait_ms, 1),
             prompt_tps=telemetry.prompt_tps,
-            draft_tokens=telemetry.draft_tokens,
-            draft_accepted=telemetry.draft_accepted,
+            draft_tokens=telemetry.draft_counts()[0],
+            draft_accepted=telemetry.draft_counts()[1],
         ))

@@ -57,7 +57,14 @@ from .common.generation_gate import GenerationCancelled, get_process_gate
 # somewhere the loader does not look. template_info is stdlib+orjson only, so
 # this keeps the gguf provider's no-MLX-import property.
 from .common.template_info import HEYLOOK_OVERRIDE, HEYLOOK_TEMPLATE_FILENAME
-from .base import BaseProvider, GenerationChunk, GenerationFailed, InvalidGenerationRequest
+from .base import (
+    BaseProvider,
+    CacheReport,
+    GenerationChunk,
+    GenerationFailed,
+    InvalidGenerationRequest,
+    SpecReport,
+)
 
 # Every live llama-server we spawned, so no exit path can leak one.
 #
@@ -1694,19 +1701,36 @@ class LlamaServerProvider(BaseProvider):
             return None  # role-prelude frame
 
         chunk = GenerationChunk(text=text, thinking=thinking, finish_reason=finish_reason)
+        cached = None
         if usage:
+            # llama-server's prompt_tokens is the WHOLE prompt
+            # (slot.task->n_tokens()), its cached part reported beside it --
+            # already the CacheReport shape.
             chunk.prompt_tokens = usage.get("prompt_tokens") or 0
             chunk.generation_tokens = usage.get("completion_tokens") or 0
             details = usage.get("prompt_tokens_details") or {}
-            chunk.cached_tokens = details.get("cached_tokens") or 0
+            cached = details.get("cached_tokens")
         if timings:
             chunk.prompt_tps = timings.get("prompt_per_second") or 0.0
             chunk.generation_tps = timings.get("predicted_per_second") or 0.0
-            if not chunk.cached_tokens:
-                chunk.cached_tokens = timings.get("cache_n") or 0
+            if cached is None:
+                cached = timings.get("cache_n")
+            if not chunk.prompt_tokens and "prompt_n" in timings:
+                # timings alone: processed (prompt_n) plus cached is the whole
+                chunk.prompt_tokens = (timings.get("prompt_n") or 0) + (cached or 0)
             if not chunk.generation_tokens:
                 chunk.generation_tokens = timings.get("predicted_n") or 0
             # present only when speculative decoding was active this request
-            chunk.draft_tokens = timings.get("draft_n") or 0
-            chunk.draft_accepted = timings.get("draft_n_accepted") or 0
+            if timings.get("draft_n"):
+                chunk.spec = SpecReport(
+                    accepted=timings.get("draft_n_accepted") or 0,
+                    drafted=timings.get("draft_n"),
+                    emitted=timings.get("predicted_n") or chunk.generation_tokens or None)
+        if cached is not None and chunk.prompt_tokens:
+            # Why a request missed is not reported by llama-server (only the
+            # count), so reason stays unset here; plan W5's fingerprint adds
+            # probable causes separately.
+            chunk.cache = CacheReport(
+                prompt_tokens=chunk.prompt_tokens, cached_tokens=cached,
+                outcome="reused" if cached > 0 else "miss")
         return chunk

@@ -35,7 +35,7 @@ from mlx_lm import tokenizer_utils as lm_tokenizer_utils
 from mlx_lm.generate import stream_generate as lm_stream_generate, wired_limit
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-from ..base import GenerationChunk, InvalidGenerationRequest
+from ..base import CacheReport, GenerationChunk, InvalidGenerationRequest, SpecReport
 from .prompt_cache import get_global_cache_manager, process_prompt_with_cache, store_generation_cache
 from .model_wrappers import MROPE_STATE_ATTRS, unwrap_language_model
 from .stop_tokens import resolve_stop_tokens
@@ -565,6 +565,20 @@ def run_generation(
 
     # Compute how many tokens came from cache for reporting in API responses
     cached_count = len(prompt_tokens) - len(tokens_to_process)
+    # The request's CacheReport (plan W5), normalized to the whole prompt.
+    # The vision path (pre_filled_cache) reports its own: it prefills outside
+    # this function and hands in only the last token.
+    cache_report = None
+    if pre_filled_cache is None and prompt_cache is not None:
+        verdict = getattr(prompt_cache, "_reuse_verdict", None)
+        gate, why = verdict if isinstance(verdict, tuple) and len(verdict) == 2 else (None, None)
+        cache_report = CacheReport(
+            prompt_tokens=len(prompt_tokens),
+            cached_tokens=cached_count,
+            outcome=("ineligible" if gate is not None
+                     else "reused" if cached_count > 0 else "miss"),
+            reason=why if gate is not None else None,
+        )
 
     # Scope peak memory to this request so API can report per-request peak
     # (not carry-over from a prior request's high-water mark). With a
@@ -622,11 +636,18 @@ def run_generation(
                 # this is the ONLY place mlx-lm's GenerationResponse shape is
                 # known; everything downstream sees GenerationChunk.
                 chunk = GenerationChunk.from_engine(response)
-                # Spec-decode acceptance: running totals on every chunk
-                # (ChunkTelemetry latches; two int writes, negligible).
+                # mlx-lm counts only the tokens it was handed (the uncached
+                # tail); the chunk's prompt_tokens is the WHOLE prompt on
+                # every engine, so it is restated here. The vision path
+                # restates its own (it hands in one token).
+                if pre_filled_cache is None:
+                    chunk.prompt_tokens = len(prompt_tokens)
+                # Spec decode: running totals on every chunk (ChunkTelemetry
+                # latches the latest). MLX knows what it emitted while
+                # drafting and how much came from the drafter; it does not
+                # see how many tokens the drafter proposed.
                 if draft_total:
-                    chunk.draft_tokens = draft_total
-                    chunk.draft_accepted = draft_accepted
+                    chunk.spec = SpecReport(accepted=draft_accepted, emitted=draft_total)
 
                 # Leading space cleanup (first token only; skipped for a
                 # continuation, where the first token completes prefilled text
@@ -637,7 +658,7 @@ def run_generation(
                 if first_token:
                     if not continuing and chunk.text.startswith(' '):
                         chunk.text = chunk.text.lstrip()
-                    chunk.cached_tokens = cached_count
+                    chunk.cache = cache_report
                     chunk.kv_cache_bytes = kv_cache_bytes_snapshot
                     first_token = False
 

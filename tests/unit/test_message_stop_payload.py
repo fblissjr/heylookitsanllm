@@ -29,6 +29,7 @@ import pytest
 
 from heylook_llm.messages_api import StreamingEventTranslator
 from heylook_llm.perf_collector import ChunkTelemetry, build_performance
+from heylook_llm.providers.base import CacheReport, SpecReport
 from heylook_llm.schema.responses import PerformanceInfo
 
 
@@ -40,8 +41,8 @@ def _fully_measured() -> ChunkTelemetry:
     t.peak_memory_gb = 12.25
     t.kv_cache_bytes = 4096
     t.queue_wait_ms = 7.5
-    t.draft_tokens = 10
-    t.draft_accepted = 5
+    t.cache = CacheReport(prompt_tokens=100, cached_tokens=60, outcome="reused")
+    t.spec = SpecReport(accepted=5, drafted=10, emitted=8)
     return t
 
 

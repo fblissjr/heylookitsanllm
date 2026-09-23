@@ -12,7 +12,7 @@ from collections import deque
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 
 @dataclass(slots=True)
@@ -61,17 +61,25 @@ class ChunkTelemetry:
     call sites that would otherwise drift apart.
     """
 
-    prompt_tokens: int = 0
+    prompt_tokens: int = 0  # the WHOLE prompt, on every engine
     completion_tokens: int = 0
-    cached_tokens: int = 0
     peak_memory_gb: float = 0.0  # monotonic max across chunks
     kv_cache_bytes: int = 0  # snapshot tagged on the first chunk
     queue_wait_ms: float = 0.0  # FIFO generation-queue wait
     prompt_tps: float = 0.0  # mlx-lm's own prefill rate
     generation_tps: float = 0.0  # mlx-lm's own decode rate
     finish_reason: Optional[str] = None  # "stop" | "length" | None (mlx-lm's)
-    draft_tokens: int = 0  # spec-decode: drafted tokens (cumulative)
-    draft_accepted: int = 0  # spec-decode: accepted drafted tokens
+    cache: Any = None  # providers.base.CacheReport, latest not-None (plan W5)
+    spec: Any = None  # providers.base.SpecReport, latest not-None (running totals)
+
+    def draft_counts(self) -> tuple[int, int]:
+        """(denominator, accepted) for the perf records' draft column: the
+        drafter's proposals where the engine knows them (gguf), else what was
+        emitted while drafting (MLX). The same pair these records always
+        held; the wire splits the two quantities (performance.speculative)."""
+        if self.spec is None:
+            return 0, 0
+        return (self.spec.drafted or self.spec.emitted or 0), self.spec.accepted
 
     def absorb(self, chunk) -> None:
         # GenerationChunk carries EVERY field on EVERY chunk (slotted, with
@@ -84,17 +92,32 @@ class ChunkTelemetry:
         # both.
         self.prompt_tokens = getattr(chunk, "prompt_tokens", 0) or self.prompt_tokens
         self.completion_tokens = getattr(chunk, "generation_tokens", 0) or self.completion_tokens
-        self.cached_tokens = getattr(chunk, "cached_tokens", 0) or self.cached_tokens
         self.peak_memory_gb = max(self.peak_memory_gb, getattr(chunk, "peak_memory", 0.0) or 0.0)
         self.kv_cache_bytes = getattr(chunk, "kv_cache_bytes", 0) or self.kv_cache_bytes
         self.queue_wait_ms = getattr(chunk, "queue_wait_ms", 0.0) or self.queue_wait_ms
         self.prompt_tps = getattr(chunk, "prompt_tps", 0.0) or self.prompt_tps
         self.generation_tps = getattr(chunk, "generation_tps", 0.0) or self.generation_tps
-        self.draft_tokens = getattr(chunk, "draft_tokens", 0) or self.draft_tokens
-        self.draft_accepted = getattr(chunk, "draft_accepted", 0) or self.draft_accepted
+        cache = getattr(chunk, "cache", None)
+        if cache is not None:
+            self.cache = cache
+        spec = getattr(chunk, "spec", None)
+        if spec is not None:
+            self.spec = spec
         # arrives on the FINAL chunk only -- a later chunk without one must
         # not erase it, so this latches rather than overwrites
         self.finish_reason = getattr(chunk, "finish_reason", None) or self.finish_reason
+
+
+def usage_counts(prompt_tokens: int, cache) -> tuple[int, Optional[int]]:
+    """``(input_tokens, cache_read_input_tokens)`` in Anthropic's sense
+    (plan W5, owner decision): input is what was PROCESSED, cache_read what
+    was reused. ``cache`` is the request's CacheReport, or None when the
+    engine reported none -- then input is the whole prompt and cache_read is
+    null (unknown, never a claimed zero). The one place both wires, streaming
+    and not, take these numbers from."""
+    if cache is None:
+        return prompt_tokens, None
+    return cache.processed_tokens, cache.cached_tokens
 
 
 def build_performance(
@@ -207,8 +230,10 @@ def build_performance(
         perf["peak_memory_gb"] = telemetry.peak_memory_gb
     if telemetry.kv_cache_bytes:
         perf["kv_cache_bytes"] = telemetry.kv_cache_bytes
-    if telemetry.draft_tokens:
-        perf["draft_acceptance"] = telemetry.draft_accepted / telemetry.draft_tokens
+    if telemetry.cache is not None:
+        perf["cache"] = telemetry.cache.to_wire()
+    if telemetry.spec is not None:
+        perf["speculative"] = telemetry.spec.to_wire()
 
     declared = set(PerformanceInfo.model_fields)
     undeclared = set(perf) - declared

@@ -723,12 +723,19 @@ def arm_checks(server, r, arm, model_id, load_timeout):
                 r.skip(f"{arm}: an image's tokens reach the usage report",
                        f"probe did not answer 200 (text={st_t} image={st_i})")
             else:
-                text_in = (body_t.get("usage") or {}).get("input_tokens")
-                img_in = (body_i.get("usage") or {}).get("input_tokens")
+                # The WHOLE prompt is processed + reused (v2.0.78: usage is
+                # Anthropic-shaped, input_tokens = processed only), so a cache
+                # hit on the text arm cannot shrink it below the image arm's.
+                def whole(body):
+                    u = body.get("usage") or {}
+                    if not isinstance(u.get("input_tokens"), int):
+                        return None
+                    return u["input_tokens"] + (u.get("cache_read_input_tokens") or 0)
+                text_in, img_in = whole(body_t), whole(body_i)
                 r.check(f"{arm}: an image's tokens reach the usage report",
                         isinstance(text_in, int) and isinstance(img_in, int)
                         and img_in > text_in,
-                        f"same prompt, +1 image: input_tokens went {text_in} -> {img_in}. "
+                        f"same prompt, +1 image: whole prompt went {text_in} -> {img_in}. "
                         f"An image is one placeholder in the text render but hundreds "
                         f"of positions in input_ids; if the image arm is not higher, "
                         f"the expansion is not being counted.")

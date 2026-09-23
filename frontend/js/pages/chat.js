@@ -3439,7 +3439,14 @@ async function finishGenerate(ctx, stream, { content, thinking, usage, aborted, 
     const parts = [`${usage?.output_tokens ?? '?'} tokens`];
     if (timing?.peak_memory_gb != null) parts.push(`${timing.peak_memory_gb.toFixed(2)} GB peak`);
     if (timing?.kv_cache_bytes != null) parts.push(`${formatBytes(timing.kv_cache_bytes)} KV`);
-    if (timing?.draft_acceptance != null) parts.push(`draft ${(timing.draft_acceptance * 100).toFixed(0)}%`);
+    // The two spec-decode rates are different quantities (accepted out of
+    // drafted vs out of emitted); say which one this is.
+    const spec = timing?.speculative;
+    if (spec?.acceptance_rate != null) parts.push(`draft accepted ${(spec.acceptance_rate * 100).toFixed(0)}%`);
+    else if (spec?.draft_share != null) parts.push(`${(spec.draft_share * 100).toFixed(0)}% from draft`);
+    const cache = timing?.cache;
+    if (cache?.outcome === 'reused') parts.push(`cache ${formatTokens(cache.cached_tokens)}/${formatTokens(cache.prompt_tokens)}`);
+    else if (cache) parts.push(cache.outcome === 'miss' ? 'no cache reuse' : 'cache not used');
     showStatus(ctx, parts.join(' · '));
   }
 

@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.78]
+
+### Changed (breaking, the Messages wire and heylook_saved)
+
+- **Per-request cache and speculative reports, and Anthropic-shaped usage
+  (plan W5, commit 1).**
+  - `GenerationChunk` carries `cache` (`CacheReport`: whole prompt, cached,
+    outcome `reused` / `miss` / `ineligible`, reason) and `spec`
+    (`SpecReport`: drafted (gguf only), accepted, emitted), replacing the
+    loose `cached_tokens` / `draft_tokens` / `draft_accepted` fields.
+  - `prompt_tokens` now means the WHOLE prompt on every engine. It did not:
+    mlx-lm is handed only the uncached tail, so the MLX text path reported
+    the processed count while gguf and MLX vision reported the whole prompt.
+    Each provider normalizes at its boundary.
+  - `usage.input_tokens` = processed, `usage.cache_read_input_tokens` =
+    reused (null when the engine reported nothing), on both modes of
+    `/v1/messages` and on the generate route, through one helper
+    (`perf_collector.usage_counts`). The owner confirmed nothing outside this
+    repo reads `usage`.
+  - `performance.cache` and `performance.speculative` replace
+    `performance.draft_acceptance`, which meant accepted/drafted on gguf and
+    accepted/emitted on MLX. The two rates are now separate fields.
+  - `heylook_saved.timing` is `build_performance`'s output, no longer a
+    hand-kept second copy. Chat's post-generation status line reads the
+    split fields and the cache outcome.
+  - The non-streaming converter validated `performance` from a hand-copied
+    field list that silently dropped every field added after it; it now
+    validates the dict whole (found by the new route test).
+  - MLX: the reported outcome is the `reuse_verdict` the cache path ran
+    under; the vision path reports `ineligible` (it builds a fresh cache per
+    request, plan W10). gguf: llama-server's own whole-prompt and cached
+    counts; why it missed follows in a later W5 commit.
+  - Tests: one route test for both modes; the chunk, telemetry, gguf
+    mapping and payload tests moved to the report types; smoke's image-token
+    check compares whole prompts (processed + reused).
+  - Not yet: the perf page still shows its stored draft column with the old
+    per-engine meaning (W5's frontend commit).
+  - Verified live against a dev server: mlx-lm (`Qwen3-0.6B-8bit-mlx`) misses
+    then reuses the shared system prompt, reported as processed + reused;
+    the qwen3_5 text path reports `ineligible` with the mRoPE reason; an
+    image request reports `ineligible` with the W10 reason; gguf
+    (`unsloth_Qwen3.8-27B-UD-Q8_K_XL`) misses then reuses; the speculative
+    report on `ggml-org_DeepSeek-V4-Flash-Vision-Exp-GGUF` (dspark drafter)
+    carries drafted, accepted and emitted, with the two rates visibly
+    different. `tests/smoke` green on all three arms (the mlx-lm arm on
+    `Qwen3-0.6B-8bit-mlx`; four mechanisms uncovered as before); e2e chat
+    green. MLX speculative reporting is unit-covered only (no local MLX
+    drafter).
+
 ## [2.0.77]
 
 ### Added
