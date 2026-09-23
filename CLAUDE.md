@@ -24,6 +24,7 @@ bite; the reasons and history behind them are in
 - The Jacobian-lens ("j-space") feature was removed in v1.79.75 (page, `/v1/jspace/*`, the `jspace/` package, tests, conversion script). Its docs are in [docs/archive/](./docs/archive/) as the revival record. Fitted lenses under `adapters/jspace/` were left on disk (gitignored, expensive to refit); the owner deletes them. `jlens-mlx` is out of scope.
 - Setup and commands: [README.md](./README.md). Tests: [tests/README.md](./tests/README.md). RLM: [docs/rlm_guide.md](./docs/rlm_guide.md). Converting checkpoints to MLX: [docs/mlx_conversion_guide.md](./docs/mlx_conversion_guide.md).
 - `internal/`, `models.toml` and `coderef/` are gitignored: local-only, never committed.
+- `coderef/llama.cpp` points at the canonical build checkout that `scripts/build_llama.py` manages, so it is exactly the source the running llama-server was built from (its `heylook-build.json` names the commit). To read upstream tip, use a separate clone. Set up 2026-09-23 after reasoning from a different commit than the binary misled two sessions.
 
 ## Architecture
 
