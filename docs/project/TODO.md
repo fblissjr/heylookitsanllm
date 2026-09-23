@@ -29,6 +29,21 @@ Sequencing section carries the reasons):
 - W6 only if W5 shows budget skips;
 - W11 upstream llama.cpp PRs, optional.
 
+## Unit-suite pruning pass, AFTER W5 + W10 (2026-09-23)
+
+Owner direction: the tier that finds real bugs here is live checks that
+assert on engine behaviour and telemetry. Unit tests earn their keep on pure
+invariants (schema, parser properties, config validation, a guard tested
+through its route) and not on mocked engine behaviour.
+
+Once W5's live cache checks and W10 exist:
+- classify each unit test as a pure invariant (keep), mock-driven (candidate
+  to delete now that live coverage exists) or covering removed code (delete);
+- let the owner weigh the candidates.
+
+No mutation ritual; the owner rejected it. Start from
+`docs/testing/audit_2026-09-08_backend_suite.md`.
+
 ## Port the eval bank to /v1/messages (2026-09-23)
 
 `tests/eval/run.py` still posts to `/v1/chat/completions`, which was removed in

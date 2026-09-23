@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.69]
+
+Documentation only.
+
+### Changed
+
+- **Plan W5 now includes a live cache-reuse check in `tests/smoke`**, which is
+  also W10's acceptance test.
+  - Per engine arm, it asserts relationships (turn 2 processes about the new
+    content; a text-only follow-up processes a handful of tokens), never
+    absolute counts.
+  - The MLX vision arm reports a named known gap until W10 lands.
+- **`TODO.md`: a unit-suite pruning pass, scheduled after W5 and W10.** Tests
+  are classified as pure invariants (keep), mock-driven or covering removed
+  code, with the owner weighing the candidates. No mutation ritual.
+
 ## [2.0.68]
 
 Documentation only.

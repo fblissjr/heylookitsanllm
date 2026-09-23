@@ -281,6 +281,19 @@ Extends the existing template panel (`GET/PUT/DELETE
   - A token-weighted cache column in the trends table.
   - The mislabelled "KV" figure is replaced.
 
+- **Live cache-reuse check in `tests/smoke`** (it also serves as W10's
+  acceptance test). Per engine arm, against a running server:
+  - turn 2 of an image conversation processes about the new content (new
+    image plus question), not the history;
+  - a text-only follow-up processes a handful of tokens;
+  - a repeated system prompt is reused across requests.
+
+  Assert on those relationships, never on absolute counts. The MLX vision arm
+  reports "known gap: W10" rather than failing, until W10 lands and it becomes
+  a real pass/fail. It needs W5 first, because MLX's cached count reaches the
+  wire only through W5. The audit's template defect would have failed this
+  check on its first run.
+
 ### W6. Prompt-cache RAM budget: derived default
 
 **Evidence-gated (2026-09-23).** On the hybrid Qwen3.8 the default budget held
