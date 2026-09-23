@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-23, v2.0.86, `main`.
+Last updated: 2026-09-23, v2.0.87, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `CLAUDE.md`, the backlog in [TODO.md](./TODO.md), and what each release
@@ -15,7 +15,7 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
-| unit + contract | green | v2.0.86 |
+| unit + contract | green | v2.0.87 |
 | `bun run e2e:render` (model-free) | green, against `marked` 18.0.13 | v2.0.82 |
 | `tests/smoke/` mlx-lm arm | retired in effect: since v2.0.86 every MLX model reports runtime mlx-vlm, so this arm has no models. Text models (Qwen3-0.6B, gpt-oss-20b) run as the mlx-vlm arm, green except its vision-capability check, which stage 3's taxonomy change retires | v2.0.86 |
 | `tests/smoke/` mlx-vlm arm | green on `Qwen3.5-0.8B-MLX-8bit` on the mlx-vlm engine, incl. every reuse check; a turn that adds a new image is the named known gap; thinking depth covered by gpt-oss-20b on this engine | v2.0.86 |
