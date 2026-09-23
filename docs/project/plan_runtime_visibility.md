@@ -525,6 +525,12 @@ disk tier. Build constraints (semantic-hash salt, checkpoint interval and
 entries, close on the creating thread, no constructor stop tokens) and the
 per-class results: `internal/claude/w10/spike_results.md`.
 
+**Owner decisions after the spike (2026-09-23).** **A2**: mlx-vlm's
+engine drives every MLX model, text-only included; mlx-lm is removed. The
+qwen3_vl image-turn gap is accepted, recorded locally with what would need to
+change (`internal/claude/w10/qwen3_vl_image_reuse.md`), and not taken
+upstream for now.
+
 **Step 2: build the chosen outcome.** In every outcome:
 - **Per-image vision feature cache**, so a new image stops re-encoding the old
   ones (unless APC under A1/A2 already covers it).
