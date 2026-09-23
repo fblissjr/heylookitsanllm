@@ -20,7 +20,7 @@ Its W0 IS the entry below (registry sidecars), and it runs in parallel rather
 than first. Order, revised 2026-09-23 after the measurements (the plan's
 Sequencing section carries the reasons):
 - W8 non-causal image guard + W9 keep-alive (both small; W9 measured);
-- the eval-bank port (prerequisite, below);
+- the eval-bank port (done v2.0.71);
 - W13 one engine contract, then W5 cache/spec reporting as its first member;
 - W10 MLX caching: first a spike ending in a named outcome (A1 mlx-vlm drives
   vision / A2 remove mlx-lm / B1 own checkpoints / B2 upstream hooks), then
@@ -48,23 +48,11 @@ Once W5's live cache checks and W10 exist:
 No mutation ritual; the owner rejected it. Start from
 `docs/testing/audit_2026-09-08_backend_suite.md`.
 
-## Port the eval bank to /v1/messages (2026-09-23)
+## Eval-gate reminder: bring it back or not (2026-09-23)
 
-`tests/eval/run.py` still posts to `/v1/chat/completions`, which was removed in
-v1.79.66, so every task reports "request failed". It was filed as a small
-pending port. Until it lands, the `/eval-ab` skill is marked BLOCKED, and the
-eval-gate reminder was retired with hookify (2026-09-23) rather than kept
-pointing at a dead instrument.
-
-The port has two parts:
-- an adapter from the tasks' OpenAI-shaped bodies to a Messages request
-  (system to top level, `image_url` parts to image blocks, `enable_thinking` /
-  `reasoning_effort` as-is);
-- reading content blocks back (`thinking`/`text`) and `stop_reason` in place
-  of `finish_reason`.
-
-Then un-block `/eval-ab`, and decide whether the eval-gate reminder comes back
-as a native PostToolUse hook (logic in `scripts/hooks/`).
+The eval bank speaks `/v1/messages` again (v2.0.71, an adapter in `run.py`;
+`/eval-ab` unblocked). Still open: whether the eval-gate reminder retired with
+hookify comes back as a native PostToolUse hook (logic in `scripts/hooks/`).
 
 ## Retire per-model entries from models.toml (2026-09-08) — START HERE
 

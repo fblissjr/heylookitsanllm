@@ -6,16 +6,8 @@ disable-model-invocation: true
 
 # eval-ab
 
-**BLOCKED until the bank is ported (2026-09-23).** `tests/eval/run.py` still
-posts to `/v1/chat/completions`, which was removed in v1.79.66, so every task
-comes back "request failed" on both sides of an A/B. The port to
-`/v1/messages` is pending in docs/project/TODO.md.
-
-Until it lands:
-- say so rather than running the bank;
-- use `tests/smoke/run.py --server <url>` for a live wire check per engine arm.
-
-The flow below applies once the bank speaks the Messages wire again.
+The bank speaks `/v1/messages` (ported v2.0.71). A result JSONL from before
+that port recorded every task as "request failed" and is not a baseline.
 
 Explicit-ask wrapper around `tests/eval/run.py` for comparing eval-bank
 results across a change: dependency pin bumps, quant swaps, or pre-release

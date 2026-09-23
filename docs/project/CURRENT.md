@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-23, v2.0.70, `main`.
+Last updated: 2026-09-23, v2.0.71, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `CLAUDE.md`, the backlog in [TODO.md](./TODO.md), and what each release
@@ -23,7 +23,7 @@ rather than carried forward as green.
 | `tests/smoke/` gguf arm | NOT RE-RUN. Last recorded green at v1.79.43 | -- |
 | `bun run e2e` (chat + pages) | green, nothing skipped, on `E2E_MODEL=Qwen3.5-0.8B-MLX-8bit` (mlx-vlm arm). The behavioural failures recorded at v1.79.78 are gone. NOT run on the default gemma-4 model, nor on the mlx-lm or gguf arms | v2.0.63 |
 | `bun run e2e:ios` | see `TODO.md` and the harness's own header | -- |
-| `tests/eval/` (behavioural bank) | DEAD: it still posts to the removed `/v1/chat/completions`, so every task reports "request failed". Its port is the plan's step 2 | -- |
+| `tests/eval/` (behavioural bank) | ported to `/v1/messages` (an adapter in `run.py`). Live on `Qwen3.5-0.8B-MLX-8bit` (mlx-vlm arm), `thinking` + `vision` only: every task got a real, judged response. Two fail on model behaviour, checked from the raw output: two-image discrimination flaps (the same failure is recorded before the port), and the 0.8B's thinking runs past the task's budget. Other categories, the mlx-lm and gguf arms: not run | v2.0.71 |
 | gguf runtime harness (`internal/claude/perf/harness/`) | Qwen3.8-27B, Muse-Glimmer-30B, DeepSeek-V4-Flash-Vision Q4: vision cost, system-prompt reuse, multi-turn cache reuse (correct on all three after the Qwen template fix), thinking levels, residency, flash attention, micro-batch. Findings in `docs/testing/gguf_runtime_audit_2026-09-23.md` | v2.0.64 build 11138 |
 
 The standing uncovered mechanism is thinking DEPTH on both MLX arms: the only
@@ -35,8 +35,8 @@ model.
 1. **The approved plan is [plan_runtime_visibility.md](./plan_runtime_visibility.md)**,
    and its "Sequencing" section is the order. W8 + W9 shipped in v2.0.70 (the
    non-causal image-token guard and the Metal residency keep-alive, both at
-   spawn). The next step is the eval-bank port (`TODO.md`), then W5
-   cache/spec reporting, which includes the live cache-reuse smoke check that
+   spawn), and the eval-bank port in v2.0.71. The next step is W13 (the one
+   engine contract), then W5 cache/spec reporting as its first member, which includes the live cache-reuse smoke check that
    is also W10's acceptance test. The evidence behind every step is
    [../testing/gguf_runtime_audit_2026-09-23.md](../testing/gguf_runtime_audit_2026-09-23.md).
 2. **Retiring per-model entries from `models.toml`** ([plan_registry_sidecars.md](./plan_registry_sidecars.md))
@@ -69,7 +69,7 @@ a server holds the default database (it has isolated its own database at
 import time since v1.79.54 -- `tests/contract/conftest.py` -- so it never opens
 the real one).
 
-## What landed 2026-09-23 (v2.0.65 - v2.0.70)
+## What landed 2026-09-23 (v2.0.65 - v2.0.71)
 
 Started from "is llama-server built and spawned optimally for vision and
 thinking models". The build was already right; what turned up was mostly
@@ -97,6 +97,9 @@ things happening where nothing could see them.
   tree's source, owner call over a build-time parser). The Metal residency
   keep-alive is set for the life of the process, after its idle CPU cost was
   measured on DeepSeek and judged negligible.
+- The eval bank speaks `/v1/messages` again (v2.0.71): an adapter in
+  `tests/eval/run.py`, no task redesign, no task dropped. `/eval-ab` is
+  unblocked.
 
 ## What landed 2026-09-21 (v2.0.51 - v2.0.63)
 

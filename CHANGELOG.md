@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.71]
+
+### Fixed
+
+- **The behavioural eval bank runs again.** `tests/eval/run.py` posted to
+  `/v1/chat/completions`, removed in v1.79.66, so every task reported "request
+  failed". It now posts to `/v1/messages` through an adapter
+  (`to_messages_request` / `read_messages_response`); the tasks keep their
+  OpenAI-shaped bodies and are not redesigned.
+  - Out: system to the top level, content parts to typed image/audio/text
+    blocks, `enable_thinking` to `thinking`. Any other key must be a
+    `MessageCreateRequest` field or the adapter raises, because the server
+    ignores unknown keys silently.
+  - Back: text and thinking blocks, `usage.output_tokens`, `stop_reason`.
+    `token_budget_exhausted` reads `stop_reason == "max_tokens"` in place of
+    `finish_reason == "length"`.
+  - No task dropped: every task's body adapts and validates against
+    `MessageCreateRequest`, and none tests a removed feature.
+  - Verified live on `Qwen3.5-0.8B-MLX-8bit`, `thinking` and `vision`
+    categories only. The two failures are model behaviour, read from the raw
+    output: two-image discrimination flaps (both images reach the model), and
+    the 0.8B's thinking runs past the task's token budget.
+- **`/eval-ab` unblocked.** A result file from before this port is not a
+  baseline.
+
 ## [2.0.70]
 
 ### Added

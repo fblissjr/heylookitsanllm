@@ -5,9 +5,10 @@
 # PIL/numpy (no files on disk) since the originals' pre-existing PNGs no
 # longer exist.
 #
-# Each EvalTask.build_request() returns a /v1/chat/completions body WITHOUT
-# "model"/"stream" -- run.py injects those. judge() takes a small context
-# dict (content, thinking, completion_tokens, max_tokens) and returns a
+# Each EvalTask.build_request() returns an OpenAI-shaped chat body WITHOUT
+# "model"/"stream"; run.py injects those and adapts the body to /v1/messages
+# (run.to_messages_request). judge() takes a small context dict (content,
+# thinking, completion_tokens, max_tokens, stop_reason) and returns a
 # judges.Verdict. Expected values (colors, needles) are closed over by the
 # judge lambda rather than stored as separate EvalTask fields, so adding a
 # task never requires touching the EvalTask shape itself.
@@ -196,7 +197,7 @@ def _judge_thinking_split(ctx: dict) -> Verdict:
         thinking_v,
         marker_leak(ctx["content"]),
         token_budget_exhausted(ctx["completion_tokens"], ctx["max_tokens"],
-                               ctx.get("finish_reason")),
+                               ctx.get("stop_reason")),
     )
 
 
@@ -255,7 +256,7 @@ def _judge_stop(ctx: dict) -> Verdict:
     return combine_verdicts(
         repetition(ctx["content"]),
         token_budget_exhausted(ctx["completion_tokens"], ctx["max_tokens"],
-                               ctx.get("finish_reason")),
+                               ctx.get("stop_reason")),
     )
 
 

@@ -564,7 +564,7 @@ display touch stored config. So W0 runs in parallel instead of blocking.
 
 1. **W8 + W9. Shipped v2.0.70.** Both are small. W9 is now measured: raising the keep-alive
    removed the idle first-request delay on the 145 GB model.
-2. **W-1, the eval-bank port** (`docs/project/TODO.md`, "Port the eval bank to
+2. **W-1, the eval-bank port. Shipped v2.0.71** (`docs/project/TODO.md`, "Port the eval bank to
    /v1/messages"). Steps 3-5 change exactly the subsystems unit tests cannot
    certify (templates, thinking, cache state), and the bank is dead until it
    speaks the Messages wire.

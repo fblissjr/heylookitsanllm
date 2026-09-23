@@ -27,6 +27,8 @@ from pathlib import Path
 
 from tasks import TASKS
 
+from heylook_llm.schema.messages import MessageCreateRequest
+
 # `tests/` on the path: this runs as a SCRIPT, not under pytest.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from helpers.engines import classify, format_coverage  # noqa: E402
@@ -48,32 +50,110 @@ DEFAULT_OUT = Path(__file__).parent / "results.jsonl"
 # that green with nothing said.
 
 
+# The bank's tasks are written in OpenAI's chat vocabulary (it predates the
+# Messages wire). Rather than rewrite every task, this adapter translates the
+# body on the way out and the response on the way back; the tasks and judges
+# stay as they were. /v1/messages is the only inference route since v1.79.66.
+
+# Request keys the adapter renames; every other key must be a Messages field.
+_RENAMED = {"enable_thinking": "thinking"}
+
+
+def _data_url_source(url: str) -> dict:
+    if url.startswith("data:"):
+        header, _, data = url.partition(",")
+        media_type = header[len("data:"):].split(";", 1)[0]
+        return {"type": "base64", "media_type": media_type, "data": data}
+    return {"type": "url", "url": url}
+
+
+def _content_block(part: dict) -> dict:
+    kind = part.get("type")
+    if kind == "text":
+        return {"type": "text", "text": part["text"]}
+    if kind == "image_url":
+        return {"type": "image", "source": _data_url_source(part["image_url"]["url"])}
+    if kind == "input_audio":
+        audio = part["input_audio"]
+        return {"type": "audio", "source": {"type": "base64",
+                                            "media_type": f"audio/{audio.get('format', 'wav')}",
+                                            "data": audio["data"]}}
+    raise ValueError(f"no Messages equivalent for content part type {kind!r}")
+
+
+def to_messages_request(body: dict) -> dict:
+    """An OpenAI-shaped chat body as a /v1/messages body.
+
+    The system message moves to the top level, content parts become typed
+    blocks, and `enable_thinking` becomes `thinking`. A key that is not a
+    Messages field raises instead of passing through: the server IGNORES
+    unknown keys, so a dropped knob would otherwise run the task without it
+    and still be judged. The allowed set is read off MessageCreateRequest,
+    never listed here.
+    """
+    out: dict = {}
+    for key, value in body.items():
+        if key == "messages":
+            continue
+        name = _RENAMED.get(key, key)
+        if name not in MessageCreateRequest.model_fields:
+            raise ValueError(f"request key {key!r} has no /v1/messages field")
+        out[name] = value
+    system, messages = [], []
+    for m in body["messages"]:
+        content = m["content"]
+        if m["role"] == "system":
+            system.append(content if isinstance(content, str)
+                          else "".join(p["text"] for p in content))
+            continue
+        if not isinstance(content, str):
+            content = [_content_block(p) for p in content]
+        messages.append({"role": m["role"], "content": content})
+    if system:
+        out["system"] = "\n\n".join(system)
+    out["messages"] = messages
+    return out
+
+
+def read_messages_response(r: dict) -> dict:
+    """The judges' context from a /v1/messages response. `thinking` is None
+    when the response carries no thinking block at all, which is what
+    thinking_off_purity checks."""
+    blocks = r.get("content") or []
+    thinking = [b.get("thinking") or b.get("text") or "" for b in blocks
+                if b.get("type") == "thinking"]
+    return {
+        "content": "".join(b.get("text", "") for b in blocks if b.get("type") == "text"),
+        "thinking": "".join(thinking) if thinking else None,
+        "completion_tokens": (r.get("usage") or {}).get("output_tokens"),
+        "stop_reason": r.get("stop_reason"),
+    }
+
+
 def run_task(server: str, model: str, task) -> dict:
     """POST one task's request, judge the response, return a JSONL-ready
     result dict. Any exception (timeout, connection error, non-200, bad JSON
     shape) is caught here so one bad task never aborts the whole run."""
     start = time.monotonic()
     timestamp = datetime.now(timezone.utc).isoformat()
-    body = task.build_request()
-    body["model"] = model
-    body.setdefault("stream", False)
     try:
+        body = to_messages_request(task.build_request())
+        body["model"] = model
+        body.setdefault("stream", False)
         req = urllib.request.Request(
-            f"{server}/v1/chat/completions",
+            f"{server}/v1/messages",
             data=json.dumps(body).encode(),
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=task.timeout) as resp:
-            r = json.load(resp)
-        message = r["choices"][0]["message"]
-        usage = r.get("usage") or {}
-        ctx = {
-            "content": message.get("content") or "",
-            "thinking": message.get("thinking"),
-            "completion_tokens": usage.get("completion_tokens"),
-            "max_tokens": body.get("max_tokens"),
-            "finish_reason": r["choices"][0].get("finish_reason"),
-        }
+        try:
+            with urllib.request.urlopen(req, timeout=task.timeout) as resp:
+                r = json.load(resp)
+        except urllib.error.HTTPError as e:
+            # The body names the problem (a 422 lists the bad field); the bare
+            # status line does not.
+            raise RuntimeError(f"HTTP {e.code}: {e.read().decode(errors='replace')[:300]}") from e
+        ctx = read_messages_response(r)
+        ctx["max_tokens"] = body.get("max_tokens")
         verdict = task.judge(ctx)
         elapsed_ms = (time.monotonic() - start) * 1000
         return {

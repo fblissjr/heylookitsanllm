@@ -1,12 +1,13 @@
 # LLM behavior-eval harness
 
-last updated: 2026-07-20
+last updated: 2026-09-23
 
-> **PENDING PORT.** This bank still builds `POST /v1/chat/completions` bodies,
-> which the heylook server no longer serves as of v1.79.66 (the inference API
-> is `POST /v1/messages`). It needs porting before it runs against a current
-> server. Owner call: small, port later. Nothing below has been updated for
-> this yet.
+> **Wire.** The tasks are written as OpenAI-shaped chat bodies; `run.py`
+> adapts each one to `POST /v1/messages` (`to_messages_request`: system to the
+> top level, content parts to typed blocks, `enable_thinking` to `thinking`)
+> and reads the content blocks and `stop_reason` back
+> (`read_messages_response`). A request key with no Messages field raises
+> rather than being silently ignored by the server.
 
 An OPTIONAL eval pass for code changes that can alter LLM *behavior* --
 chat template changes, parser/stop-token changes, vision pipeline changes.
@@ -65,10 +66,10 @@ with no required capabilities always runs). A model missing from the
 
 A task is an `EvalTask` in `tasks.py`: a name, a category (`vision` /
 `thinking` / `stop` / `text` -- matches `--tasks`), the capabilities it
-needs, a `build_request()` closure returning a `/v1/chat/completions` body
-(the pending port above moves this to a `/v1/messages` body)
-(minus `model`/`stream`, which `run.py` fills in), and a `judge()` closure
-that takes `{content, thinking, completion_tokens, max_tokens}` and returns
+needs, a `build_request()` closure returning an OpenAI-shaped chat body
+(minus `model`/`stream`, which `run.py` fills in before adapting it to
+`/v1/messages`), and a `judge()` closure that takes
+`{content, thinking, completion_tokens, max_tokens, stop_reason}` and returns
 a `judges.Verdict`. Prefer composing the existing property-checks in
 `judges.py` (`color_mention`, `marker_leak`, `repetition`,
 `token_budget_exhausted`, `exact_word_count`, `non_empty_non_gibberish`,
