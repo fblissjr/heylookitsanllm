@@ -114,6 +114,8 @@ def generate(
     input_ids: mx.array,
     raw_inputs: dict,
     sampler,
+    embed_extras: Optional[dict] = None,
+    detokenizer=None,
     processors: list,
     stop_tokens: Iterable[int],
     max_tokens: int,
@@ -123,12 +125,21 @@ def generate(
     context_length: Optional[int] = None,
     prefill_step_size: Optional[int] = None,
     model_id: Optional[str] = None,
+    reset_peak: bool = True,
 ) -> Generator[GenerationChunk, None, None]:
     """One request, start to finish, yielding GenerationChunks.
 
     ``input_ids`` (shape (1, n)) is the rendered prompt's tokens; for a
     vision request ``raw_inputs`` is ``mlx_vlm.utils.prepare_inputs``'s
     output (pixel_values and the model's extra tensors), else just the ids.
+    ``detokenizer``: a reset streaming detokenizer to use (the caller's,
+    so the continuation seam and per-token streaming are the caller's
+    choice); None takes mlx-vlm's. mlx-vlm's BPE detokenizer holds ALL text
+    until finalize when no token starts with a space (a count, code, CJK) --
+    the answer then arrives in one lump at the end.
+    ``embed_extras`` reach ``get_input_embeddings`` only, never the
+    generator's prompt kwargs (heylook's ``cached_image_features``; mlx-vlm's
+    server strips its own vision-cache kwargs the same way).
     Runs entirely on the calling thread (the pinned MLX executor).
     """
     from mlx_vlm.generate.ar import BatchGenerator
@@ -144,7 +155,8 @@ def generate(
             f"system prompt.")
 
     stop = set(int(t) for t in stop_tokens)
-    mx.reset_peak_memory()
+    if reset_peak:
+        mx.reset_peak_memory()
     started = time.perf_counter()
 
     data = {k: v for k, v in raw_inputs.items()
@@ -163,15 +175,18 @@ def generate(
             bg.apc.prepare_prefill(n, prefill_step_size=bg.prefill_step_size)
         embed = model.get_input_embeddings(
             input_ids, raw_inputs.get("pixel_values"),
-            mask=raw_inputs.get("attention_mask"), **data)
+            mask=raw_inputs.get("attention_mask"), **data, **(embed_extras or {}))
         gen_kwargs = {**data, **{k: v for k, v in embed.to_dict().items() if v is not None}}
         if apc_manager is not None:
             gen_kwargs["_apc_semantic_hash"] = semantic_hash(raw_inputs, model, processor)
         (uid,) = bg.insert([prompt_list], max_tokens=max_tokens, prompt_kwargs=[gen_kwargs],
                            logits_processors=[generated_only(processors) or []])
 
-        from mlx_vlm.tokenizer_utils import make_streaming_detokenizer
-        detok = make_streaming_detokenizer(processor)
+        if detokenizer is not None:
+            detok = detokenizer
+        else:
+            from mlx_vlm.tokenizer_utils import make_streaming_detokenizer
+            detok = make_streaming_detokenizer(processor)
         report_progress = getattr(abort_event, "set_prefill_progress", None)
         cached = 0
         cache_rep = None

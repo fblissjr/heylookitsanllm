@@ -307,7 +307,8 @@ Phase 3b; chat uses its conversation-scoped sibling below; the OpenAI-compatible
   is the Messages spelling of `enable_thinking` (same tri-state — v3 derives
   the rename in `messagesParams()`, settings.js, never a second bag); a
   request still sending `sampler` (or `preset`) gets a 422 naming the v2.0.30
-  removal rather than a silent drop, and one sending `show_special_tokens`
+  removal rather than a silent drop, one sending `chat_template_kwargs` (llama-server's
+  spelling) gets a 422 naming `thinking` and `reasoning_effort` (v2.0.86), and one sending `show_special_tokens`
   gets the same treatment for the v2.0.38 removal (below). `max_tokens` is deliberately OPTIONAL unlike Anthropic's:
   absent = the server-side sampler cascade's default (a hard schema default
   here silently overrode the cascade for every client that omitted it).
@@ -621,10 +622,10 @@ cache, thinking, image, steering}`.
   observed_cached | unknown | not_applicable`; a value whose provenance is `unknown` or
   `not_applicable` is null. `source` and `reason` are sentences for a person, ready to
   display.
-- `runtime` is the library that runs the model: `mlx-lm | mlx-vlm | llama.cpp`. DERIVED
-  from the config (loader routing: modalities, `loader`, whether mlx-vlm registers the
-  `model_type`), so it answers for unloaded models -- the set a live harness chooses its
-  engine arms from.
+- `runtime` is the library that runs the model: `mlx-vlm | llama.cpp` (since v2.0.86,
+  plan W10 A2, every MLX model runs on mlx-vlm's engine; `mlx-lm` no longer appears).
+  DERIVED from the provider, so it answers for unloaded models -- the set a live harness
+  chooses its engine arms from.
 - `context.length` is the ceiling the files declare, from the ONE resolver
   `capabilities.model_context_length` (the GGUF header's training context; MLX
   `config.json`, or the entry's own `context_length`, then `configured`) -- the number the
@@ -648,10 +649,12 @@ cache, thinking, image, steering}`.
   header's answer, since llama.cpp decides from the memory it builds), `kv_shift`
   (false whenever a projector loads), `ram_budget_mib`, `checkpoints`,
   `checkpoint_min_spacing` -- each as the spawn will get it: `extra_args`, then
-  `cache_ram_mb`, then llama-server's default. MLX: `text_reuse` (false with the gate's
-  reason when a config or drafter gate refuses reuse; `unknown` until load, then
-  `observed` from the same verdict the cache path uses), `image_requests` (`fresh cache`,
-  plan W10), `slots` (1). What a request actually reused is `usage` and
+  `cache_ram_mb`, then llama-server's default. MLX (v2.0.86, mlx-vlm's prefix cache):
+  `reuse`, `reuse_mode` (`checkpoints` for hybrid and sliding-window models, else the
+  block mode), `image_reuse` (true on checkpoint models), `checkpoint_interval`,
+  `checkpoint_entries`, `memory_budget_bytes` (mlx-vlm's automatic budget), `disk`
+  (false); `reuse_mode`, `image_reuse` and `memory_budget_bytes` are `unknown` until
+  load, then `observed`. What a request actually reused is `usage` and
   `performance.cache`, not this.
 - `thinking`, `image`, `steering` are explicit nulls until W2, W4 and W14 report them.
 - No absolute path appears anywhere in `engine` (LAN clients read `/v1/models`); paths

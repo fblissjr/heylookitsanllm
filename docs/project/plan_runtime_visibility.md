@@ -592,6 +592,11 @@ Verification at stages 2 and 3: unit and contract suites,
 a live mid-prefill cancel, smoke on all arms, e2e chat and pages, and the
 eval bank on Qwen3.5-27B-8bit-mlx against the pre-W10 baseline.
 
+**Progress.** Stage 1 (vlm_engine) and stage 2a (every MLX request routed
+through it) shipped as v2.0.86 with every gate above green; the new-image
+gap and the smoke taxonomy are named in its changelog. Next: 2b (delete the
+old path), then 3.
+
 **Step 2: build the chosen outcome.** In every outcome:
 - **Per-image vision feature cache**, so a new image stops re-encoding the old
   ones (unless APC under A1/A2 already covers it).

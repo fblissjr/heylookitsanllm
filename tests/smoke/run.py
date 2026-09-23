@@ -598,7 +598,7 @@ def thinking_checks(server, r, arm, model_id, caps):
     """
     if "thinking" in caps:
         st, body = _messages_probe(server, model_id, "Name one colour.",
-                                   {"chat_template_kwargs": {"enable_thinking": True}})
+                                   {"thinking": True})
         r.check(f"{arm}: a thinking-capable model accepts enable_thinking",
                 st == 200, f"got {st}: {str(body)[:300]}")
     else:
@@ -644,7 +644,7 @@ def cache_reuse_checks(server, r, arm, model_id, caps):
     def ask(messages, system=None):
         body = {"model": model_id, "max_tokens": 24, "stream": False,
                 "messages": messages,
-                "chat_template_kwargs": {"enable_thinking": False}}
+                "thinking": False}
         if system:
             body["system"] = system
         return call(server, "POST", "/v1/messages", body, timeout=300)
@@ -691,7 +691,7 @@ def cache_reuse_checks(server, r, arm, model_id, caps):
     else:
         judge(f"{arm}: a text follow-up reuses the conversation", t1, t2)
 
-    # -- turn 2 of an image conversation reuses the first image ---------------
+    # -- an image conversation reuses its history --------------------------
     if "vision" not in caps:
         r.skip(f"{arm}: an image conversation reuses its history",
                "this arm's model does not advertise vision -- UNCOVERED on this arm")
@@ -702,14 +702,28 @@ def cache_reuse_checks(server, r, arm, model_id, caps):
     img1 = [{"role": "user", "content": [
         {"type": "text", "text": "Describe this image in one sentence."}, image(SMOKE_PNG)]}]
     st_1, i1 = ask(img1)
-    img2 = img1 + [{"role": "assistant", "content": reply(i1) or "A gradient."},
-                   {"role": "user", "content": [
-                       {"type": "text", "text": "And this one?"}, image(_png(48, 48))]}]
-    st_2, i2 = ask(img2)
+    history = img1 + [{"role": "assistant", "content": reply(i1) or "A gradient."}]
+    # A text follow-up about the same image: the common case, and W10's
+    # main win on MLX (every turn used to re-prefill the image).
+    st_2, i2 = ask(history + [{"role": "user", "content": "What colours does it use?"}])
     if st_1 != 200 or st_2 != 200:
         r.fail(f"{arm}: an image conversation reuses its history", f"turns answered {st_1}, {st_2}")
     else:
         judge(f"{arm}: an image conversation reuses its history", i1, i2)
+    # A turn that ADDS an image. On MLX, mlx-vlm's prefix cache keys a
+    # request's images as ONE hash, so a new image changes every key and
+    # the turn re-prefills (owner decision 2026-09-23: accepted, recorded in
+    # internal/claude/w10/apc_new_image_turns.md). gguf reuses here.
+    st_3, i3 = ask(history + [{"role": "user", "content": [
+        {"type": "text", "text": "And this one?"}, image(_png(48, 48))]}])
+    name = f"{arm}: a new-image turn reuses the history"
+    if st_3 != 200:
+        r.fail(name, f"answered {st_3}")
+    elif arm != "gguf" and not ((i3 or {}).get("usage") or {}).get("cache_read_input_tokens"):
+        r.skip(name, "known gap: the MLX prefix cache keys a request's images as one hash, "
+                     "so a turn that adds an image re-prefills")
+    else:
+        judge(name, i1, i3)
 
 
 def arm_checks(server, r, arm, model_id, load_timeout):

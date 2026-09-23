@@ -29,7 +29,9 @@ from .common.samplers import build as build_sampler
 from .common.vlm_inputs import continue_from_generation_prompt, thinking_for_template
 from .common.model_wrappers import wrap_language_model
 from .common.generation_core import (
-    _reset_vlm_positions, ensure_gen_tokenizer, generate_text, run_generation)
+    _reset_vlm_positions, continuation_detokenizer, ensure_gen_tokenizer, generate_text,
+    run_generation)
+from .common import vlm_engine
 from .common.batch_vision import BatchVisionProcessor
 from .common.prompt_cache import get_global_cache_manager
 from .common.vision_feature_cache import VisionFeatureCache
@@ -339,7 +341,10 @@ class UnifiedTextStrategy:
     """
 
     def __init__(self, draft_model=None, model_id=None, model_config=None, is_vlm=False,
-                 template_info=None, context_length=None):
+                 template_info=None, context_length=None, owner=None):
+        # The provider: its APC store and stop set are read at CALL time,
+        # so clear_cache replacing the store is seen by the next request.
+        self.owner = owner
         self.draft_model = draft_model
         self.context_length = context_length  # the provider's, for the over-length guard
         self.model_id = model_id
@@ -390,27 +395,37 @@ class UnifiedTextStrategy:
         return tokenizer.decode(prompt, skip_special_tokens=False)
 
     def generate(self, request: ChatRequest, effective_request: dict, model, processor, abort_event: AbortEvent | None = None) -> Generator:
+        """Render, tokenize the way mlx-vlm's own loop does (prepare_inputs),
+        and run the request through vlm_engine (plan W10, A2)."""
         tokenizer = getattr(processor, "tokenizer", processor)
 
         prompt = self.build_prompt(request, effective_request, model, processor)
-        prompt_tokens = tokenizer.encode(prompt) if isinstance(prompt, str) else prompt
-        gen_model = self._get_generation_model(model)
-
-        # VLM mRoPE position state is reset in run_generation via _reset_vlm_positions().
-
-        yield from generate_text(
-            model=gen_model,
-            tokenizer=tokenizer,
-            prompt_tokens=prompt_tokens,
-            effective_request=effective_request,
-            model_id=self.model_id,
-            draft_model=self.draft_model,
-            cache_manager=self.cache_manager,
+        if isinstance(prompt, str):
+            raw = vlm_prepare_inputs(processor, prompts=prompt)
+        else:
+            raw = {"input_ids": mx.array([list(prompt)])}
+        input_ids = raw["input_ids"]
+        if input_ids.ndim == 1:
+            input_ids = input_ids[None, :]
+            raw = {**raw, "input_ids": input_ids}
+        sampler, processors = build_sampler(tokenizer, effective_request)
+        yield from vlm_engine.generate(
+            model=model, processor=processor,
+            apc_manager=getattr(self.owner, "_apc", None),
+            input_ids=input_ids, raw_inputs=raw,
+            sampler=sampler, processors=processors,
+            stop_tokens=getattr(self.owner, "_stop_tokens", ()),
+            max_tokens=effective_request['max_tokens'],
+            greedy=float(effective_request.get('temperature') or 0.0) == 0.0,
             abort_event=abort_event,
             # Both continuation shapes: a content prefill and a mid-thought
             # resume. The first token completes prefilled text either way.
             continuing=request.is_continuation(),
             context_length=self.context_length,
+            prefill_step_size=effective_request.get('prefill_step_size'),
+            model_id=self.model_id,
+            detokenizer=(self.owner.streaming_detokenizer(request.is_continuation())
+                         if self.owner is not None else None),
         )
 
     def _prepare_messages(self, messages) -> list[dict]:
@@ -691,7 +706,8 @@ class VLMVisionStrategy:
     """
 
     def __init__(self, model_config=None, template_info=None, model_id=None,
-                 context_length=None):
+                 context_length=None, owner=None):
+        self.owner = owner  # the provider (APC store, stop set), read per call
         self.model_config = model_config or {}
         self.template_info = template_info  # how history thinking is rendered
         self.model_id = model_id
@@ -791,91 +807,39 @@ class VLMVisionStrategy:
                 extras["cached_image_features"] = features
                 logging.info("[VLM VISION] Computed and cached vision features")
 
-        # Ensure wrapper is cached for language model generation
-        if self._cached_wrapper is None:
-            self._cached_wrapper = wrap_language_model(model)
-
-        # Create KV cache sized for the language model
-        request_cache = make_prompt_cache(self._cached_wrapper)
-
-        # THE PROMPT THIS RUN ACTUALLY READS. `input_ids` is the fully expanded
-        # sequence -- each image placeholder already widened to its hundreds or
-        # thousands of real positions. mlx-lm is handed a ONE-TOKEN prompt
-        # below (the cache holds the rest) and reports `prompt.size` on every
-        # response, so without the restamp at the bottom every vision request
-        # would report `prompt_tokens=1` and a `prompt_tps` computed from it.
         prompt_token_count = int(input_ids.shape[1])
-
-        # Guards, all BEFORE any compute -- the length is known up front now.
-        if prompt_token_count < 2:
-            raise GenerationFailed("Vision prompt rendered to fewer than two tokens.")
         if self.context_length and prompt_token_count > self.context_length:
             raise InvalidGenerationRequest(
                 f"Prompt is {prompt_token_count} tokens; {self.model_id or 'this model'} "
                 f"has a context of {self.context_length} tokens. Shorten the "
                 f"conversation, remove an image, or send a smaller one.")
-        last_prompt_token = int(input_ids[0, -1].item())
-        media_tokens = {
-            getattr(model.config, attr) for attr in _MEDIA_TOKEN_CONFIG_ATTRS
-            if isinstance(getattr(model.config, attr, None), int)}
-        if last_prompt_token in media_tokens:
-            # The prompt is split after its last token, which is only sound
-            # while that token is TEXT (every image block must sit wholly
-            # inside the prefill). A template ending on a placeholder is one
-            # this strategy does not know how to drive.
-            raise GenerationFailed(
-                f"Vision prompt ends on a media placeholder token "
-                f"({last_prompt_token}); cannot split the prefill there.")
 
-        # Phase 1: prefill every prompt token but the last into request_cache
-        # (chunked by prefill_step_size where the family allows it, reporting
-        # progress and honouring abort between chunks).
-        prefill_tic = time.perf_counter()
-        with wired_limit(model, [generation_stream]):
-            completed = _prefill_language_model(
-                model, self._cached_wrapper, input_ids, pixel_values, mask, extras,
-                request_cache,
-                step_size=effective_request.get('prefill_step_size') or DEFAULT_PREFILL_STEP_SIZE,
-                abort_event=abort_event)
-        prefill_time = time.perf_counter() - prefill_tic
-        if not completed:
-            logging.info("Generation aborted during vision prefill")
-            return
-        prefill_tps = (prompt_token_count / prefill_time) if prefill_time > 0 else 0.0
-
-        # Phase 2: mlx-lm takes the LAST prompt token as its whole prompt and
-        # samples the first generated token itself -- so that token gets the
-        # stop check, the logits processors, the max_tokens count and the
-        # streaming detokenizer like every other one.
-        #
-        # Every chunk is re-stamped, not just the first: ChunkTelemetry.absorb
-        # keeps the LAST truthy value for both fields, so a single correct
-        # chunk followed by mlx-lm's own would be overwritten by the seed's 1.
-        # The vision path builds a fresh cache for every request, so nothing
-        # of the prompt is reused -- reported as such, not as a plain miss.
-        vision_cache_report = CacheReport(
-            prompt_tokens=prompt_token_count, cached_tokens=0,
-            outcome="ineligible", cause="vision_path",
-            reason=("a request with an image builds a fresh cache, so nothing "
-                    "is reused (plan W10)"))
-        for chunk in run_generation(
-            model=self._cached_wrapper,
-            tokenizer=tokenizer,
-            prompt_tokens=[last_prompt_token],
-            effective_request=effective_request,
-            sampler=sampler,
-            processors=processors,
+        # The whole request runs on mlx-vlm's engine (plan W10, A2): the
+        # prompt, images included, is prefilled there in chunks and restored
+        # from APC across turns. The cached image features reach the
+        # embedding step only (embed_extras), never the generator.
+        embed_extras = {}
+        if "cached_image_features" in extras:
+            embed_extras["cached_image_features"] = extras["cached_image_features"]
+        raw = {**inputs, "input_ids": input_ids}
+        yield from vlm_engine.generate(
+            model=model, processor=processor,
+            apc_manager=getattr(self.owner, "_apc", None),
+            input_ids=input_ids, raw_inputs=raw, embed_extras=embed_extras,
+            sampler=sampler, processors=processors,
+            stop_tokens=getattr(self.owner, "_stop_tokens", ()),
+            max_tokens=effective_request['max_tokens'],
+            greedy=float(effective_request.get('temperature') or 0.0) == 0.0,
             abort_event=abort_event,
-            pre_filled_cache=request_cache,
             continuing=request.is_continuation(),
-            prefill_progress_offset=prompt_token_count - 1,
-        ):
-            chunk.prompt_tokens = prompt_token_count
-            chunk.prompt_tps = prefill_tps
-            if vision_cache_report is not None:
-                chunk.cache = vision_cache_report
-                vision_cache_report = None  # first chunk only; telemetry latches
-            yield chunk
+            prefill_step_size=effective_request.get('prefill_step_size'),
+            model_id=self.model_id,
+            # Reset at the top of this method: image encoding is part of
+            # this request's peak.
+            reset_peak=False,
+            detokenizer=(self.owner.streaming_detokenizer(request.is_continuation())
+                         if self.owner is not None else None),
+        )
 
     def _prepare_vlm_inputs_parallel(self, messages: List, processor, config,
                                      enable_thinking=None, reasoning_effort=None,
@@ -1050,6 +1014,12 @@ class MLXProvider(BaseProvider):
         self.model = None
         self.processor = None
         self.draft_model = None
+        # mlx-vlm's prefix cache for this model (vlm_engine), its mode, the
+        # stop set resolved ONCE at load, and the last request's context.
+        self._apc = None
+        self._apc_mode = None
+        self._stop_tokens = frozenset()
+        self._context_used = 0
         # Engine routing: modalities (description) + loader (hint) -> the mlx
         # engine that loads. is_vlm derives from it. "auto" degrades a vision
         # model mlx-vlm can't load to mlx-lm rather than crashing at load; an
@@ -1083,21 +1053,40 @@ class MLXProvider(BaseProvider):
         # they were MLX-only, which made a guard built on them cover half the
         # app. Re-initialising them here would be harmless but misleading.)
 
+    def streaming_detokenizer(self, continuing: bool):
+        """A reset streaming detokenizer for one request: mlx-lm's (primed at
+        load by ensure_gen_tokenizer), which streams per token where
+        mlx-vlm's holds space-free text until the end, with the continuation
+        seam seeded (continuation_detokenizer)."""
+        tok = self.get_tokenizer()
+        if tok is None:
+            return None
+        wrapper = ensure_gen_tokenizer(tok)
+        with continuation_detokenizer(wrapper, continuing):
+            return wrapper.detokenizer
+
     def describe_observed(self):
         """The engine contract's observed half: the template body installed
-        at load, and the prompt-cache verdict from the SAME function the
-        cache path calls per request (prompt_cache.reuse_verdict)."""
-        from .common.prompt_cache import reuse_verdict
+        at load, and the prefix cache as built at load (vlm_engine)."""
         from .contract import Fact, Observed
 
-        model = getattr(self, "model", None)
         cache = {}
-        if model is not None:
-            gate, why = reuse_verdict(self.config, model,
-                                      allow_reuse=getattr(self, "draft_model", None) is None)
-            cache["text_reuse"] = Fact(
-                value=gate is None, provenance="observed",
-                source="reuse enabled for text-only requests" if gate is None else why)
+        if self._apc is not None:
+            checkpoints = self._apc_mode == "exact"
+            cache["reuse_mode"] = Fact(
+                value="checkpoints" if checkpoints else (self._apc_mode or "blocks"),
+                provenance="observed",
+                source=("from this model's cache layers: hybrid and sliding-window "
+                        "models restore whole-cache checkpoints taken during prefill; "
+                        "plain KV models reuse hashed blocks"))
+            cache["image_reuse"] = Fact(
+                value=checkpoints, provenance="observed",
+                source=("checkpoint models restore image turns; block models "
+                        "discard in-memory blocks that contain an image, and the "
+                        "disk tier that would serve them is off"))
+            cache["memory_budget_bytes"] = Fact(
+                value=int(self._apc.memory_max_bytes), provenance="observed",
+                source="mlx-vlm's automatic prefix-cache budget, sized from the Metal working set")
         return Observed(loaded_template=self.loaded_chat_template, cache=cache)
 
     def load_model(self):
@@ -1108,17 +1097,12 @@ class MLXProvider(BaseProvider):
         # for cache construction. Explicit values pass through untouched.
         self.config.update(resolve_cache_config(self.config))
 
-        logging.info(f"Loading {'VLM' if self.is_vlm else 'LLM'} model from: {model_path}")
+        logging.info(f"Loading model with mlx-vlm from: {model_path}")
 
         try:
-            if self.is_vlm:
-                # Load VLM model with fallback strategies for common issues
-                logging.info("Loading VLM model with fallback strategies")
-                self.model, self.processor = self._load_vlm_with_fallback(model_path)
-            else:
-                # Load text-only model with MLX LM
-                logging.info("Loading text-only model using MLX LM")
-                self.model, self.processor = lm_load(model_path)
+            # Every MLX model, text-only included, loads and runs on mlx-vlm's
+            # engine (plan W10, outcome A2).
+            self.model, self.processor = self._load_vlm_with_fallback(model_path)
 
             # Stop-token completeness: raw HF tokenizers on the mlx-vlm path
             # don't absorb generation_config's eos list (gemma-4: <turn|>
@@ -1140,6 +1124,10 @@ class MLXProvider(BaseProvider):
             gen_tokenizer = self.get_tokenizer()
             if gen_tokenizer is not None:
                 ensure_gen_tokenizer(gen_tokenizer, model_path)
+            # The stop set, resolved ONCE here and checked in vlm_engine's own
+            # loop -- never added per request to the shared tokenizer.
+            from .common.stop_tokens import resolve_stop_tokens
+            self._stop_tokens = frozenset(resolve_stop_tokens(self.get_tokenizer()))
 
             # The context window, from the ONE resolver the admin row and
             # /v1/models read -- so the ceiling a client is shown is the one
@@ -1231,6 +1219,12 @@ class MLXProvider(BaseProvider):
                     getattr(self.model.config, "canvas_length", "?"),
                 )
 
+            if not self.is_diffusion:
+                from mlx_vlm import apc as _apc
+                self._apc = vlm_engine.make_apc_manager()
+                self._apc_mode = _apc.APCCoordinator(
+                    self._apc, self.model.language_model).legacy_mode
+
             logging.info(f"Successfully loaded {'VLM' if self.is_vlm else 'LLM'} model")
 
             # Debug model structure for KV cache optimization
@@ -1270,14 +1264,13 @@ class MLXProvider(BaseProvider):
 
         # Load draft model if specified
         if draft_path := self.config.get('draft_model_path'):
-            logging.info(f"Loading draft model for speculative decoding: {draft_path}")
-            try:
-                # Draft models are always text-only
-                self.draft_model, _ = lm_load(draft_path)
-                logging.info("Draft model loaded successfully for speculative decoding")
-            except Exception as e:
-                logging.warning(f"Failed to load draft model: {e}")
-                self.draft_model = None
+            # mlx-lm's draft-model path does not run on mlx-vlm's engine (plan
+            # W10, A2). No served MLX model sets one; say so rather than load
+            # a drafter nothing uses.
+            logging.warning(
+                f"draft_model_path is set for {self.model_id} ({draft_path}); "
+                f"speculative decoding is not run on the MLX engine, generating without it")
+            self.draft_model = None
 
         # Pre-compile generation strategies after model loading
         self._compile_strategies()
@@ -1383,11 +1376,12 @@ class MLXProvider(BaseProvider):
             is_vlm=self.is_vlm,
             template_info=getattr(self, "_template_info", None),
             context_length=self.context_length,
+            owner=self,
         )
         if self.is_vlm:
             self._strategies['vision'] = VLMVisionStrategy(
                 model_config=self.config, template_info=getattr(self, "_template_info", None),
-                model_id=self.model_id, context_length=self.context_length)
+                model_id=self.model_id, context_length=self.context_length, owner=self)
         # Diffusion handles BOTH its text and vision requests -- the denoising
         # loop takes pixel_values directly, so there is no separate vision
         # split. 'text' stays registered regardless: warmup resolves its
@@ -1588,6 +1582,8 @@ class MLXProvider(BaseProvider):
                             if not tagged:
                                 chunk.queue_wait_ms = queue_wait_ms
                                 tagged = True
+                            if getattr(chunk, "prompt_tokens", 0):
+                                self._context_used = chunk.prompt_tokens + (chunk.generation_tokens or 0)
                             yield chunk
                     finally:
                         inner.close()
@@ -1633,13 +1629,8 @@ class MLXProvider(BaseProvider):
         return 32768
 
     def _get_context_used(self) -> int:
-        """Get current context usage from prompt cache (thread-safe)."""
-        try:
-            cache_manager = get_global_cache_manager()
-            return cache_manager.get_context_usage(self.model_id)
-        except Exception as e:
-            logging.debug(f"Could not get context usage from cache: {e}")
-            return 0
+        """The last request's context (prompt plus generated tokens)."""
+        return self._context_used
 
     def warmup(self) -> None:
         """Text-only JIT prime. See BaseProvider.warmup() for the contract.
@@ -1669,29 +1660,18 @@ class MLXProvider(BaseProvider):
             self._warmup_diffusion(prompt_tokens)
             return
 
-        from .common.generation_core import generate_text
-        # Resolve the generation model through the SAME method real requests use
-        # (UnifiedTextStrategy._get_generation_model) rather than re-deriving it
-        # here. This keeps warmup structurally on the request path -- warmup
-        # drifting from that path is exactly how the VLM LanguageModelOutput bug
-        # (raw model -> non-subscriptable logits) went unnoticed. Strategies are
-        # compiled in load() before the router calls warmup(); fall back to the
-        # raw model defensively if that ever changes.
-        text_strategy = self._strategies.get('text')
-        gen_model = text_strategy._get_generation_model(self.model) if text_strategy else self.model
-
+        # Through the SAME engine real requests use (vlm_engine), without the
+        # prefix cache, so warmup tokens never land in it.
         t0 = time.time()
         try:
-            for _ in generate_text(
-                gen_model,
-                tok,
-                prompt_tokens,
-                {"max_tokens": 4, "num_draft_tokens": 0},
-                # model_id=None so warmup tokens don't land in the prompt cache;
-                # draft_model=None to skip the speculative-decoding path.
-                model_id=None,
-                draft_model=None,
-                abort_event=None,
+            ids = mx.array([prompt_tokens])
+            sampler, processors = build_sampler(tok, {"temperature": 0.0})
+            for _ in vlm_engine.generate(
+                model=self.model, processor=self.processor, apc_manager=None,
+                input_ids=ids, raw_inputs={"input_ids": ids},
+                sampler=sampler, processors=processors,
+                stop_tokens=self._stop_tokens, max_tokens=4, greedy=True,
+                model_id=self.model_id,
             ):
                 pass
         except Exception:
@@ -1778,10 +1758,10 @@ class MLXProvider(BaseProvider):
             )
 
     def clear_cache(self) -> bool:
-        """Clear the prompt cache for this model."""
+        """Clear this model's prefix cache (a fresh, empty APC store)."""
         try:
-            cache_manager = get_global_cache_manager()
-            cache_manager.invalidate_cache(self.model_id)
+            if self._apc is not None:
+                self._apc = vlm_engine.make_apc_manager()
             logging.info(f"Cleared prompt cache for {self.model_id}")
             return True
         except Exception as e:
@@ -1874,6 +1854,7 @@ class MLXProvider(BaseProvider):
 
         # Clear caches
         self._strategies.clear()
+        self._apc = None
 
         # Clean up models
         if hasattr(self, 'model'):

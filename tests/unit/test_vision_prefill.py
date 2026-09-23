@@ -155,76 +155,6 @@ def test_an_unknown_per_token_input_is_refused_rather_than_passed_unsliced():
     assert lookalike.language_model.calls[0]["cached_image_features"].shape == (5, n)
 
 
-class TestTheStrategyHandsMlxLmTheLastPromptToken:
-    """`VLMVisionStrategy.generate` end to end with everything model-shaped
-    faked: what it must hand `run_generation`, and what it must refuse before
-    spending a forward pass."""
-
-    IMAGE_TOKEN = 99
-
-    def _drive(self, monkeypatch, ids, *, continuing=False, context_length=None, events=None):
-        from contextlib import nullcontext
-        from types import SimpleNamespace
-
-        from heylook_llm.config import ChatRequest
-        from heylook_llm.providers.base import GenerationChunk
-
-        handed = {}
-
-        def fake_run_generation(**kwargs):
-            handed.update(kwargs)
-            yield GenerationChunk(text="x", token=1, prompt_tokens=1, prompt_tps=1.0)
-
-        monkeypatch.setattr(mp, "run_generation", fake_run_generation)
-        monkeypatch.setattr(mp, "build_sampler", lambda *a, **k: ("sampler", ["proc"]))
-        monkeypatch.setattr(mp, "vlm_prepare_inputs", lambda *a, **k: {
-            "input_ids": mx.array([ids]), "pixel_values": mx.zeros((1, 3, 2, 2))})
-        monkeypatch.setattr(mp, "make_prompt_cache", lambda m: [_Cache()])
-        monkeypatch.setattr(mp, "wrap_language_model", lambda m: m.language_model)
-        monkeypatch.setattr(mp, "wired_limit", lambda *a, **k: nullcontext())
-        def fake_prefill(*a, **k):
-            if events is not None:
-                events.append("prefill")
-            return True
-
-        monkeypatch.setattr(mp, "_prefill_language_model", fake_prefill)
-
-        strategy = mp.VLMVisionStrategy(model_id="m", context_length=context_length)
-        monkeypatch.setattr(strategy, "_prepare_vlm_inputs_parallel",
-                            lambda *a, **k: (["img"], "prompt", True, ["url"]))
-        model = SimpleNamespace(
-            config=SimpleNamespace(model_type="fake", image_token_index=self.IMAGE_TOKEN),
-            language_model=object())
-        messages = [{"role": "user", "content": "hi"}]
-        if continuing:
-            messages.append({"role": "assistant", "content": "The goat is"})
-        request = ChatRequest.model_validate({"model": "m", "messages": messages})
-        chunks = list(strategy.generate(
-            request, {"max_tokens": 8}, model, SimpleNamespace(tokenizer=object())))
-        return handed, chunks
-
-    def test_the_last_prompt_token_is_the_whole_prompt(self, monkeypatch):
-        handed, chunks = self._drive(monkeypatch, [5, 6, 7, 8], continuing=True)
-        assert handed["prompt_tokens"] == [8]
-        assert handed["prefill_progress_offset"] == 3
-        # Never passed before v2.0.55 -- a `pre_filled_cache` exemption stood in
-        # for it, and removing that exemption without this would have cost
-        # every vision continuation its seam space, silently.
-        assert handed["continuing"] is True
-        assert handed["processors"] == ["proc"], "the first token gets them too now"
-        # mlx-lm sees a one-token prompt; the client must see the real one.
-        assert [c.prompt_tokens for c in chunks] == [4]
-
-    def test_a_prompt_ending_on_a_media_placeholder_is_refused(self, monkeypatch):
-        with pytest.raises(GenerationFailed, match="placeholder"):
-            self._drive(monkeypatch, [5, 6, self.IMAGE_TOKEN])
-
-    def test_an_over_length_prompt_is_refused_before_any_compute(self, monkeypatch):
-        from heylook_llm.providers.base import InvalidGenerationRequest
-        with pytest.raises(InvalidGenerationRequest, match="context"):
-            self._drive(monkeypatch, [5, 6, 7, 8], context_length=3)
-
-
 @pytest.mark.parametrize("prompt_len", [1, 3, 40])
 def test_a_penalty_sees_the_reply_and_never_the_prompt(prompt_len):
     """The SAME reply must reach a processor the same way whatever mlx-lm
@@ -241,14 +171,3 @@ def test_a_penalty_sees_the_reply_and_never_the_prompt(prompt_len):
         scoped(mx.array(prompt + reply[:n]), mx.zeros((1, 16)))
     assert seen == [[], [7], [7, 8], [7, 8, 9]]
     assert generated_only([]) == [] and generated_only(None) is None
-
-
-def test_an_image_requests_peak_memory_includes_its_prefill(monkeypatch):
-    """The reset belongs BEFORE the prefill, once. It used to run inside
-    run_generation -- after the prefill -- so an image request reported the
-    peak of its decode and none of the prompt that usually dominates it."""
-    events = []
-    monkeypatch.setattr(mp.mx, "reset_peak_memory", lambda: events.append("reset"))
-    TestTheStrategyHandsMlxLmTheLastPromptToken()._drive(
-        monkeypatch, [5, 6, 7, 8], events=events)
-    assert events == ["reset", "prefill"]

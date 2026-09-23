@@ -1263,6 +1263,28 @@ the pixel-hash fallback in the module is never reached from that caller. A
 per-image key is part of W10 of
 [plan_runtime_visibility.md](../project/plan_runtime_visibility.md).
 
+Since v2.0.86 the live MLX path is mlx-vlm's engine and its prefix cache
+(APC), not the slot (plan W10, A2; the slot and its handoff stay as dead code
+until stage 2b deletes them). Three traps the switch found, each silent:
+- **The APC salt.** Left to `BatchGenerator`, it folds in a hash of the whole
+  prompt's `inputs_embeds`, so no two different prompts ever share a block or
+  checkpoint and every follow-up misses with nothing in the logs. mlx-vlm's
+  own server precomputes the salt from the request's media only;
+  `vlm_engine.semantic_hash` does the same.
+- **Checkpoint settings.** At mlx-vlm's defaults a checkpoint model keeps only
+  its prompt end and one far boundary, so a follow-up (which diverges at the
+  previous reply) restores nothing. `APC_CHECKPOINT_INTERVAL_TOKENS` and
+  `APC_CHECKPOINT_ENTRIES` are the spike's measured settings.
+- **The detokenizer.** mlx-vlm's BPE streaming detokenizer flushes only on a
+  token that starts with a space, so a count, code or CJK text arrived in one
+  lump at the end; the engine streams through mlx-lm's. The smoke walk-away
+  check caught it, as a false "truncated" verdict: the whole answer had been
+  delivered in the final flush.
+The one-hash image salt is also why a turn that adds an image re-prefills;
+any single salt heylook could choose either misses or risks restoring a
+different image behind identical placeholder tokens (owner decision: accepted,
+`internal/claude/w10/apc_new_image_turns.md`).
+
 ### Logits processor shape
 
 A logits processor receives `(tokens, logits)` with logits shaped

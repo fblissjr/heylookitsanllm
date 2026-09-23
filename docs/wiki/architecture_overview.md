@@ -31,8 +31,8 @@ flowchart TB
         ModelRouter["ModelRouter (LRU Eviction / Lifecycle)"]
 
         subgraph InProcessProviders ["In-Process Providers (Metal Engine)"]
-            MLX["MLXProvider (mlx-lm / mlx-vlm)<br/>Text & Vision Inference"]
-            PromptCache["Single-Slot Prompt Cache (KV Snapshots)"]
+            MLX["MLXProvider (mlx-vlm engine)<br/>Text & Vision Inference"]
+            PromptCache["Prefix Cache (mlx-vlm APC, in memory)"]
             VisionCache["Vision Feature LRU Cache"]
         end
 

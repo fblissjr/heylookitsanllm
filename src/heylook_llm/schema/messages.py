@@ -177,6 +177,18 @@ class MessageCreateRequest(BaseModel):
                     for k, v in misspelt
                 )
             )
+        # `chat_template_kwargs` is llama-server's (OpenAI-extension) spelling
+        # of the template variables, and heylook's own gguf provider sends it
+        # -- which is how it leaked into client code and probes (2026-09-23:
+        # a heylook harness sent it for weeks, got 200s, and never once turned
+        # thinking off). This wire takes the two variables it supports as
+        # fields of their own.
+        if "chat_template_kwargs" in data:
+            raise ValueError(
+                "`chat_template_kwargs` is not a field on this API -- send "
+                "`thinking` (bool) and/or `reasoning_effort` as top-level fields "
+                "instead (pydantic would otherwise DROP it silently and answer "
+                "with the default)")
         if "preset" in data or "sampler" in data:
             raise ValueError(
                 "named sampler bundles were removed in v2.0.30 -- send the "

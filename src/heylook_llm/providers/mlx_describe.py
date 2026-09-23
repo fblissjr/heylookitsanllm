@@ -149,9 +149,6 @@ def describe_static(model_id: str, cfg: dict, config_obj: Any, *,
                     written: bool, derived: dict) -> EngineDescription:
     from heylook_llm.capabilities import model_context_length
     from heylook_llm.config import MLXModelConfig
-    from heylook_llm.providers.common.loader_routing import effective_loader_for_config
-
-    loader = effective_loader_for_config("mlx", cfg)
     override = cfg.get("context_length")
     length = model_context_length("mlx", cfg.get("model_path"), override=override)
     if isinstance(override, int) and not isinstance(override, bool) and override > 0:
@@ -166,21 +163,9 @@ def describe_static(model_id: str, cfg: dict, config_obj: Any, *,
                                derived=derived, engine_default="mlx-lm/mlx-vlm")
 
     return EngineDescription(
-        cache={
-            "text_reuse": _text_reuse_static(cfg),
-            "image_requests": Fact(
-                value="fresh cache", provenance="derived",
-                source=("a request with an image anywhere in its history builds "
-                        "a fresh cache, so nothing of it is reused (plan W10)")),
-            "slots": Fact(
-                value=1, provenance="derived",
-                source=("one prompt-cache slot per model: a new request reuses "
-                        "the longest common prefix with the last one, trimming "
-                        "where the layers allow")),
-        },
-        runtime=Fact(value=loader, provenance="derived" if loader else "unknown",
-                     source="loader routing: modalities, the loader setting, and "
-                            "whether mlx-vlm registers this model_type"),
+        cache=_cache_static(),
+        runtime=Fact(value="mlx-vlm", provenance="derived",
+                     source="every MLX model runs on mlx-vlm's engine (plan W10, A2)"),
         context=ContextFacts(
             length=length_fact,
             running=Fact(provenance="not_applicable",
@@ -191,19 +176,26 @@ def describe_static(model_id: str, cfg: dict, config_obj: Any, *,
     )
 
 
-def _text_reuse_static(cfg: dict) -> Fact:
-    """Whether a text-only request can reuse the cache, as far as is knowable
-    before the model loads: the config and drafter gates
-    (cache_defaults.static_reuse_gate, the same function the cache path
-    calls). The mRoPE gate needs the loaded model, so a model that passes
-    these reads unknown until then (describe_observed fills it in)."""
-    from heylook_llm.cache_defaults import resolve_cache_config, static_reuse_gate
+def _cache_static() -> dict:
+    """The prefix cache (vlm_engine: mlx-vlm's APC, in memory), as far as is
+    knowable before load. Mode, image reuse and the byte budget depend on the
+    loaded model and the machine; describe_observed fills them in."""
+    from heylook_llm.providers.common import vlm_engine
 
-    # The cache config the provider will run with: cache_type None (auto) is
-    # resolved at load exactly like this (MLXProvider.load_model).
-    resolved = {**cfg, **resolve_cache_config(cfg, log=False)}
-    gate, why = static_reuse_gate(resolved, allow_reuse=not cfg.get("draft_model_path"))
-    if gate is not None:
-        return Fact(value=False, provenance="derived", source=why)
-    return Fact(provenance="unknown",
-                source="decided at load: needs the loaded model's position state")
+    return {
+        "reuse": Fact(value="prefix cache across requests", provenance="derived",
+                      source="mlx-vlm's automatic prefix cache, held in memory per loaded model"),
+        "reuse_mode": Fact(provenance="unknown",
+                           source=("decided at load from the model's cache layers: checkpoints "
+                                   "(hybrid, sliding-window) or hashed blocks (plain KV)")),
+        "image_reuse": Fact(provenance="unknown",
+                            source="decided at load with the reuse mode"),
+        "checkpoint_interval": Fact(value=vlm_engine.APC_CHECKPOINT_INTERVAL_TOKENS, provenance="derived",
+                                    source="vlm_engine.APC_CHECKPOINT_INTERVAL_TOKENS"),
+        "checkpoint_entries": Fact(value=vlm_engine.APC_CHECKPOINT_ENTRIES, provenance="derived",
+                                   source="vlm_engine.APC_CHECKPOINT_ENTRIES"),
+        "memory_budget_bytes": Fact(provenance="unknown",
+                                    source="mlx-vlm's automatic budget, sized from the Metal working set at load"),
+        "disk": Fact(value=False, provenance="derived",
+                     source="the prefix cache's disk tier is off: it would write prompt-derived state to disk"),
+    }

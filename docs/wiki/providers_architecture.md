@@ -74,38 +74,20 @@ Providers yield [`GenerationChunk`](../../src/heylook_llm/providers/base.py) dat
 
 [`MLXProvider`](../../src/heylook_llm/providers/mlx_provider.py) handles both text-only LLMs and multimodal Vision-Language Models (VLMs) running natively on Apple Silicon Metal.
 
-### 2.1. Library Routing via `effective_loader`
-Text and vision models in MLX require distinct loader architectures:
-- **Text models** use `mlx-lm.utils.load`.
-- **Vision models** use `mlx-vlm.utils.load` to load multimodal projectors and vision towers.
+### 2.1. One Engine: mlx-vlm
+Every MLX model, text-only included, loads with `mlx_vlm.utils.load` and generates on mlx-vlm's own engine (the runtime visibility plan's W10, outcome A2). mlx-vlm has native ports of the text-only families served here, and on them its greedy output matches mlx-lm's token for token (the W10 spike; record in `internal/claude/w10/`). `engine.runtime` therefore reads `mlx-vlm` for every MLX model (and `llama.cpp` for gguf), answered for unloaded models too.
 
-[`loader_routing.py`](../../src/heylook_llm/providers/common/loader_routing.py) resolves `effective_loader` to exactly `"mlx-vlm"` or `"mlx-lm"`, and `is_vlm` derives from it. It is driven by the config's `modalities` + `loader` fields, **not** by the raw `vision` bool (which is now a derived mirror of `"vision" in modalities`):
-- `loader = "auto"` (the default) sends a non-vision model to `mlx-lm`, and a vision model to `mlx-vlm` **unless** mlx-vlm can be shown *positively* not to register its `model_type`, in which case it falls back to `mlx-lm`. It degrades only on positive non-support.
-- An explicit `loader` **forces** the engine -- e.g. `loader = "mlx-lm"` to run a dual-capable VLM strictly as text.
-- **The reported `vision` capability derives from the same resolver.** The provider's image guard reads `is_vlm`, so reading the checkpoint's *declaration* instead once let `/v1/models` advertise images that a 400 then refused. One resolver behind both surfaces is what makes them agree by construction; `modalities` still carries the declaration, and description versus served capability are deliberately different fields.
-- It is on the wire as `engine.runtime` in the engine contract (§1.3), derived via `effective_loader_for_config` so it answers for **unloaded** models too -- the provider *attribute* is null unless the model is resident, which is the opposite of what a harness picking engine arms needs. For gguf it reads `llama.cpp`.
+[`loader_routing.py`](../../src/heylook_llm/providers/common/loader_routing.py) still resolves `effective_loader`, and `is_vlm` still derives from it, but it no longer picks a library. It decides whether a model is served as vision-capable (the reported `vision` capability and the provider's image guard read the same resolver, so `/v1/models` cannot advertise images a 400 then refuses) and which template path renders the prompt. Its retirement is stage 3 of that plan.
 
 Because it reads each model directory's `config.json`, the two admin read routes that build a model response are plain `def` (threadpool), not `async def`.
 
-### 2.2. The Strategy Pattern
-Rather than maintaining separate generation loops, `MLXProvider` unifies generation:
+### 2.2. The Generation Path: `vlm_engine`
+[`vlm_engine.generate`](../../src/heylook_llm/providers/common/vlm_engine.py) runs one request through one mlx-vlm `BatchGenerator`, with mlx-vlm's automatic prefix cache (APC) held per loaded model -- the way mlx-vlm's own server serves requests. The strategies only build the request:
+- **`UnifiedTextStrategy`** renders the prompt (the template path, thinking, continuation shapes), tokenizes it through mlx-vlm's `prepare_inputs` like mlx-vlm's own loop, and hands it to the engine.
+- **`VLMVisionStrategy`** does the same with the images: `prepare_inputs` builds the pixel tensors and the expanded prompt, the vision feature cache supplies cached image features to the embedding step only, and the engine prefills the whole prompt.
+- **`DiffusionStrategy`** covers mlx-vlm diffusion models on their own denoising engine; it does not use `vlm_engine`.
 
-#### UnifiedTextStrategy
-Handles all text-only inference.
-- If the model is a VLM (`is_vlm=True`), the language model component is wrapped in [`LanguageModelLogitsWrapper`](../../src/heylook_llm/providers/common/model_wrappers.py). The vision strategy and warmup build the same wrapper for their own hand-off to the text pipeline -- it is not text-strategy-specific.
-- The wrapper adapts `LanguageModelOutput` into raw `.logits` while preserving transparent access to `.layers` and weights, allowing `mlx_lm.generate.stream_generate` to drive it unmodified.
-
-A third strategy, `DiffusionStrategy`, covers mlx-vlm diffusion models; its availability is probed at runtime and the absent-dependency branch is load-bearing.
-
-#### VLMVisionStrategy (Pre-Filled Cache Pattern)
-Multimodal requests containing images run in two stages:
-1. **Prefill (mirrors mlx-vlm's own loop)**:
-   - `mlx_vlm.utils.prepare_inputs` tokenizes the prompt and processes image tensors.
-   - `get_input_embeddings` runs once; the language model is then driven over embedding chunks, filling a request-local KV cache with every prompt token but the last. That cache is built fresh every request and never enters the cross-request prompt cache (§3.1).
-   - Prefill progress is reported and abort is honoured between chunks.
-2. **Generation**:
-   - `generation_core.run_generation(prompt_tokens=[last token], pre_filled_cache=...)`.
-   - Every generated token, the first included, streams through the same text-generation pipeline: samplers, logits processors, stop tokens, abort handling and token metrics.
+What heylook keeps as its own inside the engine: its sampler and logits processors (penalties scoped to generated tokens by `generation_core.generated_only`), its stop set (resolved once at load and checked in the engine's loop; nothing is added to the shared tokenizer), its streaming detokenizer (§2.4), per-request timing and peak memory, and the `CacheReport`. Prefill progress is read after every prefill chunk from the prompt batch (private fields mlx-vlm's server also reads, pinned by `TestVlmEngineSurface`), and a cancel removes the request between chunks. A generator is closed on the thread that made it; its stream is thread-local.
 
 ### 2.3. Audio Input Is a Loud Refusal on MLX
 Audio towers are stripped at load on the MLX path, so `input_audio` content parts are **gguf-only**. The 400 guard lives in `MLXProvider.create_chat_completion` and must stay loud -- silently dropping an audio part would produce a confident answer about nothing.
@@ -113,7 +95,7 @@ Audio towers are stripped at load on the MLX path, so `input_audio` content part
 ### 2.4. Stop-Token & Detokenizer Hardening
 - **EOS union at load** ([`stop_tokens.py`](../../src/heylook_llm/providers/common/stop_tokens.py)): a raw HF tokenizer does not absorb `generation_config.json`, so a model whose tokenizer declares one eos while its generation config declares several will generate straight past its own end-of-turn. `MLXProvider` unions the generation-config ids into the tokenizer's set at load. Gemma 4 is the live case.
 - Do not confuse that with the **dual-source special-token read** in [`template_info.py`](../../src/heylook_llm/providers/common/template_info.py), which merges `tokenizer_config.json`'s `added_tokens_decoder` with `tokenizer.json`'s `added_tokens` to build an id-to-string map for template validation and the strip set. Different files, different purpose: only the first feeds the stop set generation halts on.
-- **Detokenizer Priming**: `load_model` primes `TokenizerWrapper` with `model_path`. This prevents `mlx-lm` from defaulting to the quadratic `NaiveStreamingDetokenizer`, which re-decodes the entire current line on every single token.
+- **Streaming detokenizer**: the engine streams through mlx-lm's detokenizer, primed at load with `model_path` (`ensure_gen_tokenizer`), with the continuation seam seeded (`continuation_detokenizer`). mlx-vlm's own BPE detokenizer holds every token until the end when none starts with a space -- a count, code, CJK text -- so an answer like that would arrive in one lump; the smoke walk-away check caught it.
 
 ---
 
@@ -134,9 +116,9 @@ The same model can behave differently on the two engines in ways no config field
 
 **Prompt reuse across requests.**
 - *gguf*: `llama-server` reuses the longest common prefix from its slot, restores earlier states from a host-RAM prompt cache, and on sliding-window and hybrid models restores context checkpoints. Image requests are covered, and an image before the match point is not re-encoded. See [its prompt reuse](./llama_server_build_and_spawn.md#46-prompt-reuse-across-requests).
-- *MLX*: one snapshot slot per model ([performance guide §2.1](./performance_optimizations.md#21-single-slot-prompt-cache-the-q7-architecture)), which the vision path bypasses entirely -- any request with an image anywhere in its history re-prefills everything. A language model with instance mRoPE state (the Qwen-VL family, qwen3_5 through mlx-vlm) is gated off reuse by [`_mrope_reuse_safe`](../../src/heylook_llm/providers/common/prompt_cache.py) even on text. The vision feature cache is keyed by the whole image list, so adding an image re-encodes the earlier ones.
+- *MLX*: mlx-vlm's prefix cache, in memory per loaded model ([performance guide §2.1](./performance_optimizations.md#21-the-mlx-prefix-cache)). Hybrid and sliding-window models restore checkpoints taken during prefill; plain KV models reuse hashed blocks. Text follow-ups reuse on every class, and so does a text follow-up in an image conversation on the checkpoint classes. Two known gaps: a turn that adds a new image re-prefills (the request's images are keyed as one hash), and plain KV vision models (qwen3_vl) do not reuse image turns while the cache's disk tier is off.
 
-Closing that gap is the [runtime visibility plan](../project/plan_runtime_visibility.md)'s W10; reporting each request's cache outcome on both engines is its W5.
+The engine switch was the [runtime visibility plan](../project/plan_runtime_visibility.md)'s W10; reporting each request's cache outcome on both engines is its W5.
 
 **Image geometry.** Each engine maps an image's size to a resized size and a token count with its own preprocessing, and they disagree even for one model family: a different per-image token cap, different rounding at a half unit, padding on one side and stretching on the other. So image cost and what the model actually sees must be reasoned about per engine and per model, never per family. The dated per-engine table is the [gguf runtime audit](../testing/gguf_runtime_audit_2026-09-23.md) §4; on llama.cpp the per-image limits are hard-coded per projector rather than read from the model's files, which is why the plan's W4 reports geometry from each engine instead of from a copied table.
 

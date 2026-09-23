@@ -5,6 +5,76 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.86]
+
+### Changed (the MLX engine, plan W10 stage 2a)
+
+- **Every MLX model now loads and generates on mlx-vlm's own engine**
+  (owner decision A2 after the W10 spike). `providers/common/vlm_engine.py`
+  runs one request per mlx-vlm `BatchGenerator` with mlx-vlm's automatic
+  prefix cache (APC) held in memory per loaded model; the text and vision
+  strategies render and tokenize (`prepare_inputs`, mlx-vlm's own path) and
+  hand off. heylook keeps its sampler and generated-only processors, its stop
+  set (resolved once at load), mlx-lm's streaming detokenizer, per-request
+  timing, peak memory and the `CacheReport`.
+- **Cross-request reuse on every MLX class.** Hybrid and sliding-window
+  models (qwen3_5, gemma-4, gpt-oss) restore checkpoints taken during
+  prefill, past the sliding window too; plain KV models reuse hashed blocks.
+  A text follow-up in an image conversation reuses the image turn. Before,
+  qwen3_5 and qwen3_vl never reused, image conversations never reused, and
+  gpt-oss refused every follow-up.
+- `engine.runtime` reads `mlx-vlm` for every MLX model; `engine.cache` for
+  MLX reports the prefix cache (reuse mode, image reuse, checkpoint settings,
+  memory budget, disk tier off).
+- An MLX `draft_model_path` is logged and skipped: speculative decoding is
+  not run on the MLX engine (no served model sets one).
+- Known gaps, owner decisions: a turn that adds a new image re-prefills (APC
+  keys a request's images as one hash); plain KV vision models (qwen3_vl) do
+  not reuse image turns with the disk tier off. Write-ups in
+  `internal/claude/w10/`.
+- The old decode loop, single-slot cache and vision prefill handoff remain
+  as dead code; stage 2b deletes them. Tests of their routing were deleted
+  with the routing.
+
+### Verification
+
+- Unit and contract suites green; `bun run e2e` chat and pages green on
+  `Qwen3.5-0.8B-MLX-8bit` (the streaming-cadence guard included).
+- `scripts/chain_probe.py` (restored == fresh at temperature 0 over four
+  extends and an edit): qwen3_5, gemma-4, Qwen3, gpt-oss every hop identical
+  and reused; Qwen3-VL-32B one hop diverged at an exact top-2 tie (margin
+  zero at bf16: rounding, not a restore bug). Records in
+  `internal/claude/w10/chain/`.
+- Population gate: all 17 served MLX models (every gemma quant, both
+  Qwen-Image PEs, diffusion-gemma, Qwen3-VL-235B) load, warm and answer text,
+  and every vision model answers an image (`internal/claude/w10/population_2a*`).
+- Live: mid-prefill cancel stops within a chunk and the next request runs;
+  prefill progress per chunk; Continue coherent on gemma-4 and Qwen3.5.
+- `tests/smoke`: mlx-vlm arm on Qwen3.5-0.8B plus gguf on
+  `unsloth_Qwen3.8-27B-UD-Q8_K_XL` 59/59 (the new-image turn reported as the
+  known gap); mlx-vlm arm on gpt-oss-20b green except "reports the vision
+  capability", the arm taxonomy stage 3 retires (text models now run on the
+  mlx-vlm engine; the mlx-lm arm has no models). One of three gpt-oss runs
+  produced no answer text within the smoke's budget (harmony has no
+  thinking-off; a long analysis), not seen in four direct repeats.
+- Eval bank on `Qwen3.5-27B-8bit-mlx`: same result as the pre-W10 baseline
+  (every task passes; audio tasks run on no model). Records in
+  `internal/claude/w10/`.
+- `scripts/vendor_frontend.py --check`: marked and dompurify one patch
+  behind upstream, both matching the manifest. Phase 3 precondition:
+  thinking depth is covered on the MLX engine by gpt-oss-20b.
+
+### Fixed along the way
+
+- mlx-vlm's BPE streaming detokenizer held space-free text (a count, code,
+  CJK) until the end; the engine streams through mlx-lm's (the smoke
+  walk-away check caught it as a false "truncated").
+- `chat_template_kwargs` on `/v1/messages` was silently dropped (it is
+  llama-server's spelling, and heylook's own smoke and chain probe sent it,
+  so their thinking-off never applied and one smoke check could not fail).
+  It is now refused with a pointer to `thinking` / `reasoning_effort`;
+  the harnesses send `thinking`.
+
 ## [2.0.85]
 
 ### Fixed

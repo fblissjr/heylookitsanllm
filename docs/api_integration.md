@@ -728,7 +728,10 @@ rather than a guarantee, for reasons the closing note gives:
   server's sampler cascade decides, which is the point.
 - **`thinking` is a bool**, not Anthropic's `{"type": "adaptive"}` config
   object. It is the local-model `enable_thinking` template switch, a
-  different mechanism that happens to share a name.
+  different mechanism that happens to share a name. The template variables
+  are top-level fields (`thinking`, `reasoning_effort`); a request sending
+  llama-server's `chat_template_kwargs` gets a 422 naming them (v2.0.86)
+  rather than a silent drop.
 - **No tools.** No `tools`, `tool_use`, or `tool_result`, so no `tool_use`
   stop reason.
 - **Thinking blocks carry no `signature`.** Anthropic's is

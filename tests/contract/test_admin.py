@@ -55,9 +55,9 @@ class TestAdminEffectiveLoader:
         rows = {m["id"]: m for m in resp.json()["models"]}
         row = rows["test-mlx-model"]
         assert row["loaded"] is False
-        # Non-vision mlx -> the text loader, with no probe of mlx-vlm's
-        # registry and no read of a model dir that does not exist.
-        assert row["engine"]["runtime"]["value"] == "mlx-lm"
+        # Every MLX model runs on mlx-vlm's engine (plan W10, A2), answered
+        # with no read of a model dir that does not exist.
+        assert row["engine"]["runtime"]["value"] == "mlx-vlm"
 
     def test_single_model_route_agrees_with_the_list(self, client):
         """Both admin reads build the same response object; pin that they

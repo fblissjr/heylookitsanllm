@@ -32,12 +32,16 @@ ap.add_argument("--out", default="internal/claude/chain_probe",
                 help="directory for the JSON record (gitignored by default)")
 a = ap.parse_args()
 
-SYSTEM = "You are a concise assistant. Answer in one or two sentences."
+# Longer than the MLX prefix cache's checkpoint interval
+# (vlm_engine.APC_CHECKPOINT_INTERVAL_TOKENS), so a checkpoint model has a
+# boundary to restore from; a shorter prompt proves nothing either way.
+SYSTEM = ("You are a concise assistant. Answer in one or two sentences. "
+          "Prefer plain words, name the thing you mean, and do not hedge. ") * 8
 
 def ask(messages):
     body = {"model": a.model, "max_tokens": a.max_tokens, "stream": False,
             "temperature": 0.0, "system": SYSTEM, "messages": messages,
-            "chat_template_kwargs": {"enable_thinking": False}}
+            "thinking": False}
     r = urllib.request.Request(a.server + "/v1/messages", data=json.dumps(body).encode(),
                                headers={"Content-Type": "application/json"})
     b = json.loads(urllib.request.urlopen(r, timeout=900).read())

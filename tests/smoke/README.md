@@ -122,14 +122,16 @@ claim is true.
 ## Prompt reuse
 
 Each arm also checks prompt reuse across requests (plan W5, and W10's
-acceptance test): a repeated system prompt, a text follow-up, and turn 2 of an
-image conversation on a vision model. One relation everywhere, never a count:
+acceptance test): a repeated system prompt, a text follow-up, a text follow-up
+in an image conversation, and a turn that adds a new image. On MLX the last
+is a named known gap (the prefix cache keys a request's images as one hash;
+owner decision 2026-09-23), reported as skipped rather than passed. One relation everywhere, never a count:
 the follow-up reuses at least half of what the request before it sent. A fresh
 cache per request reuses nothing, and a template that re-renders a finished
 turn differently sends a checkpointed model back before the history; both fail
-it. A request the engine reports as `ineligible` (today: every MLX request that
-goes through mlx-vlm, for the mRoPE or vision-path gate) is reported as the
-known gap W10, not as a pass or a failure.
+it. A request the engine reports as `ineligible`, or an MLX miss whose cause is
+`trim_refused`, is reported as the known gap W10, not as a pass or a failure;
+since the engine switch (v2.0.86) the MLX path reports neither.
 
 ## Fixtures
 

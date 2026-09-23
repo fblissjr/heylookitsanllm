@@ -432,6 +432,11 @@ def test_internal_spellings_are_refused_not_silently_dropped(client):
         assert right in r.text, \
             f"the {wrong} refusal does not name `{right}`: {r.text[:200]}"
 
+    # llama-server's spelling of the template variables (2026-09-23: a
+    # heylook harness sent it for weeks and never turned thinking off).
+    r = client.post("/v1/messages", json={**body, "chat_template_kwargs": {"enable_thinking": False}})
+    assert r.status_code == 422 and "thinking" in r.text and "reasoning_effort" in r.text, r.text[:200]
+
     # The correct spellings must still be accepted -- a guard that refuses the
     # real field name would be a far worse bug than the one it fixes.
     r = client.post("/v1/messages", json={
