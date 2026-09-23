@@ -17,7 +17,6 @@ from heylook_llm.providers.contract import (
     ContextFacts,
     EngineDescription,
     Fact,
-    Setting,
     StaticInputs,
     TemplateFacts,
     config_digest,
@@ -165,9 +164,20 @@ def describe_static(model_id: str, cfg: dict, config_obj: Any, *,
 
     settings = config_settings(MLXModelConfig, config_obj, written=written,
                                derived=derived, engine_default="mlx-lm/mlx-vlm")
-    settings["prompt_cache"] = _prompt_cache_static(cfg)
 
     return EngineDescription(
+        cache={
+            "text_reuse": _text_reuse_static(cfg),
+            "image_requests": Fact(
+                value="fresh cache", provenance="derived",
+                source=("a request with an image anywhere in its history builds "
+                        "a fresh cache, so nothing of it is reused (plan W10)")),
+            "slots": Fact(
+                value=1, provenance="derived",
+                source=("one prompt-cache slot per model: a new request reuses "
+                        "the longest common prefix with the last one, trimming "
+                        "where the layers allow")),
+        },
         runtime=Fact(value=loader, provenance="derived" if loader else "unknown",
                      source="loader routing: modalities, the loader setting, and "
                             "whether mlx-vlm registers this model_type"),
@@ -181,11 +191,12 @@ def describe_static(model_id: str, cfg: dict, config_obj: Any, *,
     )
 
 
-def _prompt_cache_static(cfg: dict) -> Setting:
-    """What can be said about cache reuse before the model is loaded: the
-    config and drafter gates (cache_defaults.static_reuse_gate, the same
-    function the cache path calls). The mRoPE gate needs the loaded model,
-    so a model that passes these reads unknown until then."""
+def _text_reuse_static(cfg: dict) -> Fact:
+    """Whether a text-only request can reuse the cache, as far as is knowable
+    before the model loads: the config and drafter gates
+    (cache_defaults.static_reuse_gate, the same function the cache path
+    calls). The mRoPE gate needs the loaded model, so a model that passes
+    these reads unknown until then (describe_observed fills it in)."""
     from heylook_llm.cache_defaults import resolve_cache_config, static_reuse_gate
 
     # The cache config the provider will run with: cache_type None (auto) is
@@ -193,6 +204,6 @@ def _prompt_cache_static(cfg: dict) -> Setting:
     resolved = {**cfg, **resolve_cache_config(cfg, log=False)}
     gate, why = static_reuse_gate(resolved, allow_reuse=not cfg.get("draft_model_path"))
     if gate is not None:
-        return Setting(value=False, auto=False, provenance="derived", reason=why)
-    return Setting(provenance="unknown", reason=(
-        "decided at load: needs the loaded model's position state"))
+        return Fact(value=False, provenance="derived", source=why)
+    return Fact(provenance="unknown",
+                source="decided at load: needs the loaded model's position state")

@@ -533,6 +533,25 @@ class LlamaServerProvider(BaseProvider):
     # Pinned against the build tree's common/common.h by
     # test_non_causal_table_matches_the_build.
     LLAMA_DEFAULT_N_UBATCH = 512
+    # llama-server's prompt-cache defaults (common/common.h: cache_ram_mib,
+    # n_ctx_checkpoints, checkpoint_min_step), what a spawn gets unless
+    # cache_ram_mb or extra_args say otherwise. Pinned against the build tree
+    # by test_non_causal_table_matches_the_build.
+    LLAMA_DEFAULT_CACHE_RAM_MIB = 8192
+    LLAMA_DEFAULT_CTX_CHECKPOINTS = 32
+    LLAMA_DEFAULT_CHECKPOINT_MIN_STEP = 8192
+
+    @staticmethod
+    def extra_arg_value(extra_args, names) -> Optional[str]:
+        """The value extra_args gives any spelling in ``names`` (``--f N`` or
+        ``--f=N``); the last one wins, as in llama.cpp's own parse."""
+        args = [str(a) for a in (extra_args or [])]
+        found = None
+        for i, a in enumerate(args):
+            flag, eq, val = a.partition("=")
+            if flag in names:
+                found = val if eq else (args[i + 1] if i + 1 < len(args) else None)
+        return found
 
     # "The life of the process" as a number, because ggml-metal has no
     # "forever": it counts the keep-alive down in 5 ms ticks in an atomic_int,

@@ -180,17 +180,20 @@ export function renderEngine(engine, { fields = null } = {}) {
 // The chat bar's compact view: what runs this model, its context, and the
 // template in force, with the full panel one link away. No settings: the
 // chat sampler panel owns the per-request ones, and everything else lives on
-// the models page. A later slot (W5's cache profile) adds its line here.
+// the models page. The cache line is the one reuse fact each engine leads
+// with: gguf's reuse class, MLX's text reuse.
 export function renderEngineCompact(engine) {
   if (!engine) {
     return createEl('div', { class: 'muted small' }, ['This server reports no engine description.']);
   }
+  const reuse = engine.cache?.reuse_class ?? engine.cache?.text_reuse;
   const rows = [
     factRow('runtime', engine.runtime?.value, engine.runtime?.provenance, engine.runtime?.source),
     ...slotRows({ context: engine.context || {} }),
     factRow('template', engine.template?.origin?.value, engine.template?.origin?.provenance,
       engine.template?.origin?.source),
   ];
+  if (reuse) rows.push(factRow('cache reuse', reuse.value, reuse.provenance, reuse.source));
   return createEl('div', { class: 'engine-panel__body engine-panel__body--compact' }, [
     ...rows,
     createEl('a', { href: '#/models', class: 'small' }, ['Every setting and why: Models page']),

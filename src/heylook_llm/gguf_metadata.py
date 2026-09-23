@@ -367,3 +367,26 @@ def context_length(primary: Path) -> Optional[int]:
             value = raw
     _context_length_cache[key] = value
     return value
+
+
+def memory_kind(primary: Path) -> Optional[str]:
+    """How the model's KV/state can be rolled back, read off the header:
+    ``hybrid_recurrent`` (``<arch>.ssm.*`` keys: a recurrent state that
+    cannot be truncated), ``sliding_window`` (``<arch>.attention
+    .sliding_window``), else ``full_attention``. None when unreadable.
+
+    llama.cpp decides checkpointing at load from the memory it builds, so
+    this is the header's answer, not the runtime's; a model with neither key
+    (a sparse-attention variant, say) may still checkpoint.
+    """
+    arch = architecture(primary)
+    if not arch:
+        return None
+    meta = safe_read_metadata(primary, {f"{arch}.ssm.state_size",
+                                        f"{arch}.ssm.conv_kernel",
+                                        f"{arch}.attention.sliding_window"})
+    if f"{arch}.ssm.state_size" in meta or f"{arch}.ssm.conv_kernel" in meta:
+        return "hybrid_recurrent"
+    if f"{arch}.attention.sliding_window" in meta:
+        return "sliding_window"
+    return "full_attention"

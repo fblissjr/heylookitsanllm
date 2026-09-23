@@ -90,8 +90,10 @@ class EngineDescription(BaseModel):
     settings: Dict[str, Setting] = Field(
         description="Every config field plus the load decisions with no field, "
                     "keyed by name.")
-    cache: Optional[Dict[str, Any]] = Field(
-        default=None, description="Cache profile (plan W5). Null until reported.")
+    cache: Optional[Dict[str, Fact]] = Field(
+        default=None,
+        description="Cache profile (plan W5): how this model reuses a prompt "
+                    "across requests, each fact with its provenance.")
     thinking: Optional[Dict[str, Any]] = Field(
         default=None, description="Thinking controls (plan W2). Null until reported.")
     image: Optional[Dict[str, Any]] = Field(
@@ -106,6 +108,7 @@ class Observed:
     context_running: Optional[Fact] = None
     loaded_template: Optional[str] = None
     settings: Dict[str, Setting] = field(default_factory=dict)
+    cache: Dict[str, Fact] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +239,8 @@ def with_observed(static: EngineDescription, observed: Observed) -> EngineDescri
         source="the template body read when this process loaded"
         if observed.loaded_template else "the running process recorded no template body")
     desc.settings.update(observed.settings)
+    if observed.cache:
+        desc.cache = {**(desc.cache or {}), **observed.cache}
     return desc
 
 

@@ -140,6 +140,7 @@ def describe_static(model_id: str, cfg: dict, config_obj: Any, *,
     })
 
     return EngineDescription(
+        cache=_cache_profile(cfg, settings),
         runtime=Fact(value="llama.cpp", provenance="derived",
                      source="provider gguf runs one llama-server per model"),
         context=ContextFacts(
@@ -151,3 +152,72 @@ def describe_static(model_id: str, cfg: dict, config_obj: Any, *,
         template=_template(model_id, cfg),
         settings=settings,
     )
+
+
+_KIND_LABEL = {
+    "hybrid_recurrent": ("checkpointed", "a recurrent state that cannot be truncated"),
+    "sliding_window": ("checkpointed", "sliding-window attention"),
+    "full_attention": ("truncates anywhere", "full attention"),
+}
+
+
+def _cache_profile(cfg: dict, settings: dict) -> dict:
+    """How llama-server reuses this model's prompt across requests (plan
+    W5): the reuse class from the header, KV shift, the host-RAM prompt
+    cache and the checkpoint settings, each as it will be spawned."""
+    from heylook_llm import gguf_metadata
+
+    P = _provider()
+    out = {}
+    kind = gguf_metadata.memory_kind(Path(str(cfg.get("model_path") or "")).expanduser())
+    if kind:
+        cls, why = _KIND_LABEL[kind]
+        out["reuse_class"] = Fact(
+            value=cls, provenance="derived",
+            source=(f"the GGUF header says {why}: a new request reuses up to "
+                    + ("the latest checkpoint at or before where it diverges"
+                       if cls == "checkpointed" else "the point where it diverges")
+                    + ". llama.cpp decides at load from the memory it builds, so "
+                      "this is the header's answer"))
+    else:
+        out["reuse_class"] = Fact(provenance="unknown", source="the GGUF header is unreadable")
+
+    if cfg.get("mmproj_path"):
+        out["kv_shift"] = Fact(value=False, provenance="derived", source=(
+            "llama-server forces KV shifting (cache_reuse) and context shift off "
+            "whenever a projector loads"))
+    else:
+        shift = P.extra_arg_value(cfg.get("extra_args"), {"--cache-reuse"})
+        out["kv_shift"] = Fact(
+            value=bool(shift and shift != "0"), provenance="derived",
+            source="--cache-reuse in extra_args" if shift
+            else "llama-server's default: cache_reuse 0, off")
+
+    # extra_args follows -cram in the argv, so it is what llama-server keeps.
+    ram = cfg.get("cache_ram_mb")
+    ram_extra = P.extra_arg_value(cfg.get("extra_args"), {"-cram", "--cache-ram"})
+    if ram_extra is not None:
+        out["ram_budget_mib"] = Fact(value=int(ram_extra), provenance="configured",
+                                     source="-cram in extra_args (-1 unlimited, 0 off)")
+    elif ram is not None:
+        out["ram_budget_mib"] = Fact(value=ram, provenance=settings["cache_ram_mb"].provenance,
+                                     source="cache_ram_mb for this model (-1 unlimited, 0 off)")
+    else:
+        out["ram_budget_mib"] = Fact(
+            value=P.LLAMA_DEFAULT_CACHE_RAM_MIB, provenance="derived",
+            source=("llama-server's default host-RAM prompt cache; an entry "
+                    "larger than it is skipped, not stored"))
+
+    for key, names, default, what in (
+        ("checkpoints", {"-ctxcp", "--ctx-checkpoints", "--swa-checkpoints"},
+         P.LLAMA_DEFAULT_CTX_CHECKPOINTS, "context checkpoints kept per slot"),
+        ("checkpoint_min_spacing", {"-cms", "--checkpoint-min-step"},
+         P.LLAMA_DEFAULT_CHECKPOINT_MIN_STEP, "minimum tokens between checkpoints"),
+    ):
+        given = P.extra_arg_value(cfg.get("extra_args"), names)
+        out[key] = Fact(value=int(given) if given is not None else default,
+                        provenance="configured" if given is not None else "derived",
+                        source=f"{what} (" + ("extra_args" if given is not None
+                                              else "llama-server's default") + ")")
+    return out
+

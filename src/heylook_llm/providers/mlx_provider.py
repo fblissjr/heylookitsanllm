@@ -1083,21 +1083,17 @@ class MLXProvider(BaseProvider):
         at load, and the prompt-cache verdict from the SAME function the
         cache path calls per request (prompt_cache.reuse_verdict)."""
         from .common.prompt_cache import reuse_verdict
-        from .contract import Observed, Setting
+        from .contract import Fact, Observed
 
         model = getattr(self, "model", None)
-        settings = {}
+        cache = {}
         if model is not None:
             gate, why = reuse_verdict(self.config, model,
                                       allow_reuse=getattr(self, "draft_model", None) is None)
-            if gate is None:
-                why = ("reuse enabled for text-only requests; a request with an "
-                       "image anywhere in its history builds a fresh cache "
-                       "(plan W10)")
-            settings["prompt_cache"] = Setting(
-                value=gate is None, auto=gate is None, reason=why,
-                provenance="observed")
-        return Observed(loaded_template=self.loaded_chat_template, settings=settings)
+            cache["text_reuse"] = Fact(
+                value=gate is None, provenance="observed",
+                source="reuse enabled for text-only requests" if gate is None else why)
+        return Observed(loaded_template=self.loaded_chat_template, cache=cache)
 
     def load_model(self):
         model_path = self.config['model_path']

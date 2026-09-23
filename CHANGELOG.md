@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.79]
+
+### Changed (the engine contract)
+
+- **`engine.cache` is filled (plan W5, commit 2).** Each `/v1/models` and
+  `/v1/admin/models` row now carries the model's prompt-cache profile as a
+  map of Facts, with keys fixed per engine whether loaded or not.
+  - gguf: `reuse_class` (`checkpointed` when the GGUF header declares a
+    recurrent state or sliding-window attention, `truncates anywhere` for
+    full attention; new `gguf_metadata.memory_kind`), `kv_shift` (false
+    whenever a projector loads, since llama-server forces it off),
+    `ram_budget_mib`, `checkpoints` and `checkpoint_min_spacing`, each as the
+    spawn will get it: `extra_args` first, then `cache_ram_mb`, then
+    llama-server's default. The three defaults are pinned against the build
+    tree's `common/common.h`.
+  - MLX: `text_reuse` (false with the refusing gate's reason from the config
+    or drafter gate; `unknown` until load, then `observed` from the verdict
+    the cache path itself uses), `image_requests` (a fresh cache, plan W10),
+    `slots` (one).
+  - MLX's `prompt_cache` entry left `engine.settings`; it is
+    `engine.cache.text_reuse` now.
+  - The chat bar's compact engine view shows the leading reuse fact; the
+    models page panel shows the whole profile through the generic renderer.
+  - Spec §4 and the providers wiki page describe the slot.
+
 ## [2.0.78]
 
 ### Changed (breaking, the Messages wire and heylook_saved)

@@ -626,14 +626,24 @@ cache, thinking, image, steering}`.
   the body the next load uses, and the sha256 of the body the running process loaded.
 - `settings` covers EVERY configurable field of the provider (derived from the config
   class, never listed) plus load decisions with no field: gguf `binary`,
-  `image_max_tokens`, `metal_keep_alive`; MLX `prompt_cache`. `configured` is non-null
+  `image_max_tokens`, `metal_keep_alive`. `configured` is non-null
   only for a value a models.toml entry stores AND that differs from what discovery derives
   for that file (else the schema default): a materialized entry's copies read as
   `derived` with reason "stored ... same as derived". Sampler keys carry the cascade's
   own answer, equal to `sampler_defaults`. The micro-batch and image cap on gguf are
   `unknown` until a spawn decides them.
-- `cache`, `thinking`, `image`, `steering` are explicit nulls until W5, W2, W4 and W14
-  report them.
+- `cache` (v2.0.79, plan W5) is the model's prompt-cache profile, a map of Facts whose
+  keys are fixed per engine, loaded or not. gguf: `reuse_class` (`checkpointed` for a
+  recurrent or sliding-window header, `truncates anywhere` for full attention; the
+  header's answer, since llama.cpp decides from the memory it builds), `kv_shift`
+  (false whenever a projector loads), `ram_budget_mib`, `checkpoints`,
+  `checkpoint_min_spacing` -- each as the spawn will get it: `extra_args`, then
+  `cache_ram_mb`, then llama-server's default. MLX: `text_reuse` (false with the gate's
+  reason when a config or drafter gate refuses reuse; `unknown` until load, then
+  `observed` from the same verdict the cache path uses), `image_requests` (`fresh cache`,
+  plan W10), `slots` (1). What a request actually reused is `usage` and
+  `performance.cache`, not this.
+- `thinking`, `image`, `steering` are explicit nulls until W2, W4 and W14 report them.
 - No absolute path appears anywhere in `engine` (LAN clients read `/v1/models`); paths
   are basenames. The admin row's `config` still carries full paths.
 - Checked through both routes by `tests/contract/test_engine_contract.py`.

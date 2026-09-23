@@ -6,10 +6,12 @@ route carries is the failure this file exists to catch.
 
 Properties, not examples:
 - the same `engine` keys on every row, whatever the engine;
-- a value with provenance unknown or not_applicable is null;
+- a value with provenance unknown or not_applicable is null, in the fixed
+  slots and in every Fact of the cache profile;
 - a configured value is marked configured;
 - the settings cover every configurable field of the row's provider, and
-  rows of one provider share one key set, loaded or not;
+  rows of one provider share one settings key set and one cache key set,
+  loaded or not;
 - the sampler settings carry the cascade's own answer (sampler_defaults);
 - no absolute path anywhere in /v1/models (LAN clients read it).
 """
@@ -21,7 +23,7 @@ from heylook_llm.providers.contract import EngineDescription
 FACT_LEAVES = (("runtime",), ("context", "length"), ("context", "running"),
                ("template", "origin"), ("template", "path"),
                ("template", "sha256"), ("template", "running_sha256"))
-FUTURE_SLOTS = ("cache", "thinking", "image", "steering")
+FUTURE_SLOTS = ("thinking", "image", "steering")
 
 
 def _rows(client):
@@ -47,10 +49,15 @@ def _check(route, row):
     assert set(engine) == set(EngineDescription.model_fields), rid
     for slot in FUTURE_SLOTS:
         assert engine[slot] is None, f"{rid}: {slot} is filled by a later workstream"
+    facts = []
     for path in FACT_LEAVES:
         fact = engine
         for key in path:
             fact = fact[key]
+        facts.append((path, fact))
+    assert engine["cache"], f"{rid}: every engine reports a cache profile"
+    facts += [(("cache", k), f) for k, f in engine["cache"].items()]
+    for path, fact in facts:
         assert set(fact) == {"value", "provenance", "source"}, (rid, path)
         if fact["provenance"] in ("unknown", "not_applicable"):
             assert fact["value"] is None, (rid, path, fact)
@@ -81,14 +88,12 @@ def test_every_row_honours_the_contract_loaded_or_not(client):
     for route, row in after:
         _check(route, row)
 
-    def key_sets(rows):
+    for slot in ("settings", "cache"):
         sets = {}
-        for _, row in rows:
-            sets.setdefault(row["provider"], set()).add(frozenset(row["engine"]["settings"]))
-        return sets
-
-    for provider, variants in key_sets(before + after).items():
-        assert len(variants) == 1, f"{provider} rows disagree on settings keys"
+        for _, row in before + after:
+            sets.setdefault(row["provider"], set()).add(frozenset(row["engine"][slot]))
+        for provider, variants in sets.items():
+            assert len(variants) == 1, f"{provider} rows disagree on {slot} keys"
 
 
 def test_no_absolute_path_on_the_public_list(client, mock_router):

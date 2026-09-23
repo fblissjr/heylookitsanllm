@@ -91,6 +91,11 @@ def test_non_causal_table_matches_the_build():
     common = (tree / "common/common.h").read_text()
     assert re.search(rf"\bn_ubatch\s*=\s*{P.LLAMA_DEFAULT_N_UBATCH};", common)
     assert re.search(rf"\bn_batch\s*=\s*{GGUFModelConfig.LLAMA_DEFAULT_N_BATCH};", common)
+    # The cache profile (engine.cache) reports these as what a spawn gets.
+    for field, value in (("cache_ram_mib", P.LLAMA_DEFAULT_CACHE_RAM_MIB),
+                         ("n_ctx_checkpoints", P.LLAMA_DEFAULT_CTX_CHECKPOINTS),
+                         ("checkpoint_min_step", P.LLAMA_DEFAULT_CHECKPOINT_MIN_STEP)):
+        assert re.search(rf"\b{field}\s*=\s*{value};", common), field
 
 
 @pytest.mark.unit
