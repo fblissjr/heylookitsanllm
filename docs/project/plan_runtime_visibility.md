@@ -326,6 +326,11 @@ Until then, W5 surfaces the budget and every skip.
 - Exposed in the chat settings panel.
 - The quality cost of a hard cut is unmeasured. The control is disclosed as a
   cap, not a quality-neutral setting.
+- **Re-point the eval bank's `thinking_requested_split`.** Until a hard
+  budget exists it measures verbosity, not the split: a small model that
+  thinks past the task's token budget fails it with a clean split (seen on
+  Qwen3.5-0.8B at the v2.0.71 port). With W7, the task checks that the budget
+  is honoured and the split is clean.
 
 ### W8. Non-causal image decode guard (shipped v2.0.70)
 
@@ -515,9 +520,34 @@ implementations of one contract instead.
   multi-turn vision to a gguf copy until W10 lands) is not in scope. Each
   model id maps to one engine. Revisit only if W10 fails.
 
+**Adopted refinements (2026-09-23, agreed across sessions and with the owner):**
+- **Two halves in code, provenance on every value on the wire.**
+  - The static half is functions over the config, never a loaded provider,
+    so it answers for unloaded models. It is cached by a stamp over EVERY
+    input that can change the answer, not just the weights: the template
+    ladder files (override and sidecar included), the mmproj, and for
+    gguf-derived facts the build manifest's commit. Each engine declares its
+    inputs beside the resolvers that read them, so the stamp is derived.
+  - The observed half comes from the running process and is null until the
+    model is loaded.
+  - Each value carries its provenance (`derived`, `observed`,
+    `observed_cached`, or unknown) rather than consumers inferring it from
+    which half produced it. `observed_cached` is W4's spawn-time probe,
+    cached on disk by binary version and mmproj hash.
+- **A load report, engine-neutral from the start.** What the provider
+  decided at load becomes visible in the product instead of only in logs:
+  - gguf: the auto micro-batch, the W8 image cap, the template rung, the W9
+    keep-alive, and which binary;
+  - MLX: the effective loader, prompt-cache eligibility and the reason when
+    ineligible, and the template rung.
+- **One conformance test, on the carrying path.** It asserts on the
+  `/v1/models` and admin-row responses through their routes, not on
+  `describe()` alone: the same key set on both engines, each key a value or an
+  explicit null. One property, not a family of examples.
+
 **Order.** Before W5, which is the first workstream to add per-engine data.
 Define the contract with W5's report as its first member, then W2/W4/W1
-extend it.
+extend it. The types are sketched for the owner's review before any code.
 
 ### W14. Activation steering (gated on the research track)
 
