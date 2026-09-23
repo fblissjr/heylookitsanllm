@@ -137,6 +137,20 @@ models.toml keeps only what is not per-model: scan folders, the default model,
 the load limit. Once it lists no models, it should stop being named as if it
 does.
 
+> **DECIDED 2026-09-23 (owner):** models.toml is not the source of truth for
+> anything per-model in the end state. It becomes ONE server config file,
+> `config.toml` (name open to a better one), easy to read and edit by hand,
+> holding every server-wide setting. That includes the keys in the DuckDB
+> `settings` table today (`observability_level`,
+> `observability_retention_days`, `mlx_cache_limit_gb`), so server settings
+> stop living in two places.
+>
+> To settle when this phase is built: which UI-editable settings keep a UI
+> writer (the comment-preserving writer exists) versus become file-only; and
+> whether `request_log_enabled`, `model_event_log_enabled` and
+> `baseline_log_interval_seconds` are superseded by `observability_level`
+> (unchecked).
+
 ### The trade this makes
 
 Making entries per-field OVERLAYS was considered and rejected, mainly because
@@ -316,7 +330,9 @@ fact: `_materialize_discovered` is called from `update_config` and
 
 - The admin config editor writes the sidecar instead of materializing an entry.
 - **Materialization is deleted**, and with it the trap it caused twice.
-- `heylookllm import` retires. Its derivation half MUST stay:
+- `heylookllm import` retires. **Pulled forward and done separately
+  (owner, 2026-09-23)**, before the sidecar exists: every model lives in a
+  scan folder, so its last use is gone. Its derivation half MUST stay:
   `model_registry.discover` imports `ModelImporter`, so discovery and the
   importer are one derivation called from two places. What retires is the WRITE
   half — `generate_toml` has exactly one production caller, the CLI entry point
