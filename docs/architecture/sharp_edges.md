@@ -1229,6 +1229,17 @@ keeps mutating its own (that was live-verified process-poisoning). See
 [mlx_provider.md](./mlx_provider.md) §4.2 and the
 [postmortems](./postmortems/).
 
+The two engines' cache classes do not share a contract. mlx-lm folded
+`meta_state` into `state` (#1778), and for a while the slot kept `state` alone
+on that basis. mlx-vlm vendors its own cache module, whose `RotatingKVCache`
+keeps offset and write index only in `meta_state`, so every gemma-4
+sliding-window layer restored at offset 0: each follow-up's trim was refused
+and reported as `trim_refused` (found through W5's cause field, 2026-09-23;
+fixed v2.0.84, `_Slot.metas`). An extension on that restore would have
+continued from the wrong position. Check both engines' cache classes before
+trusting a round-trip, and prove it with the greedy chain probe
+(`internal/claude/w10/chain_probe.py`), not a unit test on one engine's class.
+
 The vision feature cache is keyed by the request's whole image-URL list joined
 in order, so adding one image to a conversation re-encodes every image in it;
 the pixel-hash fallback in the module is never reached from that caller. A

@@ -175,6 +175,30 @@ class TestTrimInvariant:
         keys, _values = layer.keys_and_values()
         assert keys.shape[2] == 40
 
+    def test_mlx_vlm_rotating_layer_restores_its_offset(self):
+        """mlx-vlm vendors its own cache module, where a RotatingKVCache's
+        offset lives only in meta_state. A slot that kept `state` alone
+        restored gemma-4's sliding-window layers at offset 0, so every trim
+        was refused (live, 2026-09-23). Inside its window the layer must
+        restore, trim to the boundary, and report nothing refused."""
+        from mlx_vlm.models.cache import RotatingKVCache as VlmRotating
+
+        def rotating_of_len(n):
+            c = VlmRotating(max_size=64, keep=0)
+            c.update_and_fetch(mx.zeros((1, 2, n, 4)), mx.zeros((1, 2, n, 4)))
+            return c
+
+        mgr = get_global_cache_manager()
+        prompt, reply = list(range(30)), list(range(1000, 1006))
+        fresh = lambda: [VlmRotating(max_size=64, keep=0)]
+        _generate(mgr, "slot-vlm-rot", prompt, reply,
+                  cache_layers=[rotating_of_len(36)], fresh=fresh)
+        edited = prompt + list(range(7000, 7004))       # diverges in the tail
+        to_process, pc = _lookup(mgr, "slot-vlm-rot", edited, fresh=fresh)
+        assert pc._radix_matched_len == 30
+        assert pc.cache[0].offset == 30
+        assert to_process == list(range(7000, 7004))
+
     def test_full_length_match_trims_before_the_reprocessed_token(self):
         mgr = get_global_cache_manager()
         prompt = list(range(30))

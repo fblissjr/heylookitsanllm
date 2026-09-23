@@ -134,12 +134,17 @@ def _materialize(layers: List[Any]) -> int:
 class _Slot:
     """One model's persistent cache: immutable per-layer snapshots of the
     last completed generation. ``layers`` holds one ``state`` per layer in
-    layer order -- every cache type mlx-lm ships round-trips through that
-    one property (its own save/load_prompt_cache contract; ``meta_state``
-    was folded into it upstream in #1778)."""
+    layer order; ``metas`` the layer's ``meta_state`` where its class has
+    one, else None. mlx-lm folded ``meta_state`` into ``state`` upstream
+    (#1778), but mlx-vlm vendors its own cache module, and its
+    RotatingKVCache still keeps offset and write index ONLY in
+    ``meta_state`` -- restoring ``state`` alone brought a gemma-4
+    sliding-window layer back at offset 0 (every trim refused; an
+    extension would have continued from the wrong position)."""
     tokens: List[int]
     layers: List[Any]
     nbytes: int
+    metas: List[Any] = field(default_factory=list)
 
 
 def _copy_arrays(x):
@@ -160,14 +165,23 @@ def _snapshot_layers(cache: List[Any]) -> List[Any]:
     return [_copy_arrays(layer.state) for layer in cache]
 
 
+def _snapshot_metas(cache: List[Any]) -> List[Any]:
+    """Each layer's ``meta_state`` (plain strings/ints, nothing lazy), or
+    None for a class without one -- see _Slot."""
+    return [getattr(layer, "meta_state", None) for layer in cache]
+
+
 def _restore_layers(slot: _Slot, model: Any, cache_config: dict) -> List[Any]:
     """Fresh cache objects seeded from the slot's snapshots."""
     cache = make_cache(model, cache_config)
-    for layer, state in zip(cache, slot.layers):
+    metas = slot.metas or [None] * len(slot.layers)
+    for layer, state, meta in zip(cache, slot.layers, metas):
         arrays: list = []
         _flat_arrays(state, arrays)
         if arrays:  # an empty layer's state round-trips as no-op
             layer.state = state
+            if meta:  # after state: it carries the offset state cannot
+                layer.meta_state = meta
     return cache
 
 
@@ -287,7 +301,8 @@ class PromptCacheManager:
                 self._update_lru_unlocked(model_id)
             return slot
 
-    def _put_slot(self, model_id: str, tokens: List[int], layers: List[Any], nbytes: int) -> None:
+    def _put_slot(self, model_id: str, tokens: List[int], layers: List[Any], nbytes: int,
+                  metas: List[Any] | None = None) -> None:
         with self._lock:
             # Under GPU memory pressure, other models' slots are the
             # reclaimable thing we own -- drop them before storing this one.
@@ -295,7 +310,8 @@ class PromptCacheManager:
                 for other in [m for m in self._slots if m != model_id]:
                     self._slots.pop(other, None)
                 logging.debug("Memory pressure: dropped other models' cache slots")
-            self._slots[model_id] = _Slot(tokens=list(tokens), layers=layers, nbytes=nbytes)
+            self._slots[model_id] = _Slot(tokens=list(tokens), layers=layers, nbytes=nbytes,
+                                          metas=list(metas or []))
             self._update_lru_unlocked(model_id)
 
     def _update_lru_unlocked(self, model_id: str):
@@ -494,7 +510,8 @@ def store_generation_cache(
     layers = _snapshot_layers(generation_cache)
     nbytes = _materialize(layers)  # eval the EXACT arrays being stored
     manager = get_global_cache_manager()
-    manager._put_slot(model_id, full_tokens[:processed], layers, nbytes)
+    manager._put_slot(model_id, full_tokens[:processed], layers, nbytes,
+                      _snapshot_metas(generation_cache))
     prompt_cache.tokens = full_tokens
 
     logging.debug(

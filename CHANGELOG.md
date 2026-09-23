@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.84]
+
+### Fixed
+
+- **gemma-4 (and any mlx-vlm model with sliding-window layers) never reused
+  its prompt cache on a follow-up.** The slot restored each layer's `state`
+  only, on the basis that mlx-lm folded `meta_state` into it (#1778). mlx-vlm
+  vendors its own cache module, whose `RotatingKVCache` keeps offset and
+  write index only in `meta_state`, so a restored sliding-window layer came
+  back at offset 0 and every trim was refused (reported, wrongly for this
+  cause, as `trim_refused`). An extension on such a restore would have
+  continued from the wrong position. The slot now keeps each layer's
+  `meta_state` where the class has one (`_Slot.metas`) and restores it after
+  `state`. mlx-lm caches have no `meta_state` and are unaffected; gpt-oss's
+  `trim_refused` is its real window.
+- Found through the cause field (v2.0.80/.83) on a live two-turn probe.
+
+### Verified
+
+- Greedy chain probe on `gemma-4-26b-a4b-it-8bit-mlx` (four extends and one
+  edit): every hop reused, restored output identical to fresh at
+  temperature 0. Record: `internal/claude/w10/` (local). Past the window the
+  trim is refused, now for the real reason.
+- `tests/smoke` green on all three arms (mlx-lm `Qwen3-0.6B-8bit-mlx`,
+  mlx-vlm `Qwen3.5-0.8B-MLX-8bit`, gguf `unsloth_Qwen3.8-27B-UD-Q8_K_XL`),
+  and the mlx-vlm arm on `gemma-4-26b-a4b-it-8bit-mlx`: the text reuse
+  checks pass there; image reuse stays the known gap W10.
+- Uncovered as in v2.0.83 (nested image source on mlx-lm, audio on gguf,
+  thinking depth on mlx-vlm). `scripts/vendor_frontend.py --check`:
+  unchanged from v2.0.83, both vendored libs one patch behind upstream.
+
 ## [2.0.83]
 
 ### Added

@@ -438,7 +438,9 @@ Until then, W5 surfaces the budget and every skip.
   `config.json` `layer_types`: gpt_oss (a window short enough that every
   real follow-up is refused, confirmed live on gpt-oss-20b) and gemma4 /
   diffusion_gemma (a larger window: short chats reuse, longer ones do not;
-  derived, not yet observed). qwen3, qwen3_5 and qwen3_vl have none.
+  observed on gemma-4-26B-A4B after v2.0.84, which fixed a heylook restore
+  bug that had refused every gemma-4 trim). qwen3, qwen3_5 and qwen3_vl have
+  none.
 
 "Caching cannot work for qwen3_5 on MLX" is true of heylook's current
 single-slot, after-generation design only:
