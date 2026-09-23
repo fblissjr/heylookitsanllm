@@ -1,6 +1,6 @@
 # Plan: runtime visibility and one behaviour across engines
 
-last updated: 2026-09-23 (APPROVED by the owner; nothing shipped yet)
+last updated: 2026-09-23 (APPROVED by the owner; W8 + W9 shipped v2.0.70)
 
 ## Context
 
@@ -327,12 +327,15 @@ Until then, W5 surfaces the budget and every skip.
 - The quality cost of a hard cut is unmeasured. The control is disclosed as a
   cap, not a quality-neutral setting.
 
-### W8. Non-causal image decode guard
+### W8. Non-causal image decode guard (shipped v2.0.70)
 
 - At spawn, when the projector decodes images non-causally (`gemma4v`
   26B/31B, `gemma4uv`, `gemma3`, `deepseek4v`), heylook passes
-  `--image-max-tokens` no larger than the effective micro-batch. The set and
-  the limits are derived from the projector, never listed.
+  `--image-max-tokens` no larger than the effective micro-batch.
+- The set and the limits are NOT derived: llama.cpp exposes them only in C++.
+  Owner call 2026-09-23: a small table plus a test that reads the built
+  tree's source, not a build-time parser that could block a llama.cpp update
+  ([sharp_edges.md#gguf-non-causal-images](../architecture/sharp_edges.md#gguf-non-causal-images)).
 - This closes a `GGML_ASSERT` abort. It is latent today (no gemma-4 gguf is
   served).
   - DeepSeek's 384-token cap and gemma3's fixed 256 are safe at the default
@@ -340,7 +343,7 @@ Until then, W5 surfaces the budget and every skip.
   - Both become unsafe if anyone raises `--image-max-tokens` above the
     micro-batch.
 
-### W9. Metal residency keep-alive
+### W9. Metal residency keep-alive (shipped v2.0.70)
 
 - A server setting that passes `GGML_METAL_RESIDENCY_KEEP_ALIVE_S` at spawn.
   This is llama.cpp's heartbeat that keeps weights resident; it is not heylook's
@@ -353,6 +356,12 @@ Until then, W5 surfaces the budget and every skip.
 - The default should be derived, not fixed: keep resident for as long as
   heylook's own idle unload would keep the model loaded, since holding the
   model while letting its pages go cold is the worst of both.
+- As shipped: resident for the life of the process (a thirty-day constant),
+  because a value derived from the idle threshold at spawn goes stale when
+  the threshold changes live or the model is pinned, and heylook's unload
+  ends the process anyway. The idle CPU cost was measured first (owner
+  condition) and judged negligible
+  ([sharp_edges.md#gguf-metal-residency-keep-alive](../architecture/sharp_edges.md#gguf-metal-residency-keep-alive)).
 
 ### W10. MLX prompt cache: checkpoints, vision, and hybrids
 
@@ -477,7 +486,7 @@ questions, and most workstreams do not depend on it: W5, W2/W3, W4 and W10
 derive at runtime and write no settings. Only W1, W6 and the provenance
 display touch stored config. So W0 runs in parallel instead of blocking.
 
-1. **W8 + W9.** Both are small. W9 is now measured: raising the keep-alive
+1. **W8 + W9. Shipped v2.0.70.** Both are small. W9 is now measured: raising the keep-alive
    removed the idle first-request delay on the 145 GB model.
 2. **W-1, the eval-bank port** (`docs/project/TODO.md`, "Port the eval bank to
    /v1/messages"). Steps 3-5 change exactly the subsystems unit tests cannot
@@ -509,7 +518,6 @@ display touch stored config. So W0 runs in parallel instead of blocking.
 - **W12 (any time, small): profile before any native-code question.** Its
   outcomes are named in its section. W10 starts with its own spike (outcomes
   A1/A2/B1/B2) before anything is built.
-
 
 Each workstream ships with its CHANGELOG entry and `frontend_v3_spec.md` §4
 updates in the same commit as any contract change.

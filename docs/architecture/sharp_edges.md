@@ -15,7 +15,8 @@ to it, so the headings stay stable as anchors.
 
 - gguf and llama-server: [template ladder](#gguf-chat-template-ladder),
   [context](#gguf-context-allocation), [micro-batch and memory](#gguf-micro-batch-and-memory),
-  [speculative decoding](#gguf-speculative-decoding), [binary and build](#llama-server-binary-and-build)
+  [non-causal images](#gguf-non-causal-images),
+  [Metal residency](#gguf-metal-residency-keep-alive), [speculative decoding](#gguf-speculative-decoding), [binary and build](#llama-server-binary-and-build)
 - Thinking and sampling: [on the wire](#thinking-on-the-wire),
   [default and sampler report](#thinking-default-and-the-sampler-report),
   [depth](#thinking-depth), [vendor layer](#vendor-sampling-layer),
@@ -135,6 +136,62 @@ carries the model's headroom and the sysctl.
 
 The KV cache is f16 by default and stays so; `cache_type_k/v` exist for
 headroom emergencies, not as a default.
+
+### gguf non-causal images
+
+Some projectors' image tokens are decoded with non-causal attention
+(`mtmd_decode_use_non_causal` in llama.cpp's `tools/mtmd/mtmd.cpp`), and
+`llama_context::decode` asserts that a non-causal batch fits one micro-batch.
+The image is split by `n_batch`, not `n_ubatch`, so an image with more tokens
+than the micro-batch aborts the process (found in the 2026-09-23 audit, §7).
+The provider reads `clip.projector_type` from the mmproj at spawn and, for a
+listed projector whose default per-image maximum exceeds the effective
+micro-batch, passes `--image-max-tokens` equal to it (v2.0.70). It only ever
+lowers: llama.cpp takes a custom maximum above its default as given, so the
+flag is not passed when the default already fits.
+
+The set and the maxima are a hand-copied table
+(`LlamaServerProvider.NON_CAUSAL_IMAGE_PROJECTORS`), against the repo's derive
+rule, because they live in C++ with no API. Owner call 2026-09-23: a table plus
+a test, not a build-time parser in `build_llama.py`, because a parser that
+fails loudly on an upstream reshape could block updating llama-server for a
+guard no served model needs, and a non-fatal one ends up where the table does
+with more code. `test_non_causal_table_matches_the_build` reads the source of
+the build the provider spawns, located through its manifest (never
+`coderef/llama.cpp`, which can sit at a different commit), and skips with the
+reason when there is no build or the tree has moved off the built commit.
+
+Capping every vision model instead was rejected: qwen3vl allows several times
+the micro-batch, so it would cut Qwen image resolution for a crash Qwen cannot
+have. gemma4v is listed whole although its E2B/E4B text widths decode
+causally; that caps those two only at a small micro-batch. gemma3 is a fixed
+token count the flag cannot lower, so it gets a spawn warning, not a cap.
+
+### gguf Metal residency keep-alive
+
+ggml-metal keeps the weights' residency sets requested for
+`GGML_METAL_RESIDENCY_KEEP_ALIVE_S` after the last GPU work (default 180 s),
+then lets the pages go cold. This is llama.cpp's heartbeat, not heylook's
+idle unload. On the 145 GB DeepSeek-V4-Vision the first request after a gap
+past it paid a first-token delay many times the warm one; raised, the delay
+was gone (audit 2026-09-23, §8). Since v2.0.70 the provider sets it at spawn
+(`METAL_RESIDENCY_KEEP_ALIVE_S`), and an inherited value wins with a warning.
+
+The plan asked for a value derived from heylook's idle-unload threshold. That
+goes stale: the env is fixed at spawn, while `idle_unload_seconds` applies
+live and pinning changes the answer. heylook's unload ends the process, so
+"resident for the life of the process" is exactly "as long as heylook keeps
+the model loaded", and cannot go stale. ggml-metal has no forever value: it
+counts the keep-alive down in 5 ms ticks in an `atomic_int`, so a value past
+the int range wraps negative and turns residency off, and 0 or below means
+its default. The constant is thirty days, far inside the wrap.
+
+The cost, measured on DeepSeek before shipping (owner condition): the thread
+wakes every 5 ms in both cases, and only the `requestResidency` calls continue
+past 180 s. The difference in idle CPU was a fraction of one percent of one
+core, judged negligible. Data: `internal/claude/perf/gguf_runtime_2026-09-23.json`,
+`idle_cpu`. If it ever matters, a bounded value of a few hours keeps most of
+the benefit.
 
 ### gguf speculative decoding
 

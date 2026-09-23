@@ -322,16 +322,9 @@ class TestSpawnEnvironment:
     no `.set_env` -- so removing it closes the whole surface.
     """
 
-    def test_the_log_file_var_is_stripped_and_its_siblings_are_not(
-            self, tmp_path, monkeypatch):
-        # One test, two halves, because either alone passes for a wrong reason:
-        # a provider that forgot `env=` entirely inherits os.environ and fails
-        # the first half; a provider that wiped LLAMA_ARG_* wholesale (or passed
-        # a bare env) passes the first half and fails the second. The siblings
-        # are behaviour knobs someone may be setting on purpose -- they get the
-        # warning, not the scrub.
-        monkeypatch.setenv("LLAMA_ARG_LOG_FILE", str(tmp_path / "sneaky.log"))
-        monkeypatch.setenv("LLAMA_ARG_CACHE_RAM", "4096")
+    @staticmethod
+    def _spawn_env(tmp_path, monkeypatch) -> dict:
+        """The env load_model hands llama-server's Popen."""
         monkeypatch.setattr(LlamaServerProvider, "_resolve_binary",
                             lambda self: tmp_path / "llama-server")
         # load_model's own precondition, made this test's rather than
@@ -361,9 +354,36 @@ class TestSpawnEnvironment:
         with pytest.raises(RuntimeError, match="spawned"):
             provider.load_model()
 
-        child_env = seen["env"]  # absent key = the provider never passed one
+        return seen["env"]  # absent key = the provider never passed one
+
+    def test_the_log_file_var_is_stripped_and_its_siblings_are_not(
+            self, tmp_path, monkeypatch):
+        # One test, two halves, because either alone passes for a wrong reason:
+        # a provider that forgot `env=` entirely inherits os.environ and fails
+        # the first half; a provider that wiped LLAMA_ARG_* wholesale (or passed
+        # a bare env) passes the first half and fails the second. The siblings
+        # are behaviour knobs someone may be setting on purpose -- they get the
+        # warning, not the scrub.
+        monkeypatch.setenv("LLAMA_ARG_LOG_FILE", str(tmp_path / "sneaky.log"))
+        monkeypatch.setenv("LLAMA_ARG_CACHE_RAM", "4096")
+        child_env = self._spawn_env(tmp_path, monkeypatch)
         assert "LLAMA_ARG_LOG_FILE" not in child_env
         assert child_env.get("LLAMA_ARG_CACHE_RAM") == "4096"
+
+    @pytest.mark.parametrize("inherited", [None, "600"])
+    def test_metal_keep_alive_is_set_unless_inherited(
+            self, tmp_path, monkeypatch, inherited):
+        key = llama_mod.METAL_KEEP_ALIVE_ENV
+        if inherited is None:
+            monkeypatch.delenv(key, raising=False)
+        else:
+            monkeypatch.setenv(key, inherited)
+        child_env = self._spawn_env(tmp_path, monkeypatch)
+        expected = inherited or str(LlamaServerProvider.METAL_RESIDENCY_KEEP_ALIVE_S)
+        assert child_env.get(key) == expected
+        # ggml-metal's counter is an atomic_int of 5 ms ticks: past this it
+        # wraps negative and residency turns off entirely.
+        assert 0 < LlamaServerProvider.METAL_RESIDENCY_KEEP_ALIVE_S < (2**31 - 1) // 200
 
 
 # ---------------------------------------------------------------------------

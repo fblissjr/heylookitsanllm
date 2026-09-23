@@ -49,7 +49,7 @@ from pathlib import Path
 from typing import Dict, Generator, Optional
 
 from .. import observability, ram_fit
-from ..config import ChatRequest
+from ..config import ChatRequest, GGUFModelConfig
 from ..samplers import GLOBAL_SAMPLER_FLOOR, resolve_effective_sampling
 from .common.generation_gate import GenerationCancelled, get_process_gate
 # ONE filename for both engines, imported rather than re-spelled -- a second
@@ -132,6 +132,10 @@ _ENV_STRIPPED_AT_SPAWN = ("LLAMA_ARG_LOG_FILE",)
 # HF_TOKEN is deliberately NOT here: it is near-ubiquitous, heylook passes
 # local paths so llama-server never downloads, and warning on it is noise.
 _ENV_SURFACED_UNPREFIXED = ("LLAMA_API_KEY", "MTMD_BACKEND_DEVICE")
+
+# ggml-metal reads this at device init (ggml-metal-device.m). heylook sets it
+# at spawn unless the environment already does; see load_model.
+METAL_KEEP_ALIVE_ENV = "GGML_METAL_RESIDENCY_KEEP_ALIVE_S"
 
 # llama.cpp applies these BEFORE both env and CLI (common/arg.cpp: "config
 # file applies first, so env variables and CLI arguments override it"), and
@@ -468,6 +472,85 @@ class LlamaServerProvider(BaseProvider):
     # The micro-batch AUTO resolves to when the working set allows it. Why
     # 2048 and why not always: GGUFModelConfig.n_ubatch.
     AUTO_UBATCH = 2048
+    # llama-server's own -ub default, what an unset-and-not-auto spawn gets.
+    # Pinned against the build tree's common/common.h by
+    # test_non_causal_table_matches_the_build.
+    LLAMA_DEFAULT_N_UBATCH = 512
+
+    # "The life of the process" as a number, because ggml-metal has no
+    # "forever": it counts the keep-alive down in 5 ms ticks in an atomic_int,
+    # so a value above ~10.7M s wraps negative and turns residency OFF, and
+    # 0 or below silently means its default. Thirty days stays clear of the
+    # wrap even if upstream shortens the tick several-fold.
+    METAL_RESIDENCY_KEEP_ALIVE_S = 30 * 24 * 3600
+
+    # Projectors whose image tokens llama.cpp decodes NON-causally
+    # (mtmd_decode_use_non_causal, tools/mtmd/mtmd.cpp), mapped to the most
+    # tokens one image gets at llama.cpp's defaults and whether
+    # --image-max-tokens lowers that. A non-causal batch must fit one
+    # micro-batch (llama_context::decode asserts n_ubatch >= n_tokens), and
+    # the image is split by n_batch, not n_ubatch -- so an image with more
+    # tokens than the micro-batch ABORTS the process.
+    #
+    # A hand copy of C++ with no API (owner call 2026-09-23: a table plus a
+    # test, never a build-time parser that could block a llama.cpp update).
+    # test_non_causal_table_matches_the_build reads the source of the build
+    # this provider spawns and goes red when it moves.
+    # - gemma4v is non-causal only above the E2B/E4B text widths; it is
+    #   listed whole, which caps those two only when the micro-batch is small.
+    # - gemma3 is a fixed token count and ignores the flag; it is listed so
+    #   the table mirrors the source's set.
+    NON_CAUSAL_IMAGE_PROJECTORS: dict[str, tuple[int, bool]] = {
+        "gemma4v": (1120, True),
+        "gemma4uv": (1120, True),
+        "deepseek4v": (384, True),
+        "gemma3": (256, False),
+    }
+
+    def _image_token_cap(self, auto_ubatch: Optional[int]) -> Optional[int]:
+        """``--image-max-tokens`` for a non-causal projector whose largest
+        image would not fit the effective micro-batch, else None.
+
+        Never RAISES a projector's limit: llama.cpp takes a custom maximum
+        above its default as given, so the flag is only passed when it
+        lowers. Logged at spawn either way when the projector is non-causal.
+        """
+        cfg = self.config
+        mmproj = cfg.get("mmproj_path")
+        if not mmproj:
+            return None
+        from .. import gguf_metadata
+        proj = gguf_metadata.vision_projector_type(Path(mmproj).expanduser())
+        if proj not in self.NON_CAUSAL_IMAGE_PROJECTORS:
+            return None
+        default_max, cappable = self.NON_CAUSAL_IMAGE_PROJECTORS[proj]
+        ubatch = cfg.get("n_ubatch") or auto_ubatch or self.LLAMA_DEFAULT_N_UBATCH
+        n_batch = cfg.get("n_batch") or GGUFModelConfig.LLAMA_DEFAULT_N_BATCH
+        ubatch = min(ubatch, n_batch)  # llama_context clamps it the same way
+        if default_max <= ubatch:
+            logging.info(f"[GGUF] {self.model_id}: {proj} projector decodes "
+                         f"images non-causally; its {default_max}-token maximum "
+                         f"fits the {ubatch}-token micro-batch")
+            return None
+        if any(str(a).split("=", 1)[0] == "--image-max-tokens"
+               for a in cfg.get("extra_args") or []):
+            logging.warning(f"[GGUF] {self.model_id}: {proj} projector decodes "
+                            f"images non-causally; extra_args sets "
+                            f"--image-max-tokens, so heylook does not cap it at "
+                            f"the {ubatch}-token micro-batch. Above that, an "
+                            f"image aborts llama-server.")
+            return None
+        if not cappable:
+            logging.warning(f"[GGUF] {self.model_id}: {proj} projector decodes "
+                            f"a fixed {default_max} tokens per image non-causally, "
+                            f"more than the {ubatch}-token micro-batch, and "
+                            f"--image-max-tokens cannot lower it. Any image will "
+                            f"abort llama-server; raise n_ubatch.")
+            return None
+        logging.info(f"[GGUF] {self.model_id}: {proj} projector decodes images "
+                     f"non-causally; --image-max-tokens {ubatch} (default "
+                     f"{default_max} exceeds the {ubatch}-token micro-batch)")
+        return ubatch
 
     def _working_set_headroom_gb(self) -> Optional[float]:
         """Metal working set minus this model's sized weights + sidecars, via
@@ -508,13 +591,16 @@ class LlamaServerProvider(BaseProvider):
     def _build_args(self, binary: Path, port: int,
                     chat_template: Optional[str] = None,
                     template_resolved: bool = False,
-                    auto_ubatch: Optional[int] = None) -> list:
+                    auto_ubatch: Optional[int] = None,
+                    image_max_tokens: Optional[int] = None) -> list:
         """Build the spawn argv.
 
         ``auto_ubatch`` is what ``_auto_ubatch`` resolved for a config that
         leaves n_ubatch unset; a stored n_ubatch always wins over it. It is a
         parameter so this builder stays PURE (the argv/metadata drift test
         calls it with paths that do not exist and must not size anything).
+        ``image_max_tokens`` is ``_image_token_cap``'s answer, passed down for
+        the same reason (it reads the mmproj header).
 
         ``chat_template``/``template_resolved`` let ``load_model`` resolve the
         template ONCE and hand the answer down. Without that, argv and the
@@ -547,6 +633,8 @@ class LlamaServerProvider(BaseProvider):
             args += ["-ub", str(ubatch)]
         if cfg.get("mmproj_path"):
             args += ["--mmproj", cfg["mmproj_path"]]
+        if image_max_tokens is not None:
+            args += ["--image-max-tokens", str(image_max_tokens)]
         # Absent -> llama-server uses the template embedded in the GGUF, which
         # is whatever the quantizer baked in. See GGUFModelConfig's docstring
         # for why that is a real choice and not a formality.
@@ -663,8 +751,10 @@ class LlamaServerProvider(BaseProvider):
                 f"longer means the embedded template unconditionally."
             )
 
+        auto_ubatch = self._auto_ubatch()
         args = self._build_args(binary, port, resolved_template, True,
-                                auto_ubatch=self._auto_ubatch())
+                                auto_ubatch=auto_ubatch,
+                                image_max_tokens=self._image_token_cap(auto_ubatch))
 
         # Say which template is in force, every spawn. A sidecar is discovered
         # from the filesystem, so the answer can change without models.toml
@@ -735,6 +825,24 @@ class LlamaServerProvider(BaseProvider):
                     f"heylook captures into that file. heylook owns this "
                     f"subprocess's log destination."
                 )
+
+        # Metal residency keep-alive (plan W9). llama.cpp keeps the weights'
+        # residency sets requested for this long after the last GPU work, then
+        # lets the pages go cold; the first request after that gap pays for it,
+        # badly on a model near the working-set ceiling. It is NOT heylook's
+        # idle unload. heylook's unload ends the process, so keeping the
+        # weights resident for the life of the process is exactly "as long as
+        # heylook keeps the model loaded", and never goes stale when
+        # idle_unload_seconds changes live or the model is pinned. An inherited
+        # value wins: someone may be setting it deliberately.
+        inherited_keep_alive = child_env.get(METAL_KEEP_ALIVE_ENV)
+        if inherited_keep_alive is not None:
+            logging.warning(
+                f"[GGUF] {METAL_KEEP_ALIVE_ENV}={inherited_keep_alive!r} set in "
+                f"the environment; heylook's own value "
+                f"({self.METAL_RESIDENCY_KEEP_ALIVE_S} s) is not applied.")
+        else:
+            child_env[METAL_KEEP_ALIVE_ENV] = str(self.METAL_RESIDENCY_KEEP_ALIVE_S)
 
         llama_env = sorted(
             k for k in child_env

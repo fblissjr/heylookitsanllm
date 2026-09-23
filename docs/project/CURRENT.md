@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-23, v2.0.69, `main`.
+Last updated: 2026-09-23, v2.0.70, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `CLAUDE.md`, the backlog in [TODO.md](./TODO.md), and what each release
@@ -33,10 +33,9 @@ model.
 ## Handoff -- start here
 
 1. **The approved plan is [plan_runtime_visibility.md](./plan_runtime_visibility.md)**,
-   and its "Sequencing" section is the order. Nothing in it has shipped. The
-   next step is **W8 + W9**: the non-causal image-token guard at spawn, and the
-   Metal residency keep-alive setting passed at spawn. Both are small, and W9
-   is measured. After them comes the eval-bank port (`TODO.md`), then W5
+   and its "Sequencing" section is the order. W8 + W9 shipped in v2.0.70 (the
+   non-causal image-token guard and the Metal residency keep-alive, both at
+   spawn). The next step is the eval-bank port (`TODO.md`), then W5
    cache/spec reporting, which includes the live cache-reuse smoke check that
    is also W10's acceptance test. The evidence behind every step is
    [../testing/gguf_runtime_audit_2026-09-23.md](../testing/gguf_runtime_audit_2026-09-23.md).
@@ -70,7 +69,7 @@ a server holds the default database (it has isolated its own database at
 import time since v1.79.54 -- `tests/contract/conftest.py` -- so it never opens
 the real one).
 
-## What landed 2026-09-23 (v2.0.65 - v2.0.69)
+## What landed 2026-09-23 (v2.0.65 - v2.0.70)
 
 Started from "is llama-server built and spawned optimally for vision and
 thinking models". The build was already right; what turned up was mostly
@@ -93,6 +92,11 @@ things happening where nothing could see them.
   unit test (which found and fixed nine offenders) and a native `models.toml`
   PostToolUse hook in the tracked `.claude/settings.json`. The `.claude`
   allow-lists were pruned.
+- Plan W8 + W9 (v2.0.70). A non-causal projector's images are capped at the
+  micro-batch at spawn (a small table pinned by a test against the built
+  tree's source, owner call over a build-time parser). The Metal residency
+  keep-alive is set for the life of the process, after its idle CPU cost was
+  measured on DeepSeek and judged negligible.
 
 ## What landed 2026-09-21 (v2.0.51 - v2.0.63)
 

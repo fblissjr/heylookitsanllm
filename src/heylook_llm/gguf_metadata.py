@@ -192,6 +192,19 @@ def detect_modalities(primary: Path, mmproj: Optional[Path] = None) -> list[str]
     return mods
 
 
+# clip.cpp reads the generic key first and falls back to the vision-specific
+# one, which mixed-modality (omni) projectors carry instead.
+_PROJ_TYPE_KEY = "clip.projector_type"
+_VISION_PROJ_TYPE_KEY = "clip.vision.projector_type"
+
+
+def vision_projector_type(mmproj: Path) -> Optional[str]:
+    """The projector's vision type name as llama.cpp reads it (e.g.
+    ``qwen3vl_merger``, ``gemma4v``, ``deepseek4v``), or None if unreadable."""
+    meta = safe_read_metadata(mmproj, {_PROJ_TYPE_KEY, _VISION_PROJ_TYPE_KEY})
+    return meta.get(_PROJ_TYPE_KEY) or meta.get(_VISION_PROJ_TYPE_KEY)
+
+
 # Drafter filename prefix -> llama-server --spec-type. The prefix is llama.cpp's
 # OWN sibling-resolution key (common/download.cpp find_best_sibling), which makes
 # it the authoritative signal; `general.architecture` corroborates but does not

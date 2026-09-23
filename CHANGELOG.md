@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.70]
+
+### Added
+
+- **Non-causal image guard at gguf spawn (plan W8).** llama.cpp decodes some
+  projectors' image tokens non-causally and aborts when an image has more
+  tokens than the micro-batch. The provider reads `clip.projector_type` from
+  the mmproj and, when that projector's default per-image maximum exceeds the
+  effective micro-batch, passes `--image-max-tokens` equal to it. It never
+  raises a default, defers to `extra_args`, and warns for gemma3 (a fixed count
+  the flag cannot lower). Causal projectors are never capped.
+  - The projector set is a small hand-copied table
+    (`LlamaServerProvider.NON_CAUSAL_IMAGE_PROJECTORS`), by owner decision
+    over a build-time parser. `test_non_causal_table_matches_the_build` reads
+    the source of the build the provider spawns, found through its manifest,
+    and skips with the reason when that source is not the binary's.
+  - Latent today: no served gguf is affected.
+- **Metal residency keep-alive set at gguf spawn (plan W9).**
+  `GGML_METAL_RESIDENCY_KEEP_ALIVE_S` is now thirty days, so the weights stay
+  resident for the life of the llama-server process instead of going cold
+  after llama.cpp's default. heylook's idle unload still ends the process. A
+  value already in the environment wins, with a warning. It removed the large
+  first-request delay after an idle gap on the 145 GB DeepSeek-V4-Vision. Its
+  idle CPU cost was measured before shipping and judged negligible (local data
+  under `internal/claude/perf/`).
+- `gguf_metadata.vision_projector_type()`.
+
 ## [2.0.69]
 
 Documentation only.
