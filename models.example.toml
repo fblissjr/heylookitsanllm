@@ -1,7 +1,7 @@
 # models.example.toml -- reference for the model registry format.
 # Last updated: 2026-07-28
 #
-# Copy to models.toml (gitignored) or generate one with `heylookllm import`.
+# Copy to models.toml (gitignored). Models under [scan].folders need no entry.
 #
 # Entries are THIN by design (derive-at-load, v1.47+): an entry needs only
 # id + provider + model_path. Everything else is derived from the model's

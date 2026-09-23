@@ -454,42 +454,6 @@ class TestInstallChatTemplate:
         assert install_chat_template(None, self._info(), force=True) is False
 
 
-class TestDetectChatTemplateSource:
-    """``detect_chat_template_source(model_dir)`` is the ONE import-time
-    detection both the CLI wizard and the /v1/admin import route call --
-    the two inline copies drifted (.exists() vs .is_file()) within a day
-    of each other."""
-
-    def test_returns_jinja_when_file_present(self, tmp_path):
-        from heylook_llm.providers.common.template_info import detect_chat_template_source
-
-        (tmp_path / "chat_template.jinja").write_text("{{ messages }}")
-
-        assert detect_chat_template_source(tmp_path) == "jinja"
-
-    def test_returns_none_when_absent(self, tmp_path):
-        from heylook_llm.providers.common.template_info import detect_chat_template_source
-
-        assert detect_chat_template_source(tmp_path) is None
-
-    def test_directory_named_like_template_is_not_detected(self, tmp_path):
-        from heylook_llm.providers.common.template_info import detect_chat_template_source
-
-        (tmp_path / "chat_template.jinja").mkdir()
-
-        assert detect_chat_template_source(tmp_path) is None
-
-    def test_expands_tilde_paths(self, tmp_path, monkeypatch):
-        from heylook_llm.providers.common.template_info import detect_chat_template_source
-
-        monkeypatch.setenv("HOME", str(tmp_path))
-        model_dir = tmp_path / "m"
-        model_dir.mkdir()
-        (model_dir / "chat_template.jinja").write_text("{{ messages }}")
-
-        assert detect_chat_template_source("~/m") == "jinja"  # path-privacy: ignore
-
-
 class TestExplicitChatTemplateJsonSource:
     """'chat_template_json' appears as a resolved-source label in load logs,
     so it must also be an accepted explicit ``chat_template_source`` value --
@@ -623,16 +587,6 @@ class TestStopTokenValidation:
         info = read_template_info(tmp_path, source="jinja")
         assert "<end_of_turn>" in info.chat_template
         assert info.template_source == "tokenizer_config"
-
-    def test_detect_skips_broken_jinja(self, tmp_path):
-        from heylook_llm.providers.common.template_info import detect_chat_template_source
-        _write_model_dir(tmp_path, jinja="{{ '<|turn>model' }}", tokenizer_config=self._CFG)
-        assert detect_chat_template_source(tmp_path) is None
-
-    def test_detect_keeps_valid_jinja(self, tmp_path):
-        from heylook_llm.providers.common.template_info import detect_chat_template_source
-        _write_model_dir(tmp_path, jinja="{{ '<end_of_turn>' }}", tokenizer_config=self._CFG)
-        assert detect_chat_template_source(tmp_path) == "jinja"
 
     def test_unknown_stop_set_not_rejected(self, tmp_path):
         # can't determine the model's stop tokens -> DON'T reject (never break on uncertainty)

@@ -20,9 +20,8 @@ GGUF files there are multi-GB and gitignored).
 import json
 
 import pytest
-import tomllib
 
-from heylook_llm.config import AppConfig, ModelConfig
+from heylook_llm.config import ModelConfig
 from heylook_llm.model_importer import ModelImporter
 from heylook_llm.model_service import ModelService
 
@@ -517,30 +516,6 @@ class TestGGUFTomlRoundTrip:
         assert validated.provider == "gguf"
         assert validated.config.mmproj_path == str(d / "mmproj-F16.gguf")
 
-    def test_generated_toml_round_trips_through_app_config(self, importer, tmp_path):
-        # If generate_toml ever emits a field GGUFModelConfig forbids (its
-        # model_config is extra="forbid"), this fails loudly instead of
-        # producing a models.toml that crashes on server startup.
-        d = _make_gguf_dir(tmp_path, mmproj=["mmproj-F16.gguf"])
-        entry = importer._create_gguf_entry(d)
-        toml_text = importer.generate_toml([entry])
-        parsed = tomllib.loads(toml_text)
-        app_config = AppConfig(**parsed)
-        assert app_config.models[0].provider == "gguf"
-
-    def test_gguf_section_header_present_when_generator_groups_by_section(self, importer, tmp_path):
-        d = _make_gguf_dir(tmp_path, mmproj=["mmproj-F16.gguf"])
-        entry = importer._create_gguf_entry(d)
-        toml_text = importer.generate_toml([entry])
-        assert "GGUF" in toml_text
-
-
-# ---------------------------------------------------------------------------
-# model_service.py provider gating must not crash on gguf entries
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
 class TestModelServiceGGUFNoCrash:
     def _service(self, tmp_path):
         config_path = tmp_path / "models.toml"
@@ -561,28 +536,6 @@ class TestModelServiceGGUFNoCrash:
             }
         )
         assert "Unknown provider: gguf" not in result.errors
-
-    def test_import_models_does_not_crash_on_gguf(self, tmp_path):
-        # import_models() used to build every non-embedding provider's
-        # config with mlx-only fields ("vision", cache_type/kv_bits smart
-        # defaults) -- GGUFModelConfig forbids extra fields, so a gguf
-        # import silently failed validation and was dropped.
-        service = self._service(tmp_path)
-        gguf_file = tmp_path / "model.gguf"
-        _write_bytes(gguf_file, 1000)
-
-        imported = service.import_models(
-            [
-                {
-                    "id": "gguf-model",
-                    "provider": "gguf",
-                    "path": str(gguf_file),
-                    "config": {"model_path": str(gguf_file), "mmproj_path": None},
-                }
-            ]
-        )
-        assert len(imported) == 1, "gguf import was silently dropped (validation failure)"
-        assert imported[0].provider == "gguf"
 
 
 def test_mmproj_suffix_naming_detected(tmp_path):

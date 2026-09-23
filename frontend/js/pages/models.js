@@ -21,9 +21,6 @@ export default createPage({
     const s = ctx.state;
     s.models = [];
     s.loadingIds = new Set();   // model ids mid load/unload
-    s.scanResults = null;       // null until a scan has run
-    s.scanning = false;
-    s.importingIds = new Set(); // scan result ids mid import
     s.pendingLoadNote = null;   // warm-timing note, flushed after the list refetch
     s.optionsSchema = null;     // /v1/admin/model-options payload (fetched on first Configure)
     s.optionsPromise = null;    // in-flight fetch of the above
@@ -81,16 +78,11 @@ function buildSkeleton(ctx) {
   s.listNoteEl = createEl('div', { class: 'models__list-note muted small', role: 'status' });
   const listSection = createEl('section', { class: 'models__section' }, [s.listEl, s.listNoteEl]);
 
-  s.scanBtn = createEl('button', { class: 'btn btn--sm' }, ['Scan']);
-  s.scanBtn.addEventListener('click', () => handleScan(ctx));
-  s.scanResultsEl = createEl('div', { class: 'scan-panel' });
   const scanSection = createEl('section', { class: 'models__section' }, [
     createEl('div', { class: 'models__section-head' }, [
-      createEl('h2', {}, ['Find models']),
-      s.scanBtn,
+      createEl('h2', {}, ['Watch folders']),
     ]),
     buildScanControls(ctx),
-    s.scanResultsEl,
   ]);
 
   const root = createEl('div', { class: 'models' }, [
@@ -104,19 +96,15 @@ function buildSkeleton(ctx) {
   ctx.el.append(root);
 }
 
-// Scan sources. The HF cache is ONE source, not the only one: local folders
-// (a modelzoo of GGUFs, a converted checkpoint anywhere on disk) are found by
-// the same endpoint's `paths`, which the UI simply never sent -- so every
-// locally-downloaded model was unreachable from this page. The folder list
-// persists locally because re-typing a path on every scan is the thing that
-// makes an operator go edit models.toml by hand instead.
+// Watch folders are the only way a model is served: everything under one is
+// served with no models.toml entry. The one-off scan + Import panel that sat
+// here was retired with `heylookllm import` (v2.0.72) -- every model lives in
+// a watch folder, so there was nothing left for it to add.
 function buildScanControls(ctx) {
   const s = ctx.state;
 
   // WATCH FOLDERS -- server config ([scan].folders in models.toml), not a
-  // browser preference. Everything under one of these is served with no
-  // entry, so this list is the primary way to add models; the one-off scan
-  // below is for a folder you do NOT want watched.
+  // browser preference.
   s.foldersInput = createEl('textarea', {
     id: 'scan-folders',
     class: 'input',
@@ -129,20 +117,6 @@ function buildScanControls(ctx) {
   // role=status: the saved-count line is the only feedback that a folder took
   // effect, and it must reach a screen reader (DESIGN.md §7).
   s.foldersNote = createEl('div', { class: 'muted small', role: 'status' }, ['']);
-
-  // NOT remembered between sessions (v2.0.38 dropped the localStorage key).
-  // A one-off scan is by definition the thing you are not doing again -- a
-  // folder worth re-scanning belongs in the watch list above, which is server
-  // config and reaches every browser. Persisting it made the leftover path
-  // feel like the primary one.
-  s.pathsInput = createEl('input', {
-    id: 'scan-paths',
-    type: 'text',
-    class: 'input',
-    placeholder: 'modelzoo/gguf, modelzoo',
-  });
-
-  s.hfBox = createEl('input', { id: 'scan-hf', type: 'checkbox', checked: true });
 
   return createEl('div', { class: 'scan-controls' }, [
     createEl('div', { class: 'scan-controls__row' }, [
@@ -158,21 +132,6 @@ function buildScanControls(ctx) {
       'One per line, read on the SERVER. Every model under a watch folder is '
       + 'served without a models.toml entry — write an entry only to change '
       + 'something (rename it, pin a chat template, turn it off).',
-    ]),
-
-    createEl('hr', { class: 'scan-controls__sep' }),
-
-    createEl('div', { class: 'scan-controls__row' }, [
-      createEl('label', { for: 'scan-paths' }, ['One-off scan (not watched)']),
-      s.pathsInput,
-    ]),
-    createEl('div', { class: 'scan-controls__row scan-controls__row--check' }, [
-      s.hfBox,
-      createEl('label', { for: 'scan-hf' }, ['Also scan the HuggingFace cache']),
-    ]),
-    createEl('div', { class: 'muted small' }, [
-      'Comma- or newline-separated. Use this to import a model from somewhere '
-      + 'you do not want watched; a watched folder needs no import.',
     ]),
   ]);
 }
@@ -218,10 +177,6 @@ async function saveWatchFolders(ctx) {
   if (!ctx.alive) return;
   s.savingFolders = false;
   s.foldersSaveBtn.disabled = false;
-}
-
-function parsePaths(raw) {
-  return raw.split(/[,\n]/).map((p) => p.trim()).filter(Boolean);
 }
 
 function buildDangerZone(ctx) {
@@ -576,145 +531,6 @@ async function reloadModel(ctx, model) {
   s.loadingIds.delete(model.id);
   if (ctx.alive) await fetchModels(ctx, { keepStatus: true });
   if (ctx.alive) flushLoadNote(ctx);
-}
-
-// ---------------------------------------------------------------------------
-// scan + import
-// ---------------------------------------------------------------------------
-
-async function handleScan(ctx) {
-  const s = ctx.state;
-  if (s.scanning) return;
-
-  const paths = parsePaths(s.pathsInput.value);
-  const scanHf = s.hfBox.checked;
-  if (!paths.length && !scanHf) {
-    showError(ctx, 'Nothing to scan: add a folder or enable the HuggingFace cache.');
-    return;
-  }
-  s.scanning = true;
-  s.scanBtn.disabled = true;
-  s.scanBtn.textContent = 'Scanning…';
-
-  try {
-    const data = await api.adminScan({ paths, scan_hf_cache: scanHf });
-    if (!ctx.alive) return;
-    s.scanResults = data.models ?? [];
-    clearError(ctx);
-  } catch (err) {
-    if (!ctx.alive) return;
-    showError(ctx, `Scan failed: ${err.message}`);
-  }
-
-  s.scanning = false;
-  if (!ctx.alive) return;
-  s.scanBtn.disabled = false;
-  s.scanBtn.textContent = 'Scan';
-  renderScanResults(ctx);
-}
-
-function renderScanResults(ctx) {
-  const s = ctx.state;
-  if (s.scanResults === null) {
-    s.scanResultsEl.replaceChildren();
-    return;
-  }
-
-  // `served`, NOT `already_configured`. Since v1.69.0 a model under a watch
-  // folder is SERVED with no models.toml entry, so it reports
-  // already_configured=false while importing it would change nothing you can
-  // call -- this panel offered an Import button for models running in the
-  // list above it. `served` is the server's answer to "would this do
-  // anything", matched on the resolved path so a symlinked spelling counts.
-  const newOnes = s.scanResults.filter((r) => !r.served);
-  const servedCount = s.scanResults.length - newOnes.length;
-
-  const children = [];
-  if (servedCount > 0) {
-    children.push(createEl('div', { class: 'muted small' }, [
-      `${servedCount} already served — in models.toml, or found by a watch folder.`,
-    ]));
-  }
-  if (!newOnes.length) {
-    children.push(createEl('div', { class: 'empty-state' }, ['No new models found.']));
-  } else {
-    children.push(...newOnes.map((r) => buildScanRow(ctx, r)));
-  }
-  s.scanResultsEl.replaceChildren(...children);
-}
-
-// What the scan actually found. The importer reads projector headers, the
-// model's own chat template and the drafter's name prefix; all of it used to
-// stop at the server log, so this row could only ever say "vision" -- and
-// after the thin-entry change it could not honestly say even that. Modalities
-// beyond text are what change the chat UI (attach button, thinking toggle),
-// so they are the facts worth showing before deciding to import.
-function scanMetaLine(result) {
-  const parts = [`${result.size_gb.toFixed(1)} GB`, result.provider];
-  if (result.quantization) parts.push(result.quantization);
-  const extraModalities = (result.modalities || []).filter((m) => m !== 'text');
-  parts.push(...extraModalities);
-  if (result.supports_thinking) parts.push('thinking');
-  return parts.join(' · ');
-}
-
-// The drafter line is deliberately separate and phrased as a fact plus the
-// setting it enables: import pairs the drafter PATH but never turns
-// speculative decoding on, because whether it pays off is a per-model
-// measurement. Naming the required --spec-type here is the difference
-// between "do I want this on" and "what is this drafter called".
-function scanDraftLine(result) {
-  if (!result.draft_model_path) return null;
-  const name = result.draft_model_path.split('/').pop();
-  const text = result.draft_spec_type
-    ? `drafter ${name} — set spec_type = "${result.draft_spec_type}" to enable speculative decoding`
-    : `drafter ${name} — unrecognised prefix, spec_type must be set by hand`;
-  return createEl('div', { class: 'scan-row__note muted small' }, [text]);
-}
-
-function buildScanRow(ctx, result) {
-  const s = ctx.state;
-  const busy = s.importingIds.has(result.id);
-
-  const main = createEl('div', { class: 'scan-row__main' }, [
-    createEl('strong', {}, [result.id]),
-    createEl('span', { class: 'scan-row__meta muted small' }, [scanMetaLine(result)]),
-    scanDraftLine(result),
-  ]);
-
-  const btn = createEl('button', { class: 'btn btn--sm' }, [busy ? 'Importing…' : 'Import']);
-  btn.disabled = busy;
-  btn.addEventListener('click', () => importModel(ctx, result));
-
-  return createEl('div', { class: 'scan-row' }, [main, createEl('div', { class: 'scan-row__actions' }, [btn])]);
-}
-
-async function importModel(ctx, result) {
-  const s = ctx.state;
-  if (s.importingIds.has(result.id)) return;
-
-  s.importingIds.add(result.id);
-  renderScanResults(ctx);
-
-  let ok = false;
-  try {
-    await api.adminImport({ models: [{ id: result.id, path: result.path, provider: result.provider }] });
-    ok = true;
-  } catch (err) {
-    if (ctx.alive) showError(ctx, `Import failed: ${err.message}`);
-  }
-  if (!ctx.alive) return;
-
-  s.importingIds.delete(result.id);
-  if (!ok) {
-    renderScanResults(ctx);
-    return;
-  }
-
-  clearError(ctx);
-  s.scanResults = s.scanResults.filter((r) => r.id !== result.id);
-  renderScanResults(ctx);
-  await fetchModels(ctx, { keepStatus: true });
 }
 
 // ---------------------------------------------------------------------------

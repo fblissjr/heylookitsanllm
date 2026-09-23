@@ -106,10 +106,8 @@ git clone https://github.com/fblissjr/heylookitsanllm
 cd heylookitsanllm
 uv sync    # one step -- full runtime + dev tooling, no extras to remember
 
-# point it at your models: add a watch folder to models.toml ([scan].folders),
-# or import explicit entries:
-heylookllm import --hf-cache            # from the HuggingFace cache
-heylookllm import --folder /path/to/models
+# point it at your models: add a watch folder to models.toml ([scan].folders)
+# or on the Models page; everything under it is served with no entry
 
 heylookllm --log-level INFO             # serves API + UI on :8000
 ```
@@ -121,16 +119,12 @@ Run it as a background service with `heylookllm service install`
 
 ### Adding models
 
-Import writes THIN `models.toml` entries -- `id`, `model_path`, `provider`,
-plus anything you explicitly chose. Everything else is derived from the
-model's own files at load time and never goes stale; a stored field always
-wins as an override. See `models.example.toml` for the format.
-
-Three routes: the Models page in the UI (scan, select, import), the CLI
-(`heylookllm import --folder ...`), or the admin API
-(`POST /v1/admin/models/scan` then `POST /v1/admin/models/import`). The scan
-understands MLX/safetensors dirs and GGUF dirs (mmproj
-projectors and `mtp-*` drafter sidecars auto-paired).
+Put the model under a watch folder (`[scan].folders` in `models.toml`, the
+Models page, or `PUT /v1/admin/models/scan-config`). Everything under one is
+served with no entry, with its settings derived from the model's own files at
+load time. The scan understands MLX/safetensors dirs and GGUF dirs (mmproj
+projectors and `mtp-*` drafter sidecars auto-paired). A `models.toml` entry
+exists only to override something; see `models.example.toml` for the format.
 
 After hand-editing `models.toml` on a running server:
 `curl -X POST http://localhost:8000/v1/admin/reload`.

@@ -3,8 +3,9 @@
 Watch folders are a passive discovery mechanism: the server periodically
 scans configured folders and the HF cache, caches the list of "discovered
 but not yet imported" models, and surfaces the list via a read-only admin
-endpoint. There is NO auto-import -- the frontend Models page (C5) shows an
-Add button that hits the existing /v1/admin/models/import endpoint.
+endpoint. No frontend page reads that endpoint any more: a model under a watch
+folder is already served, and the import route went in v2.0.72. The cache
+retires with watch_hf_cache in the registry-sidecars plan.
 
 Tests use a fake scanner (monkeypatched onto MemoryManager) to avoid real
 filesystem I/O and to inject deterministic discovered lists.
@@ -49,13 +50,13 @@ class TestScanConfig:
         cfg = AppConfig(
             models=[],
             scan=ScanConfig(
-                folders=["/models", "~/cache/mlx"],
+                folders=["/models", "cache/mlx"],
                 watch_hf_cache=True,
                 scan_interval_seconds=600,
             ),
         )
         assert cfg.scan is not None
-        assert cfg.scan.folders == ["/models", "~/cache/mlx"]
+        assert cfg.scan.folders == ["/models", "cache/mlx"]
         assert cfg.scan.watch_hf_cache is True
         assert cfg.scan.scan_interval_seconds == 600
 

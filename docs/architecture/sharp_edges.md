@@ -289,11 +289,14 @@ build sat unused) shadowed exactly that on 2026-08-13 and is retired: the
 owner's shell export is gone, and any re-introduction announces itself. Only
 if no binary exists anywhere does load fail loudly.
 
-CLI `heylookllm import` merges with an existing models.toml by default:
-existing entries and top-level keys go right back out verbatim, comments are
-re-injected via `toml_comments`, scans only append new ids, and `--fresh` is
-the old wholesale rewrite. So a hand-written `server_binary` survives
-reimport.
+`heylookllm import` (with its merge-preserving writer and `--fresh`, and the
+admin `/scan` + `/import` routes behind the models page's one-off scan) was
+retired in v2.0.72 (owner, 2026-09-23). Every model lives in a `[scan].folders`
+watch folder and is served with no entry, so writing entries had no remaining
+use, and each written entry froze the derived config. The scanner it shared
+stays: discovery calls it. Its writer-schema guard was not re-homed, because
+the one writer left, `update_config`, validates the whole entry through
+`ModelConfig` before it writes.
 
 `scripts/build_llama.py` is the only thing that clones or builds llama.cpp;
 `uv sync` cannot, since it is C++, not a uv package. It builds the newest
@@ -557,9 +560,10 @@ contributed to an entry that exists.
 
 Every provider-config field declares when a change takes effect
 (`json_schema_extra={"effect": ...}`, the classes in `config.EFFECT_CLASSES`).
-The reload set, the import allowlist and `/v1/admin/model-options` all derive
-from it, because hand-written second copies drifted; a new field must be
-classified or import refuses it.
+The reload set and `/v1/admin/model-options` derive from it (the import
+allowlist did too, until import was retired in v2.0.72), because hand-written
+second copies drifted; a new field must be classified or `config.py` refuses
+to import.
 
 Invariants (v1.55-56, design record [config.md](./config.md)):
 `reload_config()` pushes per_request defaults into loaded providers, which are

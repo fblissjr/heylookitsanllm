@@ -1145,8 +1145,7 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   font-size: var(--text-ui);
 }
 
-.models__list .empty-state,
-.scan-panel .empty-state {
+.models__list .empty-state {
   text-align: left;
   padding: 1rem 0;
 }
@@ -1347,39 +1346,6 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
 }
 .scan-controls__row--check label { font-size: var(--text-ui); }
 
-.scan-panel { display: flex; flex-direction: column; }
-
-.scan-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.6rem 0;
-  border-bottom: 1px solid var(--line);
-  flex-wrap: wrap;
-}
-.scan-row:last-child { border-bottom: none; }
-
-.scan-row__main {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  min-width: 0;
-}
-.scan-row__main strong { overflow-wrap: break-word; }
-.scan-row__meta { overflow-wrap: break-word; }
-/* Its own line inside the baseline-aligned flex row: the drafter note is a
-   sentence, not another chip, and wrapping it beside the meta reads as noise. */
-.scan-row__note { flex-basis: 100%; overflow-wrap: break-word; }
-
-/* Watch-folder editor. The separator marks a real boundary: above it edits
-   server config (what gets served); below it is a throwaway scan. */
-.scan-controls__sep {
-  border: 0;
-  border-top: 1px solid var(--line);
-  margin: 1rem 0 0.75rem;
-}
 .scan-controls textarea.input { resize: vertical; min-height: 4.5rem; font-family: var(--mono); }
 
 /* Disclosure above the config editor for a model that has no models.toml
@@ -1389,7 +1355,6 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
   padding: 0.5rem 0.75rem;
   border-left: 2px solid var(--line);
 }
-.scan-row__actions { flex-shrink: 0; }
 
 /* ---- danger zone ---- */
 
@@ -1408,9 +1373,8 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
 
 @media (max-width: 767px) {
   .models { padding: calc(1rem + env(safe-area-inset-top, 0px)) 1rem 2.5rem; }
-  .model-row, .scan-row { padding: 0.85rem 0; }
+  .model-row { padding: 0.85rem 0; }
   .model-row__actions .btn,
-  .scan-row__actions .btn,
   .models__section-head .btn,
   .models__danger .btn {
     min-height: 44px;

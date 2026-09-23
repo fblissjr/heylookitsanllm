@@ -126,7 +126,7 @@ What is worth carrying here is the shape and the two traps:
 
 Two sibling annotations ride the same derivation and are required on every field for the same reason: **`engines`** (which of `mlx-lm`/`mlx-vlm`/`gguf` the field actually reaches -- the provider key is NOT that answer, since provider `mlx` is two engines) and **`description`** (what the field does and why you would reach for it, which `/v1/admin/model-options` is the only surface to publish -- these classes are never bound as a typed request body, so they do not appear in `/openapi.json`). See [providers_architecture.md §3.5](./providers_architecture.md#35-which-config-fields-apply-to-which-engine) for what `engines` can and cannot express.
 
-The reload check set, model import allowlists, and the admin options API (`/v1/admin/model-options`) all derive from these annotations rather than from a second hand-written list.
+The reload check set and the admin options API (`/v1/admin/model-options`) derive from these annotations rather than from a second hand-written list.
 
 ### 4.2. Lossless TOML Comment Preservation
 `models.toml` is frequently hand-edited with developer notes and performance findings. When the backend or UI writes to `models.toml` (e.g. updating a setting via admin API), [`toml_comments.py`](../../src/heylook_llm/toml_comments.py) preserves existing comments:

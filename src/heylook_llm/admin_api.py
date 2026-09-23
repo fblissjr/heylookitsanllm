@@ -29,14 +29,11 @@ from heylook_llm.config import (
     configurable_fields,
     FitRequest,
     FitResponse,
-    ModelImportRequest,
-    ModelScanRequest,
     ModelStatusResponse,
     ModelUpdateRequest,
     ModelValidateRequest,
     ScanConfigRequest,
     ScanConfigResponse,
-    ScannedModelListResponse,
 )
 from heylook_llm.model_ops_api import load_and_warm
 from heylook_llm.model_service import ModelService
@@ -704,7 +701,7 @@ async def remove_model_config(model_id: str, request: Request):
     return result
 
 
-# --- Scan / Import ---
+# --- Discovery cache ---
 
 # NOTE: These are POST endpoints at fixed paths -- they must be registered
 # BEFORE the catch-all {model_id:path} GET/PATCH/DELETE routes. FastAPI
@@ -715,9 +712,10 @@ async def _discovered_models(request: Request):
     """Return the passively-discovered models cache (C3).
 
     Populated by ``MemoryManager`` scanning the ``[scan]`` folders + HF cache
-    at ``scan_interval_seconds``. Distinct from the active ``POST /scan`` which
-    runs synchronously against user-specified paths. Endpoint is read-only;
-    the frontend hits ``POST /v1/admin/models/import`` on click-to-add.
+    at ``scan_interval_seconds``. Read-only, and read by no frontend page
+    today: a model under a watch folder is already served, so there is
+    nothing to add (the import route went in v2.0.72). It retires with
+    watch_hf_cache in the registry-sidecars plan.
     """
     memory_manager = getattr(request.app.state, "memory_manager", None)
     if memory_manager is None:
@@ -726,57 +724,6 @@ async def _discovered_models(request: Request):
         return memory_manager.discovered_snapshot()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Discovery snapshot failed: {e}")
-
-
-def _scan_for_models(request: Request, scan_request: ModelScanRequest):
-    """Scan filesystem for importable models (threadpool: the walk blocks)."""
-    service = _get_service(request)
-    try:
-        results = service.scan_paths(
-            paths=scan_request.paths or [],
-            scan_hf=scan_request.scan_hf_cache,
-        )
-        # `already_configured` alone stopped being enough at v1.69.0: a model
-        # under [scan].folders with no entry reports False, so a UI that
-        # offers "Import" on that flag offers it for models the router is
-        # ALREADY serving. Mark what the router actually serves, matched on
-        # the resolved path (the same identity rule the registry merges on)
-        # so a symlinked spelling doesn't read as a different file.
-        from heylook_llm.model_registry import path_identity
-
-        served_paths = {
-            path_identity(p) for m in _served_configs(request)
-            if (p := getattr(m.config, "model_path", None))
-        }
-        rows = []
-        for r in results:
-            row = asdict(r)
-            row["served"] = path_identity(r.path) in served_paths
-            rows.append(row)
-        return {"models": rows, "total": len(rows)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Scan failed: {e}")
-
-
-def _import_models(request: Request, import_request: ModelImportRequest):
-    """Import scanned models with configuration."""
-    service = _get_service(request)
-    router = request.app.state.router_instance
-    try:
-        imported = service.import_models(
-            models_to_import=import_request.models,
-        )
-        warning = _safe_reload_config(request)
-        loaded_ids = _get_loaded_model_ids(request)
-        result: dict = {
-            "imported": [_model_config_to_response(c, loaded_ids, router).model_dump() for c in imported],
-            "total": len(imported),
-        }
-        if warning:
-            result["warning"] = warning
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
 
 # --- Validate ---
@@ -872,20 +819,6 @@ scan_import_router.add_api_route(
 )
 
 scan_import_router.add_api_route(
-    "/scan",
-    _scan_for_models,
-    methods=["POST"],
-    summary="Scan for Models",
-    description=(
-        "Scan filesystem paths and HF cache for importable models. Body: "
-        "{paths?: [], scan_hf_cache: bool} -- `paths` is how local model "
-        "folders (a modelzoo of GGUFs, say) are found; the HF cache is a "
-        "separate, additive source, not the only one."
-    ),
-    response_model=ScannedModelListResponse,
-)
-
-scan_import_router.add_api_route(
     "/discovered",
     _discovered_models,
     methods=["GET"],
@@ -895,14 +828,6 @@ scan_import_router.add_api_route(
         "Populated by MemoryManager periodically scanning the [scan].folders + "
         "HF cache. Returns {discovered, last_scan_ts, count}."
     ),
-)
-
-scan_import_router.add_api_route(
-    "/import",
-    _import_models,
-    methods=["POST"],
-    summary="Import Models",
-    description="Import scanned models into configuration.",
 )
 
 scan_import_router.add_api_route(

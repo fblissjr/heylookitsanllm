@@ -272,8 +272,8 @@ The mlx-lm entry is the fix this plan recommended for its own finding. Two
 entries sharing one `model_path` is deliberate and is NOT the accidental
 duplicate `CLAUDE.md` warns about: discovery cannot create it (`merge_discovered`
 filters discovered-vs-explicit, never explicit-vs-explicit), and the entry
-carries a comment saying so. `heylookllm import` dedups on resolved path, so a
-reimport is the one thing likely to collapse it back — check after importing.
+carries a comment saying so. (`heylookllm import`, which deduped on resolved
+path and could collapse it, was retired in v2.0.72.)
 
 ## The failure mode this plan is guarding against
 

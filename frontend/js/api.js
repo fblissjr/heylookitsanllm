@@ -110,13 +110,11 @@ const ROUTES = {
     if (ctxSize != null) q.push(`ctx_size=${encodeURIComponent(ctxSize)}`);
     return `/v1/admin/models/${encodeURIComponent(id)}/reload${q.length ? '?' + q.join('&') : ''}`;
   }],
-  adminScan:         ['POST', () => '/v1/admin/models/scan', true],
-  adminImport:       ['POST', () => '/v1/admin/models/import', true],
-  // The [scan] watch folders -- what the server DISCOVERS models from. Since
-  // v1.69.0 a model under one of these is served with no models.toml entry,
-  // so this list is the primary way to add models; import is the fallback for
-  // a model that lives somewhere else. PUT reloads the router and answers
-  // with models_served, the observable consequence of the edit.
+  // The [scan] watch folders -- what the server DISCOVERS models from. A model
+  // under one of these is served with no models.toml entry, and this list is
+  // the only way to add models (import was retired in v2.0.72). PUT reloads
+  // the router and answers with models_served, the observable consequence of
+  // the edit.
   adminScanConfig:   ['GET', () => '/v1/admin/models/scan-config'],
   adminSetScanConfig:['PUT', () => '/v1/admin/models/scan-config', true],
   // The per-provider option schema (field type/bounds/enum/default + the

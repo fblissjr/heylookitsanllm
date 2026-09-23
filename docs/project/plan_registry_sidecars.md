@@ -330,8 +330,12 @@ fact: `_materialize_discovered` is called from `update_config` and
 
 - The admin config editor writes the sidecar instead of materializing an entry.
 - **Materialization is deleted**, and with it the trap it caused twice.
-- `heylookllm import` retires. **Pulled forward and done separately
-  (owner, 2026-09-23)**, before the sidecar exists: every model lives in a
+- `heylookllm import` retires. **Pulled forward and DONE in v2.0.72
+  (owner, 2026-09-23)**, before the sidecar exists; the admin `/scan` +
+  `/import` routes and the models page's one-off scan went with it. The
+  writer-schema guard below was not re-homed: `update_config`, the one writer
+  left, validates the whole entry through `ModelConfig` before writing. The
+  sidecar writer must still inherit the property. every model lives in a
   scan folder, so its last use is gone. Its derivation half MUST stay:
   `model_registry.discover` imports `ModelImporter`, so discovery and the
   importer are one derivation called from two places. What retires is the WRITE

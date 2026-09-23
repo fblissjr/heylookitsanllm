@@ -2,13 +2,13 @@
 """
 Service layer for model discovery, validation, and configuration management.
 
-Provides CRUD operations on models.toml, filesystem scanning for importable models,
-and smart defaults. Thread-safe for concurrent API access.
+Provides CRUD operations on models.toml, filesystem scanning (the discovery
+cache), and smart defaults. Thread-safe for concurrent API access.
 
 This module is the single source of truth for:
 - Smart defaults (get_smart_defaults)
 - HuggingFace cache paths (get_hf_cache_paths)
-- Config CRUD, scanning, import, validation
+- Config CRUD, scanning, validation
 """
 
 import copy
@@ -30,7 +30,6 @@ from heylook_llm.config import (
     PROVIDER_CONFIG_CLASSES,
     AppConfig,
     ModelConfig,
-    configurable_fields,
     reload_required_fields,
 )
 from heylook_llm.toml_comments import merge_comments
@@ -840,108 +839,6 @@ class ModelService:
             raise ValueError(f"Model '{model_id}' not found")
 
     # --- Import ---
-
-    def import_models(
-        self,
-        models_to_import: list[dict],
-    ) -> list[ModelConfig]:
-        """Import scanned models into config."""
-        with self._lock:
-            data = self._read_toml()
-            existing_models = data.get("models", [])
-            existing_ids = {m.get("id") for m in existing_models}
-            imported = []
-
-            for model_data in models_to_import:
-                model_id = model_data.get("id", "")
-
-                # Build model entry
-                provider = model_data.get("provider", "mlx")
-                config = model_data.get("config", {})
-                model_path = config.get("model_path", model_data.get("path", ""))
-
-                if provider == "gguf":
-                    # GGUFModelConfig has model_config = ConfigDict(extra=
-                    # "forbid") and no "vision"/cache_type/chat-template
-                    # fields (llama-server owns its own KV cache and
-                    # GGUF-embedded chat templating) -- building this from
-                    # the mlx-shaped entry_config below would fail
-                    # validation and silently drop the import. Only pass
-                    # through the GGUF-specific fields the caller actually
-                    # supplied in ``config`` (e.g. from a CLI-importer scan
-                    # via mmproj_path/draft_model_path/modalities).
-                    entry_config = {"model_path": model_path}
-                    # DERIVED: every GGUFModelConfig field except identity
-                    # (model_path, set above). The old hand-written tuple had
-                    # drifted from the config class and silently dropped
-                    # n_gpu_layers_draft, cache_ram_mb, load_mode,
-                    # sleep_idle_seconds and enable_thinking on import.
-                    for key in sorted(
-                        configurable_fields(PROVIDER_CONFIG_CLASSES["gguf"])
-                    ):
-                        # Skip None -- GGUFModelConfig fields are Optional
-                        # with real (non-None) defaults, and TOML has no
-                        # null literal (tomli_w raises on it).
-                        if key in config and config[key] is not None:
-                            entry_config[key] = config[key]
-
-                else:
-                    # Derive-at-load (6a, 2026-07-28): thin entry, matching
-                    # the CLI wizard. vision/modalities are detected at
-                    # config load, cache defaults resolve at model load
-                    # (cache_type=None = auto), the chat-template source is
-                    # auto-resolved at load. Only operator intent is stored.
-                    entry_config = {"model_path": model_path}
-
-                # Apply any overrides from the import request
-                overrides = model_data.get("overrides", {})
-                entry_config.update(overrides)
-
-                # description/tags only when the CALLER supplied them
-                # (operator intent); auto-text is not materialized (6a).
-                entry = {
-                    "id": model_id,
-                    "provider": provider,
-                    "enabled": model_data.get("enabled", True),
-                    "config": entry_config,
-                }
-                if model_data.get("description"):
-                    entry["description"] = model_data["description"]
-                if model_data.get("tags"):
-                    entry["tags"] = model_data["tags"]
-
-                try:
-                    validated = ModelConfig(**entry)
-                except Exception as e:
-                    logger.error(f"Failed to import model '{model_id}': {e}")
-                    continue
-
-                if model_id in existing_ids:
-                    # Re-import = PUT semantics: replace the existing entry
-                    # with the freshly built one (was skip-not-update, which
-                    # made refreshing an entry from a rescan impossible
-                    # without hand-editing the TOML).
-                    idx = next(
-                        i for i, m in enumerate(existing_models)
-                        if m.get("id") == model_id
-                    )
-                    existing_models[idx] = entry
-                    logger.info(f"Re-import: updated existing model '{model_id}'")
-                else:
-                    existing_models.append(entry)
-                    existing_ids.add(model_id)
-                imported.append(validated)
-
-            if imported:
-                data["models"] = existing_models
-                # Deliberately does NOT set default_model. Importing models is
-                # not a statement about which one to route to, and the old
-                # auto-set picked an arbitrary imported[0] -- it also silently
-                # undid a deliberately-cleared default (the way to say "route
-                # nowhere until asked") on the next scan.
-                self._write_toml(data)
-
-            return imported
 
     # --- Validation ---
 

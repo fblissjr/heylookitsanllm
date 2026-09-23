@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-23, v2.0.71, `main`.
+Last updated: 2026-09-23, v2.0.72, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `CLAUDE.md`, the backlog in [TODO.md](./TODO.md), and what each release
@@ -69,7 +69,7 @@ a server holds the default database (it has isolated its own database at
 import time since v1.79.54 -- `tests/contract/conftest.py` -- so it never opens
 the real one).
 
-## What landed 2026-09-23 (v2.0.65 - v2.0.71)
+## What landed 2026-09-23 (v2.0.65 - v2.0.72)
 
 Started from "is llama-server built and spawned optimally for vision and
 thinking models". The build was already right; what turned up was mostly
@@ -100,6 +100,9 @@ things happening where nothing could see them.
 - The eval bank speaks `/v1/messages` again (v2.0.71): an adapter in
   `tests/eval/run.py`, no task redesign, no task dropped. `/eval-ab` is
   unblocked.
+- `heylookllm import` and the admin `/scan` + `/import` routes retired
+  (v2.0.72, owner call): every model lives in a watch folder. The served set
+  is unchanged.
 
 ## What landed 2026-09-21 (v2.0.51 - v2.0.63)
 

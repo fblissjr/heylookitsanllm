@@ -333,32 +333,6 @@ def _read_template(model_dir: Path, source: Optional[str]) -> tuple[str, str]:
     return "", AUTO
 
 
-def detect_chat_template_source(model_dir) -> Optional[str]:
-    """Import-time detection shared by BOTH import paths (CLI wizard and the
-    /v1/admin import route): record ``"jinja"`` when the folder ships a
-    ``chat_template.jinja``, else leave the source unset (auto).
-
-    Expands ``~`` -- the admin API accepts arbitrary path strings.
-    """
-    model_dir = Path(model_dir).expanduser()
-    jinja_path = model_dir / "chat_template.jinja"
-    if jinja_path.is_file():
-        # Only prefer the jinja if it actually renders a stop token. A broken/
-        # corrupted jinja (no <end_of_turn>/<|im_end|>/...) would force-install a
-        # stop-less template -> runaway generation. If it's stop-less, don't record
-        # `jinja` -- leave the source unset (auto), and the load-time guard in
-        # read_template_info also rejects it.
-        body = _read_file(jinja_path)
-        if body and _template_can_stop(body, _read_eos_tokens(model_dir)):
-            return JINJA
-        logging.warning(
-            "chat_template.jinja in %s renders none of the model's stop tokens -- "
-            "NOT recording it as chat_template_source (it would run away). "
-            "Leaving source=auto.", model_dir.name,
-        )
-    return None
-
-
 def is_explicit_source(source: Optional[str]) -> bool:
     """True when ``chat_template_source`` names an explicit template choice.
 

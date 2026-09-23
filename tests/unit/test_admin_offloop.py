@@ -128,7 +128,6 @@ def admin_app(tmp_path, monkeypatch):
     app.include_router(admin_ops_router)
     app.state.model_service = ModelService(str(cfg))
     app.state.router_instance = _FakeRouter(cfg)
-    app.state.scan_store = str(store)
     app.state.scan_blob = str(blob)
     scans.clear()  # the fake router's construction reload already scanned
     app.state.scans = scans
@@ -137,14 +136,12 @@ def admin_app(tmp_path, monkeypatch):
 
 def _case(app, name):
     """(method, url, request kwargs) for one mutating admin route."""
-    store, blob = app.state.scan_store, app.state.scan_blob
+    blob = app.state.scan_blob
     return {
         "patch": ("PATCH", "/v1/admin/models/found",
                   {"json": {"config": {"chat_template_path": blob}}}),
         "toggle": ("POST", "/v1/admin/models/found/toggle", {}),
         "delete": ("DELETE", "/v1/admin/models/written-off", {}),
-        "scan": ("POST", "/v1/admin/models/scan",
-                 {"json": {"paths": [store], "scan_hf_cache": False}}),
         "reload": ("POST", "/v1/admin/reload", {}),
     }[name]
 
@@ -180,7 +177,7 @@ class TestMutatingAdminRoutesStayOffTheEventLoop:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("case", [
-        "patch", "toggle", "delete", "scan", "reload",
+        "patch", "toggle", "delete", "reload",
     ])
     async def test_route_does_not_freeze_the_loop(self, admin_app, case):
         method, url, kwargs = _case(admin_app, case)

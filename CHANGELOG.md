@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.72]
+
+### Removed
+
+- **`heylookllm import`, `POST /v1/admin/models/scan` and
+  `POST /v1/admin/models/import`** (owner decision 2026-09-23). Every model
+  lives in a `[scan].folders` watch folder and is served with no entry, so
+  writing `[[models]]` entries had no remaining use, and each written entry
+  froze the derived config. Add a model by adding its folder (models.toml, the
+  Models page, or `PUT /v1/admin/models/scan-config`).
+  - Gone: the CLI subcommand and its flags (`--folder`, `--hf-cache`,
+    `--output`, `--override`, `--chat-template`, `--fresh`), the
+    merge-preserving TOML writer (`generate_toml`, `write_merged`),
+    `ModelService.import_models`, `ModelImportRequest`, `ModelScanRequest`,
+    `ScannedModelResponse`/`ScannedModelListResponse`, the now-callerless
+    `detect_chat_template_source`, and the Models page's one-off scan panel
+    with its Import buttons. The watch-folder settings stay.
+  - Stays: the scanner (`ModelImporter.scan_directory` / `scan_hf_cache`),
+    which discovery calls. The served model set is unchanged (checked:
+    identical `merge_discovered` output before and after on the live
+    models.toml).
+  - The writer-schema test retired with the writer: the one writer left,
+    `update_config`, validates the whole entry through `ModelConfig` before
+    it writes. The scanner's own schema test stays.
+  - Tests removed with their subject: the re-import and CLI merge-preserve
+    tests (the scan-identity tests stay, as `test_scan_identity.py`),
+    `test_importer_validates_entries.py` (`--override` typos), the `/scan`
+    contract and off-loop cases, and three e2e scan checks.
+  - `/v1/admin/models/discovered` stays for now (no frontend reader); it
+    retires with `watch_hf_cache` in the registry-sidecars plan.
+
 ## [2.0.71]
 
 ### Fixed

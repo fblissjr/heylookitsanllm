@@ -49,8 +49,8 @@ Anti-recommendations, with reasons:
 
 ## After converting
 
-- Import: `heylookllm import --folder <mlx-path>` (or the v3 models page
-  scan). Template/eos come from the converted dir's own files -- for
+- Serve it: write the output under a watch folder (`[scan].folders`); it is
+  served with no entry. Template/eos come from the converted dir's own files -- for
   gemma-4, confirm the canonical `chat_template.jinja` came along.
 - Verify behavior, not vibes: register the model and run the eval bank
   against old + new side by side --

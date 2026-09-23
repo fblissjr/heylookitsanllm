@@ -660,31 +660,9 @@ value + resident + nothing stale = a plain load, no restart. This is what chat's
 Load/Reload button sends for a gguf model; `/load` stays the call for everything
 else;
 `POST /{id}/unload` →
-`{status:"unloaded"|"not_loaded"}` (never errors); `POST /scan` `{paths?:[], scan_hf_cache:bool}` →
-`{models:[{id,path,provider,size_gb,vision,quantization?,already_configured,tags,description,
-modalities,supports_thinking?,draft_model_path?,draft_spec_type?}], total}`
-(`ScannedModelListResponse`, wired as the route's `response_model` 2026-08-07 — it sat
-unreferenced for months while the dataclass grew, so the declared contract had no way to
-disagree loudly with what shipped);
-`POST /import` `{models:[{id,path,provider}]}` → `{imported:[...], total, warning?}`
-(unknown body keys 422 via extra="forbid" -- which now includes `default_sampler`,
-removed with the named-sampler system in v2.0.30).
-
-Three things about `/scan` that bit (all fixed 2026-08-07):
-- **`paths` is not optional in practice.** The HF cache is ONE source; every locally
-  downloaded model — the whole GGUF fleet — is reachable only through `paths`, and v3
-  hardcoded `{scan_hf_cache: true}` with no paths, so none of it could be found from the
-  UI. Paths resolve on the SERVER (a relative one against its working directory); a
-  missing path is a no-op, not an error.
-- **`modalities`/`vision` are DERIVED, not read from a config key.** Only the MLX entry
-  builder ever wrote `config["vision"]`, and thin entries stopped writing it — so scans
-  reported `vision:false` for every model of both providers. gguf states its modalities in
-  the entry (read from the projector's own header, which declares vision and audio
-  separately); everything else derives them from the model dir through the shared detector.
-- **`draft_spec_type` is reported, never applied.** Import pairs a drafter's PATH but
-  leaves `spec_type` unset, because whether speculative decoding pays off is a per-model
-  measurement. Which `--spec-type` the drafter requires is a fact about the file, and it
-  only ever reached the server log.
+`{status:"unloaded"|"not_loaded"}` (never errors). `POST /scan` and `POST /import` were retired in v2.0.72 with
+`heylookllm import`: every model lives in a watch folder (`/scan-config` above) and is
+served with no entry, so there is nothing to scan for or import.
 
 `GET /v1/admin/models`'s `capabilities` is DERIVED through the same helper `/v1/models`
 uses (`capabilities.py`, extracted 2026-08-07). It previously reported the stored
@@ -770,12 +748,6 @@ breaks every request to that model at its next load. Both engines bind the templ
 LOAD, so a successful write still needs a reload; that is what `stale` says.
 Harnesses: this writes a real file into the model directory, so an E2E check must point
 the model at a temp dir or intercept the PUT.
-
-`POST /v1/admin/models/scan` results carry `served` (v1.70.0) alongside
-`already_configured`: the former means the router serves that file already (matched on
-the resolved path), the latter that it has an entry. Since v1.69.0 those differ, and the
-Import button must gate on `served` -- gating on `already_configured` offered Import for
-models running in the list above it.
 
 `ChatRequest.reasoning_effort` (v1.71.0) is thinking DEPTH: `low|medium|high|xhigh`,
 sent as a chat-template kwarg beside `enable_thinking` and dropped when thinking is off

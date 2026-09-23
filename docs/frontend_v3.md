@@ -208,7 +208,7 @@ auto-appear from template detection, no `models.toml` flag needed).
 |------|-----------|
 | chat | `/v1/conversations` CRUD, **`/v1/conversations/{id}/generate` (Messages SSE -- v1.66.0, the server-side saga; DELETE = Stop)**, `/v1/presets` CRUD, `/v1/admin/models` (residency dots + the cold-send load status; the load-cost CONFIRM was removed v1.62.3 -- cost is disclosed, only loss gates) + `load?warm=true` (the bar's Load button) |
 | notebook | `/v1/notebooks` CRUD, `/v1/messages` (v1.74.0, Phase 3b) |
-| models | `/v1/models`, `/v1/capabilities`, `/v1/admin/models` (+ `/import`, `/scan` **with local `paths`**, `load?warm=true`/unload, `PATCH /{id}` config edit), `/v1/admin/model-options` (option schema for the Configure panel + row chips) |
+| models | `/v1/models`, `/v1/capabilities`, `/v1/admin/models` (+ `/scan-config` watch folders, `load?warm=true`/unload, `PATCH /{id}` config edit), `/v1/admin/model-options` (option schema for the Configure panel + row chips) |
 | perf | `/v1/performance/profile/`, `/v1/system/metrics` |
 | shared | `/v1/data/clear` (danger zone; presets are EXCLUDED from it -- config, not data) |
 

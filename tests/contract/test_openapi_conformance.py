@@ -34,7 +34,6 @@ class TestOpenAPISchema:
             "/v1/conversations",
             "/v1/system/metrics",
             "/v1/admin/models",
-            "/v1/admin/models/scan",
                 ]
         for path in expected_paths:
             assert path in paths, f"Missing endpoint in OpenAPI schema: {path}"

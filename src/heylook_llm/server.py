@@ -94,73 +94,10 @@ def main():
     # Create subcommands
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
-    # Import command
-    import_parser = subparsers.add_parser(
-        "import",
-        help="Import models from directories or HF cache (usually unnecessary "
-             "-- see [scan].folders)",
-        description=(
-            "Write [[models]] entries for models found on disk.\n\n"
-            "SINCE v1.69.0 THIS IS RARELY WHAT YOU WANT. Anything under a "
-            "[scan].folders watch folder is served with no entry at all, so "
-            "the usual way to add models is to add a folder -- in models.toml, "
-            "or on the Models page, or via PUT /v1/admin/models/scan-config. "
-            "Import remains the route for a model that lives somewhere you do "
-            "not want watched, and for pinning an entry you intend to hand-edit."
-        ),
-        # Default HelpFormatter reflows and collapses the blank line, which
-        # merges "what it does" into "you probably don't need this" -- the
-        # separation IS the point of the description.
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    import_parser.add_argument(
-        "--folder", type=str, help="Path to folder containing models to import"
-    )
-    import_parser.add_argument(
-        "--hf-cache", action="store_true", help="Scan HuggingFace cache for models"
-    )
-    import_parser.add_argument(
-        "--output",
-        "-o",
-        type=str,
-        default="models.toml",
-        help="Output file for generated configuration (default: models.toml)",
-    )
-    import_parser.add_argument(
-        "--override",
-        action="append",
-        help="Override specific settings (e.g., --override temperature=0.5 --override max_tokens=256)",
-    )
-    import_parser.add_argument(
-        "--chat-template",
-        dest="chat_template",
-        help="Chat template source policy recorded on the imported model. "
-             "'auto' (default): HF picks the right one; 'jinja': force-load "
-             "chat_template.jinja from the model dir; 'tokenizer_config': "
-             "force the embedded template; 'chat_template_json': force the "
-             "processor-side chat_template.json; or an absolute path to a "
-             ".jinja file. Import wizard auto-sets 'jinja' when "
-             "chat_template.jinja is present; pass this flag to override.",
-    )
-    import_parser.add_argument(
-        "--fresh",
-        action="store_true",
-        help="Regenerate the output file from scratch. By default an existing "
-             "file keeps every entry and top-level setting it already has "
-             "(hand edits like server_binary survive) and the scan only "
-             "appends newly found models.",
-    )
-    import_parser.add_argument(
-        "--log-level",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        default="INFO",
-        help="Logging level",
-    )
-    # (--interactive retired 2026-07-28 with config_tui: per-model sampler/KV
-    # customization at import is dead under derive-at-load thin entries --
-    # use --override or edit models.toml; the Wave 4 admin CRUD is the
-    # interactive surface. --sampler went with the named-sampler system in
-    # v2.0.30.)
+    # (`import` retired v2.0.72: every model lives in a [scan].folders watch
+    # folder and is served with no entry, so writing [[models]] entries has no
+    # remaining use. Add a folder instead: models.toml, the Models page, or
+    # PUT /v1/admin/models/scan-config.)
 
     # Service command - manage background service (macOS/Linux)
     service_parser = subparsers.add_parser(
@@ -246,21 +183,6 @@ def main():
     )
 
     args = parser.parse_args()
-
-    # Handle import command
-    if args.command == "import":
-        # Set up logging for import
-        import logging as log_module
-
-        log_level = getattr(log_module, args.log_level.upper())
-        log_module.basicConfig(
-            level=log_level, format="%(asctime)s - %(levelname)s - %(message)s"
-        )
-
-        from heylook_llm.model_importer import import_models
-
-        import_models(args)
-        return
 
     # Handle service command
     if args.command == "service":

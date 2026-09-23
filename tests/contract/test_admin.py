@@ -99,23 +99,6 @@ class TestAdminEffectiveLoader:
             mock_service.update_calls.clear()
 
 
-class TestAdminScan:
-    """Tests for POST /v1/admin/models/scan."""
-
-    def test_scan_returns_results(self, client):
-        """POST /v1/admin/models/scan returns scan results structure."""
-        resp = client.post("/v1/admin/models/scan", json={
-            "paths": [],
-            "scan_hf_cache": False,
-        })
-        assert resp.status_code == 200
-
-        data = resp.json()
-        assert "models" in data
-        assert "total" in data
-        assert isinstance(data["models"], list)
-
-
 class TestAdminModelStatus:
     """Tests for GET /v1/admin/models/{model_id}/status."""
 

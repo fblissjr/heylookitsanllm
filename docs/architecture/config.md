@@ -413,34 +413,10 @@ curl -X POST http://localhost:8000/v1/admin/reload
 
 Reloads `models.toml` without restarting the server. Currently loaded models stay in cache.
 
-### Model Importer
+### Adding models
 
-```bash
-# Scan HuggingFace cache and generate models.toml
-heylookllm import --hf-cache --sampler balanced
-
-# Scan a directory
-heylookllm import --folder modelzoo --output models.toml
-
-# Interactive mode
-heylookllm import --interactive
-```
-
-`ModelImporter._get_model_size` (`src/heylook_llm/model_importer.py`,
-lines 239-270) returns two independent values that must not be conflated:
-a human-facing **label** parsed from the model directory name (e.g. `7B`,
-`4bit`), and the actual **`size_gb`** fed to `get_smart_defaults`. Before
-v1.32.0, `size_gb` also came from the name regex -- `Qwen-7B` produced
-`size_gb = 7.0`, which is 7 billion *parameters*, not 7 *gigabytes*, and a
-`-4bit` suffix produced `size_gb = 4.0` the same way. Feeding a
-params-count into a RAM-relative GB threshold (see "Smart Defaults at
-Import" above) is a straightforward unit error. `size_gb` now always
-comes from the safetensors byte-sum on disk (`sum(f.stat().st_size for f
-in path.rglob("*.safetensors")) / 1024**3`), matching the admin scan path
-(`ModelService._raw_to_scanned`) that already did this correctly. The
-name regex now only supplies the label, and only matches the model
-**directory** name -- matching the full path let size-looking fragments
-in parent directories (e.g. a temp dir containing `680b`) win.
+Put the model under a `[scan].folders` watch folder; discovery serves it with
+no entry. `heylookllm import` was retired in v2.0.72.
 
 ---
 
@@ -452,7 +428,7 @@ in parent directories (e.g. a temp dir containing `680b`) win.
 ValueError: Model 'unknown-model' not found in configuration
 ```
 
-Check `/v1/models` or run `heylookllm import` to regenerate `models.toml`.
+Check `/v1/models`, and that the model sits under a `[scan].folders` watch folder.
 
 ### Validation Error
 

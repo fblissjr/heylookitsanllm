@@ -1748,83 +1748,14 @@ class ScanConfigResponse(BaseModel):
         default=None, description="Saved, but the router reload failed.")
 
 
-class ScannedModelResponse(BaseModel):
-    """A model discovered during filesystem scan.
-
-    Mirrors ``model_service.ScannedModel``. Wired as the /scan route's
-    ``response_model`` on purpose: this model sat unreferenced for months
-    while the dataclass grew, so the declared contract and what the route
-    actually returned had no way to disagree loudly.
-    """
-    id: str = Field(..., description="Auto-generated model identifier")
-    path: str = Field(..., description="Filesystem path to model")
-    provider: Literal["mlx", "gguf"] = Field(..., description="Detected provider type")
-    size_gb: float = Field(..., description="Estimated model size in GB")
-    vision: bool = Field(default=False, description="Whether model supports vision (shadow of `modalities`)")
-    quantization: Optional[str] = Field(default=None, description="Quantization level (4bit, 8bit, etc)")
-    already_configured: bool = Field(default=False, description="True if ID already exists in models.toml")
-    served: bool = Field(
-        default=False,
-        description="The router already serves this file (via [scan] "
-                    "discovery). Distinct from already_configured, which "
-                    "means it has a models.toml entry -- since v1.69.0 a "
-                    "model can be served with no entry, so importing it "
-                    "would change nothing.",
-    )
-    tags: List[str] = Field(default_factory=list)
-    description: str = ""
-    modalities: List[str] = Field(
-        default_factory=list,
-        description="Author-declared modality set (text/vision/audio/video)",
-    )
-    supports_thinking: Optional[bool] = Field(
-        default=None,
-        description="Thinking support read from the model's own chat template; "
-                    "null = no template to judge (e.g. a drafter head)",
-    )
-    draft_model_path: Optional[str] = Field(
-        default=None, description="Paired speculative drafter sidecar, if any"
-    )
-    draft_spec_type: Optional[str] = Field(
-        default=None,
-        description="The --spec-type that drafter REQUIRES. Reported, never applied: "
-                    "import leaves spec_type unset because whether speculative "
-                    "decoding pays off is a per-model measurement.",
-    )
-
-
-class ScannedModelListResponse(BaseModel):
-    """Response for a model scan."""
-    models: List[ScannedModelResponse] = Field(default_factory=list)
-    total: int = 0
-
-
-class ModelScanRequest(BaseModel):
-    """Request to scan for importable models."""
-    paths: List[str] = Field(default_factory=list, description="Custom paths to scan")
-    scan_hf_cache: bool = Field(default=True, description="Also scan HuggingFace cache directories")
-
-
-class ModelImportRequest(BaseModel):
-    """Import one or more scanned models.
-
-    extra="forbid": a stale {"profile": ...} or {"default_sampler": ...} body
-    from an old client must fail loudly rather than be silently dropped --
-    both named the bundled-sampler system removed in v2.0.30.
-    """
-    model_config = ConfigDict(extra="forbid")
-
-    models: List[Dict] = Field(..., description="Models to import (id, path, provider, overrides)")
-
-
 class ModelUpdateRequest(BaseModel):
     """Partial update to model config.
 
     extra="forbid": a config key sent at the TOP level (`{"ctx_size": ...}`
     instead of `{"config": {"ctx_size": ...}}`) used to validate, get ignored
     by the fixed top-level key list, and return 200 with nothing changed --
-    the silent-drop class this repo rejects elsewhere (import, the
-    preset->sampler guard). Now it 422s naming the key.
+    the silent-drop class this repo rejects elsewhere (the preset->sampler
+    guard). Now it 422s naming the key.
     """
     model_config = ConfigDict(extra="forbid")
 

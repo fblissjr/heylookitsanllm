@@ -21,7 +21,7 @@ Honesty notes:
   Failures from the converter surface verbatim -- this wrapper adds nothing.
 - After converting, verify with the probe before registering:
       uv run python scripts/gguf_probe.py <dest>
-  then add a models.toml entry (or `heylookllm import --scan <dest>`).
+  then put <dest> under a [scan].folders watch folder (no entry needed).
 """
 
 from __future__ import annotations

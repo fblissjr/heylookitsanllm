@@ -1,18 +1,19 @@
 # src/heylook_llm/model_importer.py
 """
-CLI wrapper for model scanning and import.
+Filesystem scanner behind model discovery.
 
-Provides the ModelImporter class for filesystem scanning and TOML generation,
-and the import_models CLI handler. Profiles, smart defaults, and HF cache paths
-are defined in model_service.py (single source of truth).
+ModelImporter turns what is on disk into models.toml-shaped entries; discovery
+(model_registry.discover) and the admin scan cache (ModelService.scan_paths)
+both call it. It no longer writes anything: the `heylookllm import` CLI and
+its TOML writer were retired in v2.0.72, since every model lives in a
+[scan].folders watch folder and is served with no entry. Profiles, smart
+defaults, and HF cache paths are defined in model_service.py.
 """
 
 import glob
 import logging
 import os
 import re
-import tomllib
-import tomli_w
 from pathlib import Path
 from typing import Any, Optional
 
@@ -24,26 +25,19 @@ from heylook_llm.modality_detect import (
     read_model_config_json,
 )
 
-__all__ = ["ModelImporter", "get_hf_cache_paths", "import_models"]
+__all__ = ["ModelImporter", "get_hf_cache_paths"]
 
 HF_CACHE_PATHS = get_hf_cache_paths()
 
 
 class ModelImporter:
-    """Scan directories and generate models.toml entries."""
+    """Scan directories into models.toml-shaped entries."""
 
-    def __init__(
-        self,
-        overrides: Optional[dict[str, Any]] = None,
-        chat_template_override: Optional[str] = None,
-    ):
+    def __init__(self):
         self.models: list[dict] = []
+        # Ids already produced by this instance, so one scan never yields the
+        # same id twice. Discovery uses a fresh instance per call.
         self.existing_ids: set[str] = set()
-        self.overrides = overrides or {}
-        # CLI `--chat-template` override. When set, recorded on every
-        # imported model regardless of what's in its folder. Users point at
-        # a custom .jinja path or force "tokenizer_config" to bypass jinja.
-        self.chat_template_override = chat_template_override
 
     def scan_directory(self, path: str) -> list[dict]:
         """Scan a directory recursively for models."""
@@ -145,19 +139,12 @@ class ModelImporter:
         return self._validate(models)
 
     def _validate(self, models: list[dict]) -> list[dict]:
-        """Reject entries that would not load, BEFORE they reach models.toml.
+        """Reject entries that would not load, at scan time.
 
-        The importer writes the config file directly and validated nothing, so
-        a single mistyped ``--override`` (``ctx_sze=8192``) produced a
-        successful-looking import and a server that then refused to start --
-        with the failure pointing at config load, far from the command that
-        caused it, and no indication which of N imported entries was at fault.
-
-        ``--override`` is free-form by design (it has to reach provider config
-        fields this code does not enumerate), so the config CLASS is the only
-        thing that knows what is valid. Same reasoning as the derived reload
-        set and import allowlist: ask the schema, do not maintain a second
-        list of field names here.
+        Every entry goes through ModelConfig, so the config CLASS decides what
+        is valid (the same reasoning as the derived reload set: ask the
+        schema, never a second list of field names). It raises rather than
+        skipping; discovery isolates failures per folder.
         """
         from heylook_llm.config import (
             PROVIDER_CONFIG_CLASSES,
@@ -175,7 +162,7 @@ class ModelImporter:
                     ", ".join(sorted(configurable_fields(cls))) if cls else "unknown provider"
                 )
                 raise ValueError(
-                    f"import would write an invalid entry for "
+                    f"scan produced an invalid entry for "
                     f"'{model.get('id', '?')}' (provider={provider}): {e}\n"
                     f"Settable config keys for {provider}: {valid}"
                 ) from e
@@ -511,8 +498,6 @@ class ModelImporter:
                     f"must be set by hand"
                 )
 
-        config.update(self.overrides)
-
         return {
             "id": model_id, "provider": "gguf", "enabled": True, "config": config,
         }
@@ -546,307 +531,9 @@ class ModelImporter:
         # chat-template source is auto-resolved at model load
         # (template_info.py), and description/tags auto-text is not worth
         # storing. Materializing any of these is a copy that rots when the
-        # model dir changes in place. Only an explicit CLI --chat-template
-        # override (operator intent) is recorded.
+        # model dir changes in place.
         config: dict[str, Any] = {"model_path": str(path)}
-
-        if self.chat_template_override:
-            config["chat_template_source"] = self.chat_template_override
-
-        config.update(self.overrides)
 
         return {
             "id": model_id, "provider": "mlx", "enabled": True, "config": config,
         }
-
-    # Stable section order for a mixed scan; anything outside this map
-    # (a future provider) still gets emitted, under "Other Models".
-    _SECTION_HEADERS: list[tuple[str, str]] = [
-        ("mlx", "# --- MLX Models ---"),
-        ("gguf", "# --- GGUF Models ---"),
-    ]
-
-    def generate_toml(self, models: list[dict], output_file: Optional[str] = None) -> str:
-        """Generate models.toml content from discovered models.
-
-        Entries are grouped into one ``# --- <Provider> Models ---`` section
-        per provider (stable order: MLX, GGUF, then anything
-        else) so a mixed scan reads as organized sections instead of one
-        undifferentiated list under a single "MLX Models" header.
-        """
-        config = {
-            "default_model": models[0]['id'] if models else "none",
-            "max_loaded_models": 1,
-            "models": list(models),
-        }
-
-        toml_lines = [
-            "# Auto-generated models configuration",
-            "# Edit with: heylookllm models config",
-            "",
-            f'default_model = "{config["default_model"]}"',
-            f'max_loaded_models = {config["max_loaded_models"]}',
-            "",
-        ]
-
-        by_provider: dict[str, list[dict]] = {}
-        for model in models:
-            by_provider.setdefault(model.get("provider", "mlx"), []).append(model)
-
-        known_providers = {key for key, _ in self._SECTION_HEADERS}
-        for provider_key, header in self._SECTION_HEADERS:
-            group = by_provider.get(provider_key, [])
-            if not group:
-                continue
-            toml_lines.append(header)
-            toml_lines.append("")
-            for model in group:
-                toml_lines.extend(self._model_to_toml_lines(model))
-                toml_lines.append("")
-
-        others = [
-            model
-            for provider_key, group in by_provider.items()
-            if provider_key not in known_providers
-            for model in group
-        ]
-        if others:
-            toml_lines.append("# --- Other Models ---")
-            toml_lines.append("")
-            for model in others:
-                toml_lines.extend(self._model_to_toml_lines(model))
-                toml_lines.append("")
-
-        toml_content = "\n".join(toml_lines)
-
-        if output_file:
-            with open(output_file, 'w') as f:
-                f.write(toml_content)
-            logging.info(f"Wrote configuration to {output_file}")
-
-        return toml_content
-
-    def _model_to_toml_lines(self, model: dict) -> list[str]:
-        """Convert a model dict to TOML table lines."""
-        lines = ["[[models]]"]
-        lines.append(f'id = "{model["id"]}"')
-        lines.append(f'provider = "{model["provider"]}"')
-
-        if 'description' in model:
-            lines.append(f'description = "{model["description"]}"')
-        if 'tags' in model:
-            tags_str = ", ".join(f'"{tag}"' for tag in model['tags'])
-            lines.append(f'tags = [{tags_str}]')
-
-        lines.append(f'enabled = {str(model.get("enabled", True)).lower()}')
-        lines.append("")
-
-        if 'config' in model:
-            lines.append("  [models.config]")
-            config_toml = tomli_w.dumps({"config": model['config']})
-            config_lines = config_toml.split('\n')[1:]
-            for line in config_lines:
-                if line.strip():
-                    lines.append(f"  {line}")
-
-        return lines
-
-    def write_merged(self, top_level: dict, existing_models: list[dict],
-                     new_models: list[dict], output_file: str,
-                     old_text: str) -> str:
-        """Reimport = the file you had, plus what the scan found.
-
-        Existing entries and top-level keys round-trip VERBATIM (values via
-        tomli_w; comments re-injected by merge_comments, the same machinery
-        as admin writes) -- a reimport must never eat a hand-tuned
-        server_binary or top-level setting. Refreshing one entry
-        from a rescan is the admin PUT flow, deliberately not this path.
-        """
-        from heylook_llm.toml_comments import merge_comments
-
-        def _strip_none(value):
-            if isinstance(value, dict):
-                return {k: _strip_none(v) for k, v in value.items() if v is not None}
-            if isinstance(value, list):
-                return [_strip_none(v) for v in value if v is not None]
-            return value
-
-        def _renders_as_sections(value) -> bool:
-            # A non-empty list of dicts came from [[key]] sections; tomli_w
-            # would re-render it as an inline array (valid, value-identical,
-            # but a shape change that also orphans any comments on the old
-            # sections), so those keys get section-rendered by hand below.
-            return (isinstance(value, list) and bool(value)
-                    and all(isinstance(i, dict) for i in value))
-
-        aots = {k: v for k, v in top_level.items() if _renders_as_sections(v)}
-        # Scalars before tables so tomli_w cannot emit a top-level key after
-        # a table header (which would re-parse into the wrong table).
-        scalars = {k: v for k, v in top_level.items()
-                   if k not in aots and not isinstance(v, dict)}
-        tables = {k: v for k, v in top_level.items() if isinstance(v, dict)}
-        doc: dict[str, Any] = dict(scalars)
-        all_models = existing_models + new_models
-        # First entry that HAS an id: an id-less entry is already invalid to
-        # the server, but deriving a default from it must not crash the import.
-        doc.setdefault("default_model",
-                       next((str(m["id"]) for m in all_models if m.get("id")),
-                            "none"))
-        doc.setdefault("max_loaded_models", 1)
-        doc.update(tables)
-        doc["models"] = [_strip_none(m) for m in all_models]
-
-        fresh = tomli_w.dumps(doc)
-        # Re-render array-of-tables keys as proper [[key]] sections (appended
-        # after every top-level scalar, so nothing re-parses into them).
-        # tomli_w renders {key: item} as "[key]\n<body>" with nested tables as
-        # [key.sub] -- wrapping the header line yields the AoT element form.
-        # merge_comments passes non-model text through, so the shape survives.
-        for key, items in aots.items():
-            for item in items:
-                head, _, rest = tomli_w.dumps({key: _strip_none(item)}).partition("\n")
-                fresh += f"[{head}]\n{rest}"
-        merged = merge_comments(old_text, fresh)
-        with open(output_file, "w") as f:
-            f.write(merged)
-        logging.info(f"Wrote configuration to {output_file}")
-        return merged
-
-
-def import_models(args: Any) -> None:
-    """CLI handler for model import."""
-    overrides = {}
-    if hasattr(args, 'override') and args.override:
-        for override in args.override:
-            key, value = override.split('=', 1)
-            try:
-                value = float(value)
-                if value.is_integer():
-                    value = int(value)
-            except ValueError:
-                if value.lower() == 'true':
-                    value = True
-                elif value.lower() == 'false':
-                    value = False
-            overrides[key] = value
-
-    importer = ModelImporter(
-        overrides=overrides,
-        chat_template_override=getattr(args, 'chat_template', None),
-    )
-
-    # Merge-preserve by default: whatever the existing output file says goes
-    # right back out -- hand-tuned entries (server_binary, draft_model_path,
-    # server_binary) and top-level settings must survive a reimport; the scan only
-    # ADDS. Seeding existing_ids here is what makes the scanners skip
-    # already-configured models. --fresh restores the old wholesale rewrite.
-    output_file = args.output or "models.toml"
-    existing_top: dict[str, Any] = {}
-    existing_models: list[dict] = []
-    existing_text = ""
-    out_path = Path(output_file)
-    if out_path.exists() and not getattr(args, "fresh", False):
-        existing_text = out_path.read_text()
-        try:
-            existing = tomllib.loads(existing_text)
-        except tomllib.TOMLDecodeError as e:
-            raise SystemExit(
-                f"{output_file} exists but does not parse ({e}); fix it or "
-                f"pass --fresh to regenerate from scratch."
-            )
-        existing_models = list(existing.get("models", []))
-        existing_top = {k: v for k, v in existing.items() if k != "models"}
-        importer.existing_ids.update(
-            str(m["id"]) for m in existing_models if m.get("id"))
-
-    models = []
-
-    if args.folder:
-        folder_models = importer.scan_directory(args.folder)
-        models.extend(folder_models)
-        logging.info(f"Found {len(folder_models)} models in {args.folder}")
-
-    if args.hf_cache:
-        cache_models = importer.scan_hf_cache()
-        models.extend(cache_models)
-        logging.info(f"Found {len(cache_models)} models in HF cache")
-
-    # Belt and suspenders next to the scanners' own existing_ids check: an
-    # already-configured id must never re-enter through any scan path.
-    #
-    # The id check ALONE is not enough, and the gap is not theoretical. An id
-    # is DERIVED from the directory name, so the moment you rename an entry by
-    # hand the derived name stops matching and the same model re-enters as a
-    # second entry. Symlinks widen it further: modelzoo/<vendor> pointing into
-    # the real store means one file is reachable by two spellings that share
-    # no prefix. That combination added a duplicate Muse-Glimmer entry --
-    # under the derived id, with a WRONG supports_thinking -- beside the
-    # hand-renamed one it could not see (2026-08-17).
-    #
-    # So dedupe on the resolved model_path too: `.resolve()` follows symlinks,
-    # which is what makes the two spellings compare equal. This is the same
-    # "merge by resolved model_path" rule the Phase 6 registry substrate is
-    # specified around (plan_2026-07.md item 1) -- adopting it here early
-    # keeps a re-import from corrupting models.toml before that lands.
-    # NOT gated on `if existing_models`: a FRESH import needs intra-batch
-    # dedup too. --folder and --hf-cache can both reach one file, and
-    # scan_hf_cache rewrites the id to `org/name` AFTER the directory-name id
-    # was registered in existing_ids -- so the two ids never collide and both
-    # entries get written, on a first import as readily as a re-import.
-    from heylook_llm.model_registry import path_identity
-
-    configured = {str(m["id"]) for m in existing_models if m.get("id")}
-    configured_paths = {
-        path_identity(str(p)) for m in existing_models
-        if (p := (m.get("config") or {}).get("model_path"))
-    }
-    kept = []
-    for m in models:
-        path = (m.get("config") or {}).get("model_path")
-        model_id = str(m.get("id"))
-        if model_id in configured:
-            continue
-        identity = path_identity(str(path)) if path else None
-        if identity and identity in configured_paths:
-            logging.info(
-                "skipping %s: already configured under a different id "
-                "(same file after symlink resolution)", model_id)
-            continue
-        # Extend BOTH sets as entries are accepted, so the batch dedupes
-        # against ITSELF and not only against what is already written down.
-        configured.add(model_id)
-        if identity:
-            configured_paths.add(identity)
-        kept.append(m)
-    models = kept
-
-    if not models:
-        if existing_models:
-            print(f"\nNo new models found; {output_file} left untouched "
-                  f"({len(existing_models)} configured entries).")
-        else:
-            logging.warning("No models found!")
-        return
-
-    # (Interactive per-model customization retired 2026-07-28 with config_tui:
-    # dead under derive-at-load thin entries. Operator intent at import =
-    # --override flag; richer editing is the Wave 4 admin CRUD.)
-
-    if existing_models or existing_top:
-        importer.write_merged(existing_top, existing_models, models,
-                              output_file, existing_text)
-    else:
-        importer.generate_toml(models, output_file)
-
-    print(f"\nFound {len(models)} new models:")
-    for model in models:
-        print(f"  - {model['id']} ({model['provider']})")
-
-    if overrides:
-        print(f"\nApplied overrides: {overrides}")
-
-    print(f"\nConfiguration written to: {output_file}")
-
-    if existing_models:
-        print(f"\nKept {len(existing_models)} existing entries and top-level "
-              f"settings as-is (--fresh regenerates from scratch).")
