@@ -558,6 +558,30 @@ class LlamaServerProvider(BaseProvider):
     }
 
     @classmethod
+    def effective_ubatch(cls, cfg: Dict, auto_ubatch: Optional[int]) -> tuple[int, Optional[str]]:
+        """``(n_ubatch, clamp_note)``: the micro-batch llama.cpp will actually
+        run, and a note when a clamp changed the requested one.
+
+        llama_context (src/llama-context.cpp, at the build commit) clamps
+        twice for a causal model: n_batch to the context
+        (``min(n_ctx, n_batch)``), then n_ubatch to that n_batch. The context
+        is known before spawn only when ctx_size is set; unset, llama-server
+        sizes from the training context, far above any batch. ONE function
+        over the same inputs the argv carries: the image-cap decision and
+        both halves of the report call it.
+        """
+        requested = cfg.get("n_ubatch") or auto_ubatch or cls.LLAMA_DEFAULT_N_UBATCH
+        n_batch = cfg.get("n_batch") or GGUFModelConfig.LLAMA_DEFAULT_N_BATCH
+        ctx = cfg.get("ctx_size") or 0
+        batch = min(ctx, n_batch) if ctx > 0 else n_batch
+        effective = min(batch, requested)
+        if effective == requested:
+            return effective, None
+        if ctx > 0 and ctx < n_batch and effective == ctx:
+            return effective, f"{requested}, clamped to ctx_size {ctx}"
+        return effective, f"{requested}, clamped to n_batch {batch}"
+
+    @classmethod
     def image_token_cap_decision(
             cls, cfg: Dict, auto_ubatch: Optional[int]
     ) -> tuple[Optional[int], Optional[str], Optional[str]]:
@@ -581,9 +605,7 @@ class LlamaServerProvider(BaseProvider):
         if proj not in cls.NON_CAUSAL_IMAGE_PROJECTORS:
             return None, f"the {proj} projector decodes images causally; never capped", None
         default_max, cappable = cls.NON_CAUSAL_IMAGE_PROJECTORS[proj]
-        ubatch = cfg.get("n_ubatch") or auto_ubatch or cls.LLAMA_DEFAULT_N_UBATCH
-        n_batch = cfg.get("n_batch") or GGUFModelConfig.LLAMA_DEFAULT_N_BATCH
-        ubatch = min(ubatch, n_batch)  # llama_context clamps it the same way
+        ubatch, _ = cls.effective_ubatch(cfg, auto_ubatch)
         if default_max <= ubatch:
             return None, (f"{proj} projector decodes images non-causally; its "
                           f"{default_max}-token maximum fits the {ubatch}-token "
@@ -694,6 +716,9 @@ class LlamaServerProvider(BaseProvider):
         # auto answer load_model resolved (None = inherit, again).
         if cfg.get("n_batch") is not None:
             args += ["-b", str(cfg["n_batch"])]
+        # The REQUEST goes on argv; llama.cpp applies its clamps to it.
+        # effective_ubatch mirrors those clamps from the same inputs for the
+        # image cap and the report, so what is reported is what runs.
         ubatch = cfg["n_ubatch"] if cfg.get("n_ubatch") is not None else auto_ubatch
         if ubatch is not None:
             args += ["-ub", str(ubatch)]
@@ -777,13 +802,15 @@ class LlamaServerProvider(BaseProvider):
         cfg = self.config
         stored = cfg.get("n_ubatch")
         auto = auto_ubatch or self.LLAMA_DEFAULT_N_UBATCH
+        effective, clamp = self.effective_ubatch(cfg, auto_ubatch)
         effect = field_effect(GGUFModelConfig.model_fields["n_ubatch"])
         binary, binary_reason = self.binary_report(cfg)
         cap = self._last_image_cap
         self._load_report = {
             "n_ubatch": Setting(
-                value=stored or auto, configured=stored, auto=auto,
-                reason=getattr(self, "_ubatch_reason", None) or "decided at spawn",
+                value=effective, configured=stored, auto=auto,
+                reason=((getattr(self, "_ubatch_reason", None) or "decided at spawn")
+                        + (f"; in force: {clamp}" if clamp else "")),
                 provenance="observed", effect=effect),
             "image_max_tokens": Setting(
                 value=cap, auto=cap,

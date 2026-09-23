@@ -101,7 +101,13 @@ def describe_static(model_id: str, cfg: dict, config_obj: Any, *,
 
     # The micro-batch, when not stored, is decided at spawn from live
     # working-set headroom: unknown until then.
-    if settings["n_ubatch"].provenance != "configured":
+    if settings["n_ubatch"].provenance == "configured":
+        effective, clamp = P.effective_ubatch(cfg, None)
+        if clamp:
+            settings["n_ubatch"] = settings["n_ubatch"].model_copy(update={
+                "value": effective,
+                "reason": f"set in this model's models.toml entry; in force: {clamp}"})
+    else:
         settings["n_ubatch"] = settings["n_ubatch"].model_copy(update={
             "value": None, "auto": None, "provenance": "unknown",
             "reason": (f"decided at load: {P.AUTO_UBATCH} when working-set "

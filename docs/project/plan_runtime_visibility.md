@@ -598,9 +598,11 @@ and the route-level conformance test.
    which engine reads which vendor layer. Checked by byte-identical route
    output before and after; `test_vendor_layer_reaches_the_report_on_every_engine`
    kept its assertion (its mocks now patch the source readers).
-2. One effective micro-batch function (both llama.cpp clamps) that the spawn
-   argv, the image-cap decision and the report all call. The report's source
-   names the clamp when it changed the answer.
+2. **Done (v2.0.75).** One effective micro-batch function
+   (`LlamaServerProvider.effective_ubatch`, both llama.cpp clamps) that the
+   image-cap decision and both halves of the report call, over the same
+   inputs the argv carries (argv keeps the request; llama.cpp clamps it). The
+   report names the clamp when it changed the answer.
 3. Warm the static describe cache in the background after each config load
    (never fatal; stamp-keyed, so a warm that races a reload is ignored).
 4. The generic frontend renderer, before W5: the full panel on the models

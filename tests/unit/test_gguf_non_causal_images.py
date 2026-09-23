@@ -99,6 +99,7 @@ def test_non_causal_table_matches_the_build():
     ("gemma4v", {}, 2048, None),                       # auto 2048 fits: no flag
     ("gemma4v", {"n_ubatch": 1024}, 2048, 1024),       # stored value wins over auto
     ("gemma4v", {"n_batch": 1024}, 2048, 1024),        # -ub clamped to -b
+    ("gemma4v", {"ctx_size": 768}, 2048, 768),         # -b clamped to the context first
     ("deepseek4v", {}, None, None),                    # 384 fits 512
     ("deepseek4v", {"n_ubatch": 256}, None, 256),
     ("gemma3", {"n_ubatch": 128}, None, None),         # fixed count: flag cannot help

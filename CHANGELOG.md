@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.75]
+
+### Changed
+
+- **The reported micro-batch is the one llama.cpp runs (plan W13, remaining
+  item 2).** `LlamaServerProvider.effective_ubatch` applies llama_context's
+  two clamps (n_batch to the context when `ctx_size` is set, then n_ubatch to
+  n_batch; read in the build tree at the build commit). The non-causal image
+  cap and both halves of the engine contract's `n_ubatch` setting call it,
+  and the setting's reason names the clamp when it changed the value. The
+  argv still carries the request, which llama.cpp clamps the same way. The
+  image cap now also honours the context clamp (a new test case).
+
 ## [2.0.74]
 
 ### Changed
