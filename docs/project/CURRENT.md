@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-21, v2.0.63, `main`.
+Last updated: 2026-09-23, v2.0.69, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `CLAUDE.md`, the backlog in [TODO.md](./TODO.md), and what each release
@@ -15,7 +15,7 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
-| unit + contract | green | v2.0.61 |
+| unit + contract | green (includes the new `Field` keyword-default scan) | v2.0.66 |
 | `bun run e2e:render` (model-free) | green | v2.0.61, against `marked` 18.0.13 |
 | `tests/smoke/` mlx-lm arm | green; thinking depth and nested image source UNCOVERED on that arm's model | v2.0.59 |
 | `tests/smoke/` mlx-vlm arm | green, incl. the image-token usage check; thinking depth UNCOVERED | v2.0.59 |
@@ -23,6 +23,8 @@ rather than carried forward as green.
 | `tests/smoke/` gguf arm | NOT RE-RUN. Last recorded green at v1.79.43 | -- |
 | `bun run e2e` (chat + pages) | green, nothing skipped, on `E2E_MODEL=Qwen3.5-0.8B-MLX-8bit` (mlx-vlm arm). The behavioural failures recorded at v1.79.78 are gone. NOT run on the default gemma-4 model, nor on the mlx-lm or gguf arms | v2.0.63 |
 | `bun run e2e:ios` | see `TODO.md` and the harness's own header | -- |
+| `tests/eval/` (behavioural bank) | DEAD: it still posts to the removed `/v1/chat/completions`, so every task reports "request failed". Its port is the plan's step 2 | -- |
+| gguf runtime harness (`internal/claude/perf/harness/`) | Qwen3.8-27B, Muse-Glimmer-30B, DeepSeek-V4-Flash-Vision Q4: vision cost, system-prompt reuse, multi-turn cache reuse (correct on all three after the Qwen template fix), thinking levels, residency, flash attention, micro-batch. Findings in `docs/testing/gguf_runtime_audit_2026-09-23.md` | v2.0.64 build 11138 |
 
 The standing uncovered mechanism is thinking DEPTH on both MLX arms: the only
 served MLX model advertising `reasoning_effort` is too large to be a smoke
@@ -30,24 +32,32 @@ model.
 
 ## Handoff -- start here
 
-1. **The backlog's own START HERE is untouched:** retiring per-model entries
-   from `models.toml` ([plan_registry_sidecars.md](./plan_registry_sidecars.md)).
-   Phase 0 (`served_diff`) has not started and nothing else in that plan may
-   start first. Two open questions must be decided before Phase 2.
-2. **gemma-4 vision is unverified on the v2.0.55 prefill path**, by owner
+1. **The approved plan is [plan_runtime_visibility.md](./plan_runtime_visibility.md)**,
+   and its "Sequencing" section is the order. Nothing in it has shipped. The
+   next step is **W8 + W9**: the non-causal image-token guard at spawn, and the
+   Metal residency keep-alive setting passed at spawn. Both are small, and W9
+   is measured. After them comes the eval-bank port (`TODO.md`), then W5
+   cache/spec reporting, which includes the live cache-reuse smoke check that
+   is also W10's acceptance test. The evidence behind every step is
+   [../testing/gguf_runtime_audit_2026-09-23.md](../testing/gguf_runtime_audit_2026-09-23.md).
+2. **Retiring per-model entries from `models.toml`** ([plan_registry_sidecars.md](./plan_registry_sidecars.md))
+   is the plan's W0. It runs in parallel rather than first. Phase 0
+   (`served_diff`) has not started and nothing else in that plan may start
+   first. Two open questions must be decided before Phase 2.
+3. **gemma-4 vision is unverified on the v2.0.55 prefill path**, by owner
    decision ("another time"). Its output changed with nothing having checked
    it, and the path it replaced ran non-causal attention on gemma-4. The probe
    to run and why gemma-4 is the interesting family: `TODO.md`, "MLX vision
    prefill". Do not cite a gemma-4 vision observation from before v2.0.55
    without that caveat.
-3. **`bun run e2e` is green on one arm only.** It ran at v2.0.63 on
+4. **`bun run e2e` is green on one arm only.** It ran at v2.0.63 on
    `Qwen3.5-0.8B-MLX-8bit`: a vision-capable qwen3_5, so it took the prefill
    path verified that day, and a failure there would have pointed at the app.
-   The default `E2E_MODEL` is a gemma-4, whose vision path is item 2's open
+   The default `E2E_MODEL` is a gemma-4, whose vision path is item 3's open
    question -- run the parity probe on gemma-4 BEFORE reading an image-check
    failure there as a frontend bug. The mlx-lm and gguf arms (`E2E_ARMS`) were
    not run.
-4. **Penalties are not the same knob on the two engines** (v2.0.60): MLX counts
+5. **Penalties are not the same knob on the two engines** (v2.0.60): MLX counts
    generated tokens only, llama.cpp also counts the tail of the prompt, and no
    request field aligns them. Documented, nothing to build.
 
@@ -59,6 +69,30 @@ is deliberately left dirty (the engine pins have been COMMITTED since
 a server holds the default database (it has isolated its own database at
 import time since v1.79.54 -- `tests/contract/conftest.py` -- so it never opens
 the real one).
+
+## What landed 2026-09-23 (v2.0.65 - v2.0.69)
+
+Started from "is llama-server built and spawned optimally for vision and
+thinking models". The build was already right; what turned up was mostly
+things happening where nothing could see them.
+
+- The gguf runtime audit (a tracked record with no figures; the data is local
+  JSON) and the approved runtime-visibility plan.
+- **The unsloth Qwen3.8-27B's hand-placed chat template broke multi-turn prompt
+  caching.** Stray blank lines from unguarded `{# #}` comments made every turn
+  re-encode the previous image and re-process the previous reply. It was fixed
+  with a `chat_template.heylook.jinja` override (operator file, outside the
+  repo) and verified live. No other template on disk has the defect.
+- Muse-Glimmer's wrong hand-written `supports_thinking` was removed from
+  `models.toml`.
+- The wiki became the documentation entry point, with a same-commit rule in
+  `CLAUDE.md`. `CLAUDE.md` was rewritten plain, with its history moved to
+  `docs/architecture/sharp_edges.md`.
+- hookify was retired: the plugin had been disabled and all four rules were
+  dead. They became a version-sync pre-commit guard, a `Field` keyword-default
+  unit test (which found and fixed nine offenders) and a native `models.toml`
+  PostToolUse hook in the tracked `.claude/settings.json`. The `.claude`
+  allow-lists were pruned.
 
 ## What landed 2026-09-21 (v2.0.51 - v2.0.63)
 
