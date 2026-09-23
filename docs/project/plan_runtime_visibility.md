@@ -31,6 +31,9 @@ to see them**:
   - Qwen hybrid models get no reuse even on text, because of the current
     cache design, not because of anything in MLX.
 
+Session postmortem (local, gitignored):
+`internal/postmortems/2026-09-23_session_gguf-runtime-audit.md`.
+
 This plan is the follow-up. Its governing rule, from the owner:
 **`models.toml` must not become a black box of settings nobody knows are in
 force.** Every effective setting has to be explainable from the UI: what it
