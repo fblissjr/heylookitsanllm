@@ -500,6 +500,18 @@ The spike ends in exactly one named outcome:
   multi-turn vision engine for the same families, now that the Qwen3.8
   template is fixed.
 
+**Spike, desk half (2026-09-23).** mlx-vlm's `stream_generate` + APC takes
+heylook's processors and sampler and handles mRoPE, hybrid and sliding-window
+reuse, but has no per-chunk prefill progress and no mid-prefill cancel.
+`BatchGenerator` at one request per generator has both (`remove()`, and the
+private fields mlx-vlm's own server polls), at the cost of batch code paths,
+a reply that APC never stores, and a possible block leak on `remove()`.
+**Owner decision: spike BatchGenerator hands-on**, gated per class
+(qwen3_5, gemma-4, a plain text model) on `scripts/chain_probe.py`-style
+fresh-vs-restored equality, `scripts/vlm_parity_probe.py`, and a live
+mid-prefill cancel; propose the two hooks upstream in parallel; fall back
+to B1 if it fails. Reading notes: `internal/claude/w10/spike_reading.md`.
+
 **Step 2: build the chosen outcome.** In every outcome:
 - **Per-image vision feature cache**, so a new image stops re-encoding the old
   ones (unless APC under A1/A2 already covers it).
