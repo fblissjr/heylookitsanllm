@@ -66,10 +66,18 @@ Prompt caching used to be a multi-branch radix tree. It was deleted for a failur
 - **Switching conversations is a re-prefill.** One slot per model means exactly that, and it is an accepted trade rather than an oversight.
 - **Never store or hand out live cache objects.** MLX *arrays* are immutable; cache *objects* are not. This server quarantines a wedged generator's worker thread alive, and a zombie generation keeps rebinding `.keys` / `.offset` on its own cache objects -- sharing those through the slot handed the next request state mutating underneath it (live-verified process poisoning, unreproducible single-threaded). Snapshot arrays are immune: the zombie rebinds its own attributes, the captured arrays never change.
 
+**What the slot does not cover** -- each of these re-prefills the whole prompt on every request, correctly and silently:
+- **Any request with an image anywhere in its history.** A vision model routes such a request to the vision path, which prefills a request-local cache and hands it to [`run_generation`](../../src/heylook_llm/providers/common/generation_core.py) as a pre-filled cache; the slot is neither read nor written. A text-only follow-up in a conversation that once had an image takes the same path.
+- **A language model that keeps mRoPE position state on the instance.** [`_mrope_reuse_safe`](../../src/heylook_llm/providers/common/prompt_cache.py) switches reuse off for it, because KV written under that state cannot be restored consistently. That is the Qwen-VL family, qwen3_5 included when it is routed through mlx-vlm -- so such a model gets no reuse even on text-only requests.
+- **A model with a draft model configured**, because mlx-lm's speculative path builds its own paired caches; and a quantized, rotating or bounded KV-cache config, which the eligibility gate leaves out.
+
+This is the main place the two engines differ: llama-server reuses prefixes across image requests and restores checkpoints on hybrid models (see [its prompt reuse](./llama_server_build_and_spawn.md#46-prompt-reuse-across-requests)). Bringing MLX to the same behaviour -- prompt-position checkpoints, a derivable rope-delta seed, and the vision path inside the cache -- is the [runtime visibility plan](../project/plan_runtime_visibility.md)'s W10.
+
 ### 2.2. Vision Feature LRU Cache
 In multimodal VLM conversations, re-evaluating high-resolution images across multi-turn exchanges is computationally expensive.
-- [`vision_feature_cache.py`](../../src/heylook_llm/providers/common/vision_feature_cache.py) maintains an LRU cache of encoded vision features keyed by image URL (or pixel content hash for base64 uploads).
-- Subsequent turns referencing the same image pass `cached_image_features` directly to the language model, completely bypassing the heavy vision tower forward pass.
+- [`vision_feature_cache.py`](../../src/heylook_llm/providers/common/vision_feature_cache.py) maintains an LRU cache of encoded vision features, used only for models that expose `encode_image`.
+- **The key is the request's whole image list**, every image URL in the conversation joined in order -- not one entry per image. A base64 upload is keyed by its data-URL string like any other; the pixel-hash fallback in that file is not reached from [the vision strategy](../../src/heylook_llm/providers/mlx_provider.py)'s call, since every entry in the list is a string.
+- So a turn whose image list is unchanged passes `cached_image_features` to the language model and skips the vision tower, but a turn that **adds** an image misses and re-encodes every image in the history. A per-image cache is part of the plan's W10.
 
 ### 2.3. Detokenizer Performance Hardening
 `mlx-lm` provides multiple detokenizer implementations:
@@ -85,14 +93,14 @@ A logits processor is called as `(tokens, logits)` with logits shaped **`(1, voc
 ## 3. GGUF / Llama-Server Optimizations
 
 ### 3.1. Embedded Metal Shaders
-`scripts/build_llama.py` compiles `llama-server` with `GGML_METAL_EMBED_LIBRARY=ON`, putting the `.metallib` **inside** the binary. The point is portability, not startup latency: the binary can be moved without dragging a loose shader file along, which is what a subprocess-spawning provider wants. `BUILD_SHARED_LIBS=OFF` completes that picture with a single self-contained static binary.
+`scripts/build_llama.py` compiles `llama-server` with `GGML_METAL_EMBED_LIBRARY=ON`, putting the Metal shader **source** inside the binary; the OS's Metal compiler builds it when the process starts. The point is portability, not startup latency: the binary can be moved without dragging a loose shader file along, which is what a subprocess-spawning provider wants. A side effect worth knowing is that shader code generation tracks the installed macOS rather than Xcode (the [gguf runtime audit](../testing/gguf_runtime_audit_2026-09-23.md) §1 has the rest of the build review). `BUILD_SHARED_LIBS=OFF` completes that picture with a single self-contained static binary.
 
 `GGML_METAL_NDEBUG` is deliberately **not** set. It compiles out load-time logging only -- including the *"allocated size is greater than the recommended max working set size"* warning, which is the ceiling that actually refuses loads on a big-unified-memory Mac. No throughput to gain, real diagnostics to lose.
 
 ### 3.2. KV Cache Quantization (`-ctk` / `-ctv`)
 Long-context workloads can cause KV cache memory to rival model weights in size.
 - **The KV cache is `f16` by default and stays that way.** `cache_type_k` / `cache_type_v` exist for headroom emergencies, not as a tuning default.
-- When headroom is genuinely the binding constraint, quantizing key and value tensors frees unified memory for a larger context. No quality figure is quoted here because none has been measured on this hardware for these models. **A quantized V-cache needs flash attention**, so check that before assuming `-ctv` is free.
+- When headroom is genuinely the binding constraint, quantizing key and value tensors frees unified memory for a larger context. No quality figure is quoted here because none has been measured on this hardware for these models. **A quantized V-cache needs flash attention** (§3.6), so check that before assuming `-ctv` is free.
 
 ### 3.3. Automatic Micro-Batch Sizing (`-ub`)
 `n_ubatch` is unset by default and resolves **at spawn**, not to a constant:
@@ -119,8 +127,17 @@ Speculative decoding uses a lightweight draft model or next-token prediction hea
 - `spec_draft_n_max` and `spec_draft_p_min` **interact, and the interaction inverts** -- a one-dimensional sweep of either finds a different and wrong optimum. There is no defensible global default: `p_min` values that help one model family cost throughput on another at every value tested.
 - **Never measure this at temp 0.** Greedy acceptance is exact argmax matching; temp > 0 is rejection sampling. That is a different regime, not a quieter one. Temp 0 is fine for reproducibility and never for a throughput claim.
 - Match prompt length, generation length, seed, sampling, **which binary**, and prompt-cache state across arms. An unmatched cache produced a large phantom that survived repeats and looked exactly like a finding. Matching every control you thought of only rules out the confounds you imagined.
+- **What a client sees today is one acceptance ratio.** The drafted and accepted counts are captured per request, but only their ratio reaches the wire; per-request speculative reporting, alongside cache reporting, is the [runtime visibility plan](../project/plan_runtime_visibility.md)'s W5.
 
 Conditions, history and the underlying figures live in `internal/research/` and in `GGUFModelConfig`'s own field comments. They are deliberately not reproduced in tracked docs: every number quoted for this subsystem has later needed a condition attached to stay true.
+
+### 3.6. Flash Attention (`-fa`)
+heylook does not pass `-fa`, so llama-server's `auto` applies, and on Metal it resolves on for the head dimensions served here. The vision tower inherits the setting. Forcing it off was measured slower for vision encoding and not faster for anything, so auto stays the default; the [audit](../testing/gguf_runtime_audit_2026-09-23.md) §9 has the comparison, and a per-model field for testing new architectures is the plan's W1.
+
+### 3.7. Prompt Reuse and Vision Cost on gguf
+- **Prompt reuse** is llama-server's own: the slot's longest common prefix, a host-RAM prompt cache (`-cram`) that restores earlier states across interleaved conversations, and context checkpoints for sliding-window and hybrid models. It covers image requests, and it depends on the template rendering history the same way it rendered it for generation. The mechanism is in [the deep dive](./llama_server_build_and_spawn.md#46-prompt-reuse-across-requests); the measured behaviour, and the template defect that broke one model's multi-turn reuse, are in the [audit](../testing/gguf_runtime_audit_2026-09-23.md) §5 and §10.
+- **An image request's first token** costs the CPU decode of the image, the vision-tower encode, then ordinary prefill of the image tokens and the text. Several images in one request are encoded one after another. Every projector caps the tokens per image and resizes a larger image down before encoding, so above the cap a bigger file costs only its upload and CPU decode; below it, sending a smaller image is the direct lever.
+- **Each engine resizes differently**, even for the same model family: different caps, rounding and pad-versus-stretch. The per-engine table is the [audit](../testing/gguf_runtime_audit_2026-09-23.md) §4, recorded as a dated fact rather than something to code against; reporting it per model from the engine itself is the plan's W4.
 
 ---
 

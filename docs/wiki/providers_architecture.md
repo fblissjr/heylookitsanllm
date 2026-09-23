@@ -83,7 +83,7 @@ A third strategy, `DiffusionStrategy`, covers mlx-vlm diffusion models; its avai
 Multimodal requests containing images run in two stages:
 1. **Prefill (mirrors mlx-vlm's own loop)**:
    - `mlx_vlm.utils.prepare_inputs` tokenizes the prompt and processes image tensors.
-   - `get_input_embeddings` runs once; the language model is then driven over embedding chunks, filling a request-local KV cache with every prompt token but the last.
+   - `get_input_embeddings` runs once; the language model is then driven over embedding chunks, filling a request-local KV cache with every prompt token but the last. That cache is built fresh every request and never enters the cross-request prompt cache (§3.1).
    - Prefill progress is reported and abort is honoured between chunks.
 2. **Generation**:
    - `generation_core.run_generation(prompt_tokens=[last token], pre_filled_cache=...)`.
@@ -109,6 +109,18 @@ Audio towers are stripped at load on the MLX path, so `input_audio` content part
 - Implements the chat template ladder: explicit path, then the operator override beside the weights, then the publisher sidecar, then the GGUF-embedded template.
 
 *(For the complete deep dive on building `llama-server`, process lifecycle, CLI flags, and parameter resolution, see [**Llama-Server & GGUF Deep Dive**](./llama_server_build_and_spawn.md).)*
+
+### 3.1. Where the Two Engines Differ: Prompt Reuse and Image Geometry
+
+The same model can behave differently on the two engines in ways no config field shows. Two matter most.
+
+**Prompt reuse across requests.**
+- *gguf*: `llama-server` reuses the longest common prefix from its slot, restores earlier states from a host-RAM prompt cache, and on sliding-window and hybrid models restores context checkpoints. Image requests are covered, and an image before the match point is not re-encoded. See [its prompt reuse](./llama_server_build_and_spawn.md#46-prompt-reuse-across-requests).
+- *MLX*: one snapshot slot per model ([performance guide §2.1](./performance_optimizations.md#21-single-slot-prompt-cache-the-q7-architecture)), which the vision path bypasses entirely -- any request with an image anywhere in its history re-prefills everything. A language model with instance mRoPE state (the Qwen-VL family, qwen3_5 through mlx-vlm) is gated off reuse by [`_mrope_reuse_safe`](../../src/heylook_llm/providers/common/prompt_cache.py) even on text. The vision feature cache is keyed by the whole image list, so adding an image re-encodes the earlier ones.
+
+Closing that gap is the [runtime visibility plan](../project/plan_runtime_visibility.md)'s W10; reporting each request's cache outcome on both engines is its W5.
+
+**Image geometry.** Each engine maps an image's size to a resized size and a token count with its own preprocessing, and they disagree even for one model family: a different per-image token cap, different rounding at a half unit, padding on one side and stretching on the other. So image cost and what the model actually sees must be reasoned about per engine and per model, never per family. The dated per-engine table is the [gguf runtime audit](../testing/gguf_runtime_audit_2026-09-23.md) §4; on llama.cpp the per-image limits are hard-coded per projector rather than read from the model's files, which is why the plan's W4 reports geometry from each engine instead of from a copied table.
 
 ---
 

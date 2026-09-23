@@ -17,6 +17,13 @@ This wiki provides comprehensive, deep-dive technical documentation covering the
 | [**Llama-Server & GGUF Deep Dive**](./llama_server_build_and_spawn.md) | GGUF Subprocess & Build | **Core Deep Dive**: How `llama-server` is built from C++ source, how the backend spawns and manages it, exact CLI parameters sent and why, the chat template ladder, and how settings are configured by model. |
 | [**Performance & Optimizations**](./performance_optimizations.md) | Cross-Stack Optimization | Complete guide to performance: Metal GPU shaders vs CPU glue, MLX prompt caching & KV snapshots, vision feature cache, speculative decoding, and incremental streaming UI rendering. |
 
+### Where the evidence lives
+
+The pages above explain; these records are what several of their statements rest on. Following principle 6, the wiki links to them rather than repeating what they found.
+
+- [**gguf runtime audit, 2026-09-23**](../testing/gguf_runtime_audit_2026-09-23.md) -- a dated record of the llama-server build flags, every spawn flag against llama-server's own default, what an image costs and how each engine resizes it, how a prompt is reused across requests (slot prefix, the RAM prompt cache, context checkpoints), what each template accepts for thinking depth, and a template defect that broke one model's multi-turn cache. Its measured data is a local file it names, with the conditions attached.
+- [**Runtime visibility plan**](../project/plan_runtime_visibility.md) -- the approved follow-up: make every effective setting and every cache and speculative-decoding outcome visible, and make MLX and gguf behave the same (thinking controls, template provenance and lint, image geometry, a load panel, MLX checkpoint caching). Where a wiki page describes a gap, this is where it is being closed.
+
 ---
 
 ## Architectural Principles at a Glance

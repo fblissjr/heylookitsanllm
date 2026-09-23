@@ -5,6 +5,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.65]
+
+Documentation only; no code behaviour changed.
+
+### Added
+
+- **`docs/testing/gguf_runtime_audit_2026-09-23.md`**: a dated record of the
+  llama-server build, spawn flags, vision cost and per-engine image geometry,
+  thinking-depth controls per template, and prompt-cache behaviour across
+  three vision models, measured with a harness that drives heylook's own
+  gguf provider. It carries no figures; the data lives in a local JSON file
+  it names.
+- **`docs/project/plan_runtime_visibility.md`**, owner-approved, covering:
+  - registry sidecars and per-field provenance;
+  - cache and speculative-decoding reporting (with `usage` aligned to
+    Anthropic's cached-token semantics);
+  - thinking-control detection and mapping from the in-force template;
+  - template provenance and a prefix-stability lint;
+  - per-model image geometry;
+  - a load panel with flash attention;
+  - a non-causal image-decode guard;
+  - MLX checkpoint prompt caching, reopened.
+
+### Changed
+
+- The wiki (`docs/wiki/`) is now the entry point: first in `CLAUDE.md`'s
+  "Orient first", `docs/README.md` and `README.md`. A new `CLAUDE.md` rule
+  says a change to how a subsystem works updates its wiki page in the same
+  commit. The wiki links out to the audit and the plan.
+- **Corrected claims:**
+  - `GGML_METAL_EMBED_LIBRARY` embeds the Metal shader source, compiled by
+    the OS at startup, not a prebuilt metallib (wiki, `scripts/README.md`,
+    `build_llama.py` docstring).
+  - The MLX vision feature cache is keyed by the request's whole image-URL
+    list, so adding an image re-encodes all of them (wiki, `CLAUDE.md`).
+  - The MLX prompt cache does not cover requests with an image in the
+    history, qwen3_5 through mlx-vlm, or drafter configs (wiki).
+  - The gguf template ladder has four rungs (`README.md`).
+- **`.claude` rules and skills brought up to date:**
+  - The eval-gate hook drops the removed `vision_budget.py`, gates
+    `vlm_inputs.py` and `chat_template_files.py`, and says plainly that the
+    eval bank still targets the removed OpenAI route (pending port, now in
+    `TODO.md`).
+  - The `/eval-ab` skill is marked blocked on that port.
+  - The models.toml hook no longer suggests the removed `default_sampler` and
+    checks for silently dropped derived fields.
+  - The dev-server skill takes model ids from discovery rather than
+    models.toml alone.
+
+### Found and fixed outside the repo (operator files, not tracked)
+
+- The unsloth Qwen3.8-27B folder's hand-placed `chat_template.jinja` leaked
+  blank lines from unguarded `{# #}` comments. Every multi-turn request
+  therefore diverged from the prompt cache just before the assistant header,
+  and re-encoded the previous turn's image and reply.
+  - Replaced with a whitespace-fixed `chat_template.heylook.jinja` override;
+    the old file is kept as an inert `.bak`.
+  - Verified live: each turn now processes only its new content.
+- A hand-written `supports_thinking = true` on Muse-Glimmer in `models.toml`
+  (its template reads no thinking switch) was removed.
+
 ## [2.0.64]
 
 ### Removed

@@ -1,6 +1,6 @@
 # Hey Look, It's an LLM
 
-Last updated: 2026-09-06
+Last updated: 2026-09-23
 
 <p align="center">
   <a href="assets/heylookitsanllm.jpeg">
@@ -15,6 +15,11 @@ inference endpoint, a vanilla-JS web UI, and on-the-fly model swapping.
 Built on Apple MLX for text and vision, with GGUF models served through a
 managed [llama.cpp](https://github.com/ggml-org/llama.cpp) `llama-server`
 subprocess -- one API, one UI, per-model engine choice.
+
+**Documentation**: start with the [wiki](docs/wiki/README.md) -- how the
+system works end to end, from the API and the web UI down to how llama-server
+is built and spawned and where caching happens. The full doc index is
+[docs/README.md](docs/README.md).
 
 ## Features
 
@@ -61,12 +66,15 @@ subprocess -- one API, one UI, per-model engine choice.
   disclosed in the UI, never confirmed away.
 - **GGUF needs a llama-server binary**, built by
   `uv run scripts/build_llama.py` (`uv sync` cannot build C++). One subprocess
-  per loaded model. The chat template is a `chat_template.jinja` sitting
-  beside the .gguf if there is one, else the template embedded in the GGUF by
-  the quant publisher; `chat_template_path` overrides both, and
-  `use_sidecar_chat_template = false` keeps the embedded one without deleting
-  the file. Every spawn logs which of the three it used. An
-  omitted `max_tokens` gets a 16384 default (an explicit value always wins);
+  per loaded model. The chat template is the operator override
+  `chat_template.heylook.jinja` beside the .gguf (what the models page's
+  template editor writes) if there is one, else a `chat_template.jinja` beside
+  it, else the template embedded in the GGUF by the quant publisher;
+  `chat_template_path` overrides all of them, and
+  `use_sidecar_chat_template = false` keeps the embedded one over the
+  `chat_template.jinja` without deleting the file. Every spawn logs which one
+  it used. An omitted `max_tokens` gets a 16384 default (an explicit value
+  always wins);
   llama-server's own "unlimited" default is never passed through.
 - **Telemetry is off by default** (`observability_level`, settable via
   `PUT /v1/admin/config`); raising it writes JSONL under `logs/`, local files

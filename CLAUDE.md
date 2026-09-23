@@ -6,10 +6,13 @@ and still apply. Don't duplicate them here. Last verified: 2026-07-09 -->
 
 Personal MLX inference server on Apple Silicon: FastAPI backend + a vanilla-JS
 frontend (`frontend/`, served at `/` -- the ONLY frontend since v1.77.0;
-it moved out of `apps/` and off the `/v3` mount in v1.79.76).
+it moved out of `apps/` and off the `/v3` mount in v1.79.76). How it all works
+end to end is the wiki, [docs/wiki/](./docs/wiki/README.md); this file carries
+the mechanisms that bite.
 
 ## Orient first
 
+- **START HERE: the wiki, [docs/wiki/README.md](./docs/wiki/README.md)** -- how the system works end to end (backend, frontend, providers, the llama-server build/spawn deep dive, caching and performance), explanatory and self-contained. It is not [docs/architecture/](./docs/architecture/) (why a decision was made, what must not break) and not [docs/project/](./docs/project/) (status and plans).
 - **Roadmap** -- the master plan, phased 0-7 (§"v3 frontend guardrails" + Phase 4 = v3 hardening; Phase 3b = Messages-API migration; Phase 7 = gguf/llama-server provider, done 2026-07-26 except the Phase-6-coupled registry substrate): [docs/project/plan_2026-07.md](./docs/project/plan_2026-07.md).
 - **Status + backlog**: [docs/project/CURRENT.md](./docs/project/CURRENT.md) (graded done/left narrative), [docs/project/TODO.md](./docs/project/TODO.md). Read before starting.
 - **Engine coverage plan** -- why provider != engine (`"mlx"` is TWO upstream repos) and how live coverage stops being incidental: [docs/project/plan_engine_coverage.md](./docs/project/plan_engine_coverage.md). Phase 0 shipped as `tests/smoke/`.
@@ -669,7 +672,7 @@ in git history; a contract test pins that `/v2` stays 404.)
   reads as the image having been lost, which is the opposite of the truth.
   Providers answer `render_prompt_represents_media` themselves (gguf True)
   rather than the route switching on a provider name.
-- Vision feature cache (`providers/common/vision_feature_cache.py`): models with `encode_image()` accept `cached_image_features` to skip the vision tower; LRU keyed by image URL (pixel-hash fallback for base64).
+- Vision feature cache (`providers/common/vision_feature_cache.py`): models with `encode_image()` accept `cached_image_features` to skip the vision tower; LRU keyed by the request's WHOLE image-URL list joined in order (`mlx_provider` passes `image_urls`), so adding one image to a conversation re-encodes every image in it. The pixel-hash fallback in the module is never reached from that caller. A per-image key is part of the approved plan's W10 (`docs/project/plan_runtime_visibility.md`).
 - Load-library selection is `MLXProvider.effective_loader` (`providers/common/loader_routing.py`), derived from the config's `modalities` + `loader` fields -- NOT the raw `vision` bool, which is now a derived mirror of `"vision" in modalities`. `is_vlm = (effective_loader == "mlx-vlm")`. `loader="auto"` routes vision->mlx-vlm iff mlx-vlm registers the `model_type`, else mlx-lm (degrades only on POSITIVE non-support; an explicit `loader` forces the engine). Modality DESCRIPTION (`model_importer.detect_modalities`: config `*_config` blocks + `image_token_id`/`image_token_index`/`audio_token_id`...) is deliberately separate from this library-aware routing. The REPORTED `vision` capability derives from it too (v1.79.43, capabilities.py): the provider's image guard reads `is_vlm`, so reading the checkpoint's DECLARATION instead let `/v1/models` advertise images a 400 then refused -- one resolver for both surfaces is what makes them agree by construction. `modalities` still carries the declaration; description and served capability are different fields on purpose. It is ON THE WIRE as `effective_loader` on the `/v1/admin/models` row (v1.79.31), derived via `effective_loader_for_config` so it answers for UNLOADED models -- the provider ATTRIBUTE is null unless the model is resident, which is the opposite of what a live harness picking engine arms needs. Null for every non-mlx provider (gguf is one engine, named by `provider`). Because it reads each model dir's `config.json`, the two admin READ routes that build a model response are plain `def` (threadpool), not `async def`.
 - Prompt cache is a per-model SINGLE SLOT of immutable (state, meta_state) snapshots (v1.75.0, Q7 -- the radix tree is deleted): extension continues, divergence goes through mlx-lm's `trim_prompt_cache`, and non-trimmable layers (hybrid ArraysCache, rotated windows) re-prefill rather than slice -- hybrids are now CORRECT, not "limited". NEVER store or hand out live cache OBJECTS: arrays are immutable, objects are not, and a quarantined zombie generator keeps mutating its own (that was live-verified process-poisoning). See [docs/architecture/mlx_provider.md](./docs/architecture/mlx_provider.md) §4.2.
 - A LOGITS PROCESSOR RECEIVES `(tokens, logits)` WITH LOGITS SHAPED `(1, vocab)` -- mlx-lm
@@ -862,6 +865,7 @@ in git history; a contract test pins that `/v2` stays 404.)
 - Commits fine without asking; never push unless told. Update `internal/log/log_YYYY-MM-DD.md` before ending a session.
 - The roadmap/status/backlog (`plan_2026-07.md`, `CURRENT.md`, `TODO.md`) + the v3 map live git-tracked in `docs/project/` and `docs/` -- git IS their history, edit them directly. `internal/` is still unversioned (gitignored): it holds the local-only docs (research/, log/, thoughts/, scratch/, frontend/archive/). Before destructively rewriting a long-lived doc that remains under `internal/`, copy the old version to an `archive/` subdir first -- that copy IS the history.
 - CLAUDE.md carries MECHANISMS (how things work, what bites); STATUS (what's done, counts, "until X lands") lives in `docs/project/CURRENT.md` + the plan. Status lines here rot into being actively wrong -- the perf-distrust note did exactly that within a day.
+- The wiki (`docs/wiki/`) is the EXPLANATION layer and moves with the code: a change that alters how a subsystem works updates the matching wiki page in the SAME commit. Its principle 6 applies -- no figures; name the constant or the measurement and link to where it lives.
 
 ## Tests
 

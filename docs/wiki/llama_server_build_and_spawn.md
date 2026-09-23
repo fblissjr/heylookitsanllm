@@ -33,15 +33,17 @@ The governing invariant for Apple Silicon builds is: **arithmetic executes insid
 | CMake Flag | Value | Architectural Rationale |
 | :--- | :--- | :--- |
 | `GGML_METAL` | `ON` | Enables the Metal backend -- the flag the rest of this table's reasoning rests on. |
-| `GGML_METAL_EMBED_LIBRARY` | `ON` | Embeds the compiled `.metallib` shader archive directly inside the binary. The resulting binary is portable across filesystem paths without needing loose shader files. |
+| `GGML_METAL_EMBED_LIBRARY` | `ON` | Embeds the Metal shader **source** inside the binary, and the OS's Metal compiler builds it when the process starts. The binary is portable across filesystem paths without loose shader files, and shader code generation tracks the installed macOS, not Xcode. |
 | `BUILD_SHARED_LIBS` | `OFF` | Produces a single, self-contained static binary suitable for subprocess spawning. |
-| `GGML_NATIVE` | `ON` | Passes `-mcpu=native` to Clang, tuning instructions for the specific Apple Silicon host machine (M1/M2/M3/M4). |
-| `GGML_ACCELERATE`, `GGML_BLAS`, `GGML_BLAS_VENDOR` | `ON`, `ON`, `Apple` | Uses Apple's Accelerate framework for hardware BLAS matrix operations on CPU. |
+| `GGML_NATIVE` | `ON` | Passes `-mcpu=native` to Clang, tuning instructions for the specific Apple Silicon host machine (M1/M2/M3/M4). It reaches only the CPU backend, so it tunes glue, not the Metal path. |
+| `GGML_ACCELERATE`, `GGML_BLAS`, `GGML_BLAS_VENDOR` | `ON`, `ON`, `Apple` | Uses Apple's Accelerate framework for hardware BLAS matrix operations on CPU. It gets no work while every layer is offloaded, because BLAS takes host buffers only; it matters only if dense weights are ever placed on the CPU. |
 | `GGML_CCACHE` | `ON` | Enables compiler caching; subsequent builds after tag bumps complete in seconds. |
 | `LLAMA_BUILD_SERVER`, `LLAMA_BUILD_TOOLS` | `ON`, `ON` | `llama-server` lives under `tools/`, so both are needed. `LLAMA_BUILD_EXAMPLES` and `LLAMA_BUILD_TESTS` are `OFF`, and `CMAKE_BUILD_TYPE` is `Release`. |
 | `LLAMA_BUILD_UI` | `OFF` | Skips downloading embedded web UI assets from remote network buckets. |
 | `GGML_LTO` | `OFF` | Whole-program Link Time Optimization (LTO) only optimizes CPU glue, adds several minutes to linking, and breaks `ccache`. Upstream disables LTO across all platforms. (Opt-in via `--lto`). |
 | `GGML_OPENMP` | `OFF` | Without OpenMP, `ggml` takes the `#else` branch of the same graph-compute entry point and uses its own threadpool -- same work partition, same affinity and priority handling. This is a choice of thread runtime, not threading versus none. macOS ships no `libomp`, so `OFF` is already what every upstream mac binary runs. (Opt-in via `--openmp`.) |
+
+The whole flag set was checked against a current build in the [gguf runtime audit](../testing/gguf_runtime_audit_2026-09-23.md) (§1), with nothing to change; that record also covers what does not apply on this hardware (§2) and when a toolchain update calls for `--rebuild`.
 
 #### Defusing the Upstream `--openmp` Trap
 Upstream `ggml` only *warns* when OpenMP is missing and quietly links the default threadpool build anyway, so `-DGGML_OPENMP=ON` can produce a binary identical to a non-OpenMP one while the **requested** cache variable still reads `ON`. The cache keeps the request and the resolution as separate entries, and it is the resolved one that tells the truth.
@@ -235,6 +237,14 @@ When assembling spawn arguments in [`_build_args()`](../../src/heylook_llm/provi
 
 Note that `--jinja` is **not** passed by heylook. It is on by default in the `llama-server` builds this project targets, and the provider relies on that default for the pre-split `reasoning_content` deltas -- it is not a flag in the spawn argv.
 
+The same holds for several flags that matter and are deliberately inherited rather than passed:
+- **`-fa` (flash attention)**: left at llama-server's `auto`, which resolves on under Metal for the head dimensions served here. The vision tower inherits it, which is why forcing it off is a loss for image requests. There is no config field for it yet; the [runtime visibility plan](../project/plan_runtime_visibility.md)'s W1 adds one, defaulting to auto.
+- **`--cache-reuse`**: left off. It does not matter for vision models either way, because llama-server disables it whenever an mmproj is loaded (and context shift with it).
+- **`--reasoning-preserve`**: left at its default, on. Past reasoning stays in the rendered history, which keeps the prompt prefix stable from turn to turn (§4.6).
+- **Checkpoint and SWA flags** (`-ctxcp`, `-cms`, `--swa-full`): left at llama-server's defaults.
+
+Each of these, with llama-server's current default and a verdict, is in the [gguf runtime audit](../testing/gguf_runtime_audit_2026-09-23.md) §3; its §9 is the flash-attention comparison.
+
 #### Automatic Micro-Batch Sizing (`-ub`, v2.0.13)
 `n_ubatch` is unset by default and resolves **at spawn** rather than to a constant, via `_auto_ubatch()`:
 - The provider sizes the model the way the admin fit panel does (`ram_fit.fit_for_config` -- weights plus sidecars against the live Metal working set) and reads the resulting `kv_headroom_gb`.
@@ -243,6 +253,8 @@ Note that `--jinja` is **not** passed by heylook. It is on by default in the `ll
 - **The spawn log names the value it resolved**, because the answer moves with `iogpu.wired_limit_mb` and with whatever else sits in the model directory -- a spawn quietly taking the narrow default would otherwise be indistinguishable from one quietly taking the wide one. (A stored value bypasses that line; the full argv in the same log is what discloses it.)
 
 Why it is conditional rather than always-on: the wide micro-batch is a prefill win on both dense and MoE models at no generation cost, but it costs materially more compute buffer. A vision model with thin headroom *loaded* at the wide setting -- with `--fit` quietly trimming its context -- and then died in its first decode with a Metal OOM that llama.cpp's own pre-flight never saw. Raising the working set (`scripts/gpu_wired_limit.sh`; reading it needs no root, setting or persisting it does) flips the large models to the wide setting on its own.
+
+**One hard constraint the sizing does not know about.** Some projectors decode an image's tokens with non-causal attention, and llama.cpp asserts that such a batch fits in one micro-batch -- so an image with more tokens than the micro-batch aborts the process. Nothing sizes the micro-batch to the image. It is latent today (no affected gguf is served); the [audit](../testing/gguf_runtime_audit_2026-09-23.md) §7 names the projectors, and the plan's W8 derives a spawn-time guard from the projector.
 
 ---
 
@@ -283,6 +295,8 @@ flowchart TD
 **The media guard applies to whichever candidate won**, override or publisher sidecar alike — it is not specific to the publisher's. If the model is served with a projector (`mmproj`) and the candidate carries no media markers (e.g. `part['type'] == 'image'`, `vision_start`, `image_pad`), the candidate is rejected with a warning and resolution falls through to the embedded template, so image inputs are never silently dropped.
 
 A template can therefore change with no `models.toml` change at all — dropping a file beside the weights is enough — which is why the spawn log names the winning rung, and why any measurement that varies by prompt format must establish which template each arm ran against.
+
+The log names the **rung**, not the file's provenance. A hand-placed `chat_template.jinja` is indistinguishable from a publisher's sidecar, so it wins the sidecar rung silently. The [audit](../testing/gguf_runtime_audit_2026-09-23.md) §10 records exactly that: a hand-written sidecar whose comment lines leaked whitespace made every turn's history render differently from how it was generated, which cost that model its multi-turn prompt cache (§4.6) until the fixed body was moved into the operator override. Hand edits belong in `chat_template.heylook.jinja`, which survives a re-download and shows as an override. Showing every copy's provenance and linting templates for prefix stability is the plan's W3.
 
 - **Publisher Discrepancies**: Qwen3.8-27B illustrates why this ladder matters. `ggml-org` quants embed the official template, which raises a Jinja error (HTTP 500) when multiple system messages are present; `unsloth` quants embed a patched template that merges leading system messages. An override or sidecar gives full control over these behavioural differences.
 
@@ -347,8 +361,10 @@ Memory & Engine Controls:
 3. **Idle Hibernation (`--sleep-idle-seconds`)**:
    - Tells `llama-server` to unload model weights and KV memory from RAM after an idle period while keeping the process running.
    - Waking from hibernation is significantly faster than a full process restart.
+   - Not to be confused with Metal's **residency keep-alive**, a heartbeat inside llama.cpp that keeps the model's buffers resident and stops after a period without GPU work. Neither heylook setting controls it; the [audit](../testing/gguf_runtime_audit_2026-09-23.md) §8 has what lapsing costs, and the plan's W9 exposes it only if that cost proves real.
 4. **Prompt Cache Budget (`-cram`)**:
-   - Caps memory for cached prompt state. `-1` is unlimited and `0` disables it; unset inherits llama-server's own default.
+   - Caps host RAM for the prompt cache described in §4.6. `-1` is unlimited and `0` disables it; unset inherits llama-server's own default.
+   - An entry is the slot's whole state, context checkpoints included, and an entry larger than the budget is **skipped, not stored** -- logged only as a warning at a level heylook discards by default. The budget is host RAM, not Metal working set. A derived default is the plan's W6.
 
 ---
 
@@ -360,6 +376,7 @@ When streaming requests to `llama-server` over `/v1/chat/completions`:
 2. **Reasoning Content Preservation**: `ChatMessage.thinking` is serialized as **`reasoning_content`**.
 3. **Continuation Echo Stripping**: When continuing an assistant message (`continue_final_message=True`), `llama-server` echoes the prefilled prompt tokens back as leading deltas. [`_continuation_echo_chars()`](../../src/heylook_llm/providers/llama_server_provider.py) tracks exact character lengths and strips echoed characters from both text and reasoning channels.
 4. **Prefill Progress Reporting**: Sends `"return_progress": True`. Prefill progress frames emitted by `llama-server` are mapped into the cross-engine progress tracking API.
+5. **Thinking Controls Ride the Template**: `enable_thinking` and `reasoning_effort` are sent as `chat_template_kwargs`, so what they do is whatever the in-force template does with them. Templates differ in the variable they read, the values they accept, the default, and whether an unknown value raises (a 500 from `llama-server`), is ignored, or is pasted into the prompt. The per-template table is the [audit](../testing/gguf_runtime_audit_2026-09-23.md) §6; detecting all of it from the template is the plan's W2.
 
 #### Mid-Stream Engine Errors (v2.0.13)
 A `llama-server` failure that happens *after* headers are sent does not arrive as an HTTP status -- the response was already 200 before decode ran. It arrives as a `data: {"error": {...}}` **frame** in the SSE body.
@@ -367,6 +384,18 @@ A `llama-server` failure that happens *after* headers are sent does not arrive a
 `_stream_chunks` raises `GenerationFailed` on such a frame. Before this, the frame had no `choices`, `_frame_to_chunk` returned `None`, the loop skipped it, and the stream simply ended: the client received a clean zero-token `end_turn` for what was actually a hardware failure.
 
 `_describe_engine_error` then annotates the message. `llama-server` emits a bare `"Compute error."` for **any** fatal `llama_decode` return -- which covers both the generic failure code and the allocation-failure one, the latter being the likelier of the two here. On Metal the cause underneath is almost always the GPU working set running out -- a detail that lives in the subprocess log, which at the default observability level is `DEVNULL`. The raised message therefore carries the model's own working-set headroom and the `iogpu.wired_limit_mb` value that would lift it (`scripts/gpu_wired_limit.sh` persists it).
+
+### 4.6. Prompt Reuse Across Requests
+
+`llama-server` does its own prompt caching; heylook passes nothing for it and cannot see which path a request took. The mechanism, at `-np 1`:
+
+- **The slot prefix.** The one slot keeps the previous request's tokens, prompt plus reply, and a new request reuses the longest common prefix. An image matches only if its content hash and token count match; images before the match point are not re-encoded, though every history image is still decoded and hashed on the CPU each request.
+- **The RAM prompt cache (`-cram`, §4.4).** A request whose prefix the slot does not hold can restore a better-matching earlier state from host RAM. That is how a fixed system prompt stays warm across interleaved apps or conversations. It lives in the process, so it does not survive an unload, a reload or a restart.
+- **Context checkpoints.** A full-attention model truncates at the divergence point and prefills the rest. A sliding-window or hybrid/recurrent model cannot roll back to an arbitrary position, so it restores the latest **checkpoint** at or before the divergence -- and checkpoints are taken only at a few positions during prompt processing (around user-message starts and just before the prompt's end). The audit found every vision model it tested to be one of these.
+- **What that makes load-bearing.** On a checkpointed model, reuse depends on the next prompt matching the previous one past the last checkpoint. A template that renders a finished turn differently from how it rendered it for generation diverges just before that point, and the fallback checkpoint can precede the whole previous turn, image included. That is the failure the audit found, described under the template ladder (§4.2 above). Anything that changes near the top of the prompt re-processes everything: the system prompt, a preset, an early edit, and on some templates the thinking depth, which is written into the system message.
+- **What is reported: almost nothing.** heylook captures the per-request cached-token count and sends it to no client, and `llama-server` reports only that final count, not whether it came from the slot, the RAM cache or a checkpoint. The rest is visible only in trace-level logs. Reporting it per request is the plan's W5.
+
+The measured behaviour on three vision models, and the full list of what forces a re-process, is the [gguf runtime audit](../testing/gguf_runtime_audit_2026-09-23.md) §5.
 
 ---
 

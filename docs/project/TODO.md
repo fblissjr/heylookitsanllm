@@ -8,7 +8,40 @@ entry added 2026-09-05 and corrected 2026-09-08 to match the harness's own
 header; frontend/backend state-boundary section and the E2E chat-suite failure
 added 2026-09-08; chat-template-version entry added 2026-09-20 without a full
 backlog pass; MLX vision prefill follow-ups added 2026-09-21 without a full
+backlog pass; runtime-visibility plan pointer added 2026-09-23 without a full
 backlog pass*
+
+## Runtime visibility + one behaviour across engines (2026-09-23) — APPROVED
+
+Plan: [`plan_runtime_visibility.md`](./plan_runtime_visibility.md). Evidence:
+[`../testing/gguf_runtime_audit_2026-09-23.md`](../testing/gguf_runtime_audit_2026-09-23.md).
+
+Its W0 IS the entry below (registry sidecars). The rest follows in order:
+- W8 non-causal image guard;
+- W5 cache/spec reporting;
+- W2+W3 thinking detection and template provenance/lint;
+- W1 load panel with flash attention;
+- W4 image geometry;
+- W6/W7 cache budget and thinking budget;
+- W10 MLX checkpoint caching (reopened by the owner);
+- W9 only if measured.
+
+## Port the eval bank to /v1/messages (2026-09-23)
+
+`tests/eval/run.py` still posts to `/v1/chat/completions`, which was removed in
+v1.79.66, so every task reports "request failed". It was filed as a small
+pending port. It stopped being small once two instruments came to route
+through it: the eval-gate hook and the `/eval-ab` skill, both marked BLOCKED
+until this lands.
+
+The port has two parts:
+- an adapter from the tasks' OpenAI-shaped bodies to a Messages request
+  (system to top level, `image_url` parts to image blocks, `enable_thinking` /
+  `reasoning_effort` as-is);
+- reading content blocks back (`thinking`/`text`) and `stop_reason` in place
+  of `finish_reason`.
+
+Then un-block both `.claude` files.
 
 ## Retire per-model entries from models.toml (2026-09-08) — START HERE
 

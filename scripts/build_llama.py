@@ -248,8 +248,10 @@ def cmake_args(*, lto: bool, openmp: bool, ui: bool,
     anything that only speeds up the CPU-side glue (sampling, tokenizer, graph
     build, the HTTP layer) buys noise and costs build time.
 
-      GGML_METAL_EMBED_LIBRARY  metallib inside the binary -- it can be moved
-                                without dragging a shader file along.
+      GGML_METAL_EMBED_LIBRARY  the Metal shader SOURCE inside the binary,
+                                compiled by the OS at startup -- it can be
+                                moved without dragging a shader file along,
+                                and shader codegen tracks macOS, not Xcode.
       BUILD_SHARED_LIBS=OFF     one self-contained static binary, which is what
                                 a subprocess-spawning provider wants.
       GGML_NATIVE               -mcpu=native for the host it is built on.

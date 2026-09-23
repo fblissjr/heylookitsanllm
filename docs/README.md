@@ -1,6 +1,13 @@
 # Documentation index
 
-Last updated: 2026-09-08
+Last updated: 2026-09-23
+
+**Start with the wiki: [wiki/README.md](./wiki/README.md).** It explains how the
+system works end to end -- the backend, the frontend, the two providers, how
+llama-server is built and spawned, and where caching and performance come from
+-- and links out to the evidence behind each claim. Everything below is either
+narrower (design records, dated audits) or about the project rather than the
+system (roadmap, status, plans).
 
 Git-tracked docs for heylookitsanllm. Working notes, daily logs, strategy notes,
 and research live local-only in `internal/` (gitignored) and are not part of this
@@ -32,12 +39,23 @@ on, and both of these found checks that could not.
 - [testing/audit_2026-09-08_backend_suite.md](./testing/audit_2026-09-08_backend_suite.md)
   -- runtime + mutation audit of `tests/unit/` + `tests/contract/`; claims are
   marked verified-here vs reported
+- [testing/gguf_runtime_audit_2026-09-23.md](./testing/gguf_runtime_audit_2026-09-23.md)
+  -- llama-server build, spawn, vision cost, thinking depth and prompt-cache
+  behaviour across three vision models. Carries no figures; the measured data
+  is a local JSON file it names. Found the template defect that had disabled
+  one model's multi-turn cache.
 
 ## Project -- roadmap / status / backlog
 - [project/plan_2026-07.md](./project/plan_2026-07.md) -- the phased roadmap (0-7; Phase 0 is the
   decisions block, and the 2026-07-28 re-plan re-cut Phases 1-5 into Waves 1-5)
 - [project/CURRENT.md](./project/CURRENT.md) -- graded done/left status
 - [project/TODO.md](./project/TODO.md) -- backlog
+- [project/plan_runtime_visibility.md](./project/plan_runtime_visibility.md) --
+  APPROVED 2026-09-23: make every effective setting and every cache/spec
+  outcome visible, and make MLX and gguf behave the same. Covers thinking
+  detection and mapping, template provenance and lint, image geometry, the
+  load panel, and MLX checkpoint caching. Its W0 is the registry-sidecars plan
+  below.
 - [project/plan_registry_sidecars.md](./project/plan_registry_sidecars.md) --
   PROPOSED: retire per-model entries from models.toml in favour of a sidecar in
   the model's own directory. Phase 0 is a served-set diff and gates the rest,
