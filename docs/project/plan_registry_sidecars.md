@@ -398,6 +398,18 @@ norm.
   the design's favour: `huggingface_hub` prunes nothing on re-download, so a
   sidecar survives, provided its name never collides with something the vendor
   ships.
+
+  > **DECIDED 2026-09-23 (owner):** "We don't need to read from HF cache. We
+  > can assume all models live in a pre-defined folder set in whatever
+  > models.toml becomes." Models live only in the configured scan folders,
+  > which the owner controls and can write. So a sidecar can always be written
+  > beside the weights, the functional cliff does not arise, and it is **not**
+  > a reason for `models.toml` to keep per-model entries.
+  >
+  > Consequence for Phase 3/4: the Hugging Face cache stops being a model
+  > source. `watch_hf_cache` (scan config, admin route, models-page toggle, and
+  > its tests) retires with this plan rather than lingering as an off-by-default
+  > option nothing uses.
 - **Disabling a model** currently needs an entry. Nothing is disabled today, so
   the case is theoretical, but the sidecar has to answer it.
 - **Docs invert in several places.** CLAUDE.md's registry section, the wiki's
