@@ -59,7 +59,14 @@ class CacheInfo(BaseModel):
         description="reused: some of the prompt came from cache; miss: reuse "
                     "was possible but nothing matched; ineligible: this "
                     "request could not reuse (reason says why)")
-    reason: Optional[str] = Field(default=None, description="Why, when known")
+    cause: Optional[str] = Field(
+        default=None,
+        description="Machine-readable why, when known: config | draft | mrope | "
+                    "vision_path (MLX gates); cold | no_common_prefix | "
+                    "probable_template_diverged | probable_budget_skipped | "
+                    "probable_evicted (gguf). probable_* is inferred by heylook, "
+                    "not reported by the engine")
+    reason: Optional[str] = Field(default=None, description="Why, as a sentence, when known")
 
 
 class SpeculativeInfo(BaseModel):

@@ -22,12 +22,19 @@ class CacheReport:
     ``outcome``: "reused" (some of the prompt came from cache), "miss" (the
     engine could reuse but nothing matched), "ineligible" (this request could
     not reuse at all; ``reason`` says why).
+
+    ``cause`` is the machine-readable why, set when one is known: an MLX
+    gate (``config``, ``draft``, ``mrope``, ``vision_path``), or on gguf
+    ``cold`` / ``no_common_prefix`` / ``probable_*`` from the cache witness
+    (llama_cache_witness.py). A ``probable_`` cause is inferred, not
+    reported by the engine. ``reason`` is the same thing as a sentence.
     """
 
     prompt_tokens: int
     cached_tokens: int
     outcome: str
     reason: Optional[str] = None
+    cause: Optional[str] = None
 
     @property
     def processed_tokens(self) -> int:
@@ -39,6 +46,7 @@ class CacheReport:
             "cached_tokens": self.cached_tokens,
             "processed_tokens": self.processed_tokens,
             "outcome": self.outcome,
+            "cause": self.cause,
             "reason": self.reason,
         }
 

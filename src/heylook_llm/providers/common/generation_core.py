@@ -578,6 +578,7 @@ def run_generation(
             outcome=("ineligible" if gate is not None
                      else "reused" if cached_count > 0 else "miss"),
             reason=why if gate is not None else None,
+            cause=gate,
         )
 
     # Scope peak memory to this request so API can report per-request peak

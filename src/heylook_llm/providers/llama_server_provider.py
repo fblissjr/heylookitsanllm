@@ -57,6 +57,7 @@ from .common.generation_gate import GenerationCancelled, get_process_gate
 # somewhere the loader does not look. template_info is stdlib+orjson only, so
 # this keeps the gguf provider's no-MLX-import property.
 from .common.template_info import HEYLOOK_OVERRIDE, HEYLOOK_TEMPLATE_FILENAME
+from .llama_cache_witness import CacheWitness, fingerprint
 from .base import (
     BaseProvider,
     CacheReport,
@@ -156,6 +157,36 @@ def _llama_system_config_paths() -> list[Path]:
     user_dir = Path(xdg) if xdg else Path.home() / ".config"
     return [Path("/etc/llama.cpp/config.ini"), user_dir / "llama.cpp" / "config.ini"]
 
+def _pump_output(stream, tee, witness: CacheWitness) -> None:
+    """Drain llama-server's output pipe for the life of the process.
+
+    Always drained, whatever the observability level: a pipe nobody reads
+    fills and then blocks llama-server mid-write. Each line goes to the log
+    file when file logging was on at spawn (``tee``), and to the cache
+    witness, which keeps only the cache events it recognizes. Nothing here
+    may raise out of the loop: a dead pump is a wedged server.
+    """
+    try:
+        for raw in iter(stream.readline, b""):
+            if tee is not None:
+                try:
+                    tee.write(raw)
+                    tee.flush()
+                except Exception:  # noqa: BLE001 - closed at unload; keep draining
+                    tee = None
+            try:
+                witness.note_line(raw.decode("utf-8", "replace"))
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception:  # noqa: BLE001 - the stream closed under us at teardown
+        pass
+    finally:
+        try:
+            stream.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 # cascade key -> llama-server request key
 _PAYLOAD_KEY_MAP = (
     ("temperature", "temperature"),
@@ -179,6 +210,8 @@ class LlamaServerProvider(BaseProvider):
         self.processor = None
         self._proc: Optional[subprocess.Popen] = None
         self._log_handle = None
+        # Per process: a respawn starts with empty caches, so a fresh witness.
+        self._cache_witness: Optional[CacheWitness] = None
         self._base_url: Optional[str] = None
         # The model's own recommended decode settings, read from the GGUF
         # header once and cached. None = not read yet (the file cannot change
@@ -721,8 +754,8 @@ class LlamaServerProvider(BaseProvider):
         spawn log each probed the filesystem ~85 lines apart, so a sidecar
         created or removed between the two calls made the log describe a
         command line that was never issued -- and the log is the only record,
-        since llama-server's own stdout goes to DEVNULL at the default
-        observability level. Callers that pass nothing (the argv/metadata
+        since llama-server's own output is kept nowhere at the default
+        observability level (the pump reads it only for cache events). Callers that pass nothing (the argv/metadata
         drift test) still resolve inline.
         """
         cfg = self.config
@@ -879,7 +912,7 @@ class LlamaServerProvider(BaseProvider):
         # Pre-flight EVERY configured file HERE, not in _build_args (which
         # stays pure -- it is exercised by the argv/metadata drift test with
         # paths that do not exist). At observability_level=off, which is the
-        # DEFAULT, the subprocess's stdout goes to DEVNULL, so llama-server
+        # DEFAULT, the subprocess's output is kept nowhere, so llama-server
         # exiting on a file that is not there leaves NO diagnostic anywhere:
         # a models.toml entry left behind by a directory rename produced
         # `exited with code 1 -- output not captured` and nothing else
@@ -954,7 +987,6 @@ class LlamaServerProvider(BaseProvider):
         # sprinkled logs/ dirs wherever the server happened to be started.
         if observability.current_level() == "off":
             self._log_handle = None
-            log_stdout = subprocess.DEVNULL
             # Say "was off AT SPAWN", not "observability_level=off": during
             # router pre-warm the in-process cache still holds the pre-
             # configure default, so the DB setting may already be higher --
@@ -968,7 +1000,6 @@ class LlamaServerProvider(BaseProvider):
             safe_id = "".join(c if c.isalnum() or c in "-_." else "_" for c in self.model_id)
             log_path = log_dir / f"llama_server_{safe_id}.log"
             self._log_handle = open(log_path, "ab")
-            log_stdout = self._log_handle
             log_ref = f"see {log_path}"
 
         # A flag heylook passes explicitly WINS over its env var (llama.cpp
@@ -1037,13 +1068,19 @@ class LlamaServerProvider(BaseProvider):
         logging.info(f"[GGUF] Spawning llama-server for '{self.model_id}': {' '.join(args)}")
         self._proc = subprocess.Popen(
             args,
-            stdout=log_stdout,
+            stdout=subprocess.PIPE,  # drained by _pump_output, see there
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
             env=child_env,
             start_new_session=True,  # own process group: unload kills the whole tree
         )
         self._register_proc(self._proc)
+        self._cache_witness = CacheWitness()
+        threading.Thread(
+            target=_pump_output,
+            args=(self._proc.stdout, self._log_handle, self._cache_witness),
+            name=f"llama-log-{self.model_id}", daemon=True,
+        ).start()
         self._base_url = f"http://{host}:{port}"
 
         timeout_s = float(self.config.get("startup_timeout_s") or 300.0)
@@ -1575,9 +1612,10 @@ class LlamaServerProvider(BaseProvider):
             # requests, so there is no MLX-style gate to report), which made
             # every gguf model look permanently idle to a teardown guard.
             with self.generation_active():
-                yield from self._stream_chunks(
+                yield from self._explained(self._stream_chunks(
                     response, abort_event,
-                    echo_chars=echo_chars, echo_thinking_chars=echo_thinking_chars)
+                    echo_chars=echo_chars, echo_thinking_chars=echo_thinking_chars),
+                    payload)
         finally:
             # Closing the connection frees the llama-server slot on abort.
             try:
@@ -1585,6 +1623,23 @@ class LlamaServerProvider(BaseProvider):
             except Exception:
                 pass
             self._gen_gate.release()
+
+    def _explained(self, chunks, payload: dict) -> Generator:
+        """Attach the cache witness's why to the request's CacheReport, and
+        remember this request once llama-server has reported on it."""
+        witness = self._cache_witness
+        if witness is None:
+            yield from chunks
+            return
+        messages, head = fingerprint(payload)
+        whole = None
+        for chunk in chunks:
+            if chunk.cache is not None:
+                chunk.cache = witness.explain(messages, head, chunk.cache)
+                whole = chunk.cache.prompt_tokens
+            yield chunk
+        if whole is not None:
+            witness.record(messages, head, whole)
 
     @staticmethod
     def _error_detail(e: urllib.error.HTTPError) -> str:
@@ -1656,8 +1711,8 @@ class LlamaServerProvider(BaseProvider):
         Its "Compute error." is ggml's `llama_decode` returning -3, and on
         Metal the cause underneath is almost always the GPU working set
         running out (`kIOGPUCommandBufferCallbackErrorOutOfMemory` in the
-        subprocess log -- which at the default observability level is
-        DEVNULL, so this message is the only place the reader will ever see
+        subprocess log -- which at the default observability level is kept
+        nowhere, so this message is the only place the reader will ever see
         it). Sizing the model against the live ceiling says whether that
         reading is plausible and what to do; the fit panel shows the same.
         """

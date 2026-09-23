@@ -211,7 +211,7 @@ class TestBuildArgs:
 
     def test_missing_chat_template_fails_before_spawn(self, tmp_path, monkeypatch):
         # The failure this prevents is silent: at observability_level=off the
-        # subprocess log is DEVNULL, so llama-server dying on an unreadable
+        # subprocess output is kept nowhere, so llama-server dying on an unreadable
         # template file would surface as a bare startup timeout. Assert we
         # never even reach Popen.
         monkeypatch.setattr(LlamaServerProvider, "_resolve_binary",
@@ -250,7 +250,7 @@ class TestBuildArgs:
     def test_missing_configured_file_fails_before_spawn(
             self, tmp_path, monkeypatch, field, filename):
         # A models.toml entry outliving a directory rename. llama-server exits
-        # 1 immediately and its output is DEVNULL at the default observability
+        # 1 immediately and its output is kept nowhere at the default observability
         # level, so the operator gets `exited with code 1 -- output not
         # captured` and nothing naming the file (2026-09-06). The error must
         # name the FIELD, since the entry can carry four paths and only one of
@@ -312,8 +312,8 @@ class TestBuildArgs:
 class TestSpawnEnvironment:
     """heylook owns where llama-server's output goes.
 
-    `observability_level = off` (the default) sends the subprocess's stdout to
-    DEVNULL, so nothing reaches disk. `LLAMA_ARG_LOG_FILE` in the environment
+    `observability_level = off` (the default) keeps the subprocess's output
+    nowhere: the pump drains the pipe for cache events and writes no file. `LLAMA_ARG_LOG_FILE` in the environment
     defeats that: llama-server opens its own file, and llama.cpp's logger sends
     output to a set file INSTEAD of stdout (common/log.cpp), so the variable
     both writes a file heylook did not sanction and diverts the stream heylook
@@ -840,7 +840,7 @@ class TestSSEAdapter:
 
     def test_compute_error_names_the_metal_ceiling_and_the_sysctl(self, monkeypatch):
         # "Compute error." is all llama-server says; the ggml OOM line is in a
-        # log that is DEVNULL by default. The message the reader gets must
+        # log that is kept nowhere by default. The message the reader gets must
         # carry the headroom and the remedy the fit panel would show.
         from heylook_llm.providers.base import GenerationFailed
         from types import SimpleNamespace

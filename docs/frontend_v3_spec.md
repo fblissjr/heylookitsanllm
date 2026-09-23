@@ -291,7 +291,11 @@ Phase 3b; chat uses its conversation-scoped sibling below; the OpenAI-compatible
   count), from the provider's `CacheReport` through
   `perf_collector.usage_counts`. `performance.cache` =
   `{prompt_tokens, cached_tokens, processed_tokens, outcome:"reused"|"miss"|
-  "ineligible", reason}`; `performance.speculative` = `{drafted, accepted,
+  "ineligible", cause, reason}`. `cause` (v2.0.80) is the machine-readable why,
+  null when none is known: `config | draft | mrope | vision_path` (MLX gates,
+  on `ineligible`) or `cold | no_common_prefix | probable_template_diverged |
+  probable_budget_skipped | probable_evicted` (gguf, from heylook's cache witness;
+  `probable_*` is inferred, not engine-reported); `reason` says it as a sentence; `performance.speculative` = `{drafted, accepted,
   emitted, acceptance_rate, draft_share}` (replaces `draft_acceptance`, which
   meant accepted/drafted on gguf and accepted/emitted on MLX).
 - Body: `{model?, messages:[{role:"user"|"assistant", content}], system?,

@@ -850,7 +850,7 @@ class VLMVisionStrategy:
         # of the prompt is reused -- reported as such, not as a plain miss.
         vision_cache_report = CacheReport(
             prompt_tokens=prompt_token_count, cached_tokens=0,
-            outcome="ineligible",
+            outcome="ineligible", cause="vision_path",
             reason=("a request with an image builds a fresh cache, so nothing "
                     "is reused (plan W10)"))
         for chunk in run_generation(

@@ -195,9 +195,13 @@ It carries `prompt_tps`, `generation_tps`, `request_duration_ms`,
 `cache` and `speculative`, plus the two phase durations.
 
 - `cache` (v2.0.78): `{prompt_tokens, cached_tokens, processed_tokens,
-  outcome, reason}`. `outcome` is `reused`, `miss` (reuse was possible but
+  outcome, cause, reason}`. `outcome` is `reused`, `miss` (reuse was possible but
   nothing matched) or `ineligible` (this request could not reuse; `reason`
-  says why, e.g. an MLX request with an image).
+  says why, e.g. an MLX request with an image). `cause` (v2.0.80) is the same
+  why as a token, null when unknown: `config`, `draft`, `mrope`, `vision_path`
+  on MLX; `cold`, `no_common_prefix`, `probable_template_diverged`,
+  `probable_budget_skipped`, `probable_evicted` on gguf, where `probable_`
+  marks heylook's inference (llama-server reports only the cached count).
 - `speculative` (v2.0.78), when a drafter ran: `{drafted, accepted, emitted,
   acceptance_rate, draft_share}`. `acceptance_rate` is accepted out of
   drafted (gguf only, the drafter's proposals are known there);

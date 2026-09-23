@@ -274,7 +274,7 @@ Extends the existing template panel (`GET/PUT/DELETE
 
 ### W5. Cache and speculative reporting, end to end
 
-**Progress:** commit 1 shipped v2.0.78 (per-request `CacheReport`/`SpecReport`, Anthropic-shaped `usage`, `performance.cache`/`performance.speculative`). Commit 2 shipped v2.0.79 (the `engine.cache` slot: gguf reuse class from the header, KV shift, RAM budget and checkpoint settings as spawned; MLX text reuse, fresh cache for image requests, one slot; MLX `prompt_cache` left `settings` for it). Remaining: gguf "why", per-message stats storage and the frontend, and the live cache-reuse smoke check.
+**Progress:** commit 1 shipped v2.0.78 (per-request `CacheReport`/`SpecReport`, Anthropic-shaped `usage`, `performance.cache`/`performance.speculative`). Commit 2 shipped v2.0.79 (the `engine.cache` slot: gguf reuse class from the header, KV shift, RAM budget and checkpoint settings as spawned; MLX text reuse, fresh cache for image requests, one slot; MLX `prompt_cache` left `settings` for it). Commit 3 shipped v2.0.80 (gguf "why": the cache witness, fingerprint plus the pipe-read cache log lines, `cause` on every `CacheReport`; unit-verified, live check pending with the smoke run). Remaining: per-message stats storage and the frontend, and the live cache-reuse smoke check.
 
 - **Per request.** `GenerationChunk` gains slotted `cache: CacheReport` and
   `spec: SpecReport` fields, which `ChunkTelemetry.absorb` latches on

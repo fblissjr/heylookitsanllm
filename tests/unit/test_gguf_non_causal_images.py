@@ -1,4 +1,5 @@
-"""Non-causal image decode guard (plan W8).
+"""Non-causal image decode guard (plan W8), and the other llama.cpp facts
+heylook hand-copies, pinned against the build tree.
 
 Some projectors' image tokens are decoded non-causally, and llama.cpp aborts
 when such an image has more tokens than the micro-batch. The provider caps
@@ -96,6 +97,32 @@ def test_non_causal_table_matches_the_build():
                          ("n_ctx_checkpoints", P.LLAMA_DEFAULT_CTX_CHECKPOINTS),
                          ("checkpoint_min_step", P.LLAMA_DEFAULT_CHECKPOINT_MIN_STEP)):
         assert re.search(rf"\b{field}\s*=\s*{value};", common), field
+
+
+def _log_messages(tree: Path) -> list[str]:
+    """Every server log message the build prints, rendered with sample
+    arguments: the literal of each SRV_/SLT_ call, or its argument when the
+    format is a bare "%s"."""
+    out = []
+    for name in ("server-task.cpp", "server-context.cpp"):
+        src = (tree / "tools/server" / name).read_text()
+        for call in re.finditer(r'(?:SRV|SLT)_[A-Z]{3}\((.*?)\);', src, re.S):
+            literals = re.findall(r'"((?:[^"\\]|\\.)*)"', call.group(1))
+            if not literals:
+                continue
+            fmt = literals[1] if literals[0].rstrip("\\n") == "%s" and len(literals) > 1 else "".join(literals)
+            out.append(re.sub(r"%[-\d.]*(?:zu|l?l?d|f|s|p|u)", lambda m: "1.500" if m.group(0).endswith("f") else "7", fmt))
+    return out
+
+
+@pytest.mark.unit
+def test_cache_log_patterns_match_the_build():
+    """The cache witness reads llama-server's log by its wording; a reworded
+    line upstream would silently stop every probable_* cause."""
+    from heylook_llm.providers.llama_cache_witness import LOG_PATTERNS, classify_line
+
+    kinds = {classify_line(m) for m in _log_messages(_build_tree())} - {None}
+    assert kinds == {kind for kind, _ in LOG_PATTERNS}
 
 
 @pytest.mark.unit

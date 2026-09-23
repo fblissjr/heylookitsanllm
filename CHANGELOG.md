@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.80]
+
+### Added
+
+- **Why a gguf request reused what it did (plan W5, commit 3).**
+  llama-server reports only the cached count. heylook now adds a `cause`
+  to `performance.cache` from a per-process cache witness
+  (`providers/llama_cache_witness.py`):
+  - a fingerprint of recent requests (one hash per wire message plus one
+    for `chat_template_kwargs`; hashes only, no text);
+  - the cache lines llama-server prints at its default verbosity (a state
+    skipped for exceeding the RAM budget, evictions, the budget shrinking,
+    sleep), read from the subprocess pipe.
+  - Causes: `cold`, `no_common_prefix`, and the inferred
+    `probable_template_diverged`, `probable_budget_skipped`,
+    `probable_evicted`. The log patterns are pinned against the build tree's
+    format strings.
+- `CacheReport.cause` / `performance.cache.cause` on MLX too: the gate token
+  of an `ineligible` request (`config`, `draft`, `mrope`, `vision_path`).
+
+### Changed
+
+- llama-server's output always goes to a pipe drained by a daemon thread
+  for the life of the process, which also writes the log file when file
+  logging was on at spawn. At `observability_level=off` nothing reaches
+  disk, as before.
+
+### Release standard
+
+- `tests/smoke`: not yet run for this release (no dev server was up); to be
+  run on all three arms before W5 closes, with the pump verified live on
+  the gguf arm.
+- `scripts/vendor_frontend.py --check`: marked and dompurify each one patch
+  release behind upstream, both matching the manifest; not updated here.
+- Phase 3 precondition, thinking depth on both MLX arms: unmet. The
+  mlx-lm arm can be covered by gpt-oss-20b once the owner clears it for
+  loading; the mlx-vlm arm has no candidate.
+
 ## [2.0.79]
 
 ### Changed (the engine contract)
