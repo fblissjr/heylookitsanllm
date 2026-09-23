@@ -412,6 +412,16 @@ norm.
   > option nothing uses.
 - **Disabling a model** currently needs an entry. Nothing is disabled today, so
   the case is theoretical, but the sidecar has to answer it.
+
+  > **DECIDED 2026-09-23 (owner):** "If the model exists in the folder
+  > configured, it's enabled. The end." There is no disabled state. Presence
+  > in a scan folder IS enabled; to stop serving a model, move it out of the
+  > folder. The sidecar does not answer this case because the case goes away.
+  >
+  > Consequence for Phase 3/4: the `enabled` field retires with this plan,
+  > along with `toggle_enabled` (the other materialization trigger besides
+  > `update_config`), its admin route and the models-page toggle. With both
+  > writers gone, nothing materializes an entry just to record on/off.
 - **Docs invert in several places.** CLAUDE.md's registry section, the wiki's
   override-only architectural principle, and comments in `model_registry.py` and
   `model_service.py` all describe the replacement model. They change in the same
