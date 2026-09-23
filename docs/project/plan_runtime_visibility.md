@@ -546,7 +546,7 @@ replaces it is live-green.
    semantic-hash salt, `CacheReport` from APC, per-request timing and
    peak-memory reset. The pure decisions (salt, checkpoint settings,
    report mapping) are functions testable without MLX.
-2. **Route every MLX request through it**, text and vision, loading every
+2. **(2a, then 2b below) Route every MLX request through it**, text and vision, loading every
    model with `mlx_vlm.load`. Delete what it replaces: the mlx-lm decode
    loop in `generation_core`, `prompt_cache.py`, `cache_helpers.py`,
    `model_wrappers.py`, the vision prefill handoff and position resets,
@@ -556,6 +556,36 @@ replaces it is live-green.
 3. **Remove mlx-lm** from pyproject and the lock; retire the mlx-lm smoke
    arm into an "mlx text" arm on the same engine; rewrite the MLX sections of
    CLAUDE.md, the wiki and sharp_edges (most MLX gotchas go with the seam).
+**Review adjustments (peer session, 2026-09-23), adopted.** Stage 2 splits:
+**2a** routes every MLX request through the engine and changes nothing else,
+fully verified; **2b** deletes the old path in its own commit, so a
+regression after 2a is a one-commit revert (git is the rollback; no flag, no
+dual path). Gates beyond parity and the chain probe:
+- the served population, derived from `merge_discovered`, loaded and run for
+  a few tokens one at a time within the RAM preflight (a model that does not
+  load is an owner decision before 2b);
+- sampler equivalence at temperature above 0 with fixed logits and seed
+  (mlx-lm's `sample_utils` is vendored in stage 3 rather than trusting a
+  different implementation's ordering);
+- telemetry parity through `ChunkTelemetry` (tok/s, TTFT excluding queue
+  wait, per-request peak memory) and the W5 reports re-derived from APC,
+  with smoke's reuse checks as the acceptance test;
+- an APC byte budget with a default, reported in `engine.cache`, checked
+  against the wired limit, and cleared on unload;
+- structural thread rules: close generators on the pinned thread, decide the
+  destructor path, set the stop set once at load and never per request;
+- template behaviours mlx-lm's wrapper carried: the injected
+  `enable_thinking`, python `chat_template_type` templates (delete if no
+  served model uses one), the continuation seam and
+  `continue_from_generation_prompt` (Continue re-checked live on gemma-4
+  and Qwen3.5 at 2a).
+Stage 3's deletion list includes the `loader` and MLX draft config fields and
+their effect classes, `effective_loader`, `tests/helpers/engines.py`'s
+taxonomy, the MLX perf integration tests and mlx_lm mock paths, and the
+seam-era CLAUDE.md bullets; tests die with their code. Owner questions at
+stage 3: whether optloop-lib keeps its mlx-lm half, and the new pin posture
+(mlx-vlm as the only MLX engine pin) in `ecosystem_strategy.md`.
+
 Verification at stages 2 and 3: unit and contract suites,
 `scripts/chain_probe.py` on qwen3_5, gemma-4, qwen3_vl, qwen3 and gpt-oss,
 `scripts/vlm_parity_probe.py` re-aimed at heylook versus mlx-vlm's own loop,
