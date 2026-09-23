@@ -317,9 +317,14 @@ Extends the existing template panel (`GET/PUT/DELETE
 - A server setting that passes `GGML_METAL_RESIDENCY_KEEP_ALIVE_S` at spawn.
   This is llama.cpp's heartbeat that keeps weights resident; it is not heylook's
   idle unload.
-- Build it only if the measurement on a model near the working-set ceiling
-  shows a real first-request cost after idle. On a mid-size model it was
+- **Measured worthwhile (2026-09-23).** On the 145 GB DeepSeek-V4-Vision,
+  the first request after an idle gap past the default 180 s paid a
+  first-token delay many times the warm one. With the keep-alive raised to an
+  hour, it answered as fast as a warm repeat. On a ~30 GB model the effect was
   small.
+- The default should be derived, not fixed: keep resident for as long as
+  heylook's own idle unload would keep the model loaded, since holding the
+  model while letting its pages go cold is the worst of both.
 
 ### W10. MLX prompt cache: checkpoints, vision, and hybrids
 
@@ -365,7 +370,7 @@ restores.
 5. **W4** backend, then frontend resize.
 6. **W6**, **W7**.
 7. **W10** (largest, highest risk), after W5 so its effect is visible.
-8. **W9** if measured worthwhile.
+8. **W9** (measured worthwhile; small, could move earlier).
 
 Each workstream ships with its CHANGELOG entry and `frontend_v3_spec.md` §4
 updates in the same commit as any contract change.

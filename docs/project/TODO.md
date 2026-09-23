@@ -24,15 +24,15 @@ Its W0 IS the entry below (registry sidecars). The rest follows in order:
 - W4 image geometry;
 - W6/W7 cache budget and thinking budget;
 - W10 MLX checkpoint caching (reopened by the owner);
-- W9 only if measured.
+- W9 residency keep-alive (measured worthwhile on the 145 GB model; small).
 
 ## Port the eval bank to /v1/messages (2026-09-23)
 
 `tests/eval/run.py` still posts to `/v1/chat/completions`, which was removed in
 v1.79.66, so every task reports "request failed". It was filed as a small
-pending port. It stopped being small once two instruments came to route
-through it: the eval-gate hook and the `/eval-ab` skill, both marked BLOCKED
-until this lands.
+pending port. Until it lands, the `/eval-ab` skill is marked BLOCKED, and the
+eval-gate reminder was retired with hookify (2026-09-23) rather than kept
+pointing at a dead instrument.
 
 The port has two parts:
 - an adapter from the tasks' OpenAI-shaped bodies to a Messages request
@@ -41,7 +41,8 @@ The port has two parts:
 - reading content blocks back (`thinking`/`text`) and `stop_reason` in place
   of `finish_reason`.
 
-Then un-block both `.claude` files.
+Then un-block `/eval-ab`, and decide whether the eval-gate reminder comes back
+as a native PostToolUse hook (logic in `scripts/hooks/`).
 
 ## Retire per-model entries from models.toml (2026-09-08) — START HERE
 

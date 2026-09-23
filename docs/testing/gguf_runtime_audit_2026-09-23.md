@@ -389,8 +389,13 @@ Pitfalls:
 - On the 145 GB DeepSeek-V4-Vision, **the first request after the idle gap
   paid a first-token delay many times the warm one**, with an unchanged decode
   rate. That is the cost a sporadic consumer app pays on every request that
-  follows a quiet spell. Whether raising the keep-alive removes it is recorded
-  in the data file (the `keepalive-3600` spawn).
+  follows a quiet spell.
+- **Raising the keep-alive removes it.** The same model, spawned with
+  `GGML_METAL_RESIDENCY_KEEP_ALIVE_S=3600` and left idle for the same gap
+  twice over, answered its first request after each gap as fast as a warm
+  repeat. The cost is weights that stay wired between requests, which is
+  already the point of a resident model. This is the evidence behind the
+  plan's W9.
 
 ## 9. Flash attention on vs off [measured]
 

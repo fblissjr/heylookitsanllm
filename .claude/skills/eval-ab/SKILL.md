@@ -19,8 +19,9 @@ The flow below applies once the bank speaks the Messages wire again.
 
 Explicit-ask wrapper around `tests/eval/run.py` for comparing eval-bank
 results across a change: dependency pin bumps, quant swaps, or pre-release
-checks. This is the FULL-bank tier. For small code changes, use the scoped
-check the eval-gate hook describes instead. Do not let this grow into hours
+checks. This is the FULL-bank tier. For small code changes, run one category
+(`--tasks <category>`) on one fast model against an already-running server
+instead. Do not let this grow into hours
 of testing: the whole bank on the one or two models actually under
 comparison, nothing more.
 

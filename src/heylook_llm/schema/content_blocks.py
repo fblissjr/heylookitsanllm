@@ -147,13 +147,13 @@ class ImageBlock(BaseModel):
                     "which it is derived.",
     )
     media_type: Optional[str] = Field(
-        None, description="MIME type, e.g. 'image/jpeg'. Required for base64."
+        default=None, description="MIME type, e.g. 'image/jpeg'. Required for base64."
     )
     data: Optional[str] = Field(
-        None, description="Base64-encoded image data (when source_type='base64')"
+        default=None, description="Base64-encoded image data (when source_type='base64')"
     )
     url: Optional[str] = Field(
-        None, description="Image URL (when source_type='url')"
+        default=None, description="Image URL (when source_type='url')"
     )
 
     source: Optional[MediaSource] = Field(

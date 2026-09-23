@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.66]
+
+### Changed
+
+- **hookify retired; repo rules are enforced, not reminded.** The plugin had
+  been disabled, so all four of its rules were silently dead. The three
+  deterministic ones moved to places that cannot be switched off:
+  - `scripts/check_version_sync.py`: a pre-commit guard that the newest
+    CHANGELOG heading equals `__version__`. It reads staged blobs, is stdlib
+    only, and fails closed.
+  - `tests/unit/test_field_keyword_defaults.py`: an AST scan of
+    `src/heylook_llm` refusing positional pydantic `Field` defaults. It also
+    checks that it actually found `Field` calls.
+  - `scripts/hooks/models_toml_posttool.py`: a native Claude Code PostToolUse
+    hook, wired in the newly tracked `.claude/settings.json`. It RUNS the
+    startup validation after any `models.toml` edit and feeds a failure back
+    at edit time.
+
+  The eval-gate reminder was dropped: it pointed at the eval bank, which
+  cannot run until its Messages-wire port. The `.claude` allow-list
+  (`.gitignore` and the pre-commit hook) was pruned to what is actually
+  tracked; the rule, agents and two skills it named were deleted in August.
+
+### Fixed
+
+- Nine pydantic `Field` calls with positional defaults, which crept back while
+  the reminder was dead (config operational settings, the image source block,
+  the response metadata echo). Behaviour is identical; pyright stops reporting
+  false "arguments missing" errors on those models.
+
+### Docs
+
+- The audit records that raising `GGML_METAL_RESIDENCY_KEEP_ALIVE_S` removes
+  the first-request delay after an idle gap on a model near the working-set
+  ceiling. The plan's W9 is now evidence-backed.
+- `CLAUDE.md` no longer points at the removed `/test-suite` skill.
+
 ## [2.0.65]
 
 Documentation only; no code behaviour changed.

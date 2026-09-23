@@ -159,5 +159,5 @@ class MessageResponse(BaseModel):
     usage: Usage
     performance: Optional[PerformanceInfo] = None
     metadata: Optional[Dict[str, str]] = Field(
-        None, description="Echoed from request metadata"
+        default=None, description="Echoed from request metadata"
     )

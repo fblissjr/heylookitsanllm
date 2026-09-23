@@ -1587,7 +1587,7 @@ class ScanConfig(BaseModel):
     folders: List[str] = Field(default_factory=list)
     watch_hf_cache: bool = False
     scan_interval_seconds: int = Field(
-        900, ge=0,
+        default=900, ge=0,
         description="Seconds between rescans. 0 disables periodic rescans "
                     "(no initial scan either).",
     )
@@ -1621,7 +1621,7 @@ class AppConfig(BaseModel):
     # entirely (for models without their own override). Pinned models are
     # always exempt.
     idle_unload_seconds: int = Field(
-        1800, ge=0,
+        default=1800, ge=0,
         description="Seconds of inactivity before a non-pinned model is unloaded. "
                     "0 disables idle unload globally.",
     )
@@ -1630,14 +1630,14 @@ class AppConfig(BaseModel):
     # HEYLOOK_BASELINE_LOG_INTERVAL_SECONDS, HEYLOOK_REQUEST_LOG_ENABLED,
     # HEYLOOK_MODEL_EVENT_LOG_ENABLED.
     baseline_log_interval_seconds: int = Field(
-        3600, ge=0,
+        default=3600, ge=0,
         description="Seconds between memory_baseline.jsonl entries. 0 disables.",
     )
     request_log_enabled: bool = Field(
-        True, description="Append per-request event to request_events.jsonl."
+        default=True, description="Append per-request event to request_events.jsonl."
     )
     model_event_log_enabled: bool = Field(
-        True, description="Append model load/unload events to model_events.jsonl."
+        default=True, description="Append model load/unload events to model_events.jsonl."
     )
 
     def get_model_config(self, model_id: str) -> Optional[ModelConfig]:
