@@ -139,17 +139,21 @@ does.
 
 > **DECIDED 2026-09-23 (owner):** models.toml is not the source of truth for
 > anything per-model in the end state. It becomes ONE server config file,
-> `config.toml` (name open to a better one), easy to read and edit by hand,
-> holding every server-wide setting. That includes the keys in the DuckDB
-> `settings` table today (`observability_level`,
-> `observability_retention_days`, `mlx_cache_limit_gb`), so server settings
-> stop living in two places.
+> **`heylook.toml`**, easy to read and edit by hand, holding every
+> server-wide setting. That includes the keys in the DuckDB `settings` table
+> today (`observability_level`, `observability_retention_days`,
+> `mlx_cache_limit_gb`), so server settings stop living in two places.
 >
-> To settle when this phase is built: which UI-editable settings keep a UI
-> writer (the comment-preserving writer exists) versus become file-only; and
-> whether `request_log_enabled`, `model_event_log_enabled` and
-> `baseline_log_interval_seconds` are superseded by `observability_level`
-> (unchecked).
+> - **UI writers (decided):** the UI keeps writing exactly what it writes
+>   today (`observability_level`, `observability_retention_days`,
+>   `mlx_cache_limit_gb`), now into `heylook.toml` through the
+>   comment-preserving writer. Everything else in the file is file-only.
+> - **Logging keys (decided):** `request_log_enabled`,
+>   `model_event_log_enabled` and `baseline_log_interval_seconds` retire;
+>   `observability_level` is the only logging control. The baseline interval
+>   becomes a constant, and the env overrides in `memory.py`
+>   (`parse_bool_env`) go with them, which brings the code in line with
+>   CLAUDE.md's "no env override" rule.
 
 ### The trade this makes
 
@@ -403,6 +407,22 @@ norm.
   bug in a new coordinate system — and this repo already carries that scar. The
   shape that works is a real directory holding symlinked FILES plus its own
   sidecar.
+
+  > **DECIDED 2026-09-23 (owner):** neither option. The twin is replaced by a
+  > real small text-only MLX model in a scan folder (a ~0.6B Qwen3 class
+  > model): mlx-lm loads it because it IS text, so there is no forced loader,
+  > no second directory and no per-model exception.
+  >
+  > - `tests/smoke`'s mlx-lm text arm and `tests/helpers/engines.py` move to
+  >   it, in **Phase 0**, so the arm is re-pointed before the twin's entry
+  >   retires.
+  > - The owner downloads it: Phase 0 names the exact Hugging Face repo,
+  >   verified to exist and to be text-only MLX, for the owner to pick. Not a
+  >   guess.
+  > - The `Qwen3.5-0.8B-MLX-8bit-textonly` entry retires with the other
+  >   entries.
+  > - Thinking depth on MLX stays a NAMED uncovered gap (gpt-oss-120b remains
+  >   the only MLX model with `reasoning_effort`); the cheap arm is kept.
 - **Read-only or shared model directories are a FUNCTIONAL CLIFF**, and may be
   the reason models.toml keeps per-model entries after all. The asymmetry with
   the template case is the whole point: there, a read-only directory costs you

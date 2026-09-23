@@ -738,6 +738,9 @@ updates in the same commit as any contract change.
   template's own values; no heylook scale, no mapping, no cross-model
   translation. Presets keep saving system prompts.
 
-Still open, to settle when the workstream starts:
-- W0: the two questions `plan_registry_sidecars.md` already lists as due
-  before its Phase 2 (read-only model directories; the twin).
+Still open, to settle when the workstream starts: nothing. W0's questions
+are all decided in `plan_registry_sidecars.md` (2026-09-23): models live only
+in configured scan folders (the read-only-directory case does not arise), no
+disabled state, the twin is replaced by a small text-only MLX model (Phase 0
+names the repo for the owner), and the server file is `heylook.toml` with the
+UI writing only its three current settings.
