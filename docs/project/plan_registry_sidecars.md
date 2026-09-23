@@ -315,6 +315,14 @@ building either.**
   POLICY for choosing among precision variants, which this plan does not supply.
   Either supply one or drop the bullet.
 
+  A live case (2026-09-23): `unsloth_Qwen3.8-Flash-Next-GGUF` keeps its
+  weights in `UD-Q6_K_XL/` and a single drafter,
+  `MTP/mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf`, in a sibling `MTP/`. The
+  subdirectory rule leaves it unpaired, and its explicit models.toml entry
+  would keep spec decode off regardless. One file in `MTP/` is the simplest
+  version of the policy question (a single variant needs no choosing).
+  Enabling it is still a measured, per-model opt-in.
+
 ### Phase 2 — the sidecar format and reader
 
 - One optional file per model directory, layered over derived defaults; the same
