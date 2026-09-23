@@ -15,6 +15,7 @@ import { createEl, armedConfirm, createUnloadGuard, formatTokens } from '../util
 import { api } from '../api.js';
 import * as drawer from '../settings-drawer.js';
 import { createModelConfigEditor, configSummary, hasUnsavedTemplate } from '../model-config.js';
+import { contextCeiling } from '../engine.js';
 
 export default createPage({
   async setup(ctx) {
@@ -275,7 +276,8 @@ function modelMetaLine(model) {
   if (model.capabilities?.length) parts.push(model.capabilities.join(', '));
   // The context window, derived server-side for every provider that has one
   // (gguf header / MLX config.json) -- answered for unloaded models too.
-  if (model.context_length) parts.push(`ctx ${formatTokens(model.context_length)}`);
+  const ceiling = contextCeiling(model);
+  if (ceiling) parts.push(`ctx ${formatTokens(ceiling)}`);
   if (model.config?.chat_template_source) {
     parts.push(`template: ${model.config.chat_template_source}`);
   }

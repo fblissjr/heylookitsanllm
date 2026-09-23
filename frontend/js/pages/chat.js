@@ -36,6 +36,7 @@ import { createPresetBar, paintPresetChip } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
 import { createDocumentWriter } from '../document-writer.js';
 import { createContextSelect } from '../context-select.js';
+import { contextRunning } from '../engine.js';
 import { paintPromptPreview, paintPromptPreviewError } from '../prompt-preview.js';
 
 // A system prompt typed before any conversation exists has no owner: the
@@ -543,8 +544,8 @@ async function refreshLoadedIds(ctx) {
     s.loadedIds = new Set((data.models ?? []).filter((m) => m.loaded).map((m) => m.id));
     // The whole row, ONE map: provider (gates the context control and the
     // continuation asymmetry in the editor), config with the stored
-    // ctx_size, context_length as the ceiling, context_running as what the
-    // resident process actually got.
+    // ctx_size, and `engine` (the engine contract: the context ceiling and
+    // what the resident process actually got, via js/engine.js).
     s.adminRows = new Map((data.models ?? []).map((m) => [m.id, m]));
     s.loadedKnown = true;
   } catch {
@@ -621,7 +622,7 @@ async function loadModelNow(ctx) {
   await refreshLoadedIds(ctx);
   // Say what the process actually got, once the row can tell us: for Auto
   // that is the only place the number exists.
-  const running = s.adminRows.get(id)?.context_running;
+  const running = contextRunning(s.adminRows.get(id));
   if (summary && running && ctx.alive) showStatus(ctx, `${summary} Context ${formatTokens(running)}.`);
 }
 

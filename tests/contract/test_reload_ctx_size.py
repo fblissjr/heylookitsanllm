@@ -101,21 +101,31 @@ class TestAdminRowContextFields:
     def test_fields_present_on_every_row(self, client):
         rows = {m["id"]: m for m in client.get("/v1/admin/models").json()["models"]}
         for row in rows.values():
-            assert "context_length" in row
-            assert "context_running" in row
+            context = row["engine"]["context"]
+            assert set(context) == {"length", "running"}
         # The fake gguf path does not exist: header unreadable -> null, not an
         # error, and not a listing failure.
-        assert rows["test-gguf-model"]["context_length"] is None
-        assert rows["test-mlx-model"]["context_length"] is None
+        assert rows["test-gguf-model"]["engine"]["context"]["length"]["value"] is None
+        assert rows["test-mlx-model"]["engine"]["context"]["length"]["value"] is None
+        # MLX has no fixed allocation: not applicable, which is not unknown.
+        assert rows["test-mlx-model"]["engine"]["context"]["running"]["provenance"] == "not_applicable"
 
     def test_running_is_null_until_a_provider_reports_one(self, client, mock_router):
-        client.post("/v1/models/test-gguf-model/load")
-        row = client.get("/v1/admin/models/test-gguf-model").json()
-        assert row["loaded"] is True
-        assert row["context_running"] is None
-        # A provider that knows its slot size (LlamaServerProvider reads it
-        # from /props at ready) is what fills the field.
-        mock_router.providers["test-gguf-model"].running_ctx = 32768
-        row = client.get("/v1/admin/models/test-gguf-model").json()
-        assert row["context_running"] == 32768
-        assert client.get("/v1/admin/models/test-mlx-model").json()["context_running"] is None
+        """The running context reaches the row through the REAL gguf observed
+        half (LlamaServerProvider.describe_observed), not a stand-in."""
+        from heylook_llm.providers.llama_server_provider import LlamaServerProvider
+
+        provider = LlamaServerProvider.__new__(LlamaServerProvider)
+        provider.model_id = "test-gguf-model"
+        provider.config = {"model_path": "/fake/model.gguf"}
+        provider.running_ctx = None
+        provider.loaded_chat_template = None
+        mock_router.providers["test-gguf-model"] = provider
+
+        def running():
+            row = client.get("/v1/admin/models/test-gguf-model").json()
+            return row["engine"]["context"]["running"]
+
+        assert running()["value"] is None
+        provider.running_ctx = 32768
+        assert (running()["value"], running()["provenance"]) == (32768, "observed")

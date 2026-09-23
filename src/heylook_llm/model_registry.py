@@ -131,6 +131,23 @@ def merge_discovered(config_data: dict, discovered: list[dict]) -> dict:
     return merged
 
 
+def derived_for_explicit(config_data: dict, discovered: list[dict]) -> dict[str, dict]:
+    """For each models.toml entry, the config discovery derives for the SAME
+    file (matched by resolved path, the merge's identity rule), keyed by the
+    entry's id. merge_discovered drops these, since the entry wins; the engine
+    contract needs them to tell a stored value that differs from derivation
+    (configured) from one that merely repeats it (a materialized copy).
+    """
+    by_path = {path_identity(p): dict(e.get("config") or {})
+               for e in discovered if (p := _entry_path(e))}
+    out: dict[str, dict] = {}
+    for e in config_data.get("models") or []:
+        p = _entry_path(e)
+        if p and e.get("id") and path_identity(p) in by_path:
+            out[str(e["id"])] = by_path[path_identity(p)]
+    return out
+
+
 def discover(config_data: dict) -> list[dict]:
     """Scan the folders named by ``[scan].folders``; never raise.
 

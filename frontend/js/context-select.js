@@ -30,12 +30,13 @@
 //   currentModelId()  the id the page's model select shows
 //   adminRow(id)      that model's /v1/admin/models row (provider gates the
 //                     control, config carries the stored ctx_size,
-//                     context_length is the ceiling, context_running is what
+//                     engine.context.length is the ceiling, .running is what
 //                     the resident process actually got), or undefined
 //   onChange()        fired on a user pick, so the page can re-decide whether
 //                     its Load/Reload button shows
 
 import { createEl, formatTokens } from './utils.js';
+import { contextCeiling, contextRunning } from './engine.js';
 
 const CTX_MIN = 4096;
 const CTX_FALLBACK_MAX = 262144; // ceiling when the header did not say
@@ -56,7 +57,7 @@ const IDLE_TITLE = 'Context size for the next load';
 // 40960) and the stored value when it is off-grid -- the select must be able
 // to SHOW what is stored, or Auto would be preselected over a real value.
 export function ctxStepsFor(row) {
-  const max = row?.context_length || CTX_FALLBACK_MAX;
+  const max = contextCeiling(row) || CTX_FALLBACK_MAX;
   const steps = [];
   for (let n = CTX_MIN; n <= max; n *= 2) steps.push(n);
   if (!steps.includes(max)) steps.push(max);
@@ -92,7 +93,7 @@ export function createContextSelect({ currentModelId, adminRow, onChange }) {
   let beforeCustom = '';
 
   function ceilingFor(row) {
-    return row?.context_length || CTX_FALLBACK_MAX;
+    return contextCeiling(row) || CTX_FALLBACK_MAX;
   }
 
   // Put `n` in the list as a real option (sorted, before "Custom…") and
@@ -100,7 +101,7 @@ export function createContextSelect({ currentModelId, adminRow, onChange }) {
   function selectValue(n, row) {
     const value = String(n);
     if (![...select.options].some((o) => o.value === value)) {
-      const tag = n === row?.context_length ? ' (max)' : '';
+      const tag = n === contextCeiling(row) ? ' (max)' : '';
       const option = createEl('option', { value }, [`${formatTokens(n)}${tag}`]);
       const after = [...select.options].find(
         (o) => o.value !== CUSTOM && o.value !== '' && Number(o.value) > n);
@@ -148,7 +149,7 @@ export function createContextSelect({ currentModelId, adminRow, onChange }) {
     custom.min = String(CTX_ABS_MIN);
     custom.max = String(ceilingFor(row));
     custom.value = String(
-      row?.config?.ctx_size || (row?.loaded ? row.context_running : null) || CTX_MIN);
+      row?.config?.ctx_size || (row?.loaded ? contextRunning(row) : null) || CTX_MIN);
     custom.hidden = false;
     custom.focus();
     custom.select();
@@ -178,10 +179,10 @@ export function createContextSelect({ currentModelId, adminRow, onChange }) {
       return;
     }
     const stored = row.config?.ctx_size ?? '';
-    const running = row.loaded ? row.context_running : null;
+    const running = row.loaded ? contextRunning(row) : null;
     // Rebuild only when the model (or its facts) moved; an untouched rebuild
     // would throw away a choice the user just made.
-    const sig = `${id}|${stored}|${row.context_length ?? ''}|${running ?? ''}`;
+    const sig = `${id}|${stored}|${contextCeiling(row) ?? ''}|${running ?? ''}`;
     if (element.dataset.sig === sig) return;
     const modelChanged = (element.dataset.sig ?? '').split('|')[0] !== id;
     if (modelChanged) pending = null;  // another model's number means nothing here
@@ -191,7 +192,7 @@ export function createContextSelect({ currentModelId, adminRow, onChange }) {
     const steps = ctxStepsFor(row);
     if (pending && !steps.includes(pending)) steps.push(pending);
     for (const n of steps.sort((a, b) => a - b)) {
-      const tag = n === row.context_length ? ' (max)' : '';
+      const tag = n === contextCeiling(row) ? ' (max)' : '';
       options.push(createEl('option', { value: String(n) }, [`${formatTokens(n)}${tag}`]));
     }
     options.push(createEl('option', { value: CUSTOM }, ['Custom…']));

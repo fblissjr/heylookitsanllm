@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-23, v2.0.72, `main`.
+Last updated: 2026-09-23, v2.0.73, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `CLAUDE.md`, the backlog in [TODO.md](./TODO.md), and what each release
@@ -69,7 +69,7 @@ a server holds the default database (it has isolated its own database at
 import time since v1.79.54 -- `tests/contract/conftest.py` -- so it never opens
 the real one).
 
-## What landed 2026-09-23 (v2.0.65 - v2.0.72)
+## What landed 2026-09-23 (v2.0.65 - v2.0.73)
 
 Started from "is llama-server built and spawned optimally for vision and
 thinking models". The build was already right; what turned up was mostly
@@ -103,6 +103,10 @@ things happening where nothing could see them.
 - `heylookllm import` and the admin `/scan` + `/import` routes retired
   (v2.0.72, owner call): every model lives in a watch folder. The served set
   is unchanged.
+- Plan W13, first cut (v2.0.73): one `engine` object on both model lists,
+  replacing `effective_loader`/`context_length`/`context_running`. Still to
+  come in W13: moving the remaining per-engine branches out of
+  `capabilities.py`, and the frontend's generic renderer.
 
 ## What landed 2026-09-21 (v2.0.51 - v2.0.63)
 

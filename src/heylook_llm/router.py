@@ -177,13 +177,27 @@ class ModelRouter:
             f"Add a [scan] section or a [[models]] entry to create one."
         )
 
-    @staticmethod
-    def _with_discovered(config_data: dict) -> dict:
+    # Set by every config load (_with_discovered): the ids with a models.toml
+    # entry, and for each the config discovery derives for the same file. The
+    # engine contract reads both so /v1/models never re-reads models.toml or
+    # re-runs discovery to say which settings are really configured.
+    written_ids: frozenset = frozenset()
+    derived_configs: dict = {}
+
+    def _with_discovered(self, config_data: dict) -> dict:
         """Fold `[scan].folders` discoveries into the parsed config."""
-        from heylook_llm.model_registry import discover, merge_discovered
+        from heylook_llm.model_registry import (
+            derived_for_explicit,
+            discover,
+            merge_discovered,
+        )
 
         ModelRouter._audit_configured_paths(config_data)
-        return merge_discovered(config_data, discover(config_data))
+        discovered = discover(config_data)
+        self.written_ids = frozenset(
+            str(e["id"]) for e in config_data.get("models") or [] if e.get("id"))
+        self.derived_configs = derived_for_explicit(config_data, discovered)
+        return merge_discovered(config_data, discovered)
 
     # Last audit report emitted, so a reload re-reports only on CHANGE.
     # `None` (never audited) is deliberately distinct from `""` (audited,

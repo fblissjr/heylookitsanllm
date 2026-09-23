@@ -86,15 +86,15 @@ back as the exact prefix of a longer one, in the same row.
 
 Three different fields, routinely conflated:
 
-- `context_length` -- the GGUF header's training context. A **ceiling**, not a
-  setting.
+- `engine.context.length` -- the GGUF header's training context. A
+  **ceiling**, not a setting.
 - `ctx_size` -- what models.toml asks for. Absent = llama-server's `-c 0`, i.e.
   the training context, then `--fit` shrinking to device memory.
-- `context_running` -- what the process actually got, read from `/props` at
-  ready. The only field that answers "what is it running at".
+- `engine.context.running` -- what the process actually got, read from
+  `/props` at ready. The only field that answers "what is it running at".
 
 The chat page's context select offers power-of-two steps from 4K up to
-`context_length`, plus the ceiling itself when it is not a power of two, plus
+`engine.context.length`, plus the ceiling itself when it is not a power of two, plus
 the stored value so the panel shows what is in force -- and a `Custom…` number
 input, so the range is not limited to the steps. `Auto` sends 0.
 
@@ -102,4 +102,4 @@ Picking one **persists**: `POST /v1/admin/models/{id}/reload?ctx_size=N` writes
 it as the model's `ctx_size` through the one config writer and then loads. For a
 discovered model that materializes an entry. It is a spawn-time flag, so it
 takes effect on the next load, and asking is not getting -- `--fit` can still
-trim, which is what `context_running` is for.
+trim, which is what `engine.context.running` is for.

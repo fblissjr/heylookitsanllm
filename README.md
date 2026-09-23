@@ -44,7 +44,7 @@ it holds to: [VISION.md](VISION.md).
 - **RLM**: recursive inference -- the model explores long contexts by writing
   Python against a sandboxed REPL ([guide](docs/rlm_guide.md),
   [advanced](docs/rlm_advanced.md))
-- **Model management**: scan, import, configure, load/unload from the web UI
+- **Model management**: watch folders, configure, load/unload from the web UI
   or API
 - **Local-only logging**: opt-in JSONL metrics/events under `logs/`
 
@@ -60,8 +60,9 @@ it holds to: [VISION.md](VISION.md).
 - **`models.toml` is override-only.** Anything under a `[scan].folders` watch
   folder is served automatically with defaults derived from the model's own
   files (modalities, chat template, sampling, KV-cache sizing) -- a new
-  download needs no import, no edit. A `[[models]]` entry always wins as an
-  explicit override; import exists for pinning entries you intend to hand-edit.
+  download needs no edit. A `[[models]]` entry always wins as an explicit
+  override; the Models page's config editor writes one when you change a
+  setting.
 - **One model resident by default** (`max_loaded_models = 1`): LRU eviction,
   optional idle unload (`idle_unload_seconds`). Loading a model on request is
   disclosed in the UI, never confirmed away.
@@ -92,8 +93,8 @@ stored server-side in DuckDB (messages as content blocks; images round-trip).
 
 Pages: **Chat** (streaming with thinking blocks, capability-gated image/audio
 attach, per-conversation system prompt + presets, honest mid-conversation
-model switching), **Notebook** (base-model continuation), **Models** (scan,
-import, load/unload, schema-driven per-model config editor), and
+model switching), **Notebook** (base-model continuation), **Models** (watch
+folders, load/unload, schema-driven per-model config editor), and
 **Performance**.
 
 Build contract: [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md) (§4 =

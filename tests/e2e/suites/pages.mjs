@@ -899,6 +899,11 @@ export async function runPagesSuite({ suite, ctx, config }) {
   await suite.check('danger-zone clear reports deleted counts', async () => {
     await ctx.open('#/models');
     await page.waitForSelector('.models__danger');
+    // The danger zone sits BELOW the model list, which fills in when
+    // /v1/admin/models answers and pushes the button down. Clicking before
+    // then hit stale coordinates: a miss, or an arm whose confirming click
+    // missed. Wait for the rows, as the checks above do.
+    await waitFor(async () => (await count(page, '.model-row')) > 0, { message: 'no model rows' });
     const btn = await page.$('.models__danger button');
     await armedClick(btn);
     await btn.dispose();

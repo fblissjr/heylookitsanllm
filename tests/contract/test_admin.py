@@ -57,14 +57,14 @@ class TestAdminEffectiveLoader:
         assert row["loaded"] is False
         # Non-vision mlx -> the text loader, with no probe of mlx-vlm's
         # registry and no read of a model dir that does not exist.
-        assert row["effective_loader"] == "mlx-lm"
+        assert row["engine"]["runtime"]["value"] == "mlx-lm"
 
     def test_single_model_route_agrees_with_the_list(self, client):
         """Both admin reads build the same response object; pin that they
         keep answering the same way rather than growing a second derivation."""
         listed = client.get("/v1/admin/models").json()["models"][0]
         single = client.get(f"/v1/admin/models/{listed['id']}").json()
-        assert single["effective_loader"] == listed["effective_loader"]
+        assert single["engine"] == listed["engine"]
 
     def test_thinking_default_is_on_every_row_and_a_bool(self, client):
         """`thinking_default` (v1.79.62) is the cascade's answer for an empty
@@ -89,7 +89,7 @@ class TestAdminEffectiveLoader:
         try:
             assert resp.status_code == 200, resp.text
             row = resp.json()["model"]
-            assert row["context_length"] == 65536
+            assert row["engine"]["context"]["length"]["value"] == 65536
             assert row["config"]["context_length"] == 65536  # stored, so the editor shows it
             assert "context_length" in resp.json()["reload_required_fields"]
         finally:

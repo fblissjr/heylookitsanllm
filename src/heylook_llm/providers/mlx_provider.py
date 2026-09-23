@@ -1068,6 +1068,27 @@ class MLXProvider(BaseProvider):
         # they were MLX-only, which made a guard built on them cover half the
         # app. Re-initialising them here would be harmless but misleading.)
 
+    def describe_observed(self):
+        """The engine contract's observed half: the template body installed
+        at load, and the prompt-cache verdict from the SAME function the
+        cache path calls per request (prompt_cache.reuse_verdict)."""
+        from .common.prompt_cache import reuse_verdict
+        from .contract import Observed, Setting
+
+        model = getattr(self, "model", None)
+        settings = {}
+        if model is not None:
+            gate, why = reuse_verdict(self.config, model,
+                                      allow_reuse=getattr(self, "draft_model", None) is None)
+            if gate is None:
+                why = ("reuse enabled for text-only requests; a request with an "
+                       "image anywhere in its history builds a fresh cache "
+                       "(plan W10)")
+            settings["prompt_cache"] = Setting(
+                value=gate is None, auto=gate is None, reason=why,
+                provenance="observed")
+        return Observed(loaded_template=self.loaded_chat_template, settings=settings)
+
     def load_model(self):
         model_path = self.config['model_path']
 

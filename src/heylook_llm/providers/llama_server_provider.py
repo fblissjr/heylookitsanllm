@@ -210,6 +210,61 @@ class LlamaServerProvider(BaseProvider):
     # is picked up with zero config; the literal path is pinned by a test.
     DEFAULT_BUILD = Path.home() / ".heylook" / "llama.cpp" / "build" / "bin" / "llama-server"
 
+    @classmethod
+    def binary_choice(cls, cfg: Dict) -> tuple[Optional[Path], str, bool]:
+        """``(path, source, is_override)``: which llama-server a spawn would
+        use, with no logging and no raising. ``path`` is None only when
+        nothing is configured and no canonical build exists. The one
+        precedence rule, shared by the spawn and the engine contract."""
+        candidate = cfg.get("server_binary")
+        source = "models.toml server_binary"
+        if not candidate:
+            candidate = os.environ.get("HEYLOOK_LLAMA_SERVER")
+            source = "$HEYLOOK_LLAMA_SERVER"
+        if not candidate:
+            return (cls.DEFAULT_BUILD if cls.DEFAULT_BUILD.is_file() else None,
+                    "the canonical build", False)
+        return Path(candidate).expanduser(), source, True
+
+    @classmethod
+    def canonical_build_label(cls) -> Optional[str]:
+        """The canonical build's commit and build number from its manifest,
+        e.g. "4e416ee7 (build 11138)", or None without a manifest."""
+        manifest = cls.DEFAULT_BUILD.parents[1] / "heylook-build.json"
+        try:
+            data = json.loads(manifest.read_text())
+        except (OSError, ValueError):
+            return None
+        sha = str(data.get("sha") or data.get("rev") or "")[:8]
+        m = re.search(r"build (\d+)", str(data.get("version") or ""))
+        return f"{sha} (build {m.group(1)})" if m else sha or None
+
+    @classmethod
+    def binary_report(cls, cfg: Dict) -> tuple[Optional[str], str]:
+        """``(value, reason)`` naming the binary for the engine contract:
+        the canonical build by commit, an override by file name only (no
+        absolute paths leave the server this way)."""
+        path, source, is_override = cls.binary_choice(cfg)
+        if path is None:
+            return None, "no llama-server binary: run scripts/build_llama.py"
+        if not is_override:
+            label = cls.canonical_build_label()
+            return (f"canonical build {label}" if label else "canonical build",
+                    "no server_binary or $HEYLOOK_LLAMA_SERVER override")
+        return path.name, f"{source}, overriding the canonical build"
+
+    @classmethod
+    def keep_alive_choice(cls, environ) -> tuple[str, str, bool]:
+        """``(value, reason, inherited)`` for GGML_METAL_RESIDENCY_KEEP_ALIVE_S:
+        an inherited value wins; otherwise heylook's process-lifetime value."""
+        inherited = environ.get(METAL_KEEP_ALIVE_ENV)
+        if inherited is not None:
+            return (inherited, f"{METAL_KEEP_ALIVE_ENV} set in heylook's "
+                               f"environment; it wins over heylook's value", True)
+        return (str(cls.METAL_RESIDENCY_KEEP_ALIVE_S),
+                "the life of the process: heylook's idle unload is what ends it",
+                False)
+
     def _resolve_binary(self) -> Path:
         """server_binary > $HEYLOOK_LLAMA_SERVER > the canonical build.
 
@@ -225,22 +280,17 @@ class LlamaServerProvider(BaseProvider):
         source and the canonical build it beats, so it can never again be
         the thing nobody remembers is set.
         """
-        candidate = self.config.get("server_binary")
-        source = "models.toml server_binary"
-        if not candidate:
-            candidate = os.environ.get("HEYLOOK_LLAMA_SERVER")
-            source = "$HEYLOOK_LLAMA_SERVER"
-        if not candidate and self.DEFAULT_BUILD.is_file():
+        path, source, is_override = self.binary_choice(self.config)
+        if not is_override and path is not None:
             logging.info(f"[GGUF] using the canonical build at {self.DEFAULT_BUILD}")
-            return self.DEFAULT_BUILD
-        if not candidate:
+            return path
+        if path is None:
             raise RuntimeError(
                 "No llama-server binary configured. Build one with "
                 "`uv run scripts/build_llama.py`, or set server_binary in "
                 "models.toml / the $HEYLOOK_LLAMA_SERVER env var (a Homebrew "
                 "or upstream release binary works too)."
             )
-        path = Path(candidate).expanduser()
         if not path.is_file():
             raise RuntimeError(
                 f"llama-server binary not found at '{path}'. Build it "
@@ -507,50 +557,63 @@ class LlamaServerProvider(BaseProvider):
         "gemma3": (256, False),
     }
 
-    def _image_token_cap(self, auto_ubatch: Optional[int]) -> Optional[int]:
-        """``--image-max-tokens`` for a non-causal projector whose largest
-        image would not fit the effective micro-batch, else None.
+    @classmethod
+    def image_token_cap_decision(
+            cls, cfg: Dict, auto_ubatch: Optional[int]
+    ) -> tuple[Optional[int], Optional[str], Optional[str]]:
+        """``(cap, reason, level)`` for ``--image-max-tokens``.
+
+        ``cap`` is the micro-batch when a non-causal projector's largest image
+        would not fit it, else None. ``reason`` is the sentence the spawn log
+        and the engine contract both carry; ``level`` is the log level
+        ("info"/"warning"), None when the projector is causal or absent.
 
         Never RAISES a projector's limit: llama.cpp takes a custom maximum
         above its default as given, so the flag is only passed when it
-        lowers. Logged at spawn either way when the projector is non-causal.
+        lowers. Takes a CONFIG so the contract's static half can answer for an
+        unloaded model whose micro-batch is stored.
         """
-        cfg = self.config
         mmproj = cfg.get("mmproj_path")
         if not mmproj:
-            return None
+            return None, None, None
         from .. import gguf_metadata
         proj = gguf_metadata.vision_projector_type(Path(mmproj).expanduser())
-        if proj not in self.NON_CAUSAL_IMAGE_PROJECTORS:
-            return None
-        default_max, cappable = self.NON_CAUSAL_IMAGE_PROJECTORS[proj]
-        ubatch = cfg.get("n_ubatch") or auto_ubatch or self.LLAMA_DEFAULT_N_UBATCH
+        if proj not in cls.NON_CAUSAL_IMAGE_PROJECTORS:
+            return None, f"the {proj} projector decodes images causally; never capped", None
+        default_max, cappable = cls.NON_CAUSAL_IMAGE_PROJECTORS[proj]
+        ubatch = cfg.get("n_ubatch") or auto_ubatch or cls.LLAMA_DEFAULT_N_UBATCH
         n_batch = cfg.get("n_batch") or GGUFModelConfig.LLAMA_DEFAULT_N_BATCH
         ubatch = min(ubatch, n_batch)  # llama_context clamps it the same way
         if default_max <= ubatch:
-            logging.info(f"[GGUF] {self.model_id}: {proj} projector decodes "
-                         f"images non-causally; its {default_max}-token maximum "
-                         f"fits the {ubatch}-token micro-batch")
-            return None
+            return None, (f"{proj} projector decodes images non-causally; its "
+                          f"{default_max}-token maximum fits the {ubatch}-token "
+                          f"micro-batch"), "info"
         if any(str(a).split("=", 1)[0] == "--image-max-tokens"
                for a in cfg.get("extra_args") or []):
-            logging.warning(f"[GGUF] {self.model_id}: {proj} projector decodes "
-                            f"images non-causally; extra_args sets "
-                            f"--image-max-tokens, so heylook does not cap it at "
-                            f"the {ubatch}-token micro-batch. Above that, an "
-                            f"image aborts llama-server.")
-            return None
+            return None, (f"{proj} projector decodes images non-causally; "
+                          f"extra_args sets --image-max-tokens, so heylook does "
+                          f"not cap it at the {ubatch}-token micro-batch. Above "
+                          f"that, an image aborts llama-server."), "warning"
         if not cappable:
-            logging.warning(f"[GGUF] {self.model_id}: {proj} projector decodes "
-                            f"a fixed {default_max} tokens per image non-causally, "
-                            f"more than the {ubatch}-token micro-batch, and "
-                            f"--image-max-tokens cannot lower it. Any image will "
-                            f"abort llama-server; raise n_ubatch.")
-            return None
-        logging.info(f"[GGUF] {self.model_id}: {proj} projector decodes images "
-                     f"non-causally; --image-max-tokens {ubatch} (default "
-                     f"{default_max} exceeds the {ubatch}-token micro-batch)")
-        return ubatch
+            return None, (f"{proj} projector decodes a fixed {default_max} "
+                          f"tokens per image non-causally, more than the "
+                          f"{ubatch}-token micro-batch, and --image-max-tokens "
+                          f"cannot lower it. Any image will abort llama-server; "
+                          f"raise n_ubatch."), "warning"
+        return ubatch, (f"{proj} projector decodes images non-causally; "
+                        f"--image-max-tokens {ubatch} (default {default_max} "
+                        f"exceeds the {ubatch}-token micro-batch)"), "info"
+
+    def _image_token_cap(self, auto_ubatch: Optional[int]) -> Optional[int]:
+        """The decision above for this provider's config, logged at spawn
+        when the projector is non-causal and recorded for describe_observed."""
+        cap, reason, level = self.image_token_cap_decision(self.config, auto_ubatch)
+        self._image_cap_reason = reason
+        if level == "warning":
+            logging.warning(f"[GGUF] {self.model_id}: {reason}")
+        elif level == "info":
+            logging.info(f"[GGUF] {self.model_id}: {reason}")
+        return cap
 
     def _working_set_headroom_gb(self) -> Optional[float]:
         """Metal working set minus this model's sized weights + sidecars, via
@@ -572,21 +635,24 @@ class LlamaServerProvider(BaseProvider):
         sits in the model dir, and a spawn that quietly ran at 512 would be
         indistinguishable from one that quietly ran at 2048."""
         if self.config.get("n_ubatch") is not None:
+            self._ubatch_reason = "set in models.toml for this model"
             return None  # explicit wins; _build_args reads it directly
         headroom = self._working_set_headroom_gb()
         if headroom is None:
-            logging.info(f"[GGUF] {self.model_id}: n_ubatch auto -> "
-                         f"llama-server default (no Metal ceiling to size against)")
-            return None
-        if headroom >= ram_fit.THIN_HEADROOM_GB:
-            logging.info(f"[GGUF] {self.model_id}: n_ubatch auto -> "
-                         f"{self.AUTO_UBATCH} (working-set headroom {headroom:.1f} GiB)")
-            return self.AUTO_UBATCH
-        logging.info(
-            f"[GGUF] {self.model_id}: n_ubatch auto -> llama-server default "
-            f"(working-set headroom {headroom:.1f} GiB < "
-            f"{ram_fit.THIN_HEADROOM_GB:.0f}; raise iogpu.wired_limit_mb to lift it)")
-        return None
+            reason = "auto: llama-server default (no Metal ceiling to size against)"
+            value = None
+        elif headroom >= ram_fit.THIN_HEADROOM_GB:
+            reason = (f"auto: {self.AUTO_UBATCH} (working-set headroom "
+                      f"{headroom:.1f} GiB)")
+            value = self.AUTO_UBATCH
+        else:
+            reason = (f"auto: llama-server default (working-set headroom "
+                      f"{headroom:.1f} GiB < {ram_fit.THIN_HEADROOM_GB:.0f}; raise "
+                      f"iogpu.wired_limit_mb to lift it)")
+            value = None
+        self._ubatch_reason = reason
+        logging.info(f"[GGUF] {self.model_id}: n_ubatch {reason}")
+        return value
 
     def _build_args(self, binary: Path, port: int,
                     chat_template: Optional[str] = None,
@@ -701,6 +767,52 @@ class LlamaServerProvider(BaseProvider):
         args += list(cfg.get("extra_args") or [])
         return args
 
+    def _record_load_report(self, auto_ubatch: Optional[int], keep_alive: str,
+                            keep_alive_reason: str) -> None:
+        """What this spawn decided, recorded for describe_observed(). Built
+        from the same values the argv and child env were built from."""
+        from heylook_llm.config import field_effect
+        from .contract import Setting
+
+        cfg = self.config
+        stored = cfg.get("n_ubatch")
+        auto = auto_ubatch or self.LLAMA_DEFAULT_N_UBATCH
+        effect = field_effect(GGUFModelConfig.model_fields["n_ubatch"])
+        binary, binary_reason = self.binary_report(cfg)
+        cap = self._last_image_cap
+        self._load_report = {
+            "n_ubatch": Setting(
+                value=stored or auto, configured=stored, auto=auto,
+                reason=getattr(self, "_ubatch_reason", None) or "decided at spawn",
+                provenance="observed", effect=effect),
+            "image_max_tokens": Setting(
+                value=cap, auto=cap,
+                reason=getattr(self, "_image_cap_reason", None)
+                or "no projector: the model takes no images",
+                provenance="observed" if cfg.get("mmproj_path") else "not_applicable"),
+            "metal_keep_alive": Setting(
+                value=keep_alive, auto=str(self.METAL_RESIDENCY_KEEP_ALIVE_S),
+                reason=keep_alive_reason, provenance="observed"),
+            "binary": Setting(value=binary, auto=binary, reason=binary_reason,
+                              provenance="observed"),
+        }
+
+    def describe_observed(self):
+        """The engine contract's observed half: what this process was spawned
+        with, read back from fields load_model recorded. No call to the
+        process and no lock, so a listing never waits on a generation."""
+        from .contract import Fact, Observed
+
+        ctx = self.running_ctx
+        return Observed(
+            context_running=Fact(
+                value=ctx, provenance="observed" if ctx else "unknown",
+                source="llama-server's /props at ready" if ctx
+                else "llama-server's /props did not report a context size"),
+            loaded_template=self.loaded_chat_template,
+            settings=dict(getattr(self, "_load_report", None) or {}),
+        )
+
     def load_model(self):
         binary = self._resolve_binary()
         host = self.config.get("host", "127.0.0.1")
@@ -752,9 +864,10 @@ class LlamaServerProvider(BaseProvider):
             )
 
         auto_ubatch = self._auto_ubatch()
+        self._last_image_cap = self._image_token_cap(auto_ubatch)
         args = self._build_args(binary, port, resolved_template, True,
                                 auto_ubatch=auto_ubatch,
-                                image_max_tokens=self._image_token_cap(auto_ubatch))
+                                image_max_tokens=self._last_image_cap)
 
         # Say which template is in force, every spawn. A sidecar is discovered
         # from the filesystem, so the answer can change without models.toml
@@ -835,14 +948,15 @@ class LlamaServerProvider(BaseProvider):
         # heylook keeps the model loaded", and never goes stale when
         # idle_unload_seconds changes live or the model is pinned. An inherited
         # value wins: someone may be setting it deliberately.
-        inherited_keep_alive = child_env.get(METAL_KEEP_ALIVE_ENV)
-        if inherited_keep_alive is not None:
+        keep_alive, keep_alive_reason, inherited = self.keep_alive_choice(child_env)
+        if inherited:
             logging.warning(
-                f"[GGUF] {METAL_KEEP_ALIVE_ENV}={inherited_keep_alive!r} set in "
+                f"[GGUF] {METAL_KEEP_ALIVE_ENV}={keep_alive!r} set in "
                 f"the environment; heylook's own value "
                 f"({self.METAL_RESIDENCY_KEEP_ALIVE_S} s) is not applied.")
         else:
-            child_env[METAL_KEEP_ALIVE_ENV] = str(self.METAL_RESIDENCY_KEEP_ALIVE_S)
+            child_env[METAL_KEEP_ALIVE_ENV] = keep_alive
+        self._record_load_report(auto_ubatch, keep_alive, keep_alive_reason)
 
         llama_env = sorted(
             k for k in child_env

@@ -23,6 +23,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from heylook_llm.providers.common.loader_routing import effective_loader_for_config
+from heylook_llm.providers.contract import EngineDescription, describe
 from heylook_llm import gguf_metadata
 from heylook_llm.samplers import load_vendor_sampling, sampler_defaults, thinking_default
 
@@ -101,8 +102,8 @@ def _template_supports_thinking(model_path: str, _stamp: tuple) -> bool:
     in practice.
     """
     try:
-        from heylook_llm.providers.common.template_info import read_template_info
-        return read_template_info(Path(model_path), None).supports_enable_thinking
+        from heylook_llm.providers.common.template_info import cached_template_info
+        return cached_template_info(Path(model_path)).supports_enable_thinking
     except Exception:
         return False
 
@@ -123,8 +124,8 @@ def _template_supports_reasoning_effort(model_path: str, _stamp: tuple) -> bool:
     not on the path -- see `_template_stamp`.
     """
     try:
-        from heylook_llm.providers.common.template_info import read_template_info
-        return read_template_info(Path(model_path), None).supports_reasoning_effort
+        from heylook_llm.providers.common.template_info import cached_template_info
+        return cached_template_info(Path(model_path)).supports_reasoning_effort
     except Exception:
         return False
 
@@ -337,14 +338,14 @@ def model_context_length(provider: str, model_path: str | None,
 @dataclass(frozen=True, slots=True)
 class ModelFacts:
     """Every DERIVED fact a model row reports, resolved once (see
-    :func:`derived_model_facts`)."""
+    :func:`derived_model_facts`). ``engine`` is the engine contract
+    (providers/contract.py): which library runs the model, its context,
+    template and every setting with its provenance."""
     resolved: dict
     capabilities: list[str]
-    effective_loader: str | None
     thinking_default: bool
     sampler_defaults: dict
-    context_length: int | None
-    context_running: int | None
+    engine: EngineDescription
 
 
 @lru_cache(maxsize=64)
@@ -391,9 +392,10 @@ def derived_model_facts(model_config, router=None) -> ModelFacts:
     router work behind ``effective_loader_for_config`` still returns on its
     first line for anything but mlx.
 
-    ``router`` is optional: only ``context_running`` (what a RESIDENT
-    llama-server process was sized to) needs it, and ``/v1/models`` does not
-    carry that field.
+    ``router`` supplies what the engine contract needs beyond the config:
+    which models have a models.toml entry and what discovery derives for
+    them (so only real overrides read as configured), and the loaded
+    providers' observed halves. Both routes pass it.
     """
     resolved = config_dict(model_config.config)
     # ONE resolution, three consumers. `effective_capabilities` derives the
@@ -422,21 +424,43 @@ def derived_model_facts(model_config, router=None) -> ModelFacts:
             model_config.provider, str(resolved["model_path"]))) or None
     defaults = sampler_defaults(
         resolved, thinking_capable="thinking" in capabilities, vendor=vendor)
-    context_length = model_context_length(
-        model_config.provider, resolved.get("model_path"),
-        override=resolved.get("context_length"))
-    # gguf only: MLX has no fixed allocation to report. None until ready and
-    # None when /props does not say (LlamaServerProvider.running_ctx).
-    context_running = None
-    if model_config.provider == "gguf" and router is not None:
-        provider = router.get_loaded_models().get(model_config.id)
-        context_running = getattr(provider, "running_ctx", None)
     return ModelFacts(
         resolved=resolved,
         capabilities=capabilities,
-        effective_loader=effective_loader,
         thinking_default=default_thinking,
         sampler_defaults=defaults,
-        context_length=context_length,
-        context_running=context_running,
+        engine=_engine_with_sampler_answers(
+            describe(model_config, router), defaults, resolved,
+            thinking_capable="thinking" in capabilities, vendor=vendor),
     )
+
+
+def _engine_with_sampler_answers(engine, defaults: dict, resolved: dict, *,
+                                 thinking_capable: bool, vendor):
+    """The engine's settings, with every sampler key carrying the CASCADE's
+    answer rather than a second derivation.
+
+    The keys are the overlap of the settings and ``sampler_defaults``
+    (derived, never listed). ``value`` is the cascade's answer, which
+    ``sampler_defaults`` also reports; ``auto`` is the same cascade with the
+    model's stored sampler values removed, i.e. what applies if nothing were
+    stored. Works on a copy: ``describe`` may hand back a cached object.
+    """
+    overlap = sorted(set(engine.settings) & set(defaults))
+    if not overlap:
+        return engine
+    engine = engine.model_copy(deep=True)
+    stored = {k for k in overlap if engine.settings[k].provenance == "configured"}
+    unstored = sampler_defaults(
+        {k: v for k, v in resolved.items() if k not in stored},
+        thinking_capable=thinking_capable, vendor=vendor) if stored else defaults
+    cascade = ("the sampling cascade: this model's stored value, else its own "
+               "vendor defaults, else heylook's floor")
+    for key in overlap:
+        entry = engine.settings[key]
+        engine.settings[key] = entry.model_copy(update={
+            "value": defaults[key],
+            "auto": unstored.get(key),
+            "reason": entry.reason if key in stored else cascade,
+        })
+    return engine

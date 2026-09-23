@@ -343,7 +343,10 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
         models.push({
           id: secondModel.id, loaded: secondModel.loaded ?? true,
           provider: secondModel.provider ?? 'mlx',
-          context_length: secondModel.context_length ?? null, config: {},
+          // The engine contract's shape (providers/contract.py), reduced to
+          // the one fact the page reads here.
+          engine: { context: { length: { value: secondModel.context_length ?? null } } },
+          config: {},
         });
       }
       return { models };

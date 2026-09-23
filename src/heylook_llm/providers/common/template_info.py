@@ -22,6 +22,7 @@ tokens in the model's OWN template file, not because we invented them.
 
 from __future__ import annotations
 
+import functools
 import logging
 import re
 from dataclasses import dataclass
@@ -55,6 +56,16 @@ HEYLOOK_OVERRIDE = "heylook_override"
 # the fallback carried a hand-written subset of this and went stale the moment
 # a rung was inserted above the one it omitted.
 _AUTO_LADDER = (HEYLOOK_OVERRIDE, JINJA, TOKENIZER_CONFIG, CHAT_TEMPLATE_JSON)
+
+# The file each named source reads, in the model's own directory. The resolver
+# below and the engine contract (providers/mlx_describe.py) both read this, so
+# "which file is in force" has one answer.
+SOURCE_FILES = {
+    HEYLOOK_OVERRIDE: HEYLOOK_TEMPLATE_FILENAME,
+    JINJA: "chat_template.jinja",
+    TOKENIZER_CONFIG: "tokenizer_config.json",
+    CHAT_TEMPLATE_JSON: "chat_template.json",
+}
 
 # EVERY file `read_template_info()` opens. Exported because `capabilities.py`
 # stamps these to key its cached template probes, and the hand-written subset it
@@ -158,6 +169,40 @@ _REASONING_CONTENT_PATTERN = re.compile(r"\breasoning_content\b")
 _PREFILL_THINK_PATTERN = re.compile(r"<think>(?![\s\S]{0,24}</think>)")
 
 
+def _input_stamp(model_dir: Path, source: Optional[str]) -> tuple:
+    """File identity for every input read_template_info can open. A missing
+    file counts, so writing or deleting the operator override is a change."""
+    paths = [model_dir / name for name in TEMPLATE_INPUT_FILES]
+    if source and (source.startswith("/") or source.startswith("~")):
+        paths.append(Path(source).expanduser())
+    stamp = []
+    for p in paths:
+        try:
+            st = p.stat()
+            stamp.append((str(p), st.st_mtime_ns, st.st_size))
+        except OSError:
+            stamp.append((str(p), None, None))
+    return tuple(stamp)
+
+
+@functools.lru_cache(maxsize=256)
+def _cached_template_info(model_dir: str, source: Optional[str],
+                          _stamp: tuple) -> "ModelTemplateInfo":
+    return read_template_info(Path(model_dir), source)
+
+
+def cached_template_info(model_dir: Path, source: Optional[str] = None) -> "ModelTemplateInfo":
+    """read_template_info, parsed once per state of its input files.
+
+    For READ-ONLY reporters (the capability probes, the template view the
+    engine contract reads), which otherwise parsed the same template several
+    times per model on every cold listing. ModelTemplateInfo is frozen, so
+    sharing it is safe. Model load keeps calling read_template_info directly.
+    """
+    model_dir = Path(model_dir)
+    return _cached_template_info(str(model_dir), source, _input_stamp(model_dir, source))
+
+
 def read_template_info(
     model_dir: Path, source: Optional[str]
 ) -> ModelTemplateInfo:
@@ -254,8 +299,8 @@ def _read_template(model_dir: Path, source: Optional[str]) -> tuple[str, str]:
     """Return ``(template_body, source_label)``."""
     normalized = (source or "").strip().lower() or AUTO
 
-    jinja_path = model_dir / "chat_template.jinja"
-    config_path = model_dir / "tokenizer_config.json"
+    jinja_path = model_dir / SOURCE_FILES[JINJA]
+    config_path = model_dir / SOURCE_FILES[TOKENIZER_CONFIG]
 
     # Readable by NAME as well as by winning the auto ladder, so the stop-less
     # fallback can try it like any other rung. Not reachable from models.toml:
@@ -263,7 +308,7 @@ def _read_template(model_dir: Path, source: Optional[str]) -> tuple[str, str]:
     # config field is documented as auto/jinja/tokenizer_config/
     # chat_template_json/path -- this spelling exists for the fallback loop.
     if normalized == HEYLOOK_OVERRIDE:
-        body = _read_file(model_dir / HEYLOOK_TEMPLATE_FILENAME)
+        body = _read_file(model_dir / SOURCE_FILES[HEYLOOK_OVERRIDE])
         return (body, HEYLOOK_OVERRIDE) if body is not None else ("", HEYLOOK_OVERRIDE)
 
     if normalized == JINJA:
@@ -287,7 +332,7 @@ def _read_template(model_dir: Path, source: Optional[str]) -> tuple[str, str]:
         normalized = AUTO
 
     if normalized == CHAT_TEMPLATE_JSON:
-        body = _read_embedded_template(model_dir / "chat_template.json")
+        body = _read_embedded_template(model_dir / SOURCE_FILES[CHAT_TEMPLATE_JSON])
         if body is not None:
             return body, CHAT_TEMPLATE_JSON
         logging.warning(

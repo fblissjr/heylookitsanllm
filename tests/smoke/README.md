@@ -40,7 +40,7 @@ provider "mlx"   ──┬──▶ mlx-lm    (text)     two SEPARATE upstream r
 provider "gguf"  ─────▶ llama-server subprocess (one engine, one local binary)
 ```
 
-Which MLX library actually decodes is `effective_loader`, derived from the
+Which MLX library actually decodes is `engine.runtime`, derived from the
 model's modalities and its `loader` hint — **not** the provider field. So "we
 covered mlx" is a claim about a config value, not about code: a text model and
 a vision model on the same provider run through different libraries, with
@@ -50,8 +50,8 @@ green.
 
 The classification itself is `tests/helpers/engines.py`, shared with
 `tests/eval/run.py` (two copies of a taxonomy is one drifting copy). It reads
-`effective_loader` off `GET /v1/admin/models`, which the server answers for
-UNLOADED models too (v1.79.31) — a field sourced from a live provider would be
+`engine.runtime` off `GET /v1/admin/models`, which the server answers for
+UNLOADED models too — a field sourced from a live provider would be
 null for exactly the models an arm has yet to choose from. Against a server too
 old to serve it, the engine is inferred from the vision capability and the model
 is reported as *engine identity NOT confirmed* rather than claimed.

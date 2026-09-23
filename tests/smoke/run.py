@@ -870,7 +870,7 @@ def main():
                 r.skip(f"{arm}: whole arm", "no model of this engine is served")
                 continue
             # Say it ONCE per arm, not once per model: on a server too old to
-            # serve `effective_loader` the engine is inferred from the vision
+            # serve `engine.runtime` the engine is inferred from the vision
             # capability, and a harness that names engines should say when it
             # is guessing.
             if chosen[arm] in cov.unconfirmable:

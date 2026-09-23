@@ -224,14 +224,14 @@ def list_models(request: Request):
             # list gates on the same capabilities, labels its "model default"
             # thinking choice with the value generation will use, and can
             # size a prompt against the ceiling the provider enforces instead
-            # of learning it from a 400. `context_length` is null when the
-            # files do not say.
-            facts = derived_model_facts(model_config)
+            # of learning it from a 400 (`engine.context.length`).
+            facts = derived_model_facts(model_config, router)
             if facts.capabilities:
                 model_entry["capabilities"] = facts.capabilities
             model_entry["thinking_default"] = facts.thinking_default
             model_entry["sampler_defaults"] = facts.sampler_defaults
-            model_entry["context_length"] = facts.context_length
+            # The engine contract: the same object the admin row carries.
+            model_entry["engine"] = facts.engine.model_dump()
 
         models_data.append(model_entry)
 

@@ -10,7 +10,7 @@
 //
 // ARMS ARE ENGINES, not providers: "mlx" is TWO upstream repos (mlx-lm text /
 // mlx-vlm vision, separate release trains), so a text arm and a vision arm are
-// different code. The mapping is the SERVER's answer (`effective_loader`), read
+// different code. The mapping is the SERVER's answer (`engine.runtime`), read
 // through tests/helpers/engines.py -- the same module tests/smoke and
 // tests/eval use. The JS side shells out to it rather than re-deriving "which
 // engine is this model" in a second language.
@@ -67,7 +67,7 @@ const runChat = which === 'all' || which === 'chat';
 const runPages = which === 'all' || which === 'pages';
 
 // The engine taxonomy is Python's (tests/helpers/engines.py) and stays that
-// way: it reads `effective_loader` off the admin row, so the SERVER names the
+// way: it reads `engine.runtime` off the admin row, so the SERVER names the
 // engine. Re-deriving that here would be the hand-copied-list defect this repo
 // keeps paying for, in a second language where it could drift silently.
 async function resolveArms(base, spec) {

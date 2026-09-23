@@ -1821,37 +1821,20 @@ class AdminModelResponse(BaseModel):
     # these instead of the word "auto".
     sampler_defaults: Dict[str, Any] = Field(default_factory=dict)
     stale_reload_fields: List[str] = Field(default_factory=list)
-    effective_loader: Optional[Literal["mlx-lm", "mlx-vlm"]] = Field(
-        default=None,
-        description="Which MLX library actually decodes this model -- mlx-lm "
-                    "(text) or mlx-vlm (vision). Null for every non-mlx "
-                    "provider: gguf is one engine, already named by "
-                    "`provider`. DERIVED from the config (loader + "
-                    "modalities + the model dir's model_type), so it is "
-                    "answered for UNLOADED models too -- provider `mlx` is "
-                    "two separate upstream repos, and this is the only field "
-                    "that says which one a row means.",
-    )
-    context_length: Optional[int] = Field(
-        default=None,
-        description="The model's context window in tokens, from the one "
-                    "resolver every surface reads (gguf: `<arch>.context_length` "
-                    "in the GGUF header, the training context llama-server "
-                    "sizes from when `ctx_size` is unset; mlx: config.json's "
-                    "max_position_embeddings, v1.79.65). The ceiling a "
-                    "context-size control offers, and what an over-length "
-                    "prompt is refused against. Null when the files do not "
-                    "say and for providers with no chat context. DERIVED, so "
-                    "it is answered for unloaded models.",
-    )
-    context_running: Optional[int] = Field(
-        default=None,
-        description="The context the RESIDENT llama-server process was "
-                    "actually sized to (its slot `n_ctx`, read from /props at "
-                    "ready). `config.ctx_size` is what was asked; absent "
-                    "means llama-server chose from the model and memory, and "
-                    "this is what it chose. Null for unloaded models and for "
-                    "every non-gguf provider.",
+    # Not typed as EngineDescription here: config.py sits below the providers
+    # package, and the route validates it on the way out (the engine block is
+    # built by capabilities.derived_model_facts). Its schema is documented in
+    # frontend_v3_spec.md §4 and providers/contract.py.
+    engine: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="The engine contract (providers/contract.py): runtime "
+                    "(mlx-lm|mlx-vlm|llama.cpp), context (length from the "
+                    "files; running from the process), the template in force, "
+                    "and every setting as {value, configured, auto, reason, "
+                    "provenance, effect}. Every value carries its provenance. "
+                    "The same object /v1/models carries. Replaces the "
+                    "top-level effective_loader, context_length and "
+                    "context_running (v2.0.73).",
     )
     thinking_default: bool = Field(
         default=False,

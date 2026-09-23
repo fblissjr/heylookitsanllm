@@ -69,6 +69,18 @@ export function createPageContext(page, { base, maxTokens }) {
     // absence would leave the run uncapped -- so that is what is required, and a
     // gated key that is missing is skipped and reported in the return value.
     async seedPanel(params, { required = ['max_tokens'] } = {}) {
+      // Capability-gated controls appear only once the page's model list has
+      // landed and a model is selected. Seeding before that skipped
+      // `enable_thinking` on a thinking-capable model -- silently, since a
+      // gated key may legitimately be absent -- and the fast checks then got
+      // a reply that was all thinking. The race was always there; a slower
+      // cold /v1/models (2026-09-23) is what lost it. Wait for the selected
+      // model first, so a control still missing afterwards really is gated
+      // off. Pages with no model select (models, perf) pass straight through.
+      await page.waitForFunction(() => {
+        const sel = document.querySelector('#app select[title="Model"]');
+        return !sel || (sel.options.length > 0 && Boolean(sel.value));
+      }, { timeout: 30000 });
       await openDrawer(page);
       // The panel is built from capabilities; wait for the required control
       // rather than racing it.

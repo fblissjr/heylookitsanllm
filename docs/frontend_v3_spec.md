@@ -535,7 +535,7 @@ Response bodies are typed in `/openapi.json` (`Preset`, `PresetList`, `PresetDel
 
 **Admin models** (`X-Heylook-Admin-Token`): `GET /v1/admin/models` →
 `{models:[{id,provider,description?,tags,enabled,capabilities,config,loaded,source,
-stale_reload_fields,effective_loader,context_length,context_running,thinking_default,sampler_defaults}], total}`.
+stale_reload_fields,engine,thinking_default,sampler_defaults}], total}`.
 `source` (v1.70.0) is `"config"` (a models.toml `[[models]]` entry) or `"discovered"`
 (found under `[scan].folders`, served with no entry). NOT derivable from `config`: a
 discovered model's `config` is not empty — it carries what the scanner assigned
@@ -589,33 +589,43 @@ is rendered as OVERRIDDEN only when the key survives `samplerParams(caps)` — a
 or `presence_penalty` of 0 is dropped at the wire, so marking it would claim a value the
 server never receives.
 
-`context_length` (v1.79.61 gguf, v1.79.65 every provider with a chat context; also on every
-`/v1/models` entry, same value; `null` where the files do not say): the model's context
-window from the ONE resolver `capabilities.model_context_length` -- the TRAINING context
-read off the GGUF header (`<arch>.context_length`) for gguf, `config.json`'s
-`max_position_embeddings` (top-level, then the nested text block) for MLX -- answered for
-unloaded models too, and the number the provider refuses an over-length prompt against
-(**400**; llama-server refuses itself, MLX enforces it in `run_generation`). An MLX entry's
-own `config.context_length` (requires reload) overrides the file for a checkpoint whose true
-window differs, e.g. YaRN with the original value in `config.json`; the row then reports the
-override. Chat's context
-select stays gguf-only (MLX has no fixed allocation to choose); the models page shows the
-ceiling for every row. `context_running` (v1.79.61, gguf only) is the context the RESIDENT
-process actually got (its slot `n_ctx`, read from llama-server's `/props`
-at ready; `null` when not loaded). `config.ctx_size` is what was ASKED; absent means
-llama-server chose, and `context_running` is what it chose -- which is why the Auto
-option can show a number once the model is resident;
-`effective_loader` (v1.79.31) is `"mlx-lm" | "mlx-vlm"` on an mlx row and `null` on every
-other provider — WHICH MLX LIBRARY decodes this model. Provider `mlx` is two separate
-upstream repos with separate release trains, so `provider` does not name an engine, and
-`loader` in `config` is a routing HINT (`auto` degrades vision→mlx-lm when mlx-vlm does
-not register the `model_type`). DERIVED from the config plus the model dir's
-`model_type`, deliberately NOT read off a loaded provider: `MLXProvider.effective_loader`
-is null for every model that is not resident, which is the set a live harness has to
-choose its arms from. `null` for gguf (one engine, already named by `provider`) and for
-embeddings (no answer exists). Read-only, so it sits top-level beside `provider` and
-never inside `config` — a value in a provider config class becomes an editable field on
-the models page.
+`engine` (v2.0.73, plan W13) is the ONE ENGINE CONTRACT, the same object on every
+`/v1/models` entry (`providers/contract.py`). It replaced the top-level `effective_loader`,
+`context_length` and `context_running`. Same keys on every engine:
+`{runtime, context:{length, running}, template:{origin, path, sha256, running_sha256},
+settings:{<name>: {value, configured, auto, reason, provenance, effect}},
+cache, thinking, image, steering}`.
+- Every leaf of `runtime`, `context` and `template` is a Fact
+  `{value, provenance, source}`. `provenance` is `derived | configured | observed |
+  observed_cached | unknown | not_applicable`; a value whose provenance is `unknown` or
+  `not_applicable` is null. `source` and `reason` are sentences for a person, ready to
+  display.
+- `runtime` is the library that runs the model: `mlx-lm | mlx-vlm | llama.cpp`. DERIVED
+  from the config (loader routing: modalities, `loader`, whether mlx-vlm registers the
+  `model_type`), so it answers for unloaded models -- the set a live harness chooses its
+  engine arms from.
+- `context.length` is the ceiling the files declare, from the ONE resolver
+  `capabilities.model_context_length` (the GGUF header's training context; MLX
+  `config.json`, or the entry's own `context_length`, then `configured`) -- the number the
+  provider refuses an over-length prompt against (**400**). `context.running` is what the
+  resident gguf process was sized to (`/props` at ready), `unknown` until loaded, and
+  `not_applicable` on MLX, which has no fixed allocation. `config.ctx_size` is what was
+  ASKED; absent means llama-server chose, and `running` is what it chose.
+- `template` is the ladder rung, the file (basename; null when embedded), the sha256 of
+  the body the next load uses, and the sha256 of the body the running process loaded.
+- `settings` covers EVERY configurable field of the provider (derived from the config
+  class, never listed) plus load decisions with no field: gguf `binary`,
+  `image_max_tokens`, `metal_keep_alive`; MLX `prompt_cache`. `configured` is non-null
+  only for a value a models.toml entry stores AND that differs from what discovery derives
+  for that file (else the schema default): a materialized entry's copies read as
+  `derived` with reason "stored ... same as derived". Sampler keys carry the cascade's
+  own answer, equal to `sampler_defaults`. The micro-batch and image cap on gguf are
+  `unknown` until a spawn decides them.
+- `cache`, `thinking`, `image`, `steering` are explicit nulls until W5, W2, W4 and W14
+  report them.
+- No absolute path appears anywhere in `engine` (LAN clients read `/v1/models`); paths
+  are basenames. The admin row's `config` still carries full paths.
+- Checked through both routes by `tests/contract/test_engine_contract.py`.
 Adding it moved `GET /v1/admin/models` and `GET /v1/admin/models/{id}` off the event loop
 (plain `def`): the derivation stats each served model's `config.json`.
 `GET|PUT /v1/admin/models/scan-config` (v1.70.0) → `{folders,watch_hf_cache,
@@ -764,7 +774,7 @@ no cheap file to scan (best-effort — a thinking-capable GGUF whose template ig
 variable shows the control and the kwarg goes unread). Sent whenever set, NOT gated on
 thinking being on: harmony reads it unconditionally and has no enable_thinking at all.
 
-**Models list** `GET /v1/models` → `{data:[{id,provider?,capabilities?,modalities?}]}` (enabled models only). `modalities` (v1.34.43) is the model's declared capability set (`["text","vision","audio","video"]`); `capabilities` stays gated to what the server actually serves (image input) -- description != served. Since v1.79.43 the MLX `vision` capability is DERIVED FROM THE LOADER ROUTER (`effective_loader == "mlx-vlm"`), the same answer `MLXProvider`'s image guard reads, so the advertised capability and the 400 cannot disagree. Before that it read the checkpoint's DECLARATION, and a hand-made text-only variant whose directory still carried vision blocks advertised `vision` and was then refused -- a client gating on `capabilities` exactly as this spec instructs got the refusal anyway. An explicit `loader = "mlx-lm"` on a dual-capable VLM now correctly reports no `vision` too. NB `modalities` is UNCHANGED by this: the checkpoint still declares what it declares, which is why chat's history-media drop disclosure reads capabilities and not modalities. `thinking` (v1.34.60) is auto-detected from whether the model's chat template references `enable_thinking` (Qwen3 `<think>` blocks, gemma-4 thought channels) -- no `models.toml` flag needed; this is what shows/hides the drawer checkbox and composer icon.
+**Models list** `GET /v1/models` → `{data:[{id,provider?,capabilities?,modalities?,thinking_default?,sampler_defaults?,engine?}]}` (enabled models only; `engine` is the contract described under Admin models). `modalities` (v1.34.43) is the model's declared capability set (`["text","vision","audio","video"]`); `capabilities` stays gated to what the server actually serves (image input) -- description != served. Since v1.79.43 the MLX `vision` capability is DERIVED FROM THE LOADER ROUTER (`effective_loader == "mlx-vlm"`), the same answer `MLXProvider`'s image guard reads, so the advertised capability and the 400 cannot disagree. Before that it read the checkpoint's DECLARATION, and a hand-made text-only variant whose directory still carried vision blocks advertised `vision` and was then refused -- a client gating on `capabilities` exactly as this spec instructs got the refusal anyway. An explicit `loader = "mlx-lm"` on a dual-capable VLM now correctly reports no `vision` too. NB `modalities` is UNCHANGED by this: the checkpoint still declares what it declares, which is why chat's history-media drop disclosure reads capabilities and not modalities. `thinking` (v1.34.60) is auto-detected from whether the model's chat template references `enable_thinking` (Qwen3 `<think>` blocks, gemma-4 thought channels) -- no `models.toml` flag needed; this is what shows/hides the drawer checkbox and composer icon.
 **Metrics** `GET /v1/system/metrics?force_refresh?` → `{system:{ram_used_gb,ram_available_gb,ram_total_gb,
 cpu_percent}, models:{[id]:{memory_mb,context_used,context_capacity,context_percent,requests_active,
 requests_queued}}}` (30s server cache).

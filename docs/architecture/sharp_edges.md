@@ -16,7 +16,8 @@ to it, so the headings stay stable as anchors.
 - gguf and llama-server: [template ladder](#gguf-chat-template-ladder),
   [context](#gguf-context-allocation), [micro-batch and memory](#gguf-micro-batch-and-memory),
   [non-causal images](#gguf-non-causal-images),
-  [Metal residency](#gguf-metal-residency-keep-alive), [speculative decoding](#gguf-speculative-decoding), [binary and build](#llama-server-binary-and-build)
+  [Metal residency](#gguf-metal-residency-keep-alive),
+  [one engine contract](#one-engine-contract), [speculative decoding](#gguf-speculative-decoding), [binary and build](#llama-server-binary-and-build)
 - Thinking and sampling: [on the wire](#thinking-on-the-wire),
   [default and sampler report](#thinking-default-and-the-sampler-report),
   [depth](#thinking-depth), [vendor layer](#vendor-sampling-layer),
@@ -104,9 +105,9 @@ general: try the shape, do not assume it.
 
 (v1.79.61) `ctx_size` absent means llama-server's `-c 0`, i.e. the model's
 training context, then `--fit` shrinking unset args to device memory.
-DeepSeek-V4-Flash got a 1,048,576-token slot that way. The admin row carries
-`context_length` (GGUF header, the ceiling) and `context_running` (`/props` at
-ready, what the process got), and `POST /v1/admin/models/{id}/reload?ctx_size=N`
+DeepSeek-V4-Flash got a 1,048,576-token slot that way. The engine contract
+carries `engine.context.length` (GGUF header, the ceiling) and
+`engine.context.running` (`/props` at ready, what the process got), and `POST /v1/admin/models/{id}/reload?ctx_size=N`
 persists through the one config writer and then loads (0 = Auto = drop the
 key; unchanged + resident = plain load, no restart). This is gguf-only: MLX
 has no fixed context allocation.
@@ -184,14 +185,50 @@ live and pinning changes the answer. heylook's unload ends the process, so
 the model loaded", and cannot go stale. ggml-metal has no forever value: it
 counts the keep-alive down in 5 ms ticks in an `atomic_int`, so a value past
 the int range wraps negative and turns residency off, and 0 or below means
-its default. The constant is thirty days, far inside the wrap.
+its default. The constant (`METAL_RESIDENCY_KEEP_ALIVE_S`, reasoned) sits far
+inside the wrap.
 
 The cost, measured on DeepSeek before shipping (owner condition): the thread
-wakes every 5 ms in both cases, and only the `requestResidency` calls continue
-past 180 s. The difference in idle CPU was a fraction of one percent of one
-core, judged negligible. Data: `internal/claude/perf/gguf_runtime_2026-09-23.json`,
+wakes on every tick (`time_per_loop_ms` in ggml-metal-device.m) in both cases,
+and only the `requestResidency` calls continue past llama.cpp's default
+keep-alive. The long keep-alive raised idle CPU, and the rise was judged
+negligible. Data and conditions: `internal/claude/perf/gguf_runtime_2026-09-23.json`,
 `idle_cpu`. If it ever matters, a bounded value of a few hours keeps most of
 the benefit.
+
+### One engine contract
+
+(v2.0.73, plan W13.) Engine facts used to be answered with per-engine
+branches in `capabilities.py`, the admin routes and the frontend, and that is
+where drift bugs came from: the gguf vendor sampling layer landed in the
+provider while the capability report still said MLX-only. Now every engine
+answers the same questions through `providers/contract.py`: a static half per
+engine (`mlx_describe`, `gguf_describe`; functions over the config, so it
+answers for unloaded models) and an observed half (`describe_observed()` on
+the provider, read back from fields `load_model` recorded, never a call into
+the process). `/v1/models` and the admin row carry one `engine` object, and
+the frontend reads it through `js/engine.js`.
+
+Every decision the static half reports is made by the SAME function the spawn
+or the request path uses: `resolve_chat_template`, `binary_choice`,
+`image_token_cap_decision`, `keep_alive_choice`, and the prompt-cache gates
+(`cache_defaults.static_reuse_gate`, then `prompt_cache.reuse_verdict`). A
+second derivation for the report is the drift this exists to end.
+
+"Configured" is not "the entry has this key". Admin edits materialize an
+entry with the whole derived config, so most models.toml entries are frozen
+copies. A stored value counts as configured only when it differs from what
+discovery derives for the same file (the router records both at merge time:
+`written_ids`, `derived_configs`), else the schema default. An equal stored
+value reads as derived, "stored ... same as derived", which is exactly what
+the registry-sidecars prune removes. Checked on the live models.toml when
+built: only the real overrides lit up.
+
+The static half is cached by a stat-only stamp over every file that can
+change the answer (template ladder files including the override and sidecar,
+the mmproj, the drafter, the build manifest), the relevant environment, the
+installed mlx-lm/mlx-vlm commits (from their install records, not uv.lock)
+and a digest of the resolved config.
 
 ### gguf speculative decoding
 
@@ -1166,11 +1203,11 @@ then refused. One resolver for both surfaces is what makes them agree by
 construction. `modalities` still carries the declaration; description and
 served capability are different fields on purpose.
 
-It is on the wire as `effective_loader` on the `/v1/admin/models` row
-(v1.79.31), derived via `effective_loader_for_config` so it answers for
-unloaded models. The provider attribute is null unless the model is resident,
-which is the opposite of what a live harness picking engine arms needs. It is
-null for every non-mlx provider (gguf is one engine, named by `provider`).
+It is on the wire as `engine.runtime` (v2.0.73; `effective_loader` on the
+admin row from v1.79.31), derived via `effective_loader_for_config` so it
+answers for unloaded models. The provider attribute is null unless the model is resident,
+which is the opposite of what a live harness picking engine arms needs. For
+gguf it reads `llama.cpp`, so one field names the engine on every row.
 Because it reads each model dir's `config.json`, the two admin read routes
 that build a model response are plain `def` (threadpool), not `async def`.
 

@@ -35,7 +35,7 @@ from .providers.common.template_info import (
     HEYLOOK_TEMPLATE_FILENAME,
     HEYLOOK_OVERRIDE,
     is_explicit_source,
-    read_template_info,
+    cached_template_info,
 )
 
 logger = logging.getLogger(__name__)
@@ -195,7 +195,7 @@ def _mlx_view(config: dict, present: bool) -> tuple[Optional[str], str, Optional
         return None, "unresolvable model_path", None
 
     source = config.get("chat_template_source")
-    info = read_template_info(directory, source)
+    info = cached_template_info(directory, source)
     origin = info.template_source or "unknown"
 
     inert = None

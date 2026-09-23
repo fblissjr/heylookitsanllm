@@ -203,6 +203,15 @@ class BaseProvider(ABC):
             with self._active_lock:
                 self._active_generations -= 1
 
+    def describe_observed(self):
+        """The engine contract's observed half (providers/contract.py): what
+        this loaded provider decided, read back from fields set at load. No
+        call into the engine and no lock -- a model listing must never wait
+        on a generation. The default reports only the template body; each
+        engine adds what it records."""
+        from .contract import Observed
+        return Observed(loaded_template=self.loaded_chat_template)
+
     def template_info(self):
         """Chat-template metadata (ModelTemplateInfo) for reasoning-parser
         selection, or None when the provider owns templating/splitting

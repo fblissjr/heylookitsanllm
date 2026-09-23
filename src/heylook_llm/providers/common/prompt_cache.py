@@ -190,6 +190,29 @@ def _mrope_reuse_safe(model) -> bool:
     return not any(hasattr(target, attr) for attr in MROPE_STATE_ATTRS)
 
 
+def reuse_verdict(cache_config: dict | None, model: Any,
+                  allow_reuse: bool = True) -> Tuple[Optional[str], str]:
+    """Whether a request on this model may reuse its prompt-cache slot.
+
+    Returns ``(gate, reason)``: ``gate`` is None when reuse is allowed, else
+    the name of the gate that refused it (``"config"``, ``"draft"``,
+    ``"mrope"``); ``reason`` is a sentence a person reads. ONE decision,
+    called by process_prompt_with_cache per request and by the engine
+    contract's load report (MLXProvider.describe_observed), so the two cannot
+    disagree.
+    """
+    from heylook_llm.cache_defaults import static_reuse_gate
+
+    gate, why = static_reuse_gate(cache_config, allow_reuse)
+    if gate is not None:
+        return gate, why
+    if not _mrope_reuse_safe(model):
+        return "mrope", ("the language model keeps instance mRoPE position "
+                         "state, which a restored cache cannot satisfy -- every "
+                         "request re-prefills (correct, slower)")
+    return None, "reuse enabled"
+
+
 def _common_prefix_len(a: List[int], b: List[int]) -> int:
     n = min(len(a), len(b))
     i = 0
@@ -370,29 +393,15 @@ def process_prompt_with_cache(
     cache_config = cache_config or {}
     model_id = prompt_cache.model_key[0]
 
-    # Config-level gate, kept exactly as the radix had it: quantized /
-    # rotating / bounded-KV CONFIGS never enter the reuse path at all.
-    # Extension-only reuse would in fact be sound for them; widening is a
-    # separate decision with its own verification, not a ride-along.
     # (Historical name: the gate outlived the radix it was written for.)
-    prompt_cache._radix_eligible = (
-        cache_config.get("cache_type", "standard") == "standard"
-        and not cache_config.get("max_kv_size")
-    )
+    gate, why = reuse_verdict(cache_config, model, allow_reuse)
+    prompt_cache._radix_eligible = gate is None
     manager0 = get_global_cache_manager()
-    if prompt_cache._radix_eligible and not allow_reuse:
-        prompt_cache._radix_eligible = False
-        manager0._log_verdict_once(model_id, (
-            f"Prompt-cache reuse disabled for {model_id}: a draft model is "
-            f"configured, and mlx-lm's speculative path builds its own paired "
-            f"caches -- every request re-prefills"))
-    if prompt_cache._radix_eligible and not _mrope_reuse_safe(model):
-        prompt_cache._radix_eligible = False
-        manager0._log_verdict_once(model_id, (
-            f"Prompt-cache reuse DISABLED for {model_id}: the language model "
-            f"keeps instance mRoPE position state, which a restored cache "
-            f"cannot satisfy -- every request re-prefills (correct, slower)"))
-    elif prompt_cache._radix_eligible:
+    if gate == "draft":
+        manager0._log_verdict_once(model_id, f"Prompt-cache reuse disabled for {model_id}: {why}")
+    elif gate == "mrope":
+        manager0._log_verdict_once(model_id, f"Prompt-cache reuse DISABLED for {model_id}: {why}")
+    elif gate is None:
         manager0._log_verdict_once(model_id, f"Prompt-cache reuse enabled for {model_id}")
 
     manager = get_global_cache_manager()

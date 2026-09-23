@@ -139,12 +139,13 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
     two apart. A resolved dump made every default look deliberately chosen
     (chip on every row, ``n_gpu_layers 999`` rendered as an explicit choice).
 
-    ``effective_loader`` is DERIVED, and derived from the config rather than
-    from a loaded provider: ``MLXProvider.effective_loader`` is null for every
-    model that is not resident, which is most of them, and a field that only
-    answers for resident models cannot tell a harness which engines it can
-    cover. Provider ``mlx`` is two upstream repos (mlx-lm, mlx-vlm); this is the
-    only field on the wire that says which one a row means.
+    ``engine`` is the engine contract (providers/contract.py), the same
+    object /v1/models carries. Its ``runtime`` names the library that runs the
+    model (mlx-lm, mlx-vlm or llama.cpp) and is derived from the config, so
+    it answers for UNLOADED models: provider ``mlx`` is two upstream repos,
+    and a harness choosing engine arms needs the answer before loading. The
+    router is passed for every row, loaded or not, because the contract reads
+    which models have an entry from it.
     """
     loaded = mc.id in loaded_ids
     # Every DERIVED value on the row comes from the ONE derivation /v1/models
@@ -155,7 +156,7 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
     # on the models page as an editable option. The per-row filesystem cost
     # (config.json, GGUF header, template probes -- all cached after the first
     # read) is why this route runs on the threadpool.
-    facts = derived_model_facts(mc, router if loaded else None)
+    facts = derived_model_facts(mc, router)
     return AdminModelResponse(
         id=mc.id,
         provider=mc.provider,
@@ -170,9 +171,7 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
         stale_reload_fields=(
             router.stale_reload_fields(mc.id) if router is not None and loaded else []
         ),
-        effective_loader=facts.effective_loader,
-        context_length=facts.context_length,
-        context_running=facts.context_running,
+        engine=facts.engine.model_dump(),
         thinking_default=facts.thinking_default,
         sampler_defaults=facts.sampler_defaults,
     )

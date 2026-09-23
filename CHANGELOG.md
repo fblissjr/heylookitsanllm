@@ -5,6 +5,76 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.73]
+
+### Changed (breaking, /v1/models and /v1/admin/models)
+
+- **One engine contract (plan W13).** Both model lists carry one `engine`
+  object per model, the same shape on every engine
+  (`src/heylook_llm/providers/contract.py`): `runtime` (mlx-lm, mlx-vlm or
+  llama.cpp), `context` (the ceiling from the files, and what a resident
+  process was sized to), `template` (the rung in force, its file, the body
+  hash for the next load and for the running process), and `settings`: every
+  configurable field plus load decisions with no field (gguf `binary`,
+  `image_max_tokens`, `metal_keep_alive`; MLX `prompt_cache`), each as
+  `{value, configured, auto, reason, provenance, effect}`. Every value carries
+  its provenance. `cache`, `thinking`, `image` and `steering` are explicit
+  nulls until W5, W2, W4 and W14 fill them.
+  - **Removed:** the top-level `effective_loader`, `context_length` and
+    `context_running`. Read `engine.runtime.value`,
+    `engine.context.length.value` and `engine.context.running.value`. The
+    frontend, `tests/helpers/engines.py` and the e2e stub moved with it.
+    Known external follow-up: the heylook-provider skill in the owner's
+    plugin repo teaches the old shape.
+  - **"Configured" means stored and different from derived.** A value a
+    models.toml entry stores that equals what discovery derives for the same
+    file reads as derived ("stored ... same as derived"); materialized
+    entries no longer look like overrides. The router records `written_ids`
+    and `derived_configs` at each config load for this.
+  - One decision, several callers: the report calls the functions the spawn
+    and request paths use (`LlamaServerProvider.binary_choice`,
+    `image_token_cap_decision`, `keep_alive_choice`, `resolve_chat_template`;
+    `cache_defaults.static_reuse_gate` + `prompt_cache.reuse_verdict`, now
+    shared by the cache path with its log lines unchanged;
+    `template_info.SOURCE_FILES`). Sampler settings carry the cascade's own
+    answer, equal to `sampler_defaults`.
+  - The static half is cached by a stat-only stamp over every input file,
+    the relevant environment, the installed mlx-lm/mlx-vlm commits (from
+    their install records) and a config digest. No absolute path appears in
+    `engine`.
+  - `tests/contract/test_engine_contract.py` checks the properties through
+    both routes, loaded and unloaded.
+- **One template parse per model state for read-only reporters.**
+  `template_info.cached_template_info` (keyed on the stat of every input file)
+  now serves the two capability probes and the template view, which each
+  parsed the same template on every cold listing. W13's view had added a
+  third parse; with the shared cache a cold `/v1/models` derivation is
+  faster than before W13 (measured against HEAD in a worktree; record in the
+  session log). Model load still reads fresh.
+- **e2e: the panel seed waits for the model list.** `seedPanel` skipped a
+  capability-gated control that had not rendered yet, silently, so on a
+  thinking-capable model "thinking off" never reached the panel and the
+  fast checks got a reply that was all thinking. It now waits for the page's
+  model select to hold a model before deciding what is missing. The race
+  predates W13; W13's slower cold listing (since fixed, above) exposed it.
+- **e2e: the danger-zone check waits for the model list.** It clicked while
+  the list was still filling in above it, so the layout shift sent the clicks
+  to stale coordinates. It now waits for model rows, as the checks before it
+  do. Also a pre-existing race, exposed by timing.
+- README and `CLAUDE.md` lines still describing the retired import removed.
+
+Verified: `tests/unit` + `tests/contract` green; `tests/smoke` on all three
+engine arms (mlx-vlm `Qwen3.5-0.8B-MLX-8bit`, mlx-lm
+`Qwen3.5-0.8B-MLX-8bit-textonly`, gguf `unsloth_Qwen3.8-27B-UD-Q8_K_XL`)
+green, with four mechanisms these models cannot exercise UNCOVERED: thinking
+depth on both MLX arms, the nested image source on the mlx-lm arm, and audio
+on the gguf arm; e2e chat and pages green on `Qwen3.5-0.8B-MLX-8bit`, and
+render green. `scripts/vendor_frontend.py --check`: marked and dompurify are
+each one patch release behind (not updated here). Phase 3 precondition still
+unmet: thinking depth on both MLX arms.
+- `sharp_edges.md`'s W9 note now points at the measurement record instead of
+  quoting it.
+
 ## [2.0.72]
 
 ### Removed

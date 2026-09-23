@@ -179,7 +179,7 @@ E2E_ARMS=gguf bun run e2e:chat
 
 Arms are ENGINES, not providers -- `"mlx"` is two upstream repos with separate
 release trains, so a text arm and a vision arm are different code. The mapping
-is the SERVER's (`effective_loader`), read through `tests/helpers/engines.py`,
+is the SERVER's (`engine.runtime`), read through `tests/helpers/engines.py`,
 the same module `tests/smoke` and `tests/eval` use; the JS side shells out to
 `python -m helpers.engines --json` rather than re-deriving it. An arm with no
 model prints as UNCOVERED, never as a pass.

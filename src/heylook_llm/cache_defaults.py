@@ -67,7 +67,7 @@ def smart_cache_defaults(size_gb: float) -> dict[str, Any]:
     return {"cache_type": "standard"}
 
 
-def resolve_cache_config(config: dict) -> dict[str, Any]:
+def resolve_cache_config(config: dict, *, log: bool = True) -> dict[str, Any]:
     """Updates for a provider config whose ``cache_type`` is None (= auto).
 
     Returns only the fields to fill in: an explicit ``cache_type`` yields
@@ -80,6 +80,31 @@ def resolve_cache_config(config: dict) -> dict[str, Any]:
     updates = {
         k: v for k, v in defaults.items() if config.get(k) is None
     }
-    if updates.get("cache_type") != "standard":
+    if log and updates.get("cache_type") != "standard":
         logging.info(f"Auto cache defaults resolved at load: {updates}")
     return updates
+
+
+def static_reuse_gate(cache_config: dict | None,
+                      allow_reuse: bool = True) -> tuple[str | None, str]:
+    """The prompt-cache reuse gates decidable WITHOUT the model.
+
+    ``(gate, reason)``: gate None means these gates pass; the model's own
+    position-state gate is prompt_cache.reuse_verdict's, which calls this
+    first. Pure (no MLX import) so the engine contract's static half can say
+    as much as is knowable for a model that is not loaded.
+    """
+    cache_config = cache_config or {}
+    # Config-level gate, kept exactly as the radix had it: quantized /
+    # rotating / bounded-KV CONFIGS never enter the reuse path at all.
+    # Extension-only reuse would in fact be sound for them; widening is a
+    # separate decision with its own verification, not a ride-along.
+    if not (cache_config.get("cache_type", "standard") == "standard"
+            and not cache_config.get("max_kv_size")):
+        return "config", ("the KV cache is quantized, rotating or bounded, "
+                          "which never enters the reuse path")
+    if not allow_reuse:
+        return "draft", ("a draft model is configured, and mlx-lm's speculative "
+                         "path builds its own paired caches -- every request "
+                         "re-prefills")
+    return None, "reuse enabled"

@@ -97,8 +97,10 @@ class TestContextLengthOverride:
         with_override = ModelConfig(id="m", provider="mlx",
                                     config={"model_path": path, "context_length": 131072})
         without = ModelConfig(id="m", provider="mlx", config={"model_path": path})
-        assert derived_model_facts(with_override).context_length == 131072
-        assert derived_model_facts(without).context_length == 32768
+        length = derived_model_facts(with_override).engine.context.length
+        assert (length.value, length.provenance) == (131072, "configured")
+        length = derived_model_facts(without).engine.context.length
+        assert (length.value, length.provenance) == (32768, "derived")
 
 
 class TestOverLengthGuard:

@@ -109,67 +109,101 @@ today's design would freeze into every existing entry.
   slower and nothing faster. The field exists so a new architecture can be
   tested, not to change the default.
 
-### W2. Thinking controls: detect from the template, map one scale
+### W2. Thinking controls: detect from the template, show its own values
 
-- **Detection (both engines).** Render the in-force template once per
-  candidate value (the template's own string literals plus a small fixed set)
-  and group by output. It recovers:
+**Owner decision (2026-09-23): no hardcoded thinking levels.** The controls
+show what the in-force template offers, in its own spellings. There is no
+heylook scale, no step-to-value mapping and no clamping, and no value is
+translated between models. Detail and reasoning:
+`internal/claude/w2/preset_portability.md`.
+
+- **Detection (both engines) is the only source of values.** Render the
+  in-force template once per candidate value (the template's own string
+  literals plus a small fixed set) and group by output. It recovers:
   - the thinking switch variable, or none;
   - the depth variable (`reasoning_effort`, `reasoning_strength`,
     `thinking_mode`, ...);
-  - accepted values and aliases;
+  - the distinct values, in the template's own spellings, with aliases
+    grouped under one spelling;
   - the default (the group matching the absent render);
   - strictness (garbage raises, is ignored, or is pasted in);
   - **where depth enters the prompt**: the character offset of the first
-    divergence between two depth renders. Early means a mid-conversation change
-    re-processes everything.
+    divergence between two depth renders (`changes_prefix`). Early means a
+    mid-conversation change re-processes everything.
 
-  Cache the result by template-body hash. Always run it on the template that
-  WILL be used (`chat_template_files.view`, which already resolves both
-  engines' ladders including the override), at row-derivation time. Never
-  write it to `models.toml`.
-- **API.** `/v1/models` and the admin row gain a `thinking` block:
+  Cache the result by template-body hash, on the template that WILL be used
+  (`chat_template_files.view`, both ladders including the override), at
+  row-derivation time. Never write it to `models.toml`.
+- **API: it fills W13's `engine.thinking` slot**, not a separate top-level
+  block:
 
       "thinking": {
         "switch": "enable_thinking" | null,
         "depth": {
           "variable": "reasoning_effort",
-          "values": ["low", "medium", "xhigh"],   // the model's own spellings
+          "values": ["low", "medium", "xhigh"],   // the template's own spellings
           "default": "xhigh",
           "strict": true,
-          "scale": {"off": null, "low": "low", "medium": "medium",
-                    "high": "xhigh", "max": "xhigh"},
-          "changes_prefix": true                  // depth edits re-process history
-        } | null,
-        "source": {"template_sha": "...", "origin": "heylook_override"}
+          "changes_prefix": true
+        } | null
       }
 
-  `thinking_default` / `sampler_defaults` report the depth default, so the
-  existing "auto (x)" label names it.
-- **Mapping.** The request keeps one field on a fixed heylook scale
-  (off, low, medium, high, max). The server maps it onto the model's own
-  variable and value via `scale`, falling back to the nearest value at or below
-  on the ordered vocabulary.
-  - A raw model value is also accepted.
-  - An unsupported value is a 400 naming the model's values, never a
-    llama-server 500.
-  - The hand-copied `ReasoningEffort` Literal goes away.
-  - **Be honest about what the scale does.** Measured on three models, only
-    off, a shortened low, and "on" separated reliably; medium, high and xhigh
-    overlapped, and run-to-run variation at one level exceeded the gap between
-    adjacent levels. The UI must not imply that a higher step reliably means
-    longer thinking. It shows the model's own value and says the ordering
-    above low is the template's instruction, not a guarantee. W7's budget is
-    the control that actually bounds length.
-- **Frontend.** The dropdown is built from the row. It shows the heylook step
-  and, muted, the model's own value ("high → xhigh"). A thinking toggle
-  appears only when `switch` is non-null. When `changes_prefix` is true, a
-  mid-conversation change is disclosed ("re-processes the conversation").
+  `thinking_default` / `sampler_defaults` stay the cascade's own answer; the
+  depth default is the model's own value. The `reasoning_effort` capability
+  becomes `engine.thinking.depth != null`.
+- **Removed:** the hand-copied `ReasoningEffort` Literal and
+  `PARAM_META.reasoning_effort.options` in `settings.js`. No list of levels
+  exists anywhere but detection.
+- **The request carries one depth field; the server supplies the variable.**
+  The wire field stays `reasoning_effort`, as a bounded string. Both providers
+  emit `template_kwargs[depth.variable] = value`, which makes Muse
+  (`reasoning_strength`) and MiniMax (`thinking_mode`) depth reachable with no
+  new field. The MLX rule that it never rides `base_kwargs` carries over to
+  whatever the variable is named.
+- **Validation lives in one place: the model's own list.**
+  `check_thinking_depth(value, depth)` runs inside
+  `samplers.resolve_effective_sampling`, covering the request value and a
+  models.toml per-model default alike. A detected value or alias passes;
+  anything else raises `InvalidGenerationRequest` naming the model's values,
+  a 400 instead of llama-server's 500. Both routes pre-check the request value
+  from W13's static half, so the 400 comes before the 200, for unloaded models
+  too. An invalid stored default is a W13 settings problem, never a startup
+  failure, and is not sent.
+- **Presets store the value they were saved with.** A value means what that
+  template says it means, and there is no honest cross-model equivalence.
+  `samplerParams(caps)` extends its existing capability drop to the VALUE: a
+  depth the current model does not offer is left off the request, so the
+  model runs at its own default. The panel cache keeps it, and switching back
+  restores it. `valid()` accepts any bounded string, since validity is per
+  model; legacy stored values need no migration. Presets keep saving system
+  prompts; nothing here touches `presets.system_prompt`.
+- **Disclosure, no confirm** (nothing is lost). The dropdown is "auto
+  (<default>)" plus `depth.values` in template order; a stored value the model
+  does not offer shows as a disabled "xhigh (not offered by this model)". The
+  preset status line on Apply names the default used instead. A thinking
+  toggle appears only when `switch` is non-null; if a template offers `off` as
+  a depth value, it is just a value and the template decides. When
+  `changes_prefix` is true, a mid-conversation change is disclosed
+  ("re-processes the conversation").
+- **Be honest about depth.** The template's words are instructions, not
+  guarantees: measured on three models, levels above low overlapped run to
+  run (the audit, §6). W7's budget is the control that actually bounds length.
 - `supports_thinking` for gguf is derived from the in-force template, not read
   once at import from the embedded one.
+- **Checks (lean):** one property test over descriptors detected from
+  templates on disk (fixtures copied into tests): every detected value and
+  alias passes, a value from another model's list or an unknown string
+  raises. One route test through `/v1/messages`: an unoffered value is a 400
+  before any stream. One e2e check: apply a preset carrying a depth value,
+  switch to a model that does not offer it, and confirm the request omits it,
+  the disclosure shows, and switching back restores it (prompt preview).
+  Model pair chosen when W2 starts; the models with real depth vocabularies
+  are large.
+- **Aliases (owner, 2026-09-23):** the server accepts every spelling the
+  template accepts; the dropdown lists one option per distinct render, in the
+  template's own spelling; nothing is added beyond what detection finds.
 - **Not in scope: editing templates to add levels.** A level is prompt text
-  the model was trained on. An invented level is untrained text, and measured
-  even the trained levels above "low" barely separate.
+  the model was trained on; an invented level is untrained text.
 
 ### W3. Templates: every copy visible, copy-to-override, lint
 
@@ -484,7 +518,7 @@ running small models locally and falling back to heylook). It is a capability
 track, not a server speedup, and mlx-swift-lm has the small vision families it
 would need.
 
-### W13. One engine contract
+### W13. One engine contract (first cut shipped v2.0.73)
 
 **The goal.** Every engine answers the same questions through its provider,
 and everything else consumes one shape. Today's single request type,
@@ -648,7 +682,10 @@ updates in the same commit as any contract change.
 - **Muse-Glimmer's hand-written `supports_thinking = true` removed from
   `models.toml`.** Its template reads no thinking switch.
 
+- **W2: no hardcoded thinking levels.** The controls show the in-force
+  template's own values; no heylook scale, no mapping, no cross-model
+  translation. Presets keep saving system prompts.
+
 Still open, to settle when the workstream starts:
 - W0: the two questions `plan_registry_sidecars.md` already lists as due
   before its Phase 2 (read-only model directories; the twin).
-- W2: the heylook scale's step names (off, low, medium, high, max proposed).

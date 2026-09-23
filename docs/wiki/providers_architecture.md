@@ -40,6 +40,22 @@ Only two members are `@abstractmethod`; the rest are concrete base-class behavio
 
 Read a stub as a contract, not as inherited behaviour: a provider that inherits the no-op `check_capacity` is ungated.
 
+### 1.3. The Engine Contract (`engine` on every model row)
+
+Every engine answers the same questions about a model, and `/v1/models`, the admin row and the frontend read one shape: [`providers/contract.py`](../../src/heylook_llm/providers/contract.py)'s `EngineDescription`. The same keys appear for every engine:
+
+- `runtime` -- the library that runs the model (`mlx-lm`, `mlx-vlm`, `llama.cpp`).
+- `context` -- `length`, the ceiling the model's files declare, and `running`, what a resident gguf process was sized to (not applicable on MLX).
+- `template` -- which ladder rung won, the file, and the sha256 of the body the next load will use beside the one the running process loaded.
+- `settings` -- every configurable field of the provider plus the load decisions that have no field (gguf: `binary`, `image_max_tokens`, `metal_keep_alive`; MLX: `prompt_cache`), each as `{value, configured, auto, reason, provenance, effect}`.
+- `cache`, `thinking`, `image`, `steering` -- explicit nulls until the workstreams that fill them land.
+
+Each value carries its **provenance** (`derived`, `configured`, `observed`, `observed_cached`, `unknown`, `not_applicable`), so a client never infers where a value came from.
+
+It is built in two halves. The **static half** is one module per engine ([`mlx_describe.py`](../../src/heylook_llm/providers/mlx_describe.py), [`gguf_describe.py`](../../src/heylook_llm/providers/gguf_describe.py)): plain functions over the config and the model's files, so it answers for models that are not loaded. It is cached by a stat-only stamp over every file that can change the answer. The **observed half** is `describe_observed()` on the loaded provider, read back from what `load_model` recorded (the auto micro-batch, the image cap, the binary, the prompt-cache verdict). It never calls into the running process, so a model listing never waits on a generation.
+
+Both halves call the **same decision functions** the spawn and the request path use, so the report cannot drift from behaviour. A value counts as `configured` only when a models.toml entry stores it **and** it differs from what discovery derives for that file. A stored copy of a derived value reads as derived. No absolute path appears in `engine`. The frontend reads values through [`js/engine.js`](../../frontend/js/engine.js). Why it is shaped this way: [sharp_edges.md#one-engine-contract](../architecture/sharp_edges.md#one-engine-contract).
+
 ### 1.2. The `GenerationChunk` Invariant
 Providers yield [`GenerationChunk`](../../src/heylook_llm/providers/base.py) dataclass instances:
 - **Slotted Fields** (`@dataclass(slots=True)`, complete set): `text`, `token`, `thinking`, `finish_reason`, `prompt_tokens`, `generation_tokens`, `prompt_tps`, `generation_tps`, `peak_memory`, `cached_tokens`, `kv_cache_bytes`, `queue_wait_ms`, `draft_tokens`, `draft_accepted`.
@@ -65,7 +81,7 @@ Text and vision models in MLX require distinct loader architectures:
 - `loader = "auto"` (the default) sends a non-vision model to `mlx-lm`, and a vision model to `mlx-vlm` **unless** mlx-vlm can be shown *positively* not to register its `model_type`, in which case it falls back to `mlx-lm`. It degrades only on positive non-support.
 - An explicit `loader` **forces** the engine -- e.g. `loader = "mlx-lm"` to run a dual-capable VLM strictly as text.
 - **The reported `vision` capability derives from the same resolver.** The provider's image guard reads `is_vlm`, so reading the checkpoint's *declaration* instead once let `/v1/models` advertise images that a 400 then refused. One resolver behind both surfaces is what makes them agree by construction; `modalities` still carries the declaration, and description versus served capability are deliberately different fields.
-- It is on the wire as `effective_loader` on the `/v1/admin/models` row, derived via `effective_loader_for_config` so it answers for **unloaded** models too -- the provider *attribute* is null unless the model is resident, which is the opposite of what a harness picking engine arms needs. It is null for every non-mlx provider (gguf is one engine, named by `provider`).
+- It is on the wire as `engine.runtime` in the engine contract (§1.3), derived via `effective_loader_for_config` so it answers for **unloaded** models too -- the provider *attribute* is null unless the model is resident, which is the opposite of what a harness picking engine arms needs. For gguf it reads `llama.cpp`.
 
 Because it reads each model directory's `config.json`, the two admin read routes that build a model response are plain `def` (threadpool), not `async def`.
 
@@ -143,8 +159,8 @@ GET /v1/admin/model-options
 **Read `engines`, not the provider key.** Provider is not engine: provider
 `mlx` is two upstream repos on separate release trains (mlx-lm for text,
 mlx-vlm for vision), which is the same split
-[`effective_loader`](#21-library-routing-via-effective_loader) reports on the
-admin row. Two consequences the provider key cannot express:
+[`engine.runtime`](#21-library-routing-via-effective_loader) reports on both
+model lists. Two consequences the provider key cannot express:
 
 - a field declared on the MLX config may reach only ONE of the two engines
   (none does today -- `vision_tokens` was the example until its removal in

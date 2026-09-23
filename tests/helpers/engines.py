@@ -8,7 +8,8 @@ ever read `capabilities`, so the two disagreed about what a vision model was.
 
 The taxonomy lives HERE, beside the harnesses, and not in `src/heylook_llm/`:
 the server has no reason to carry a test taxonomy. What the server owes is the
-FACTS -- `provider` and `effective_loader` on the admin row -- and it now does.
+FACTS -- `provider` and the engine contract's `engine.runtime` on the admin
+row -- and it does.
 
 Why the arms are engines and not providers
 ------------------------------------------
@@ -16,10 +17,10 @@ Why the arms are engines and not providers
                     -> mlx-vlm  (vision)   ) separate release trains
     provider "gguf" -> llama-server subprocess (one engine, one local binary)
 
-So "we covered mlx" is a claim about a config value, not about code. Which of
-the two MLX libraries decodes is `effective_loader`, which the admin listing
-serves for UNLOADED models too (v1.79.31) precisely so a harness can choose
-its arms without loading anything.
+So "we covered mlx" is a claim about a config value, not about code. Which
+library decodes is `engine.runtime` (mlx-lm | mlx-vlm | llama.cpp), which the
+admin listing serves for UNLOADED models too, precisely so a harness can
+choose its arms without loading anything.
 
 Stdlib only, same rule as the harnesses that import it (they run as scripts,
 not under pytest, and must not need a venv beyond the server's own).
@@ -85,7 +86,7 @@ def classify(server: str, *, get_json=None) -> Coverage:
     harness that already carries an authenticated fetcher. Defaults to plain
     stdlib GETs.
 
-    ENGINE IDENTITY IS ``effective_loader``, not the vision capability, and
+    ENGINE IDENTITY IS ``engine.runtime``, not the vision capability, and
     that distinction is the whole reason this module exists:
 
     - An explicit ``loader = "mlx-lm"`` on a dual-capable VLM still reports the
@@ -122,6 +123,14 @@ def classify(server: str, *, get_json=None) -> Coverage:
             cov.resident.add(mid)
 
         provider = row.get("provider") or entry.get("provider")
+        # The server's own answer: the engine contract's runtime (v2.0.73),
+        # the library that actually runs the model.
+        runtime = ((row.get("engine") or {}).get("runtime") or {}).get("value")
+        arm = {"llama.cpp": "gguf"}.get(runtime, runtime)
+        if arm in ("mlx-lm", "mlx-vlm", "gguf"):
+            cov.by_engine[mid] = arm
+            continue
+        # Fallbacks for a server older than the engine contract.
         if provider == "gguf":
             cov.by_engine[mid] = "gguf"
             continue
@@ -132,17 +141,13 @@ def classify(server: str, *, get_json=None) -> Coverage:
                 "no provider on either /v1/models or /v1/admin/models "
                 "(is the admin endpoint behind a token?)")
             continue
-
-        loader = row.get("effective_loader")
+        loader = row.get("effective_loader")  # v1.79.31 - v2.0.72 servers
         if loader in ("mlx-lm", "mlx-vlm"):
-            cov.by_engine[mid] = loader          # the server's own answer
+            cov.by_engine[mid] = loader
             continue
-        # Fallback: the pre-v1.79.31 inference. Kept because a harness pointed
-        # at an older server should still run, and degraded honestly because
-        # this is precisely the guess the field was added to replace.
         cov.by_engine[mid] = "mlx-vlm" if "vision" in caps else "mlx-lm"
         cov.unconfirmable[mid] = (
-            "no `effective_loader` on the admin row -- engine inferred from the "
+            "no `engine.runtime` on the admin row -- engine inferred from the "
             "vision capability, which an explicit `loader` or an mlx-vlm "
             "degradation would contradict")
 
@@ -303,7 +308,7 @@ def _main(argv=None) -> int:
 
     `python -m helpers.engines --server URL --json` is what tests/e2e shells
     out to; it exists so the JS side never re-implements "which engine is this
-    model", which the server answers via effective_loader.
+    model", which the server answers via engine.runtime.
     """
     import argparse
     ap = argparse.ArgumentParser(description="Resolve e2e/smoke arms to models.")

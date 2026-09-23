@@ -35,8 +35,20 @@ themselves.)
 { "id": "...", "object": "model", "owned_by": "user",
   "provider": "mlx" | "gguf",
   "modalities": ["text", "vision", ...],
-  "capabilities": ["chat", "vision", "thinking", "reasoning_effort", ...] }
+  "capabilities": ["chat", "vision", "thinking", "reasoning_effort", ...],
+  "thinking_default": true,
+  "sampler_defaults": { ... },
+  "engine": { "runtime": {...}, "context": {...}, "template": {...},
+              "settings": {...}, "cache": null, "thinking": null,
+              "image": null, "steering": null } }
 ```
+
+`engine` (v2.0.73) is the same object on every engine: which library runs the
+model (`engine.runtime.value`: `mlx-lm`, `mlx-vlm` or `llama.cpp`), its context
+ceiling (`engine.context.length.value`), the template in force, and every
+setting with its value, the stored value, what auto would pick and why. Each
+value carries a `provenance`. It replaced the top-level `context_length`.
+The full shape is `docs/frontend_v3_spec.md` §4.
 
 `modalities` is the checkpoint author's description of the weights.
 `capabilities` is what this server will actually **serve** them as, which is

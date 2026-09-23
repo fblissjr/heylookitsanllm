@@ -120,19 +120,22 @@ class TestSamplerDefaultsOnModelRows:
 
 
 class TestContextLengthOnModelRows:
-    """v1.79.65: every /v1/models entry carries `context_length` from the ONE
-    resolver the admin row and the provider's over-length guard read -- an
-    int, or null when the model files do not say (every fake path here)."""
+    """Every /v1/models entry carries the context ceiling
+    (`engine.context.length`) from the ONE resolver the admin row and the
+    provider's over-length guard read -- an int, or null when the model files
+    do not say (every fake path here)."""
 
     def test_present_on_every_entry(self, client):
         data = client.get("/v1/models").json()["data"]
         assert data
         for entry in data:
-            assert "context_length" in entry, entry["id"]
-            assert entry["context_length"] is None or isinstance(entry["context_length"], int)
+            value = entry["engine"]["context"]["length"]["value"]
+            assert value is None or isinstance(value, int), entry["id"]
 
     def test_agrees_with_the_admin_row(self, client):
-        listed = {m["id"]: m["context_length"] for m in client.get("/v1/models").json()["data"]}
-        admin = {m["id"]: m["context_length"] for m in client.get("/v1/admin/models").json()["models"]}
-        for mid, value in listed.items():
-            assert admin.get(mid) == value, mid
+        """Not just the ceiling: the whole engine object is the same on both
+        routes (one derivation, capabilities.derived_model_facts)."""
+        listed = {m["id"]: m["engine"] for m in client.get("/v1/models").json()["data"]}
+        admin = {m["id"]: m["engine"] for m in client.get("/v1/admin/models").json()["models"]}
+        for mid, engine in listed.items():
+            assert admin.get(mid) == engine, mid
