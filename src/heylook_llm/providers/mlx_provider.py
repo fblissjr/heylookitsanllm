@@ -26,7 +26,7 @@ from ..cache_defaults import resolve_cache_config
 from ..capabilities import model_context_length
 from ..samplers import GLOBAL_SAMPLER_FLOOR, load_vendor_sampling, resolve_effective_sampling
 from .common.samplers import build as build_sampler
-from .common.vlm_inputs import thinking_for_template
+from .common.vlm_inputs import continue_from_generation_prompt, thinking_for_template
 from .common.model_wrappers import wrap_language_model
 from .common.generation_core import (
     _reset_vlm_positions, ensure_gen_tokenizer, generate_text, run_generation)
@@ -454,18 +454,23 @@ class UnifiedTextStrategy:
             enable_thinking = True
         reasoning_effort = effective_request.get("reasoning_effort")
 
-        if self.is_vlm:
-            prompt = vlm_apply_chat_template(
-                processor, model.config, messages, num_images=0,
-                enable_thinking=enable_thinking,
-                reasoning_effort=reasoning_effort,
-                continue_final_message=continuing, model_id=self.model_id,
-            )
-        else:
-            prompt = _apply_chat_template(
-                tokenizer, messages, enable_thinking=enable_thinking,
-                reasoning_effort=reasoning_effort, continuing=continuing,
+        def render(msgs, cont):
+            if self.is_vlm:
+                return vlm_apply_chat_template(
+                    processor, model.config, msgs, num_images=0,
+                    enable_thinking=enable_thinking,
+                    reasoning_effort=reasoning_effort,
+                    continue_final_message=cont, model_id=self.model_id,
+                )
+            return _apply_chat_template(
+                tokenizer, msgs, enable_thinking=enable_thinking,
+                reasoning_effort=reasoning_effort, continuing=cont,
                 model_id=self.model_id)
+
+        prompt = render(messages, continuing)
+        if continuing:
+            prompt = continue_from_generation_prompt(
+                prompt, messages, lambda msgs: render(msgs, False))
 
         if resume_thinking is not None:
             if not isinstance(prompt, str):

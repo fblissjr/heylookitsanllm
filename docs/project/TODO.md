@@ -33,6 +33,16 @@ Sequencing section carries the reasons):
 - W12 profiling (decode overhead + image preprocessing), any time; decides
   whether any native piece is ever justified.
 
+## gguf Continue: does llama-server's prefill render drop a generation prefix? (2026-09-23)
+
+v2.0.85 fixed MLX: gemma-4 with thinking off opens an empty thought channel
+in its generation prompt that its history render omits, and Continue then
+degraded (fixed-seed A/B record in `internal/claude/w2/`). llama-server
+continues an assistant prefill with its own render, so the same question
+stands there for gemma-4 gguf: compare `/apply-template` for the history plus
+generation prompt against the continuation render, then a seeded A/B on the
+output if they differ. Belongs with W2 (thinking and templates).
+
 ## Unit-suite pruning pass, AFTER W5 + W10 (2026-09-23)
 
 Owner direction: the tier that finds real bugs here is live checks that

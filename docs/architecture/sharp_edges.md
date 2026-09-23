@@ -414,6 +414,19 @@ Preview is `provider.render_prompt()` (gguf `/apply-template`, MLX the same
 `build_prompt` generation uses) behind `POST /v1/conversations/{id}/prompt`,
 which renders resident models only: a preview must never load one.
 
+A content continuation on MLX used `continue_final_message` alone, which
+re-renders the partial reply as a HISTORY turn. gemma-4 with thinking off
+opens and closes an empty thought channel in its generation prompt that its
+history render omits, so Continue asked the model to extend a turn shaped
+unlike the one it wrote, and the continuation degraded into repetition. A
+fixed-seed A/B in mlx-vlm alone settled the cause (record in
+`internal/claude/w2/`). Since v2.0.85 `vlm_inputs.continue_from_generation_prompt`
+continues from the generation prompt plus the reply's text whenever that
+prompt extends what the continuation render put before the text, on the text
+and vision paths alike; the Qwen families' history render already matches
+and is unchanged. The same question on gguf (llama-server's own prefill
+render) is open, filed in `TODO.md`.
+
 ### Thinking default and the sampler report
 
 (v1.79.62) The cascade resolves request > models.toml `enable_thinking` > the
@@ -1238,7 +1251,11 @@ and reported as `trim_refused` (found through W5's cause field, 2026-09-23;
 fixed v2.0.84, `_Slot.metas`). An extension on that restore would have
 continued from the wrong position. Check both engines' cache classes before
 trusting a round-trip, and prove it with the greedy chain probe
-(`internal/claude/w10/chain_probe.py`), not a unit test on one engine's class.
+(`scripts/chain_probe.py`), not a unit test on one engine's class.
+The wrong-position extension was not reachable in practice: on the pre-fix
+code every chat flow (append, follow-up, continue, regenerate, thinking on and
+off) diverged inside the stored tail and took the trim path, which refused, so
+the cost was lost reuse, never a reply decoded from a wrong position.
 
 The vision feature cache is keyed by the request's whole image-URL list joined
 in order, so adding one image to a conversation re-encodes every image in it;

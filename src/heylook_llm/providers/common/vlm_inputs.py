@@ -88,6 +88,34 @@ def content_for_template(text: str, num_images: int):
     return [{"type": "image"}] * num_images + [{"type": "text", "text": text}]
 
 
+def continue_from_generation_prompt(prompt, messages, render_generation_prompt):
+    """A content continuation, rebuilt on the prompt the reply was generated
+    under when the template's history render lost part of it.
+
+    ``continue_final_message`` re-renders the partial reply as a HISTORY
+    turn. Where a template's generation prompt adds something after the role
+    header that its history render does not reproduce -- gemma-4 with
+    thinking off opens and closes an empty thought channel there -- the model
+    is asked to extend a turn shaped unlike the one it wrote, and the
+    continuation degrades into repetition (fixed-seed A/B, 2026-09-23, record
+    in internal/claude/w2/: with the channel restored it stays clean). So: if the
+    generation prompt for the history before the reply EXTENDS everything
+    the continuation render put before the reply's text, continue from the
+    generation prompt plus that text -- exactly what the model saw. Anything
+    else (the reply carries thinking, the render rewrote the text, a
+    tokenized template) keeps the continuation render unchanged."""
+    content = messages[-1].get("content") if messages else None
+    if not isinstance(prompt, str) or not isinstance(content, str) or not content:
+        return prompt
+    if not prompt.endswith(content):
+        return prompt
+    head = prompt[: len(prompt) - len(content)]
+    generation = render_generation_prompt(messages[:-1])
+    if isinstance(generation, str) and generation != head and generation.startswith(head):
+        return generation + content
+    return prompt
+
+
 def prepare_vlm_inputs_parallel(
     messages: List,
     processor,
@@ -196,5 +224,14 @@ def prepare_vlm_inputs_parallel(
         reasoning_effort=reasoning_effort,
         continue_final_message=continue_final_message,
     )
+    if continue_final_message:
+        # The final message is an assistant turn (no media), so the image
+        # count is the same without it.
+        formatted_prompt = continue_from_generation_prompt(
+            formatted_prompt, safe_messages,
+            lambda msgs: vlm_apply_chat_template_fn(
+                processor, config, msgs, num_images=len(images),
+                enable_thinking=enable_thinking, reasoning_effort=reasoning_effort,
+                continue_final_message=False))
 
     return images, formatted_prompt, has_images, image_urls

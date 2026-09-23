@@ -348,3 +348,39 @@ class TestEnsureGenTokenizerPicksAStreamingDetokenizer:
         wrapped = gc.ensure_gen_tokenizer(_FakeHfForDetok())
         assert isinstance(wrapped, TokenizerWrapper)
         assert type(wrapped._detokenizer) is NaiveStreamingDetokenizer
+
+
+@pytest.mark.unit
+class TestContinueFromGenerationPrompt:
+    """A content continuation resumes on the prompt the reply was generated
+    under (gemma-4 thinking off: an empty thought channel the history render
+    drops; without it the continuation degrades -- A/B 2026-09-23)."""
+
+    GEN = "<u>hi</u><model>\n<ch>thought\n</ch>"
+    HISTORY_HEAD = "<u>hi</u><model>\n"
+    MSGS = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "Mars is"}]
+
+    def _run(self, prompt, generation):
+        from heylook_llm.providers.common.vlm_inputs import continue_from_generation_prompt
+        seen = []
+
+        def render(msgs):
+            seen.append(msgs)
+            return generation
+        return continue_from_generation_prompt(prompt, self.MSGS, render), seen
+
+    def test_dropped_generation_prefix_is_restored(self):
+        out, seen = self._run(self.HISTORY_HEAD + "Mars is", self.GEN)
+        assert out == self.GEN + "Mars is"
+        assert seen == [self.MSGS[:-1]]          # rendered WITHOUT the partial reply
+
+    def test_a_render_that_already_matches_is_left_alone(self):
+        prompt = self.GEN + "Mars is"
+        assert self._run(prompt, self.GEN)[0] == prompt
+
+    def test_anything_that_is_not_a_clean_extension_keeps_the_continuation(self):
+        # the history render carries thinking the generation prompt lacks
+        prompt = self.HISTORY_HEAD + "<ch>thought\nplan</ch>Mars is"
+        assert self._run(prompt, self.GEN)[0] == prompt
+        # the template rewrote the reply's text
+        assert self._run(self.HISTORY_HEAD + "Mars is.", self.GEN)[0] == self.HISTORY_HEAD + "Mars is."

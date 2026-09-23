@@ -222,6 +222,7 @@ Models format their internal reasoning in diverse, vendor-specific ways. The par
 
 Two selection subtleties, both about where a stream *starts*:
 - `prefills_thinking` is consulted in the **marker branch only** -- the channel parsers never look at it. There, a template that pre-fills an unclosed `<think>` means the model's output begins **inside** the block, so the parser starts in thinking state, but only when thinking is actually enabled *and* the request is not a **continuation**. A continuation has no generation prompt at all, so nothing opened a block, and a parser armed that way would misfile the whole continuation as thinking.
+- A content continuation (the final assistant message has text) is rendered on the **generation prompt** plus that text whenever the template's history render drops part of what the generation prompt put before the reply -- gemma-4 with thinking off opens an empty thought channel there that its history render omits, and without it the continuation degrades. Otherwise the template's own `continue_final_message` render stands. One helper, [`continue_from_generation_prompt`](../../src/heylook_llm/providers/common/vlm_inputs.py), on the text and vision paths.
 - `resumes_thinking` is the one continuation that *does* start inside the block: the final assistant message carries thinking and no content, so the provider reopened the block. All three routing parsers accept it -- harmony starts inside `analysis`, gemma inside `thought`, the marker parser inside `<think>`.
 
 ### StripSpecials Wrapper

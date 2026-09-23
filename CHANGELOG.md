@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.85]
+
+### Fixed
+
+- **Continue on gemma-4 (MLX, thinking off) degraded into repetition.**
+  `continue_final_message` re-renders the partial reply as a history turn,
+  and gemma-4's history render omits the empty thought channel its generation
+  prompt opens, so the model extended a turn shaped unlike the one it wrote.
+  A fixed-seed A/B in mlx-vlm alone (record in `internal/claude/w2/`) put the
+  cause there: with the channel restored every seed stayed clean. A
+  continuation now resumes on the generation prompt plus the reply's text
+  whenever that prompt extends what the continuation render put before the
+  text (`vlm_inputs.continue_from_generation_prompt`, text and vision
+  paths); anything else keeps the template's own continuation render. The
+  Qwen3 and Qwen3.5 renders already matched and are unchanged (checked from
+  their tokenizers). gguf's own prefill render is not yet checked (TODO).
+- v2.0.84's restore bug was not reachable as wrong output: on the pre-fix
+  code every chat flow (append, follow-up, continue, regenerate, thinking on
+  and off) took the trim path, which refused. The cost was lost reuse only.
+
+### Added
+
+- `scripts/chain_probe.py`: the MLX prompt-cache restore check (fresh vs
+  restored at temperature 0 over an extend chain and an edit), promoted from
+  a local script; exits 1 on a mismatch or a hop that never restored.
+
+### Release standard
+
+- `tests/smoke` green on all three arms (mlx-lm `Qwen3-0.6B-8bit-mlx`,
+  mlx-vlm `Qwen3.5-0.8B-MLX-8bit`, gguf `unsloth_Qwen3.8-27B-UD-Q8_K_XL`);
+  uncovered as in v2.0.83. e2e chat green on `Qwen3.5-0.8B-MLX-8bit`. Live:
+  gemma-4-26B-A4B, Qwen3-0.6B and Qwen3.5-0.8B continue from the generation
+  prompt and read coherently.
+- `scripts/vendor_frontend.py --check`: marked and dompurify one patch
+  behind upstream, both matching the manifest. Phase 3 precondition: the
+  mlx-vlm half of thinking depth remains unmet.
+
 ## [2.0.84]
 
 ### Fixed
