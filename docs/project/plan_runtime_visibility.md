@@ -290,10 +290,12 @@ Extends the existing template panel (`GET/PUT/DELETE
 - **Wire.** `performance.cache` / `performance.speculative` on
   `message_stop`. `heylook_saved.timing` is built by the same builder instead
   of a second copy.
-  - Whether to add Anthropic's `usage.cache_read_input_tokens` is an open
-    decision. Anthropic's `input_tokens` excludes cached tokens; heylook's does
-    not. Either align, or list it as a deliberate difference in
-    `docs/api_integration.md`.
+  - **Decided (owner, see Owner decisions): align with Anthropic.**
+    `usage.input_tokens` = processed tokens, `usage.cache_read_input_tokens`
+    = cached tokens; heylook's detail rides in `performance.cache`. This
+    changes what an existing number means, so before shipping ASK THE OWNER
+    what their other project reads from `usage` (do not infer it), and record
+    the change in `docs/api_integration.md` and spec §4.
 - **gguf "why".**
   - llama-server reports only the final `cache_n`, not whether it came from
     the slot, the RAM cache or a checkpoint.
@@ -304,12 +306,17 @@ Extends the existing template panel (`GET/PUT/DELETE
     read from the subprocess pipe (not a file, so observability `off` still
     writes nothing) with a parser pinned by a fixture.
   - The durable fix is an upstream PR adding a cache source to `timings`.
-- **Per model.** A `cache` block on the admin row:
-  - gguf: effective RAM budget, checkpoint count and spacing, reuse class
-    (full attention vs checkpointed SWA/hybrid, from the header), KV-shift
-    disabled with mmproj, spec decode configured and how.
-  - MLX: reuse eligibility and reason, byte budget, slot size, vision-cache
-    counts.
+- **Per model: it fills W13's `engine.cache` slot** (no separate admin-row
+  block), in the contract's two halves:
+  - static (describer, answers unloaded): reuse class (full attention vs
+    checkpointed SWA/hybrid, from the header), KV-shift disabled with mmproj,
+    spec decode configured and how;
+  - observed (`describe_observed`, recorded at load): the effective RAM
+    budget as spawned, checkpoint count and spacing, MLX reuse eligibility
+    and reason (already the `prompt_cache` setting), byte budget, slot size,
+    vision-cache counts.
+  - Its frontend is a line in the engine panel and the chat engine chip the
+    W13 renderer already draws, not new chrome.
 - **Storage.** Counts and enums only in the request telemetry (content-free).
   Per-message stats in an additive `message_stats` table, so numbers survive a
   reload with no schema bump.
@@ -321,8 +328,11 @@ Extends the existing template panel (`GET/PUT/DELETE
   - A token-weighted cache column in the trends table.
   - The mislabelled "KV" figure is replaced.
 
+- **Release standard applies** (a wire contract change touching provider
+  code): `tests/smoke` green on all three arms, `scripts/vendor_frontend.py
+  --check` answered, spec §4 and `docs/api_integration.md` in the same commit.
 - **Live cache-reuse check in `tests/smoke`** (it also serves as W10's
-  acceptance test). Per engine arm, against a running server:
+  acceptance test; W5 must ship it). Per engine arm, against a running server:
   - turn 2 of an image conversation processes about the new content (new
     image plus question), not the history;
   - a text-only follow-up processes a handful of tokens;
@@ -674,7 +684,10 @@ display touch stored config. So W0 runs in parallel instead of blocking.
    shows generically). This comes first so every later change is observable in the
    product, not only in a harness, and so W2/W4/W1 extend one contract rather
    than adding per-engine branches.
-4. **W10**, moved up. On MLX every turn of a conversation with an image
+4. **W10**, moved up. Before it starts: the full eval-bank baseline on
+   Qwen3.5-27B-8bit-mlx (owner's per-workstream baseline decision), and W5's
+   live cache-reuse check shipped with the MLX vision arm reporting "known
+   gap: W10". On MLX every turn of a conversation with an image
    anywhere in its history re-processes everything, for every family. That is
    the owner's daily path and probably the largest single win here, and W5
    makes it measurable.
