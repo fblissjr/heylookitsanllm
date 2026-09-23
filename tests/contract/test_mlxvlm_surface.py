@@ -501,3 +501,51 @@ class TestGenerationResponse:
         assert "response.token" in gen_core_src
         assert "response.from_draft" in gen_core_src
         assert "GenerationChunk.from_engine(response)" in gen_core_src
+
+
+class TestVlmEngineSurface:
+    """`providers/common/vlm_engine.py` drives mlx-vlm's BatchGenerator and
+    APC the way mlx-vlm's own server does, leaning on names that are private
+    or keyword-only upstream, on a SHA pin that moves. A pin bump that breaks
+    them fails HERE, by name. Whether the path then generates the right
+    tokens is `scripts/chain_probe.py` and the W10 spike harness, live."""
+
+    def test_the_generator_takes_the_keywords_we_pass(self):
+        from mlx_vlm.generate.ar import BatchGenerator
+
+        init = inspect.signature(BatchGenerator.__init__).parameters
+        for name in ("sampler", "compute_logprobs", "apc_manager", "greedy_sampling",
+                     "max_tokens", "prefill_step_size"):
+            assert name in init, name
+        insert = inspect.signature(BatchGenerator.insert).parameters
+        for name in ("prompts", "max_tokens", "prompt_kwargs", "logits_processors"):
+            assert name in insert, name
+        for method in ("next", "remove", "close"):
+            assert callable(getattr(BatchGenerator, method)), method
+
+    def test_the_prefill_progress_fields_still_exist(self):
+        import importlib
+
+        # `import mlx_vlm.generate.ar as ar` resolves against the package's
+        # re-exported `generate` function, not the submodule.
+        src = inspect.getsource(importlib.import_module("mlx_vlm.generate.ar"))
+        for field in ("self._prompt_batch", "_processed_prompt_columns", "_inputs_embeds"):
+            assert field in src, field
+
+    def test_apc_takes_our_overrides_and_no_disk(self):
+        from heylook_llm.providers.common.vlm_engine import (
+            APC_CHECKPOINT_ENTRIES, APC_CHECKPOINT_INTERVAL_TOKENS, make_apc_manager)
+
+        mgr = make_apc_manager()
+        assert mgr.disk is None
+        assert mgr.checkpoint_interval_tokens == APC_CHECKPOINT_INTERVAL_TOKENS
+        assert mgr._exact_cache_max == APC_CHECKPOINT_ENTRIES
+
+    def test_the_salt_helpers_take_what_we_pass(self):
+        from mlx_vlm import apc as _apc
+        from mlx_vlm.tokenizer_utils import make_streaming_detokenizer  # noqa: F401
+
+        salt = inspect.signature(_apc.semantic_extra_hash).parameters
+        for name in ("image_hash", "media", "model", "processor"):
+            assert name in salt, name
+        assert "pixel_values" in inspect.signature(_apc.hash_image_payload).parameters
