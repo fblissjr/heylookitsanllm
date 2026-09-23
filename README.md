@@ -19,7 +19,8 @@ subprocess -- one API, one UI, per-model engine choice.
 **Documentation**: start with the [wiki](docs/wiki/README.md) -- how the
 system works end to end, from the API and the web UI down to how llama-server
 is built and spawned and where caching happens. The full doc index is
-[docs/README.md](docs/README.md).
+[docs/README.md](docs/README.md). What the project is for and the principles
+it holds to: [VISION.md](VISION.md).
 
 ## Features
 

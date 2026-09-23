@@ -479,6 +479,46 @@ running small models locally and falling back to heylook). It is a capability
 track, not a server speedup, and mlx-swift-lm has the small vision families it
 would need.
 
+### W13. One engine contract
+
+**The goal.** Every engine answers the same questions through its provider,
+and everything else consumes one shape. Today's single request type,
+single output type, single wire and single sampler cascade are the start of
+this. What is not unified is everything *about* an engine:
+- `capabilities.py`, the admin routes and the frontend answer thinking
+  support, vendor sampling and other facts with per-engine branches;
+- that is where the drift bugs came from (the gguf vendor layer landed in the
+  provider while the capability report still said MLX-only).
+
+W2, W4, W5 and W1 each add per-engine facts. Built independently, they would
+each add branches in their own place. This workstream makes them
+implementations of one contract instead.
+
+**Shape:**
+- `provider.describe()` returns thinking controls (W2), image geometry (W4),
+  cache profile (reuse class, budget, known limits; W5), load settings (W1)
+  and the template in force (W3).
+- Every generation chunk can carry the per-request cache and speculative
+  reports (W5's schema).
+- `/v1/models`, the admin row and the frontend read that one shape, with no
+  engine switches. The existing per-engine branches move behind the providers,
+  which is net deletion. A future engine implements the contract and nothing
+  else changes.
+
+**Limits, stated so they are not re-litigated:**
+- **Unified cache means one vocabulary, one report, and one decision table
+  for MLX (W10). It does not mean shared cache storage.** MLX and llama.cpp
+  hold their state in incompatible formats, and llama-server decides its own
+  reuse. For gguf, heylook observes (W5) and influences (stable templates,
+  spawn flags).
+- **Routing one model's request across engines** (for example sending
+  multi-turn vision to a gguf copy until W10 lands) is not in scope. Each
+  model id maps to one engine. Revisit only if W10 fails.
+
+**Order.** Before W5, which is the first workstream to add per-engine data.
+Define the contract with W5's report as its first member, then W2/W4/W1
+extend it.
+
 ## Sequencing (revised 2026-09-23, after the measurements)
 
 The first order put W0 first. W0 is gated on its own Phase 0 and two open
@@ -492,8 +532,11 @@ display touch stored config. So W0 runs in parallel instead of blocking.
    /v1/messages"). Steps 3-5 change exactly the subsystems unit tests cannot
    certify (templates, thinking, cache state), and the bank is dead until it
    speaks the Messages wire.
-3. **W5**, backend and wire, then frontend. This comes first so every later
-   change is observable in the product, not only in a harness.
+3. **W13 then W5.** Define the one engine contract with W5's cache and
+   speculative report as its first member, then build W5 backend and wire,
+   then frontend. This comes first so every later change is observable in the
+   product, not only in a harness, and so W2/W4/W1 extend one contract rather
+   than adding per-engine branches.
 4. **W10**, moved up. On MLX every turn of a conversation with an image
    anywhere in its history re-processes everything, for every family. That is
    the owner's daily path and probably the largest single win here, and W5

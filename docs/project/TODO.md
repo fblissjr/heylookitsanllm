@@ -21,7 +21,7 @@ than first. Order, revised 2026-09-23 after the measurements (the plan's
 Sequencing section carries the reasons):
 - W8 non-causal image guard + W9 keep-alive (both small; W9 measured);
 - the eval-bank port (prerequisite, below);
-- W5 cache/spec reporting;
+- W13 one engine contract, then W5 cache/spec reporting as its first member;
 - W10 MLX caching: first a spike ending in a named outcome (A1 mlx-vlm drives
   vision / A2 remove mlx-lm / B1 own checkpoints / B2 upstream hooks), then
   build (reopened; the biggest daily win);

@@ -13,6 +13,7 @@ bite; the reasons and history behind them are in
 
 ## Orient first
 
+- **North star: [VISION.md](./VISION.md)** -- what the project is for and the principles it holds to. When a design choice is unclear, it breaks the tie. It carries no status and no plan.
 - **START HERE: the wiki, [docs/wiki/README.md](./docs/wiki/README.md)** -- how the system works end to end (backend, frontend, providers, the llama-server build/spawn deep dive, caching and performance), explanatory and self-contained. It is not [docs/architecture/](./docs/architecture/) (why a decision was made, what must not break) and not [docs/project/](./docs/project/) (status and plans).
 - Roadmap, phased 0-7: [docs/project/plan_2026-07.md](./docs/project/plan_2026-07.md) (§"v3 frontend guardrails" and Phase 4 = v3 hardening; Phase 3b = Messages-API migration; Phase 7 = gguf/llama-server provider).
 - Status and backlog: [docs/project/CURRENT.md](./docs/project/CURRENT.md) and [docs/project/TODO.md](./docs/project/TODO.md). Read before starting.
