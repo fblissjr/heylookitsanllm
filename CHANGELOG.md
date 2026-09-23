@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.83]
+
+### Added
+
+- **An MLX miss says why (plan W5).** An eligible request that reused
+  nothing reports the branch the prompt cache took as its `cause`: `cold`
+  (empty slot), `no_common_prefix`, or `trim_refused` (the prompt diverges
+  inside the stored one and a sliding-window or recurrent cache cannot be
+  cut there, so it re-prefills; W10's prompt-position checkpoints).
+  `gpt-oss-20b` is the live case: its `RotatingKVCache` layers make every
+  follow-up that diverges inside the stored tail a full re-prefill, which
+  used to report a bare `miss`.
+- **Live prompt-reuse checks in `tests/smoke` (W5's last item; W10's
+  acceptance test).** Per arm: a repeated system prompt, a text follow-up,
+  and turn 2 of an image conversation on a vision model. One relation
+  everywhere: the follow-up reuses at least half of what the request before
+  it sent. `ineligible` and `trim_refused` report as the known gap W10.
+- e2e: the token-usage check reads the reply's stats line (the numbers
+  moved there in v2.0.82).
+
+### Release standard (closes W5, v2.0.78 - v2.0.83)
+
+- `tests/smoke` green on all three arms, including the new reuse checks:
+  mlx-lm on `Qwen3-0.6B-8bit-mlx`, mlx-vlm on `Qwen3.5-0.8B-MLX-8bit`
+  (reuse reports the known gap W10: mRoPE on text, vision path on images),
+  gguf on `unsloth_Qwen3.8-27B-UD-Q8_K_XL` (all three reuse checks pass).
+  The mlx-lm arm also ran on `gpt-oss-20b-MXFP4-Q8-mlx` (owner-cleared):
+  green, reuse reports `trim_refused` as the known gap W10.
+- Uncovered: nested image source on the mlx-lm arm, audio on the gguf arm,
+  thinking depth on the mlx-vlm arm.
+- `bun run e2e` chat and pages green on `Qwen3.5-0.8B-MLX-8bit`; render green.
+- Live: the gguf cache witness labels a fresh conversation
+  `no_common_prefix` and a repeat as reused; stored stats round-trip through
+  the generate route; the output pump held through every gguf run.
+- `scripts/vendor_frontend.py --check`: marked and dompurify each one patch
+  release behind upstream, both matching the manifest; not updated.
+- Phase 3 precondition (thinking depth on both MLX arms): the mlx-lm half is
+  covered by `gpt-oss-20b`; the mlx-vlm half stays unmet (no candidate).
+
 ## [2.0.82]
 
 ### Added

@@ -90,7 +90,8 @@ class TestSlotReuse:
         # turn. The full stored sequence is the common prefix; nothing trims.
         mgr = get_global_cache_manager()
         prompt, reply = list(range(100)), list(range(1000, 1010))
-        _generate(mgr, "slot-turn", prompt, reply)
+        _, first = _generate(mgr, "slot-turn", prompt, reply)
+        assert first._miss[0] == "cold"        # the report's cause (plan W5)
         next_prompt = prompt + reply + list(range(2000, 2020))
         to_process, pc = _lookup(mgr, "slot-turn", next_prompt)
         assert pc._radix_matched_len == len(prompt) + len(reply)
@@ -138,6 +139,7 @@ class TestSlotReuse:
         _generate(mgr, "slot-miss", list(range(100, 150)), [])
         to_process, pc = _lookup(mgr, "slot-miss", list(range(500, 520)))
         assert pc._radix_matched_len == 0
+        assert pc._miss[0] == "no_common_prefix"
         assert to_process == list(range(500, 520))
         # the untouched slot is still there for a future extension
         to_process, pc = _lookup(mgr, "slot-miss", list(range(100, 160)))
@@ -210,6 +212,7 @@ class TestHybridSafety:
         edited = prompt[:30] + list(range(9000, 9010))
         to_process, pc = _lookup(mgr, "hyb-div", edited, fresh=self._fresh_hybrid)
         assert pc._radix_matched_len == 0      # refused, not sliced
+        assert pc._miss[0] == "trim_refused"   # and the report says so
         assert to_process == edited            # full re-prefill
         # and the slot survived for a future extension
         _, pc = _lookup(mgr, "hyb-div", prompt + [1], fresh=self._fresh_hybrid)

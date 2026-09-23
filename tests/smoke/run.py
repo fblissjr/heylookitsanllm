@@ -659,7 +659,9 @@ def cache_reuse_checks(server, r, arm, model_id, caps):
 
     def judge(name, first, second):
         cache = ((second or {}).get("performance") or {}).get("cache") or {}
-        if cache.get("outcome") == "ineligible":
+        # trim_refused: a sliding-window or recurrent MLX model cannot cut its
+        # stored cache where the follow-up diverges -- the checkpoints W10 adds.
+        if cache.get("outcome") == "ineligible" or cache.get("cause") == "trim_refused":
             r.skip(name, f"known gap: W10 ({cache.get('cause') or cache.get('reason')})")
             return
         cached = ((second or {}).get("usage") or {}).get("cache_read_input_tokens")

@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-23, v2.0.82, `main`.
+Last updated: 2026-09-23, v2.0.83, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `CLAUDE.md`, the backlog in [TODO.md](./TODO.md), and what each release
@@ -15,25 +15,21 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
-| unit + contract | green | v2.0.82 |
+| unit + contract | green | v2.0.83 |
 | `bun run e2e:render` (model-free) | green, against `marked` 18.0.13 | v2.0.82 |
-| `tests/smoke/` mlx-lm arm | green on `Qwen3-0.6B-8bit-mlx`; thinking depth and nested image source UNCOVERED on that model | v2.0.78 |
-| `tests/smoke/` mlx-vlm arm | green on `Qwen3.5-0.8B-MLX-8bit`, incl. the image-token usage check; thinking depth UNCOVERED | v2.0.78 |
+| `tests/smoke/` mlx-lm arm | green on `Qwen3-0.6B-8bit-mlx` (reuse checks pass; thinking depth and nested image source UNCOVERED on it) and on `gpt-oss-20b-MXFP4-Q8-mlx` (thinking depth covered; reuse is the known gap W10, `trim_refused`) | v2.0.83 |
+| `tests/smoke/` mlx-vlm arm | green on `Qwen3.5-0.8B-MLX-8bit`, incl. the image-token usage check; reuse is the known gap W10 (mRoPE, vision path); thinking depth UNCOVERED | v2.0.83 |
 | `scripts/vlm_parity_probe.py` | exact token parity with mlx-vlm's `generate_step` on Qwen3.5-0.8B, Qwen-Image-2.1-PE-I21, Qwen3.5-27B-8bit, Qwen3-VL-32B; single- and multi-chunk prefill | v2.0.55; 0.8B re-run at v2.0.60 |
-| `tests/smoke/` gguf arm | green on `unsloth_Qwen3.8-27B-UD-Q8_K_XL`; audio UNCOVERED (the model declares none) | v2.0.78 |
-| `bun run e2e` (chat + pages) | green on `E2E_MODEL=Qwen3.5-0.8B-MLX-8bit` (mlx-vlm arm), chat and pages at v2.0.77, chat again at v2.0.78. NOT run on the default gemma-4 model, nor on the mlx-lm or gguf arms | v2.0.78 |
+| `tests/smoke/` gguf arm | green on `unsloth_Qwen3.8-27B-UD-Q8_K_XL`, all three reuse checks pass; audio UNCOVERED (the model declares none) | v2.0.83 |
+| `bun run e2e` (chat + pages) | green on `E2E_MODEL=Qwen3.5-0.8B-MLX-8bit` (mlx-vlm arm). NOT run on the default gemma-4 model, nor on the mlx-lm or gguf arms | v2.0.83 |
 | `bun run e2e:ios` | see `TODO.md` and the harness's own header | -- |
 | `tests/eval/` (behavioural bank) | ported to `/v1/messages` (an adapter in `run.py`). Live on `Qwen3.5-0.8B-MLX-8bit` (mlx-vlm arm), `thinking` + `vision` only: every task got a real, judged response. Two fail on model behaviour, checked from the raw output: two-image discrimination flaps (the same failure is recorded before the port), and the 0.8B's thinking runs past the task's budget. Other categories, the mlx-lm and gguf arms: not run | v2.0.71 |
 | gguf runtime harness (`internal/claude/perf/harness/`) | Qwen3.8-27B, Muse-Glimmer-30B, DeepSeek-V4-Flash-Vision Q4: vision cost, system-prompt reuse, multi-turn cache reuse (correct on all three after the Qwen template fix), thinking levels, residency, flash attention, micro-batch. Findings in `docs/testing/gguf_runtime_audit_2026-09-23.md` | v2.0.64 build 11138 |
 
-Nothing live has run since v2.0.78: v2.0.79 - v2.0.82 (the rest of W5) are
-unit, contract and render verified, and the smoke and chat/pages e2e run for
-them is pending an owner-started dev server.
-
-The standing uncovered mechanism is thinking DEPTH on both MLX arms.
-`gpt-oss-20b-MXFP4-Q8-mlx` is on disk and cleared by the owner for smoke
-(2026-09-23) as the mlx-lm arm's depth model; the mlx-lm half stays UNCOVERED
-until a smoke run actually exercises it. The mlx-vlm half has no candidate.
+The standing uncovered mechanism is thinking DEPTH on the mlx-vlm arm: no
+candidate model. The mlx-lm half is covered since v2.0.83 by
+`gpt-oss-20b-MXFP4-Q8-mlx` (owner-cleared for smoke 2026-09-23), run as a
+second mlx-lm arm (`--arm mlx-lm --model mlx-lm=gpt-oss-20b-MXFP4-Q8-mlx`).
 
 ## Handoff -- start here
 
@@ -42,8 +38,9 @@ until a smoke run actually exercises it. The mlx-vlm half has no candidate.
    non-causal image-token guard and the Metal residency keep-alive, both at
    spawn), the eval-bank port in v2.0.71, and W13 (the one engine contract)
    in v2.0.73 - v2.0.77. W5 (cache and speculative reporting) shipped in
-   v2.0.78 - v2.0.82 except its live cache-reuse smoke check, which is also
-   W10's acceptance test; that check and the pending smoke/e2e run are next. The evidence behind every step is
+   v2.0.78 - v2.0.83, including the live cache-reuse smoke check that is
+   W10's acceptance test. Next, per the owner's order: W10 (after its full
+   eval baseline on Qwen3.5-27B-8bit-mlx), then W2+W3+W7, W4, W0, W1. The evidence behind every step is
    [../testing/gguf_runtime_audit_2026-09-23.md](../testing/gguf_runtime_audit_2026-09-23.md).
 2. **Retiring per-model entries from `models.toml`** ([plan_registry_sidecars.md](./plan_registry_sidecars.md))
    is the plan's W0. It runs in parallel rather than first. Phase 0

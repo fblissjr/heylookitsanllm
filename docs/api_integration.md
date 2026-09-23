@@ -201,7 +201,8 @@ not the run's KV; `performance.cache` says what a request reused.
   nothing matched) or `ineligible` (this request could not reuse; `reason`
   says why, e.g. an MLX request with an image). `cause` (v2.0.80) is the same
   why as a token, null when unknown: `config`, `draft`, `mrope`, `vision_path`
-  on MLX; `cold`, `no_common_prefix`, `probable_template_diverged`,
+  on an MLX `ineligible`, `cold`, `no_common_prefix`, `trim_refused` on an MLX
+  miss (v2.0.83); `cold`, `no_common_prefix`, `probable_template_diverged`,
   `probable_budget_skipped`, `probable_evicted` on gguf, where `probable_`
   marks heylook's inference (llama-server reports only the cached count).
   Best-effort: the log lines behind it are read asynchronously, so an event

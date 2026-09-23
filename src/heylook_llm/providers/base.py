@@ -24,7 +24,8 @@ class CacheReport:
     not reuse at all; ``reason`` says why).
 
     ``cause`` is the machine-readable why, set when one is known: an MLX
-    gate (``config``, ``draft``, ``mrope``, ``vision_path``), or on gguf
+    gate (``config``, ``draft``, ``mrope``, ``vision_path``), an MLX miss's
+    branch (``cold``, ``no_common_prefix``, ``trim_refused``), or on gguf
     ``cold`` / ``no_common_prefix`` / ``probable_*`` from the cache witness
     (llama_cache_witness.py). A ``probable_`` cause is inferred, not
     reported by the engine. ``reason`` is the same thing as a sentence.

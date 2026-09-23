@@ -319,9 +319,15 @@ export async function runChatSuite({ suite, ctx, config }) {
     assert(reply.length > 0, 'assistant reply is empty');
   });
 
-  await suite.check('status line reports token usage after completion', async () => {
-    const status = await textOf(page, '.chat__status');
-    assert(status && /token/i.test(status), `status="${status}"`);
+  // The numbers moved from the transient status line onto the message's own
+  // stats line in v2.0.82 (plan W5); formatStats emits `<n> tokens`.
+  await suite.check('the reply carries its stats line with the token count', async () => {
+    const lastStats = () => page.evaluate(() => {
+      const rows = document.querySelectorAll('.message--assistant');
+      return rows[rows.length - 1]?.querySelector('.message-stats')?.textContent ?? '';
+    });
+    await waitFor(async () => /\d+ tokens/.test(await lastStats()),
+      { message: 'no stats line under the reply' });
   });
 
   await suite.check('streaming delivery is not poll-quantized (client cadence)', async () => {

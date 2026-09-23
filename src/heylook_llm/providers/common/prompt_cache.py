@@ -96,6 +96,9 @@ class PromptCache:
     tokens: List[int] = field(default_factory=list)
     _radix_matched_len: int = 0   # tokens reused from the slot (historical name)
     _radix_eligible: bool = True  # set per request by process_prompt_with_cache
+    # Why an eligible request reused nothing: (cause token, sentence), set per
+    # request by process_prompt_with_cache for the CacheReport (plan W5).
+    _miss: Tuple[Optional[str], Optional[str]] = (None, None)
 
     def __str__(self):
         return f"PromptCache(tokens={len(self.tokens)}, model={self.model_key[0]})"
@@ -409,6 +412,8 @@ def process_prompt_with_cache(
 
     manager = get_global_cache_manager()
     slot = manager._get_slot(model_id) if prompt_cache._radix_eligible else None
+    prompt_cache._miss = ("cold", "this model's cache slot is empty: the first "
+                                  "request since load, or the slot was evicted")
 
     if slot is not None and new_tokens:
         matched_len = _common_prefix_len(slot.tokens, new_tokens)
@@ -418,6 +423,8 @@ def process_prompt_with_cache(
         if matched_len == len(new_tokens):
             matched_len -= 1
 
+        prompt_cache._miss = ("no_common_prefix", "the stored prompt shares no "
+                                                  "leading tokens with this one")
         if matched_len > 0:
             tail = len(slot.tokens) - matched_len
             # Reconstruct FRESH cache objects from the immutable snapshots
@@ -438,6 +445,11 @@ def process_prompt_with_cache(
                     f"processing {len(tokens_to_process)} new"
                 )
                 return tokens_to_process, prompt_cache
+            prompt_cache._miss = ("trim_refused", (
+                f"this prompt diverges {tail} tokens before the end of the "
+                f"stored one, and this model's cache cannot be cut there (a "
+                f"sliding-window or recurrent layer), so it re-prefills; "
+                f"prompt-position checkpoints are plan W10"))
 
     # Re-prefill everything with a fresh cache
     prompt_cache.cache = make_cache(model, cache_config)

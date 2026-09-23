@@ -572,13 +572,16 @@ def run_generation(
     if pre_filled_cache is None and prompt_cache is not None:
         verdict = getattr(prompt_cache, "_reuse_verdict", None)
         gate, why = verdict if isinstance(verdict, tuple) and len(verdict) == 2 else (None, None)
+        # An eligible request that reused nothing says which branch it took.
+        miss = getattr(prompt_cache, "_miss", None) if gate is None and cached_count == 0 else None
+        miss_cause, miss_reason = miss if isinstance(miss, tuple) and len(miss) == 2 else (None, None)
         cache_report = CacheReport(
             prompt_tokens=len(prompt_tokens),
             cached_tokens=cached_count,
             outcome=("ineligible" if gate is not None
                      else "reused" if cached_count > 0 else "miss"),
-            reason=why if gate is not None else None,
-            cause=gate,
+            reason=why if gate is not None else miss_reason,
+            cause=gate if gate is not None else miss_cause,
         )
 
     # Scope peak memory to this request so API can report per-request peak
