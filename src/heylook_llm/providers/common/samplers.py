@@ -57,7 +57,7 @@ def make_presence_penalty_processor(penalty: float):
     position, clamp to binary, subtract penalty. Zero GPU-CPU syncs and
     fixed output shapes (vocab_size) for stable compilation.
 
-    WHICH tokens it sees is not decided here: ``run_generation`` wraps every
+    WHICH tokens it sees is not decided here: ``vlm_engine.generate`` wraps every
     processor in ``generation_core.generated_only``, so ``tokens`` is what this
     reply has generated and never the prompt. Called bare (tests, scripts) it
     penalises whatever it is handed.

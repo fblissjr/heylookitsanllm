@@ -308,7 +308,7 @@ class TestEnsureGenTokenizerPicksAStreamingDetokenizer:
     mlx-lm's own loader, which selects SPM/BPE streaming from tokenizer.json
     -- the same choice the mlx-lm text path gets -- instead of the naive
     default. The provider primes it at load; the per-request call from
-    run_generation must then find it in the cache."""
+    streaming_detokenizer must then find it in the cache."""
 
     def test_model_path_routes_through_the_mlx_lm_loader_and_primes_the_cache(self, monkeypatch, tmp_path):
         from pathlib import Path
@@ -327,7 +327,7 @@ class TestEnsureGenTokenizerPicksAStreamingDetokenizer:
         assert gc.ensure_gen_tokenizer(raw, tmp_path) is built
         assert seen["path"] == Path(tmp_path)
         assert seen["eos"] == gc.resolve_stop_tokens(raw)   # the extended set, not the loader's own
-        assert gc.ensure_gen_tokenizer(raw) is built          # run_generation's call: cache hit, no path needed
+        assert gc.ensure_gen_tokenizer(raw) is built          # the per-request call: cache hit, no path needed
 
     def test_a_loader_failure_falls_back_to_the_default_wrapper(self, monkeypatch, tmp_path):
         from mlx_lm.tokenizer_utils import TokenizerWrapper

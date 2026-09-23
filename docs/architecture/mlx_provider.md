@@ -1,7 +1,14 @@
 # Developer Notes: MLX Provider
 
-> **Status**: CURRENT
+> **Status**: PARTLY HISTORICAL (2026-09-23)
 > **Last Updated**: 2026-07-20
+>
+> Since v2.0.86-87 (plan W10, outcome A2) every MLX model loads and generates
+> on mlx-vlm's engine through `providers/common/vlm_engine.py`, with mlx-vlm's
+> prefix cache per model. The single-slot prompt cache (4.2), the mlx-lm decode
+> loop and the vision prefill handoff described below are deleted; read those
+> sections as the design record of what the engine replaced. The live path is
+> described in the wiki (`docs/wiki/providers_architecture.md` §2).
 
 This document provides a deep-dive technical reference for the `MLXProvider` in `heylookitsanllm`. This provider is responsible for running models using Apple's MLX framework and is based on the `mlx-lm` and `mlx-vlm` libraries.
 

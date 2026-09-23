@@ -1,10 +1,6 @@
 # tests/unit/test_unified_equivalence.py
-"""Equivalence tests for UnifiedTextStrategy with is_vlm=True vs is_vlm=False.
-
-Proves the whole point of v1.16.0's unification: both VLM-text and text-only
-paths produce equivalent generate_text() calls for the same input. Detects
-future drift between the two paths.
-"""
+"""The MLX text-path template call: a missing template is refused with a
+message naming the fix, and other template errors propagate."""
 
 import pytest
 from unittest.mock import MagicMock, patch, call

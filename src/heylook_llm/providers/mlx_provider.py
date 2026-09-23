@@ -10,30 +10,22 @@ from typing import Generator, Dict, List, Tuple
 import mlx.core as mx
 from PIL import Image
 
-from mlx_lm.utils import load as lm_load
-from mlx_lm.generate import wired_limit
-from mlx_lm.models.cache import make_prompt_cache
 from mlx_vlm.utils import load as vlm_load, prepare_inputs as vlm_prepare_inputs
 from mlx_vlm.prompt_utils import apply_chat_template as mlx_vlm_apply_chat_template
-from mlx_vlm.generate.common import _chunked_prefill_enabled, DEFAULT_PREFILL_STEP_SIZE
+from mlx_vlm.generate.common import generation_stream, wired_limit
 
 from ..config import ChatRequest, ModelMetrics, MLX_RUNTIME_DEFAULT_FIELDS
 from .abort import AbortEvent
 from .base import BaseProvider, CacheReport, GenerationChunk, GenerationFailed, InvalidGenerationRequest
 # Layer-1 sampler floor -- provider-shared, defined in heylook_llm.samplers
 # (the llama-server provider applies the same floor).
-from ..cache_defaults import resolve_cache_config
 from ..capabilities import model_context_length
 from ..samplers import GLOBAL_SAMPLER_FLOOR, load_vendor_sampling, resolve_effective_sampling
 from .common.samplers import build as build_sampler
 from .common.vlm_inputs import continue_from_generation_prompt, thinking_for_template
-from .common.model_wrappers import wrap_language_model
-from .common.generation_core import (
-    _reset_vlm_positions, continuation_detokenizer, ensure_gen_tokenizer, generate_text,
-    run_generation)
+from .common.generation_core import continuation_detokenizer, ensure_gen_tokenizer
 from .common import vlm_engine
 from .common.batch_vision import BatchVisionProcessor
-from .common.prompt_cache import get_global_cache_manager
 from .common.vision_feature_cache import VisionFeatureCache
 from .common.loader_routing import resolve_effective_loader, read_model_type
 from .common.generation_gate import GenerationGate, GenerationCancelled, get_process_gate
@@ -91,16 +83,6 @@ def _apply_transformers_patches():
 _apply_transformers_patches()
 del _apply_transformers_patches
 
-# Create dedicated generation stream for better Metal utilization
-# This allows async evaluation and improves pipeline performance.
-#
-# Must be thread-local: generation runs on FastAPI's thread pool
-# (asyncio.to_thread / run_in_executor), not this import thread. MLX streams
-# are bound to the thread that creates them -- a plain mx.new_stream() here
-# would raise "There is no Stream(gpu, 0) in current thread." when wired_limit
-# synchronizes it from a pool worker. new_thread_local_stream materializes the
-# stream per-thread (matching mlx_lm.generate's own generation_stream).
-generation_stream = mx.new_thread_local_stream(mx.default_device())
 
 
 # Process-global generation gate. There is ONE GPU, so generation must serialize
@@ -330,15 +312,10 @@ def resolve_add_generation_prompt(messages) -> bool:
 
 
 class UnifiedTextStrategy:
-    """Unified strategy for all text-based generation (text-only and VLM text).
-
-    Dispatches on is_vlm for:
-    - Chat template application (tokenizer.apply_chat_template vs vlm_apply_chat_template)
-    - Model selection (raw model vs LanguageModelLogitsWrapper)
-
-    Everything else -- cache config, prompt cache lookup, generation loop,
-    acceptance tracking, KV snapshot storage -- is handled by generation_core.
-    """
+    """Every text request, on every MLX model (text-only and vision models
+    alike): render the prompt (template path by ``is_vlm``, thinking,
+    continuation shapes), tokenize with mlx-vlm's ``prepare_inputs``, and
+    run it through ``vlm_engine`` (plan W10)."""
 
     def __init__(self, draft_model=None, model_id=None, model_config=None, is_vlm=False,
                  template_info=None, context_length=None, owner=None):
@@ -353,8 +330,6 @@ class UnifiedTextStrategy:
         # ModelTemplateInfo (or None): names the thinking opener a mid-thought
         # resume has to re-open -- see _thinking_resume_opener.
         self.template_info = template_info
-        self._cached_wrapper = None
-        self.cache_manager = get_global_cache_manager()
 
     def build_prompt(self, request: ChatRequest, effective_request: dict, model, processor):
         """The templated prompt for ``request``: a string, or (defensively)
@@ -495,21 +470,6 @@ class UnifiedTextStrategy:
             prompt = _append_thinking_resume(prompt, resume_thinking, self.template_info)
         return prompt
 
-    def _get_generation_model(self, model):
-        """Return raw model for text-only, LanguageModelLogitsWrapper for VLM.
-
-        The wrapper is cached per strategy instance so it's created once and reused.
-        For VLM, wired_limit and cache operations use the wrapper (which wraps
-        the language model component), not the full VLM model.
-        """
-        if not self.is_vlm:
-            return model
-
-        if self._cached_wrapper is None:
-            self._cached_wrapper = wrap_language_model(model)
-        return self._cached_wrapper
-
-
 def _has_audio_parts(messages) -> bool:
     """True if any message carries an input_audio content part.
 
@@ -558,151 +518,19 @@ def _non_user_image_roles(messages) -> list[str]:
     return roles
 
 
-# Per-token kwargs that must be cut to the prefill length when the WHOLE
-# prefill is one language-model call. In chunked mode upstream passes them at
-# full length and each family aligns them by cache offset, so they are left
-# alone there (slicing would diverge from the loop this mirrors).
-_PER_TOKEN_PREFILL_KWARGS = (
-    "mm_token_type_ids", "token_type_ids", "position_ids",
-    "visual_pos_masks", "per_layer_inputs",
-)
-# Config attributes naming a media placeholder token. The prompt is split after
-# its LAST token, which is only sound while that token is text.
-_MEDIA_TOKEN_CONFIG_ATTRS = (
-    "image_token_index", "image_token_id", "video_token_index",
-    "video_token_id", "audio_token_index", "audio_token_id",
-)
-
-
-def _slice_per_token_kwargs(kwargs: dict, n_total: int, n_keep: int) -> dict:
-    """Cut the allowlisted per-token kwargs from ``n_total`` to ``n_keep``.
-
-    An allowlist, never "anything with a dimension of N": `image_grid_thw` and
-    image features are not per-token and a shape coincidence would corrupt
-    them. The price of an allowlist is a NEW per-token kwarg upstream going
-    unsliced -- and gemma-4's bidirectional overlay silently no-ops on a length
-    mismatch -- so an unlisted array SHAPED like a per-token input is refused
-    loudly instead.
-    """
-    out = dict(kwargs)
-    for key, value in kwargs.items():
-        if not isinstance(value, mx.array):
-            continue
-        if key in _PER_TOKEN_PREFILL_KWARGS:
-            # The token axis is the LAST one for mRoPE position_ids
-            # (3, B, N) and axis 1 for everything batch-first (B, N, ...).
-            axis = value.ndim - 1 if key == "position_ids" else 1
-            if value.ndim > axis and value.shape[axis] == n_total:
-                index = [slice(None)] * value.ndim
-                index[axis] = slice(0, n_keep)
-                out[key] = value[tuple(index)]
-        elif value.ndim >= 2 and value.shape[0] == 1 and value.shape[1] == n_total:
-            # Batch-first with a prompt-length axis 1 is what a per-token
-            # input looks like. (Deliberately NOT "N anywhere in the shape":
-            # cached image features are (tokens, hidden) and a hidden size can
-            # equal a prompt length by coincidence.)
-            raise GenerationFailed(
-                f"Vision prefill: '{key}' {tuple(value.shape)} looks per-token "
-                f"but is not a known per-token input. Add it to "
-                f"_PER_TOKEN_PREFILL_KWARGS (mlx_provider.py) after checking "
-                f"how the model consumes it.")
-    return out
-
-
-def _prefill_language_model(model, wrapper, input_ids, pixel_values, mask, extras,
-                            cache, *, step_size, abort_event=None) -> bool:
-    """Fill ``cache`` with every prompt token BUT THE LAST, the way mlx-vlm's
-    own loop does (`mlx_vlm/generate/ar.py`), and return False if aborted.
-
-    The last prompt token is left for mlx-lm: `run_generation` is handed it as
-    a one-token prompt, so the FIRST GENERATED token is sampled by the same
-    code as every other one -- stop check, logits processors, `max_tokens`
-    accounting and the streaming detokenizer included. Before v2.0.55 this
-    strategy ran the whole prompt through the full VLM forward and sampled that
-    token itself, and it got none of those.
-
-    Structure, each step upstream's: embed ONCE (the only place pixel values
-    and cached image features are consumed), then drive `model.language_model`
-    over embedding slices. NO `mask` reaches the language model -- every family
-    builds its own causal / sliding-window / bidirectional masks, and a
-    caller-supplied one REPLACES them on the families that honour it (an int32
-    ones mask is "no mask", i.e. non-causal attention).
-    """
-    n_total = int(input_ids.shape[1])
-    n_prefill = n_total - 1
-    report = getattr(abort_event, "set_prefill_progress", None)
-    if report is not None:
-        report(0, n_total)
-
-    # Direct language-model calls never clear the mRoPE instance state the way
-    # the full VLM forward did (it nulled them on seeing pixel_values), so
-    # without this the decode step's rope path depends on what ran BEFORE this
-    # request. `rope_deltas` below re-seeds it for this one.
-    _reset_vlm_positions(wrapper)
-
-    with mx.stream(generation_stream):
-        embedding_output = model.get_input_embeddings(
-            input_ids, pixel_values, mask=mask, **extras)
-        inputs_embeds = embedding_output.inputs_embeds
-        lm_kwargs = {
-            **extras,
-            **{k: v for k, v in embedding_output.to_dict().items()
-               if k != "inputs_embeds" and v is not None},
-        }
-
-        chunked = _chunked_prefill_enabled(
-            model, input_ids=input_ids, inputs_embeds=inputs_embeds,
-            prompt_cache=cache, draft_model=None, draft_kind=None,
-            prefill_kwargs=lm_kwargs)
-        if chunked:
-            step = step_size
-        else:
-            # A family that refuses chunking (gemma-4 with images: its vision
-            # blocks attend bidirectionally and must not be split) still gets
-            # the one-token holdback -- the last token is text, so every image
-            # block stays whole inside this single call.
-            step = n_prefill
-            lm_kwargs = _slice_per_token_kwargs(lm_kwargs, n_total, n_prefill)
-
-        done = 0
-        while done < n_prefill:
-            n = min(step, n_prefill - done)
-            # The output is deliberately never evaluated: qwen ignores
-            # logits_to_keep, and evaluating it would materialize a
-            # (1, n, vocab) logits tensor only to drop it. The cache state is
-            # what this call is for.
-            model.language_model(
-                inputs=input_ids[:, done:done + n],
-                inputs_embeds=inputs_embeds[:, done:done + n],
-                cache=cache, n_to_process=n, logits_to_keep=1, **lm_kwargs)
-            mx.eval([c.state for c in cache])
-            mx.clear_cache()
-            done += n
-            if report is not None:
-                report(done, n_total)
-            if abort_event is not None and abort_event.is_set():
-                return False
-    return True
-
 
 class VLMVisionStrategy:
     """Strategy for VLM requests with images.
 
-    Uses the pre-filled cache pattern (inspired by vllm-mlx):
-    1. Prepare inputs via mlx_vlm.utils.prepare_inputs
-    2. Create KV cache for the language model
-    3. Run full VLM forward pass (vision + language), filling the cache
-    4. Sample first token from logits
-    5. Continue generation via generation_core.run_generation()
+    Renders the conversation with its images (``prepare_vlm_inputs``),
+    builds the pixel tensors and the expanded prompt with mlx-vlm's
+    ``prepare_inputs``, and hands the request to ``vlm_engine`` -- the same
+    engine every MLX request runs on, prefix cache included (plan W10).
 
-    Vision feature caching (inspired by mlx-vlm VisionFeatureCache):
-    When a model supports encode_image(), vision encoder outputs are cached
-    by image URL so multi-turn conversations skip the expensive vision tower
-    forward pass on repeated images.
-
-    This gives vision requests the full sampler suite, abort support, and
-    speculative decoding from generation_core -- a single code path for all
-    MLX generation.
+    Vision feature caching: when a model supports encode_image(), vision
+    encoder outputs are cached by the request's image list and reach the
+    embedding step only (``embed_extras``), so a turn with an unchanged image
+    list skips the vision tower.
     """
 
     def __init__(self, model_config=None, template_info=None, model_id=None,
@@ -713,7 +541,6 @@ class VLMVisionStrategy:
         self.model_id = model_id
         self.context_length = context_length  # the provider's, for the over-length guard
         self._batch_vision_processor = None
-        self._cached_wrapper = None
         self._vision_cache = VisionFeatureCache(max_entries=20)
 
     def generate(self, request: ChatRequest, effective_request: dict, model, processor, abort_event: AbortEvent | None = None) -> Generator:
@@ -721,9 +548,8 @@ class VLMVisionStrategy:
         sampler, processors = build_sampler(tokenizer, effective_request)
 
         # Per-request peak-memory scoping, and it has to start HERE: image
-        # encoding and the prefill below are part of this request, and
-        # run_generation deliberately does not reset again for a pre-filled
-        # cache.
+        # encoding is part of this request, so the engine is told not to
+        # reset again (reset_peak=False).
         mx.reset_peak_memory()
 
         # Initialize batch vision processor for parallel image loading
@@ -777,9 +603,7 @@ class VLMVisionStrategy:
             if k not in ("input_ids", "pixel_values", "attention_mask")
         }
 
-        # What the EMBEDDING step takes beside ids/pixels/mask. `mask` goes to
-        # get_input_embeddings only and never to the language model (see
-        # _prefill_language_model); it may be None, as it is upstream.
+        # What the EMBEDDING step takes beside ids/pixels/mask.
         extras = dict(extra_kwargs)
         if input_ids.ndim == 1:
             input_ids = input_ids[None, :]
@@ -955,7 +779,7 @@ class DiffusionStrategy:
             getattr(model.config, 'model_type', 'unknown'),
         )
 
-        # Per-request peak-memory scoping (same contract as run_generation);
+        # Per-request peak-memory scoping (same contract as vlm_engine);
         # the engine reports mx.get_peak_memory() on every chunk.
         mx.reset_peak_memory()
 
@@ -1095,7 +919,6 @@ class MLXProvider(BaseProvider):
         # Derive-at-load (6a): cache_type=None means auto -- resolve from
         # actual weight bytes vs RAM here, BEFORE anything reads the config
         # for cache construction. Explicit values pass through untouched.
-        self.config.update(resolve_cache_config(self.config))
 
         logging.info(f"Loading model with mlx-vlm from: {model_path}")
 
@@ -1115,12 +938,11 @@ class MLXProvider(BaseProvider):
             from .common.stop_tokens import extend_eos_from_generation_config
             extend_eos_from_generation_config(self.get_tokenizer(), model_path)
 
-            # Prime the generation wrapper HERE, where model_path is known:
-            # the mlx-vlm path hands run_generation a raw HF tokenizer, and a
-            # wrapper built without the path takes mlx-lm's naive detokenizer
-            # (quadratic per line, read-only `text` -- see ensure_gen_tokenizer).
-            # mlx-lm loads are already wrapped and pass straight through.
-            # After the eos extension above, so the primed set is the full one.
+            # Prime the detokenizer wrapper HERE, where model_path is known:
+            # streaming_detokenizer hands vlm_engine this wrapper's streaming
+            # detokenizer, and one built without the path takes the naive
+            # detokenizer (quadratic per line, read-only `text` -- see
+            # ensure_gen_tokenizer). After the eos extension above.
             gen_tokenizer = self.get_tokenizer()
             if gen_tokenizer is not None:
                 ensure_gen_tokenizer(gen_tokenizer, model_path)
@@ -1131,7 +953,7 @@ class MLXProvider(BaseProvider):
 
             # The context window, from the ONE resolver the admin row and
             # /v1/models read -- so the ceiling a client is shown is the one
-            # run_generation refuses an over-length prompt against.
+            # vlm_engine refuses an over-length prompt against.
             self.context_length = model_context_length(
                 "mlx", model_path, override=self.config.get("context_length"))
 
@@ -1384,8 +1206,7 @@ class MLXProvider(BaseProvider):
                 model_id=self.model_id, context_length=self.context_length, owner=self)
         # Diffusion handles BOTH its text and vision requests -- the denoising
         # loop takes pixel_values directly, so there is no separate vision
-        # split. 'text' stays registered regardless: warmup resolves its
-        # generation model through UnifiedTextStrategy._get_generation_model.
+        # split.
         if self.is_diffusion:
             self._strategies['diffusion'] = DiffusionStrategy(
                 model_config=self.config, template_info=getattr(self, "_template_info", None))

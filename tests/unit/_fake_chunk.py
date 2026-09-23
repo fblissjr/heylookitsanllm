@@ -1,7 +1,7 @@
-"""Shared fake mlx-lm GenerationResponse chunk builder.
+"""Shared fake engine-chunk builder.
 
-Satisfies the non-slotted attr-bag shape ``run_generation`` /
-``stream_generate`` chunks have, without depending on mlx-lm. Imported via
+A non-slotted attr-bag with the fields ``GenerationChunk.from_engine``
+duck-converts, without depending on an engine. Imported via
 sibling-dir path injection (pytest adds the test file's parent to sys.path),
 same pattern used by ``_mock_provider.py`` for the router tests and
 ``_fake_request.py`` for auth tests.

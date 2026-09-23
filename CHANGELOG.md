@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.87]
+
+### Removed (plan W10 stage 2b: the path 2a replaced)
+
+- The mlx-lm decode loop (`generation_core.run_generation`, `generate_text`),
+  the single-slot prompt cache (`prompt_cache.py`, `cache_helpers.py`), the
+  language-model wrapper (`model_wrappers.py`), the vision prefill handoff
+  (`_prefill_language_model` and its per-token kwargs table), the mRoPE
+  position reset, `DraftTuner`, and the MLX cache-config resolution at load.
+  `generation_core` keeps only the detokenizer wrapper, the continuation
+  seam and the generated-only processor scope.
+- `GET /v1/cache/list` (it listed the old slot; nothing read it) and the
+  `--prompt-cache-bytes` server flag (the prefix cache has its own bounded
+  budget). `POST /v1/cache/clear` stays and now clears each loaded model's
+  prefix cache through its provider.
+- Tests of the deleted internals went with them; the context-length guard
+  and the generated-only penalty test were re-aimed at `vlm_engine`. The
+  MLX mock tree lists only the mlx paths heylook still imports.
+
+### Changed
+
+- An MLX miss says why: `cold` (the model's prefix cache was empty) or
+  `new_image_set` (no stored prefix has this request's image set -- the
+  accepted gap). MLX no longer reports `ineligible`, `trim_refused` or the
+  gate causes. The smoke new-image check keys on `new_image_set`.
+- `memory.py`'s prompt-cache bytes read the loaded models' prefix caches.
+- `scripts/vlm_parity_probe.py` drives the live path against mlx-vlm's own
+  loop (a heylook stop is checked against upstream's next token);
+  `scripts/chain_probe.py` exits 1 only on a mismatch and lists hops that
+  never restored as not exercised.
+- CLAUDE.md: the MLX section describes the engine, not the deleted seam;
+  its gguf template line no longer names `chat_template_kwargs` as the
+  per-request lever (the wire fields are `thinking` and `reasoning_effort`).
+  The MLX KV cache config fields are named as inert, for stage 3 to retire.
+
+### Verification
+
+- Unit and contract suites green; `bun run e2e:chat` green.
+- `tests/smoke` 59/59 on the mlx-vlm arm (Qwen3.5-0.8B) and gguf
+  (`unsloth_Qwen3.8-27B-UD-Q8_K_XL`), the new-image turn reported as the
+  named gap `new_image_set`.
+- `scripts/chain_probe.py`: every hop identical on Qwen3.5-0.8B and
+  gemma-4-26B-A4B; Qwen3.5's edit hop did not restore (it diverges before
+  the earliest kept checkpoint) and re-prefilled correctly.
+- `scripts/vlm_parity_probe.py` on Qwen3.5-0.8B: MATCH on both cases,
+  negative control holds.
+- Smoke check count since v2.0.83 (76 to 59): the mlx-lm arm's 21 checks
+  have no models to run on (reported as an uncovered arm, and exercised by
+  running the text models as the mlx-vlm arm), and 4 checks were added or
+  turned from known-gap skips into passes.
+- `scripts/vendor_frontend.py --check`: marked and dompurify one patch
+  behind upstream, both matching the manifest.
+
 ## [2.0.86]
 
 ### Changed (the MLX engine, plan W10 stage 2a)

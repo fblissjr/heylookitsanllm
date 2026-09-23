@@ -32,9 +32,9 @@ WHAT CAN FOOL IT, and what the report carries so you can tell:
   there is no such excuse left, so expect exact MATCH and read a NEAR-TIE as a
   sign the paths have drifted apart again.
 - heylook stops at its resolved stop set and generate_step does not stop at
-  all. The shared prefix is compared, and when heylook ended early its own LAST
-  token must be a stop token (mlx-lm yields the stop token, then breaks) --
-  ending early on anything else means a token was lost, reported as SHORT.
+  all. The shared prefix is compared, and when heylook ended early, upstream's
+  NEXT token must be a stop token (heylook's engine stops without yielding
+  it) -- ending early anywhere else means a token was lost, reported as SHORT.
 - Position state on the language model survives between requests. The probe
   runs vision after TEXT and vision after VISION in the same process; both must
   agree with upstream.
@@ -120,8 +120,9 @@ def _run(args) -> dict:
     from mlx_vlm.generate.ar import generate_step
 
     from heylook_llm.providers import mlx_provider as mp
-    from heylook_llm.providers.common.generation_core import (
-        _get_generation_stream, ensure_gen_tokenizer)
+    from mlx_vlm.generate.common import generation_stream
+
+    from heylook_llm.providers.common.generation_core import ensure_gen_tokenizer
 
     cfg = _resolve_config(args.model)
     if args.step:
@@ -175,16 +176,17 @@ def _run(args) -> dict:
             margin = float((top2[1] - top2[0]).tolist())
             row["upstream_top1_top2_margin"] = margin
             row["verdict"] = "NEAR-TIE" if margin <= NEAR_TIE_MARGIN else "DIVERGED"
-        elif len(ours) < len(theirs) and ours:
-            # heylook ended first: legitimate only if it ended ON a stop token.
-            row["heylook_ended_on_a_stop"] = ours[-1] in stop_ids
-            row["verdict"] = "MATCH" if ours[-1] in stop_ids else "SHORT"
+        elif len(ours) < len(theirs):
+            # heylook ended first: legitimate only if upstream's NEXT token is
+            # a stop token (heylook's engine stops without yielding it).
+            row["heylook_stopped_at_upstream_stop"] = theirs[len(ours)] in stop_ids
+            row["verdict"] = "MATCH" if theirs[len(ours)] in stop_ids else "SHORT"
         else:
             row["verdict"] = "MATCH" if n else "EMPTY"
         return row
 
     rows = []
-    with mx.stream(_get_generation_stream()):
+    with mx.stream(generation_stream):
         # Text first, so the first vision run inherits whatever position state
         # a text generation leaves on the language model.
         heylook("Say hello in five words.")

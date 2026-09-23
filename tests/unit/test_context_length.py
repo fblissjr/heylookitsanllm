@@ -6,7 +6,7 @@ Claims:
   gguf header, an MLX config.json -- top-level or the nested text block a VLM
   wrapper puts the language head in) and answers None, never a guess, when
   the files do not say or the provider has no chat context.
-- The MLX over-length guard in run_generation refuses a prompt longer than
+- The MLX over-length guard in vlm_engine refuses a prompt longer than
   that number as the CLIENT's error (InvalidGenerationRequest -> 400), before
   any engine work, and stays silent when the number is unknown.
 """
@@ -106,10 +106,13 @@ class TestContextLengthOverride:
 
 class TestOverLengthGuard:
     def _gen(self, prompt_len: int, context_length):
-        from heylook_llm.providers.common.generation_core import run_generation
-        return run_generation(
-            model=None, tokenizer=None, prompt_tokens=[1] * prompt_len,
-            effective_request={}, sampler=None, processors=None,
+        import mlx.core as mx
+
+        from heylook_llm.providers.common import vlm_engine
+        return vlm_engine.generate(
+            model=None, processor=None, apc_manager=None,
+            input_ids=mx.array([[1] * prompt_len]), raw_inputs={},
+            sampler=None, processors=[], stop_tokens=(), max_tokens=4,
             model_id="m", context_length=context_length)
 
     def test_a_prompt_past_the_window_is_the_clients_error(self):

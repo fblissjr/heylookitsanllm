@@ -45,9 +45,6 @@ except ImportError:
     mx_utils = None  # type: ignore[assignment]
     HAS_MLX = False
 
-# Hoisted from inside MemoryManager._prompt_cache_stats -- no circular
-# dependency risk since prompt_cache.py does not import memory.
-from heylook_llm.providers.common.prompt_cache import get_global_cache_manager
 
 
 # Runtime telemetry lives under logs/ (gitignored), NOT internal/log/ (human
@@ -517,11 +514,17 @@ class MemoryManager:
         return record
 
     def _prompt_cache_stats(self) -> dict:
+        """Bytes held by the loaded models' prefix caches (MLX: mlx-vlm's
+        APC resident bytes per model, vlm_engine)."""
+        total = 0
         try:
-            cm = get_global_cache_manager()
-            return {"total_bytes": int(cm.total_cache_bytes)}
+            for provider in (self.router.get_loaded_models() if self.router else {}).values():
+                apc = getattr(provider, "_apc", None)
+                if apc is not None:
+                    total += int(apc.stats_snapshot().get("resident_bytes", 0) or 0)
         except Exception:
             return {"total_bytes": 0}
+        return {"total_bytes": total}
 
     def _vision_cache_stats(self) -> dict:
         combined = {"entries": 0, "bytes": 0, "hits": 0, "misses": 0, "hit_rate": 0.0}

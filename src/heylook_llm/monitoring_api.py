@@ -1,10 +1,9 @@
 # src/heylook_llm/monitoring_api.py
 """Monitoring and discovery routes: system metrics, the performance profile,
-server capabilities, and the prompt-cache list/clear. Split out of api.py in
+server capabilities, and the prompt-cache clear. Split out of api.py in
 v1.79.67; the resource-snapshot loop in api.py shares the metrics collector
 through get_metrics_collector()."""
 import threading
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
@@ -12,12 +11,9 @@ from heylook_llm.auth import require_admin_token
 from heylook_llm.config import (
     CacheClearRequest,
     CacheClearResponse,
-    CacheInfo,
-    CacheListResponse,
     SystemMetricsResponse,
 )
 from heylook_llm.perf_collector import get_perf_collector
-from heylook_llm.providers.common.prompt_cache import get_global_cache_manager
 from heylook_llm.router import ModelRouter
 from heylook_llm.system_metrics import SystemMetricsCollector
 
@@ -183,43 +179,6 @@ async def get_capabilities(request: Request):
     return capabilities
 
 
-@monitoring_router.get("/v1/cache/list",
-    summary="List Saved Prompt Caches",
-    description="""
-List all prompt caches currently in memory.
-
-**Returns:**
-- List of cache entries with model ID and token counts
-- Cache statistics for each loaded model
-
-**Note:** Currently shows in-memory caches only. Persistent storage coming soon.
-    """,
-    response_model=CacheListResponse,
-    response_description="List of cached prompts",
-)
-async def list_caches(request: Request, model: str | None = None):
-    """List all prompt caches, optionally filtered by model."""
-    cache_manager = get_global_cache_manager()
-    cache_info = cache_manager.get_cache_info()
-
-    caches = []
-    for model_id, info in cache_info.items():
-        if model and model_id != model:
-            continue
-
-        caches.append(CacheInfo(
-            cache_id=f"mem-{model_id}",  # In-memory cache ID
-            model=model_id,
-            name=f"Active cache for {model_id}",
-            description="In-memory prompt cache",
-            tokens_cached=info.get("tokens_cached", 0),
-            size_mb=0.0,  # Unknown for in-memory
-            created_at=datetime.now(timezone.utc).isoformat()
-        ))
-
-    return CacheListResponse(caches=caches)
-
-
 @monitoring_router.post("/v1/cache/clear",
     summary="Clear Prompt Caches",
     dependencies=[Depends(require_admin_token)],
@@ -237,18 +196,16 @@ Clear prompt caches for a specific model or all models.
     response_description="Number of caches cleared",
 )
 async def clear_caches(request: Request, body: CacheClearRequest = Body(default=CacheClearRequest())):
-    """Clear prompt caches for a model or all models."""
-    cache_manager = get_global_cache_manager()
-    cache_info = cache_manager.get_cache_info()
-
-    if body.model:
-        # Clear specific model cache
-        if body.model in cache_info:
-            cache_manager.invalidate_cache(body.model)
-            return CacheClearResponse(deleted_count=1)
-        return CacheClearResponse(deleted_count=0)
-    else:
-        # Clear all caches
-        count = len(cache_info)
-        cache_manager.clear_all()
-        return CacheClearResponse(deleted_count=count)
+    """Clear the prefix cache of one loaded model, or of every loaded model.
+    Each provider owns its cache (MLX: mlx-vlm's prefix cache per model), so
+    this asks the providers; a model that is not loaded has no cache."""
+    router: ModelRouter = request.app.state.router_instance
+    loaded = router.get_loaded_models()
+    targets = [body.model] if body.model else list(loaded)
+    count = 0
+    for model_id in targets:
+        provider = loaded.get(model_id)
+        clear = getattr(provider, "clear_cache", None)
+        if clear is not None and clear():
+            count += 1
+    return CacheClearResponse(deleted_count=count)

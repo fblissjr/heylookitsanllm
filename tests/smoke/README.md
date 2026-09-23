@@ -129,9 +129,9 @@ owner decision 2026-09-23), reported as skipped rather than passed. One relation
 the follow-up reuses at least half of what the request before it sent. A fresh
 cache per request reuses nothing, and a template that re-renders a finished
 turn differently sends a checkpointed model back before the history; both fail
-it. A request the engine reports as `ineligible`, or an MLX miss whose cause is
-`trim_refused`, is reported as the known gap W10, not as a pass or a failure;
-since the engine switch (v2.0.86) the MLX path reports neither.
+it. A request the engine reports as `ineligible` is reported as a known gap, not
+as a pass or a failure; the MLX engine (v2.0.86+) never reports one. The
+new-image turn's known gap keys on the engine's own cause, `new_image_set`.
 
 ## Fixtures
 

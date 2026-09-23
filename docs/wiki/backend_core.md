@@ -28,7 +28,7 @@ Route modules in src/heylook_llm/:
 │                                #   admin_ops_router    -> /v1/admin         (model-options, ops)
 ├── config_api.py                # Operational settings: /v1/admin/config
 ├── monitoring_api.py            # /v1/capabilities, /v1/system/metrics,
-│                                # /v1/performance/profile/{time_range}, /v1/cache/*
+│                                # /v1/performance/profile/{time_range}, /v1/cache/clear
 ├── requests_api.py              # Execution cancellation: DELETE /v1/requests/{id}
 ├── telemetry_api.py             # Frontend ingestion: /v1/telemetry/events
 ├── rlm.py                       # Recursive inference (POST /v1/rlm/completions)

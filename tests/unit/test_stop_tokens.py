@@ -101,9 +101,9 @@ class _FakeHfTokenizer:
 
 @pytest.mark.unit
 class TestEnsureGenTokenizer:
-    """run_generation must wrap raw tokenizers itself: mlx-lm's
-    stream_generate auto-wrap uses only the single eos_token_id, silently
-    dropping the extra terminators (gemma-4's <turn|>)."""
+    """The detokenizer wrapper carries the FULL stop set: mlx-lm's own
+    auto-wrap uses only the single eos_token_id, silently dropping the extra
+    terminators (gemma-4's <turn|>)."""
 
     def test_raw_tokenizer_wrapped_with_full_stop_set(self):
         from mlx_lm.tokenizer_utils import TokenizerWrapper

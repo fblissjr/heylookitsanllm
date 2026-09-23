@@ -20,8 +20,7 @@
 #
 # Import discipline: this file imports the REAL mlx_lm / mlx_vlm / heylook_llm.*
 # modules at module level (collection time), matching the precedent set by
-# tests/unit/test_snapshot_thread_affinity.py (which imports
-# heylook_llm.providers.common.cache_helpers unmocked, module-level). This must
+# the other real-MLX tests. This must
 # NEVER go through the mock_mlx / mlx_mocks fixtures -- those replace mlx_lm/mlx_vlm
 # with MagicMocks, which would make every assertion here vacuously true. Because
 # collection happens before any fixture body runs, importing at module level (not
@@ -30,11 +29,9 @@
 # sys.modules afterward.
 #
 # heylook_llm.providers.mlx_provider itself is deliberately NOT imported here (or
-# anywhere unmocked in this suite): it creates a real MLX thread-local stream at
-# module level (`generation_stream = mx.new_thread_local_stream(mx.default_device())`).
-# Its consumption sites are pinned via plain source-text reads instead.
+# anywhere unmocked in this suite); its consumption sites are pinned via plain
+# source-text reads instead.
 
-import dataclasses
 import inspect
 import re
 import sys
@@ -46,18 +43,8 @@ import pytest
 # --- Real mlx_vlm surface -----------------------------------------------------
 from mlx_vlm.utils import prepare_inputs
 from mlx_vlm.prompt_utils import apply_chat_template, MODEL_CONFIG
-from mlx_vlm.models.base import LanguageModelOutput
 from mlx_vlm.models.gemma4 import gemma4 as _gemma4_module
-from mlx_vlm.models.qwen3_5 import language as _qwen3_5_language_module
 
-# --- Real mlx_lm surface -------------------------------------------------------
-from mlx_lm.generate import GenerationResponse
-from mlx_lm.models.cache import KVCache, QuantizedKVCache, RotatingKVCache, make_prompt_cache
-
-# --- Real heylook_llm consumption-side helpers (safe to import unmocked: no
-# Metal/GPU touch at import time, unlike mlx_provider.py itself) -------------
-from heylook_llm.providers.common.model_wrappers import wrap_language_model
-from heylook_llm.providers.common.generation_core import _reset_vlm_positions
 
 
 _SRC_ROOT = Path(__file__).parent.parent.parent / "src" / "heylook_llm"
@@ -288,219 +275,6 @@ class TestEncodeImageCachedFeaturesPattern:
         src = _mlx_provider_source()
         assert "hasattr(model, 'encode_image')" in src
         assert "cached_image_features" in src
-
-
-# ---------------------------------------------------------------------------
-# LanguageModelOutput
-# ---------------------------------------------------------------------------
-
-class TestLanguageModelOutput:
-    """Consumed by providers/common/model_wrappers.py
-    (LanguageModelLogitsWrapper.__call__: getattr(result, 'logits', None)) --
-    the ONE reader since v2.0.55, when VLMVisionStrategy stopped sampling a
-    first token from the full-VLM forward's logits itself. It reads ONLY the
-    .logits field, defensively, so pin that the field exists and is required --
-    not the rest of the dataclass shape."""
-
-    def test_is_dataclass_with_required_logits_field(self):
-        assert dataclasses.is_dataclass(LanguageModelOutput)
-        fields = {f.name: f for f in dataclasses.fields(LanguageModelOutput)}
-        assert "logits" in fields
-        logits_field = fields["logits"]
-        assert logits_field.default is dataclasses.MISSING
-        assert logits_field.default_factory is dataclasses.MISSING
-
-    def test_wrap_language_model_extracts_logits_via_getattr(self):
-        # Real (unmocked) call into our own wrapper -- proves the consumption
-        # site still works against a LanguageModelOutput-shaped result, not
-        # just that the library dataclass shape is unchanged.
-        class _FakeLanguageModel:
-            def __call__(self, *args, **kwargs):
-                return LanguageModelOutput(logits="LOGITS_SENTINEL")
-
-        class _FakeVLM:
-            language_model = _FakeLanguageModel()
-
-        wrapper = wrap_language_model(_FakeVLM())
-        assert wrapper(1, 2, foo="bar") == "LOGITS_SENTINEL"
-
-
-# ---------------------------------------------------------------------------
-# The prefill loop VLMVisionStrategy mirrors
-# ---------------------------------------------------------------------------
-
-class TestChunkedPrefillSurface:
-    """`mlx_provider._prefill_language_model` follows mlx-vlm's OWN loop
-    (`generate/ar.py`): embed once, then call `model.language_model` over
-    embedding slices, gated by the library's chunk policy. Two of the pieces it
-    leans on are upstream-PRIVATE (`_chunked_prefill_enabled`, the
-    `n_to_process` kwarg), on a SHA pin that moves. These make a pin bump that
-    breaks the contract fail HERE, by name, rather than as a TypeError inside
-    the first image request.
-
-    Whether the loop then produces the right tokens is not a surface question:
-    that is `scripts/vlm_parity_probe.py`, on a real model."""
-
-    def test_the_chunk_gate_takes_the_keywords_we_pass(self):
-        from mlx_vlm.generate.common import DEFAULT_PREFILL_STEP_SIZE, _chunked_prefill_enabled
-
-        params = inspect.signature(_chunked_prefill_enabled).parameters
-        for name in ("input_ids", "inputs_embeds", "prompt_cache",
-                     "draft_model", "draft_kind", "prefill_kwargs"):
-            assert params[name].kind is inspect.Parameter.KEYWORD_ONLY, name
-        assert isinstance(DEFAULT_PREFILL_STEP_SIZE, int)
-
-    def test_the_gate_asks_the_model_and_defaults_to_chunking(self):
-        from mlx_vlm.generate.common import _chunked_prefill_enabled
-
-        class _Refuses:
-            def chunked_prefill_policy(self, **kwargs):
-                return False
-
-        assert _chunked_prefill_enabled(_Refuses()) is False
-        assert _chunked_prefill_enabled(object()) is True
-
-    @pytest.mark.parametrize("module", [_qwen3_5_language_module,
-                                        "mlx_vlm.models.qwen3_vl.language"])
-    def test_language_models_take_embeddings_and_swallow_the_rest(self, module):
-        import importlib
-        if isinstance(module, str):
-            module = importlib.import_module(module)
-        params = inspect.signature(module.LanguageModel.__call__).parameters
-        assert {"inputs", "inputs_embeds", "cache"} <= set(params)
-        # `n_to_process`, `logits_to_keep` and every data kwarg ride **kwargs;
-        # a family that stopped accepting them would reject the prefill call.
-        assert any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
-
-    def test_embedding_features_expose_their_extras(self):
-        from mlx_vlm.models.base import InputEmbeddingsFeatures
-
-        features = InputEmbeddingsFeatures(inputs_embeds="E")
-        assert features.inputs_embeds == "E"
-        assert "inputs_embeds" in features.to_dict()
-
-
-# ---------------------------------------------------------------------------
-# _position_ids / _rope_deltas mRoPE attribute convention
-# ---------------------------------------------------------------------------
-
-class TestPositionIdsRopeDeltasConvention:
-    """Consumed at providers/common/generation_core.py:35-55
-    (_reset_vlm_positions): Qwen3.5-style VLM language models cache
-    `_position_ids`/`_rope_deltas` as plain instance attributes (no public
-    accessor -- this is a private, dynamically-set convention with no type
-    contract), and generation_core resets them to None between fresh
-    generations to prevent stale mRoPE broadcast-shape mismatches."""
-
-    def test_qwen3_5_language_model_still_sets_both_attributes(self):
-        # Static source pin -- constructing a real LanguageModel needs a full
-        # ModelArgs config graph, out of scope for an inspect-level test.
-        src = inspect.getsource(_qwen3_5_language_module.LanguageModel.__init__)
-        assert "_position_ids" in src
-        assert "_rope_deltas" in src
-
-    def test_reset_vlm_positions_clears_both_attrs_on_language_model(self):
-        # Real (unmocked) call into our own reset function against the exact
-        # attribute convention above.
-        class _FakeLanguageModel:
-            def __init__(self):
-                self._position_ids = "stale_positions"
-                self._rope_deltas = "stale_deltas"
-
-        class _FakeWrappedVLM:
-            def __init__(self):
-                self.language_model = _FakeLanguageModel()
-
-        wrapped = _FakeWrappedVLM()
-        _reset_vlm_positions(wrapped)
-        assert wrapped.language_model._position_ids is None
-        assert wrapped.language_model._rope_deltas is None
-
-
-# ---------------------------------------------------------------------------
-# mlx-lm private-API touchpoints
-# ---------------------------------------------------------------------------
-
-
-
-class TestCacheClasses:
-    """Consumed at src/heylook_llm/providers/mlx_provider.py:15
-    (`from mlx_lm.models.cache import make_prompt_cache`) and
-    providers/common/cache_helpers.py:19
-    (`from mlx_lm.models.cache import KVCache, QuantizedKVCache, RotatingKVCache`).
-    prompt_cache._restore_layers relies on every cache class exposing a
-    settable `.state` property."""
-
-    @pytest.mark.parametrize("cache_factory", [
-        lambda: KVCache(),
-        lambda: QuantizedKVCache(),
-        lambda: RotatingKVCache(max_size=8),
-    ])
-    def test_cache_class_exposes_settable_state(self, cache_factory):
-        cache = cache_factory()
-        state_prop = type(cache).state
-        assert isinstance(state_prop, property)
-        assert state_prop.fset is not None, (
-            "prompt_cache._restore_layers does `layer.state = state` -- the "
-            "property must stay settable"
-        )
-
-    def test_make_prompt_cache_signature_and_shape(self):
-        sig = inspect.signature(make_prompt_cache)
-        assert "model" in sig.parameters
-        assert "max_kv_size" in sig.parameters
-
-        # Real (unmocked) call: a bare object with .layers (no make_cache
-        # override) must fall back to plain KVCache per layer -- the branch
-        # mlx_provider.py:438 (make_prompt_cache(self._cached_wrapper)) hits,
-        # since LanguageModelLogitsWrapper has no make_cache method.
-        class _FakeModel:
-            layers = [object(), object(), object()]
-
-        cache = make_prompt_cache(_FakeModel())
-        assert len(cache) == 3
-        assert all(isinstance(c, KVCache) for c in cache)
-
-
-# ---------------------------------------------------------------------------
-# mlx_lm.generate.GenerationResponse
-# ---------------------------------------------------------------------------
-
-class TestGenerationResponse:
-    """Since 7a the SOLE consumer of GenerationResponse is
-    GenerationChunk.from_engine (providers/base.py) at the run_generation
-    boundary, plus generation_core's direct reads of response.token /
-    response.from_draft. Fields pinned here are the ones from_engine getattrs
-    -- if upstream renames one, from_engine silently falls to defaults and
-    telemetry goes dark, so this pin must fail first. (The old
-    "must stay non-slotted for runtime attr-patching" pin was deleted with
-    the attr-patch mechanism itself; from_engine only reads.)"""
-
-    EXPECTED_FIELDS = {
-        # `logprobs` was pinned here until 2026-09-06. from_engine stopped
-        # reading it when logprobs went with the token explorer (v1.79.74), so
-        # the pin guarded a field nothing consumes -- an upstream removal would
-        # have gone red for something heylook no longer wants.
-        "text", "token", "from_draft", "prompt_tokens", "prompt_tps",
-        "generation_tokens", "generation_tps", "peak_memory", "finish_reason",
-    }
-
-    def test_has_exactly_the_consumed_fields(self):
-        actual = {f.name for f in dataclasses.fields(GenerationResponse)}
-        missing = self.EXPECTED_FIELDS - actual
-        assert not missing, f"GenerationResponse dropped fields: {missing}"
-
-    def test_our_consumption_sites_still_read_documented_fields(self):
-        # Source-text pin: generation_core reads response.token /
-        # response.from_draft directly and converts everything else via
-        # GenerationChunk.from_engine at the yield boundary.
-        gen_core_src = (
-            Path(__file__).parent.parent.parent
-            / "src" / "heylook_llm" / "providers" / "common" / "generation_core.py"
-        ).read_text()
-        assert "response.token" in gen_core_src
-        assert "response.from_draft" in gen_core_src
-        assert "GenerationChunk.from_engine(response)" in gen_core_src
 
 
 class TestVlmEngineSurface:

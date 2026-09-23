@@ -75,14 +75,30 @@ def semantic_hash(raw_inputs: dict, model, processor) -> int:
         model=model.language_model, processor=processor)
 
 
-def cache_report(prompt_tokens: int, cached_tokens: Optional[int]) -> Optional[CacheReport]:
+def cache_report(prompt_tokens: int, cached_tokens: Optional[int], *,
+                 cold: bool = False, has_media: bool = False) -> Optional[CacheReport]:
     """The request's CacheReport from APC's cached count (whole-prompt
-    normalized like every engine). None when APC reported nothing."""
+    normalized like every engine). None when APC reported nothing.
+
+    A miss says why when the engine can know: ``cold`` (the model's prefix
+    cache held nothing when the request started), or ``new_image_set`` (the
+    request carries images and no stored prefix has its image set -- APC
+    keys a request's images as ONE hash, so a turn that adds an image starts
+    over; an accepted gap, internal/claude/w10/apc_new_image_turns.md)."""
     if cached_tokens is None:
         return None
     cached = max(0, min(int(cached_tokens), prompt_tokens))
     if cached:
         return CacheReport(prompt_tokens=prompt_tokens, cached_tokens=cached, outcome="reused")
+    if cold:
+        return CacheReport(prompt_tokens=prompt_tokens, cached_tokens=0, outcome="miss",
+                           cause="cold", reason="this model's prefix cache was empty")
+    if has_media:
+        return CacheReport(prompt_tokens=prompt_tokens, cached_tokens=0, outcome="miss",
+                           cause="new_image_set",
+                           reason=("no stored prefix has this request's image set: the "
+                                   "prefix cache keys a request's images as one hash, so "
+                                   "a turn that adds an image starts over"))
     return CacheReport(prompt_tokens=prompt_tokens, cached_tokens=0, outcome="miss",
                        reason="no stored prefix matched this prompt")
 
@@ -171,6 +187,13 @@ def generate(
     bg = BatchGenerator(model.language_model, processor, **bg_kwargs)
     detok = None
     try:
+        cold = False
+        if apc_manager is not None:
+            try:
+                cold = not apc_manager.stats_snapshot().get("resident_bytes")
+            except Exception:  # noqa: BLE001 - a report detail, never a failure
+                cold = False
+        has_media = raw_inputs.get("pixel_values") is not None
         if bg.apc is not None:
             bg.apc.prepare_prefill(n, prefill_step_size=bg.prefill_step_size)
         embed = model.get_input_embeddings(
@@ -203,7 +226,7 @@ def generate(
             for pr in prompt_responses:
                 if pr.uid == uid:
                     cached = int(getattr(pr, "cached_tokens", 0) or 0)
-                    cache_rep = cache_report(n, cached)
+                    cache_rep = cache_report(n, cached, cold=cold, has_media=has_media)
                     prefill_done_at = time.perf_counter()
             if prefill_done_at is None and report_progress is not None:
                 progress = prefill_progress(getattr(bg, "_prompt_batch", None), n, cached)

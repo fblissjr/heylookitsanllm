@@ -18,31 +18,6 @@ from helpers.mlx_mock import create_mock_model, create_mock_processor, create_mo
 
 
 @pytest.mark.unit
-class TestGenerationStreamThreadLocal:
-    """The module-level generation stream must be thread-local.
-
-    Generation runs on FastAPI's thread pool (asyncio.to_thread /
-    run_in_executor), not the import thread. MLX streams are thread-local:
-    a stream from mx.new_stream() is bound to the thread that created it, so
-    synchronizing it from a pool worker raises
-    'There is no Stream(gpu, 0) in current thread.' -- every VLM/text request
-    fails. mx.new_thread_local_stream() materializes the stream per-thread
-    (this is what mlx_lm.generate uses), so it is valid on any worker.
-    """
-
-    def test_module_uses_thread_local_stream(self, mock_mlx):  # noqa: ARG002
-        # Force a fresh import so module-level stream creation runs under the mock.
-        mx = sys.modules["mlx.core"]
-        mx.new_thread_local_stream.reset_mock()  # ignore any earlier import
-        mx.new_stream.reset_mock()
-        sys.modules.pop("heylook_llm.providers.mlx_provider", None)
-        importlib.import_module("heylook_llm.providers.mlx_provider")
-
-        mx.new_thread_local_stream.assert_called_once_with(mx.default_device.return_value)
-        mx.new_stream.assert_not_called()
-
-
-@pytest.mark.unit
 class TestMLXProviderInit:
     def test_init_sets_model_id(self, mock_mlx_provider):
         assert mock_mlx_provider.model_id == "test-model"
@@ -1006,35 +981,3 @@ class TestNoContentCache:
         # Call twice -- should work fine without cache
         assert mock_mlx_provider._detect_images_optimized(messages) is False
         assert mock_mlx_provider._detect_images_optimized(messages) is False
-
-
-@pytest.mark.unit
-class TestUnifiedTextStrategy:
-    """Verify UnifiedTextStrategy for both text-only and VLM text paths."""
-
-    def test_cached_wrapper_none_initially(self, mock_mlx):  # noqa: ARG001
-        from heylook_llm.providers.mlx_provider import UnifiedTextStrategy
-        strategy = UnifiedTextStrategy(draft_model=None, model_id="test-vlm", is_vlm=True)
-        assert strategy._cached_wrapper is None  # None until generate() called
-
-    def test_has_cache_manager(self, mock_mlx):  # noqa: ARG001
-        from heylook_llm.providers.mlx_provider import UnifiedTextStrategy
-        strategy = UnifiedTextStrategy(draft_model=None, model_id="test-vlm")
-        assert strategy.cache_manager is not None
-
-    def test_no_cached_generator(self, mock_mlx):  # noqa: ARG001
-        """UnifiedTextStrategy should not have _cached_generator (only VLMVisionStrategy uses it)."""
-        from heylook_llm.providers.mlx_provider import UnifiedTextStrategy
-        strategy = UnifiedTextStrategy(draft_model=None, model_id="test-vlm")
-        assert not hasattr(strategy, '_cached_generator')
-
-    def test_text_only_mode(self, mock_mlx):  # noqa: ARG001
-        from heylook_llm.providers.mlx_provider import UnifiedTextStrategy
-        strategy = UnifiedTextStrategy(draft_model=None, model_id="test", is_vlm=False)
-        assert strategy.is_vlm is False
-        assert strategy._cached_wrapper is None
-
-    def test_vlm_mode(self, mock_mlx):  # noqa: ARG001
-        from heylook_llm.providers.mlx_provider import UnifiedTextStrategy
-        strategy = UnifiedTextStrategy(draft_model=None, model_id="test", is_vlm=True)
-        assert strategy.is_vlm is True

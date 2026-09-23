@@ -249,8 +249,7 @@ class TestMLXModelConfigValidation:
             assert MLXModelConfig(**self.BASE, kv_group_size=good).kv_group_size == good
 
     def test_rotating_cache_requires_max_kv_size(self):
-        # Previously validated fine and raised at first generation
-        # (cache_helpers.make_cache).
+        # Inert on the mlx-vlm engine; retired in plan W10 stage 3.
         with pytest.raises(ValidationError):
             MLXModelConfig(**self.BASE, cache_type="rotating")
         cfg = MLXModelConfig(**self.BASE, cache_type="rotating", max_kv_size=4096)

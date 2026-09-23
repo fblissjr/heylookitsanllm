@@ -659,10 +659,8 @@ def cache_reuse_checks(server, r, arm, model_id, caps):
 
     def judge(name, first, second):
         cache = ((second or {}).get("performance") or {}).get("cache") or {}
-        # trim_refused: a sliding-window or recurrent MLX model cannot cut its
-        # stored cache where the follow-up diverges -- the checkpoints W10 adds.
-        if cache.get("outcome") == "ineligible" or cache.get("cause") == "trim_refused":
-            r.skip(name, f"known gap: W10 ({cache.get('cause') or cache.get('reason')})")
+        if cache.get("outcome") == "ineligible":
+            r.skip(name, f"known gap ({cache.get('cause') or cache.get('reason')})")
             return
         cached = ((second or {}).get("usage") or {}).get("cache_read_input_tokens")
         if cached is None:
@@ -712,16 +710,17 @@ def cache_reuse_checks(server, r, arm, model_id, caps):
         judge(f"{arm}: an image conversation reuses its history", i1, i2)
     # A turn that ADDS an image. On MLX, mlx-vlm's prefix cache keys a
     # request's images as ONE hash, so a new image changes every key and
-    # the turn re-prefills (owner decision 2026-09-23: accepted, recorded in
+    # the turn re-prefills; the engine reports it as cause `new_image_set`
+    # (owner decision 2026-09-23: accepted, recorded in
     # internal/claude/w10/apc_new_image_turns.md). gguf reuses here.
     st_3, i3 = ask(history + [{"role": "user", "content": [
         {"type": "text", "text": "And this one?"}, image(_png(48, 48))]}])
     name = f"{arm}: a new-image turn reuses the history"
     if st_3 != 200:
         r.fail(name, f"answered {st_3}")
-    elif arm != "gguf" and not ((i3 or {}).get("usage") or {}).get("cache_read_input_tokens"):
-        r.skip(name, "known gap: the MLX prefix cache keys a request's images as one hash, "
-                     "so a turn that adds an image re-prefills")
+    elif (((i3 or {}).get("performance") or {}).get("cache") or {}).get("cause") == "new_image_set":
+        r.skip(name, "known gap (new_image_set): the MLX prefix cache keys a request's "
+                     "images as one hash, so a turn that adds an image re-prefills")
     else:
         judge(name, i1, i3)
 
@@ -802,10 +801,10 @@ def arm_checks(server, r, arm, model_id, load_timeout):
                 "no assistant content" if conv is not None else "the run never went idle")
 
         # -- an image's tokens are actually COUNTED ---------------------------
-        # The vision path prefills the whole expanded prompt in ONE forward and
-        # then hands run_generation a one-token continuation seed, so mlx-lm's
-        # own `prompt.size` describes the seed, not the prompt. Every vision
-        # request reported input_tokens=1 until v2.0.47.
+        # An image is one placeholder in the text render but hundreds of
+        # positions in input_ids. The old vision path handed mlx-lm a
+        # one-token seed after its own prefill, and every vision request
+        # reported input_tokens=1 until v2.0.47.
         #
         # SELF-CALIBRATING on purpose: the same text, with and without the
         # image, and the image arm must be HIGHER. A fixed threshold would need

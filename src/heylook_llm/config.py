@@ -243,13 +243,11 @@ def _extra(field) -> dict:
 # applies. A hand-maintained table of the same facts is this repo's named
 # defect class; do not write one.
 #
-# WHAT THE TAG CANNOT SAY. It is per-ENGINE, and some fields are inert
-# per-ARCHITECTURE within an engine -- the KV cache knobs are swallowed
-# whole by `cache_helpers.create_kv_cache`'s `hasattr(model, "make_cache")`
-# early return, silently, for every architecture defining one (qwen3_5,
-# gemma3, the mamba family...). A tag listing both MLX engines is true and
-# still not the whole answer there, so those fields say it in their own
-# ``description``. When you add a field, ask both questions.
+# WHAT THE TAG CANNOT SAY. It is per-ENGINE, and a field can be inert on
+# the engine it names: since v2.0.86 the MLX KV cache knobs (cache_type,
+# kv_bits, kv_group_size, max_kv_size, quantized_kv_start) reach nothing --
+# vlm_engine builds mlx-vlm's own caches and passes none of them. Plan W10
+# stage 3 retires them. When you add a field, ask both questions.
 ENGINE_MLX_LM = "mlx-lm"
 ENGINE_MLX_VLM = "mlx-vlm"
 ENGINE_GGUF = "gguf"
@@ -446,7 +444,7 @@ class MLXModelConfig(BaseModel):
     # None = read the file (capabilities.model_context_length: top-level
     # max_position_embeddings, then the nested text block). A YaRN-scaled
     # checkpoint often ships the ORIGINAL value with the factor in
-    # rope_scaling, and the file value alone makes run_generation refuse a
+    # rope_scaling, and the file value alone makes vlm_engine refuse a
     # prompt the model takes; this is the per-model answer. requires_reload:
     # the provider reads it ONCE at load into MLXProvider.context_length, the
     # number the over-length guard and the admin row both report. MLX only --
@@ -764,9 +762,9 @@ class MLXModelConfig(BaseModel):
 
     @model_validator(mode="after")
     def _rotating_requires_max_kv_size(self):
-        # Enforced here because cache_helpers.make_cache raises for this at
-        # FIRST GENERATION -- a config that is guaranteed to fail must not
-        # validate cleanly at load/import time.
+        # A config the old slot cache would have refused at first generation.
+        # Inert on the mlx-vlm engine (v2.0.86); retired with the KV cache
+        # knobs in plan W10 stage 3.
         if self.cache_type == "rotating" and self.max_kv_size is None:
             raise ValueError("cache_type='rotating' requires max_kv_size")
         return self
@@ -1679,22 +1677,6 @@ class SystemMetricsResponse(BaseModel):
 # =============================================================================
 # Cache Management Models
 # =============================================================================
-
-class CacheInfo(BaseModel):
-    """Information about a saved prompt cache."""
-    cache_id: str = Field(..., description="Unique cache identifier")
-    model: str = Field(..., description="Model ID this cache belongs to")
-    name: str = Field(..., description="User-friendly cache name")
-    description: Optional[str] = Field(default=None, description="Optional description")
-    tokens_cached: int = Field(..., description="Number of tokens in cache")
-    size_mb: float = Field(..., description="Cache file size in MB")
-    created_at: str = Field(..., description="ISO timestamp of creation")
-
-
-class CacheListResponse(BaseModel):
-    """Response for listing saved caches."""
-    caches: List[CacheInfo] = Field(default_factory=list)
-
 
 class CacheClearRequest(BaseModel):
     """Request to clear caches."""

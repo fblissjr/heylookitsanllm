@@ -14,8 +14,8 @@ Hops: extends (multi-turn), then one edit (diverges mid-history -> trim).
 Only a CHAIN discriminates: single-hop restores have passed on models whose
 chained restores were broken. Greedy is right here and nowhere else: this is
 a text EQUALITY check, not a throughput measurement. A restored run that
-reports anything but `reused` is printed as such -- a hop that never
-restored proves nothing about the restore.
+reports anything but `reused` is listed as NOT EXERCISED -- a hop that never
+restored proves nothing about the restore -- and only a mismatch exits 1.
 
   uv run python scripts/chain_probe.py --server http://127.0.0.1:8991 --model ID
 
@@ -88,7 +88,13 @@ for h in hops:
     print(f"{h['hop']:9} match={h['match']} restored={rc.get('outcome')} cause={rc.get('cause')} "
           f"cached={rc.get('cached_tokens')}/{rc.get('prompt_tokens')}")
 print("wrote", path)
-bad = [h["hop"] for h in hops if not h["match"] or (h["restored_cache"] or {}).get("outcome") != "reused"]
-if bad:
-    print("NOT PROVEN / MISMATCH:", ", ".join(bad))
+# A hop that never restored proves nothing about the restore; say so, but
+# only a MISMATCH is a failure (a checkpoint model legitimately re-prefills
+# an edit that diverges before its earliest kept checkpoint).
+unexercised = [h["hop"] for h in hops if (h["restored_cache"] or {}).get("outcome") != "reused"]
+if unexercised:
+    print("NOT EXERCISED (no restore happened):", ", ".join(unexercised))
+mismatch = [h["hop"] for h in hops if not h["match"]]
+if mismatch:
+    print("MISMATCH:", ", ".join(mismatch))
     raise SystemExit(1)

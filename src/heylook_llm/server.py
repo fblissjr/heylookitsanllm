@@ -175,12 +175,6 @@ def main():
         default=None,
         help="Optional ID of a model to load on startup.",
     )
-    parser.add_argument(
-        "--prompt-cache-bytes",
-        type=str,
-        default=None,
-        help="Max prompt cache memory (e.g. '2G', '512M'). Default: unlimited.",
-    )
 
     args = parser.parse_args()
 
@@ -267,23 +261,6 @@ def main():
             f"Set wired memory limit: {wired_limit / (1024**3):.1f} GB "
             f"(max recommended working set)"
         )
-
-    # Configure prompt cache byte budget if specified
-    if args.prompt_cache_bytes:
-        from heylook_llm.providers.common.prompt_cache import get_global_cache_manager
-
-        def _parse_size(s: str) -> int:
-            """Parse size string like '2G', '512M', '1024K' to bytes."""
-            s = s.strip().upper()
-            multipliers = {'K': 1024, 'M': 1024**2, 'G': 1024**3, 'T': 1024**4}
-            if s[-1] in multipliers:
-                return int(float(s[:-1]) * multipliers[s[-1]])
-            return int(s)
-
-        cache_bytes = _parse_size(args.prompt_cache_bytes)
-        mgr = get_global_cache_manager()
-        mgr.set_byte_budget(cache_bytes)
-        logging.info(f"Prompt cache byte budget: {cache_bytes / (1024**3):.2f} GB")
 
     # Log all optimization statuses
     from heylook_llm.optimizations.status import log_all_optimization_status

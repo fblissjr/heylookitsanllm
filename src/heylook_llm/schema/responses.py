@@ -61,8 +61,7 @@ class CacheInfo(BaseModel):
                     "request could not reuse (reason says why)")
     cause: Optional[str] = Field(
         default=None,
-        description="Machine-readable why, when known: config | draft | mrope | "
-                    "vision_path (MLX gates); cold | no_common_prefix | trim_refused "
+        description="Machine-readable why, when known: cold | new_image_set "
                     "(an MLX miss); cold | no_common_prefix | "
                     "probable_template_diverged | probable_budget_skipped | "
                     "probable_evicted (gguf). probable_* is inferred by heylook, "

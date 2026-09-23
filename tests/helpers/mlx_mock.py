@@ -59,8 +59,7 @@ def create_mlx_module_mocks() -> dict:
 
     Covers:
     - mlx, mlx.core, mlx.nn
-    - mlx_lm (utils, generate, sample_utils, tokenizer_utils, models,
-      models.cache)
+    - mlx_lm (sample_utils, tokenizer_utils)
     - mlx_vlm (utils, generate, prompt_utils)
     - PIL / PIL.Image
     - transformers (PreTrainedTokenizer)
@@ -75,10 +74,6 @@ def create_mlx_module_mocks() -> dict:
 
     # mlx_lm tree
     mock_mlx_lm = MagicMock()
-    mock_mlx_lm.utils = MagicMock()
-    mock_mlx_lm.generate = MagicMock()
-    mock_mlx_lm.generate.stream_generate = MagicMock()
-    mock_mlx_lm.generate.wired_limit = MagicMock()
     mock_mlx_lm.sample_utils = MagicMock()
     mock_mlx_lm.sample_utils.make_sampler = MagicMock()
     mock_mlx_lm.sample_utils.make_logits_processors = MagicMock(return_value=[])
@@ -94,13 +89,6 @@ def create_mlx_module_mocks() -> dict:
         pass
 
     mock_mlx_lm.tokenizer_utils.TokenizerWrapper = _FakeTokenizerWrapper
-    mock_mlx_lm.models = MagicMock()
-    mock_mlx_lm.models.cache = MagicMock()
-    mock_mlx_lm.models.cache.KVCache = MagicMock()
-    mock_mlx_lm.models.cache.QuantizedKVCache = MagicMock()
-    mock_mlx_lm.models.cache.RotatingKVCache = MagicMock()
-    mock_mlx_lm.models.cache.trim_prompt_cache = MagicMock()
-    mock_mlx_lm.models.cache.can_trim_prompt_cache = MagicMock(return_value=False)
 
     # mlx_vlm tree
     mock_mlx_vlm = MagicMock()
@@ -121,12 +109,8 @@ def create_mlx_module_mocks() -> dict:
         "mlx.nn": mock_mx.nn,
         # mlx_lm
         "mlx_lm": mock_mlx_lm,
-        "mlx_lm.utils": mock_mlx_lm.utils,
-        "mlx_lm.generate": mock_mlx_lm.generate,
         "mlx_lm.sample_utils": mock_mlx_lm.sample_utils,
         "mlx_lm.tokenizer_utils": mock_mlx_lm.tokenizer_utils,
-        "mlx_lm.models": mock_mlx_lm.models,
-        "mlx_lm.models.cache": mock_mlx_lm.models.cache,
         # mlx_vlm
         "mlx_vlm": mock_mlx_vlm,
         "mlx_vlm.utils": mock_mlx_vlm.utils,

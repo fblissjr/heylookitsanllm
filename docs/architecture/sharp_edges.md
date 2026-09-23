@@ -90,7 +90,11 @@ about the model.
 provider and is deliberately a different name for a different mechanism. All
 of the gguf template settings are `requires_reload` because llama-server takes
 the template at spawn, which is also why no per-request or per-preset form
-exists (the per-request lever is `chat_template_kwargs`).
+exists. The per-request levers are the wire fields `thinking` and
+`reasoning_effort`, which the provider forwards to llama-server as
+`chat_template_kwargs`. That name itself was never a `/v1/messages` field:
+pydantic dropped it silently, a heylook harness sent it for weeks without
+ever turning thinking off, and since v2.0.86 the route refuses it (422).
 
 Publishers differ on the same weights, and it is not cosmetic (measured live
 on Qwen3.8-27B, both templates, 2026-08-17): ggml-org embeds Qwen's official
@@ -1264,8 +1268,9 @@ per-image key is part of W10 of
 [plan_runtime_visibility.md](../project/plan_runtime_visibility.md).
 
 Since v2.0.86 the live MLX path is mlx-vlm's engine and its prefix cache
-(APC), not the slot (plan W10, A2; the slot and its handoff stay as dead code
-until stage 2b deletes them). Three traps the switch found, each silent:
+(APC), not the slot (plan W10, A2; the slot, the mlx-lm decode loop and the
+vision prefill handoff were deleted in v2.0.87). Three traps the switch
+found, each silent:
 - **The APC salt.** Left to `BatchGenerator`, it folds in a hash of the whole
   prompt's `inputs_embeds`, so no two different prompts ever share a block or
   checkpoint and every follow-up misses with nothing in the logs. mlx-vlm's

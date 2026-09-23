@@ -231,32 +231,3 @@ class TestKeepaliveMarker:
 # ---------------------------------------------------------------------------
 # PromptCacheManager byte budget integration tests
 # ---------------------------------------------------------------------------
-
-class TestPromptCacheManagerByteBudget:
-    def test_enforce_with_no_budget(self):
-        from heylook_llm.providers.common.prompt_cache import PromptCacheManager
-        mgr = PromptCacheManager(max_cache_bytes=None)
-        # Should not raise
-        mgr.enforce_byte_budget()
-
-    def test_total_cache_bytes_empty(self):
-        from heylook_llm.providers.common.prompt_cache import PromptCacheManager
-        mgr = PromptCacheManager()
-        assert mgr.total_cache_bytes == 0
-
-    def test_cache_info_shape(self):
-        """get_cache_info carries tokens_cached (api.py reads it) + slot stats."""
-        from heylook_llm.providers.common.prompt_cache import PromptCacheManager
-
-        mgr = PromptCacheManager()
-        mock_model = MagicMock()
-        mock_model.layers = [MagicMock() for _ in range(2)]
-        mock_model.make_cache.return_value = [MagicMock() for _ in range(2)]
-
-        mgr.get_or_create_cache("test-model", mock_model)
-        info = mgr.get_cache_info()
-
-        assert "test-model" in info
-        assert info["test-model"]["tokens_cached"] == 0
-        assert info["test-model"]["slot_bytes"] == 0
-        assert info["test-model"]["slot_tokens"] == 0

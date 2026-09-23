@@ -16,7 +16,6 @@ dir yields the standard cache, never an exception at load.
 import pytest
 
 from heylook_llm.cache_defaults import (
-    resolve_cache_config,
     smart_cache_defaults,
     weights_size_gb,
 )
@@ -47,36 +46,3 @@ class TestWeightsSize:
 
     def test_missing_dir_is_zero(self):
         assert weights_size_gb("/nonexistent/nowhere") == 0.0
-
-
-@pytest.mark.unit
-class TestResolveCacheConfig:
-    def test_auto_resolves_from_weights(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(
-            "heylook_llm.cache_defaults._system_ram_gb", lambda: 64.0)
-        monkeypatch.setattr(
-            "heylook_llm.cache_defaults.weights_size_gb", lambda p: 30.0)
-        config = {"model_path": str(tmp_path), "cache_type": None}
-        updates = resolve_cache_config(config)
-        assert updates["cache_type"] == "quantized"
-        assert updates["kv_bits"] == 8
-
-    def test_explicit_cache_type_untouched(self):
-        config = {"model_path": "/x", "cache_type": "standard"}
-        assert resolve_cache_config(config) == {}
-
-    def test_explicit_kv_bits_survive_auto(self, monkeypatch):
-        # Operator pinned kv_bits but left cache_type auto: auto may pick the
-        # cache TYPE but must not stomp the pinned knob.
-        monkeypatch.setattr(
-            "heylook_llm.cache_defaults._system_ram_gb", lambda: 64.0)
-        monkeypatch.setattr(
-            "heylook_llm.cache_defaults.weights_size_gb", lambda p: 30.0)
-        config = {"model_path": "/x", "cache_type": None, "kv_bits": 4}
-        updates = resolve_cache_config(config)
-        assert updates["cache_type"] == "quantized"
-        assert "kv_bits" not in updates  # pinned value wins
-
-    def test_missing_dir_falls_back_standard(self):
-        config = {"model_path": "/nonexistent/nowhere", "cache_type": None}
-        assert resolve_cache_config(config) == {"cache_type": "standard"}
