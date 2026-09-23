@@ -168,6 +168,13 @@ class MockRouter:
             "requests_active": 0 if loaded else None,
         }
 
+    # The lifespan warms the real router's row facts in a background thread;
+    # a stand-in has no caches worth warming.
+    warm_model_facts_on_load = False
+
+    def warm_model_facts(self):
+        pass
+
     def pin_model(self, model_id):
         pass
 

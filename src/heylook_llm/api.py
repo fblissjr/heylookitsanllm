@@ -95,6 +95,11 @@ async def lifespan(app: FastAPI):
     # and skip the record even when telemetry is enabled.
     memory_manager.log_startup_info()
 
+    # Warm the model-list derivation off the request path (router.py,
+    # warm_model_facts), now and after every config reload.
+    router.warm_model_facts_on_load = True
+    router.warm_model_facts()
+
     yield
 
     # Reap child processes FIRST and in its own try: the gguf provider's

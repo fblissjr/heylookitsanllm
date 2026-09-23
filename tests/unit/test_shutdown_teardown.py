@@ -31,6 +31,9 @@ class _FakeRouter:
     def unload_all(self):
         self.unload_all_calls += 1
 
+    def warm_model_facts(self):
+        """The lifespan warms row facts at startup; nothing to warm here."""
+
 
 class _FakeDB:
     def __init__(self):

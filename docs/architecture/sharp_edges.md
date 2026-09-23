@@ -228,7 +228,12 @@ The static half is cached by a stat-only stamp over every file that can
 change the answer (template ladder files including the override and sidecar,
 the mmproj, the drafter, the build manifest), the relevant environment, the
 installed mlx-lm/mlx-vlm commits (from their install records, not uv.lock)
-and a digest of the resolved config.
+and a digest of the resolved config. The app lifespan warms it (and the
+template probes) in a background thread after each config load
+(`ModelRouter.warm_model_facts`), so the first listing after a start or
+reload does not pay the cold parse. Only the lifespan turns this on: unit
+tests build routers over a mocked MLX tree, where a background thread is the
+teardown-crash class.
 
 ### gguf speculative decoding
 

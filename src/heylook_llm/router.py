@@ -707,6 +707,34 @@ class ModelRouter:
             self._last_used_ts.clear()
             logging.info("Model cache cleared")
     
+    # Set by the app's lifespan, never by construction: unit tests build
+    # routers directly over a mocked MLX tree, and a background thread
+    # touching those mocks is the teardown-crash class tests/README warns of.
+    warm_model_facts_on_load: bool = False
+
+    def warm_model_facts(self) -> None:
+        """Derive every model's row facts once, in the background.
+
+        The derivation /v1/models and the admin row run (template parses,
+        header reads, the engine contract's static half) is cached by file
+        stamps, so the FIRST listing after a start or reload pays it cold.
+        Warming here moves that cost off the user's first page load. Never
+        fatal, never blocking: failures are logged and dropped, like
+        discovery. A warm that races a later reload only fills entries whose
+        stamps nobody reads.
+        """
+        def run(app_config):
+            from heylook_llm.capabilities import derived_model_facts
+            for mc in list(app_config.models):
+                try:
+                    derived_model_facts(mc, self)
+                except Exception:  # noqa: BLE001 -- warming is best-effort
+                    logging.debug("[router] warming row facts failed for %s",
+                                  mc.id, exc_info=True)
+
+        threading.Thread(target=run, args=(self.app_config,),
+                         name="warm-model-facts", daemon=True).start()
+
     def reload_config(self):
         """Reload model configuration from file."""
         try:
@@ -715,6 +743,8 @@ class ModelRouter:
             self.app_config = AppConfig(**config_data)
             self.max_loaded_models = self.app_config.max_loaded_models
             self._refresh_per_request_defaults()
+            if self.warm_model_facts_on_load:
+                self.warm_model_facts()
             logging.info(f"Model configuration reloaded from {self.config_path}")
         except Exception as e:
             logging.error(f"Failed to reload configuration: {e}")

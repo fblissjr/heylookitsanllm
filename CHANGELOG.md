@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.76]
+
+### Changed
+
+- **The model-list derivation is warmed in the background (plan W13,
+  remaining item 3).** `ModelRouter.warm_model_facts` runs the same
+  derivation `/v1/models` and the admin row use for every model, on a daemon
+  thread, at startup and after each config reload, so the first listing
+  does not pay the cold template parses and header reads. Never fatal (a
+  failure is logged at debug and dropped); stamp-keyed caches mean a warm
+  that races a reload fills only entries nobody reads. Turned on by the app
+  lifespan, never by router construction, so tests that build routers over
+  mocks start no thread. The e2e races fixed in v2.0.73 stay fixed in the
+  checks; warming makes them rarer, not impossible.
+
 ## [2.0.75]
 
 ### Changed
