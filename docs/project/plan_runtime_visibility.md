@@ -190,6 +190,9 @@ translated between models. Detail and reasoning:
   run (the audit, §6). W7's budget is the control that actually bounds length.
 - `supports_thinking` for gguf is derived from the in-force template, not read
   once at import from the embedded one.
+- **Capability inference moves here from `capabilities.py`** (W13 deferred it
+  to W2, which changes its answers): the per-engine capability branches move
+  into the engine describers as part of this workstream.
 - **Checks (lean):** one property test over descriptors detected from
   templates on disk (fixtures copied into tests): every detected value and
   alias passes, a value from another model's list or an unknown string
@@ -597,9 +600,13 @@ and the route-level conformance test.
    argv, the image-cap decision and the report all call.
 3. Warm the static describe cache in the background after each config load
    (never fatal; stamp-keyed, so a warm that races a reload is ignored).
-4. The generic frontend renderer: the full panel on the models page row (all
-   settings, grouped by `effect`, with provenance), a compact chat popover
-   (runtime, context, template origin; room for W5's cache line). Schema
+4. The generic frontend renderer, before W5: the full panel on the models
+   page row (ALL settings, per_request included, grouped by `effect`, with
+   provenance, since per-request defaults quietly set in models.toml are the
+   black box this plan exists to open), and a compact chat popover (runtime,
+   context, template origin, a link to the models page row; room for W5's
+   cache line). Chat shows no per_request settings; its sampler panel owns
+   them. Schema
    `ui:"hidden"` fields are omitted only when not configured; a configured one
    shows read-only.
 - **Capability inference moves with W2**, which changes its answers (the
