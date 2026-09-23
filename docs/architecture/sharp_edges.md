@@ -1427,7 +1427,9 @@ first -- a green here means nothing until you have seen it fail". That
 sentence contradicted the standing owner rule that there is no make-it-fail-first
 rule, carve-outs included (see [No make-it-fail-first rule](#no-make-it-fail-first-rule)),
 so the rewrite states the lesson as "read the constant it is supposed to
-match" and leaves a deliberate red as the optional tool it is everywhere else.
+match". The owner confirmed the same day that a self-administered red "never
+works" here, and the optional-tool carve-out was removed as well. The remedy
+for a check that asserts on the wrong string is an independent review pass.
 
 ### MLX mocks and teardown crashes
 

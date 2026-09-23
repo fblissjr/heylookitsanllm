@@ -798,8 +798,11 @@ entries below are unchanged from 2026-07-13):
   for these models automatically. Messages API's hardcoded `<think>`-only
   parser also replaced with `select_reasoning_parser` (streaming and
   non-streaming), matching the then-OpenAI chat/completions route.
-- **Model-agnostic vision token budget (v1.34.64) -- SOLID, live-verified,
-  ahead of the Q8 spike.** `vision_tokens` request field + per-model
+- **Model-agnostic vision token budget (v1.34.64) -- REMOVED v2.0.64.**
+  It was measured on 2026-09-22 as a silent no-op on every Qwen-family MLX
+  model (mlx-vlm drops the kwarg); the client-side pixel cap is the lever. The
+  per-model image geometry in `plan_runtime_visibility.md` W4 is the successor.
+  Original entry, kept as history: `vision_tokens` request field + per-model
   models.toml default + v3 drawer control (cap-gated on `vision`), mapped by
   duck-typing the loaded processor: gemma-4 discrete buckets (snap to
   70/140/280/560/1120), qwen2/3-VL continuous pixel budget, unknown families

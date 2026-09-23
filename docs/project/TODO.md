@@ -16,15 +16,18 @@ backlog pass*
 Plan: [`plan_runtime_visibility.md`](./plan_runtime_visibility.md). Evidence:
 [`../testing/gguf_runtime_audit_2026-09-23.md`](../testing/gguf_runtime_audit_2026-09-23.md).
 
-Its W0 IS the entry below (registry sidecars). The rest follows in order:
-- W8 non-causal image guard;
+Its W0 IS the entry below (registry sidecars), and it runs in parallel rather
+than first. Order, revised 2026-09-23 after the measurements (the plan's
+Sequencing section carries the reasons):
+- W8 non-causal image guard + W9 keep-alive (both small; W9 measured);
+- the eval-bank port (prerequisite, below);
 - W5 cache/spec reporting;
-- W2+W3 thinking detection and template provenance/lint;
-- W1 load panel with flash attention;
+- W10 MLX checkpoint caching (reopened; the biggest daily win);
+- W2+W3 thinking detection + templates, with W7 thinking budget;
 - W4 image geometry;
-- W6/W7 cache budget and thinking budget;
-- W10 MLX checkpoint caching (reopened by the owner);
-- W9 residency keep-alive (measured worthwhile on the 145 GB model; small).
+- W0 from Phase 0, then W1 load panel;
+- W6 only if W5 shows budget skips;
+- W11 upstream llama.cpp PRs, optional.
 
 ## Port the eval bank to /v1/messages (2026-09-23)
 

@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.68]
+
+Documentation only.
+
+### Changed
+
+- **`plan_runtime_visibility.md` re-sequenced after the measurements** (owner
+  approved):
+  - W8+W9 first, then the eval-bank port as a prerequisite, then W5 reporting
+    and W10 MLX checkpoint caching (moved up).
+  - Then W2+W3 with W7 thinking budget (moved up), then W4.
+  - W0 runs in parallel instead of blocking.
+  - W6 waits for evidence of budget skips.
+  - A new optional W11 proposes two upstream llama.cpp PRs.
+  - W2 states plainly that depth levels above "low" did not reliably change
+    thinking length.
+  - W5's usage alignment is flagged as a client-visible contract change.
+- `CLAUDE.md` no longer carries a "deliberate red is a tool" carve-out; the
+  owner confirmed a self-administered red has not worked here. The
+  "removal is the preferred change" line added the day before was taken out
+  (owner: it depends).
+- `CURRENT.md` no longer grades the removed `vision_tokens` budget as solid.
+
 ## [2.0.67]
 
 Documentation only.

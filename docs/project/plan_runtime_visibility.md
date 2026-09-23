@@ -151,6 +151,13 @@ today's design would freeze into every existing entry.
   - An unsupported value is a 400 naming the model's values, never a
     llama-server 500.
   - The hand-copied `ReasoningEffort` Literal goes away.
+  - **Be honest about what the scale does.** Measured on three models, only
+    off, a shortened low, and "on" separated reliably; medium, high and xhigh
+    overlapped, and run-to-run variation at one level exceeded the gap between
+    adjacent levels. The UI must not imply that a higher step reliably means
+    longer thinking. It shows the model's own value and says the ordering
+    above low is the template's instruction, not a guarantee. W7's budget is
+    the control that actually bounds length.
 - **Frontend.** The dropdown is built from the row. It shows the heylook step
   and, muted, the model's own value ("high → xhigh"). A thinking toggle
   appears only when `switch` is non-null. When `changes_prefix` is true, a
@@ -276,6 +283,11 @@ Extends the existing template panel (`GET/PUT/DELETE
 
 ### W6. Prompt-cache RAM budget: derived default
 
+**Evidence-gated (2026-09-23).** On the hybrid Qwen3.8 the default budget held
+a 10k-token image conversation comfortably, because its per-token KV is small.
+So build this only when W5's reporting shows over-budget skips in real use.
+Until then, W5 surfaces the budget and every skip.
+
 - `cache_ram_mb` unset = auto, never written. The derivation is sized from
   the model's measured state:
   - bytes per token from the KV geometry;
@@ -358,19 +370,42 @@ so it needs the owner's go-ahead (asked 2026-09-23).
 so only a chain discriminates), and `scripts/vlm_parity_probe.py` for vision
 restores.
 
-## Sequencing
+## Sequencing (revised 2026-09-23, after the measurements)
 
-1. **W0** (registry sidecars Phase 0 onward, plus provenance) and **W8**
-   (small, closes a crash).
-2. **W5** backend and wire, then W5 frontend. Visibility first, so every
-   later change is observable in the product rather than only in a harness.
-3. **W2 + W3** together (they share the template resolution and render
-   harness).
-4. **W1** (load panel), which renders W0 provenance and hosts W6.
-5. **W4** backend, then frontend resize.
-6. **W6**, **W7**.
-7. **W10** (largest, highest risk), after W5 so its effect is visible.
-8. **W9** (measured worthwhile; small, could move earlier).
+The first order put W0 first. W0 is gated on its own Phase 0 and two open
+questions, and most workstreams do not depend on it: W5, W2/W3, W4 and W10
+derive at runtime and write no settings. Only W1, W6 and the provenance
+display touch stored config. So W0 runs in parallel instead of blocking.
+
+1. **W8 + W9.** Both are small. W9 is now measured: raising the keep-alive
+   removed the idle first-request delay on the 145 GB model.
+2. **W-1, the eval-bank port** (`docs/project/TODO.md`, "Port the eval bank to
+   /v1/messages"). Steps 3-5 change exactly the subsystems unit tests cannot
+   certify (templates, thinking, cache state), and the bank is dead until it
+   speaks the Messages wire.
+3. **W5**, backend and wire, then frontend. This comes first so every later
+   change is observable in the product, not only in a harness.
+4. **W10**, moved up. On MLX every turn of a conversation with an image
+   anywhere in its history re-processes everything, for every family. That is
+   the owner's daily path and probably the largest single win here, and W5
+   makes it measurable.
+5. **W2 + W3, with W7.** One template/thinking pass. W7 moved up because
+   thinking length proved the dominant and least predictable latency cost,
+   varying several-fold at a fixed level, and a hard budget is the only
+   reliable control.
+6. **W4**, backend then frontend resize. It is independent.
+7. **W0**, from Phase 0 onward; it may start in parallel from step 1. Then
+   **W1**, which renders W0's provenance.
+8. **W6 only if W5 shows budget skips.** The default budget held a
+   10k-token conversation on the hybrid model comfortably, because its
+   per-token KV is small. So auto-sizing waits for evidence.
+- **W11 (optional, any time): upstream llama.cpp.**
+  - A cache-source field in `timings` (slot, RAM cache or checkpoint), which
+    W5 otherwise has to infer.
+  - Place a checkpoint at the generation-prompt boundary rather than a fixed
+    four tokens from the end. The fixed offset sat one position past the
+    divergence a template produced in the audit, which is why a one-newline
+    defect cost whole turns.
 
 Each workstream ships with its CHANGELOG entry and `frontend_v3_spec.md` §4
 updates in the same commit as any contract change.
@@ -379,10 +414,13 @@ updates in the same commit as any contract change.
 
 - **W10: reopened.** It lands after W5, so its effect is visible in the
   product. This supersedes the 2026-09-20 "leave prompt caching alone" call.
-- **Sequencing:** as above.
+- **Sequencing:** the revised order above (approved the same day).
 - **W5: align with Anthropic.** `usage.input_tokens` = processed tokens and
   `usage.cache_read_input_tokens` = cached tokens. heylook's detail rides in
-  `performance.cache`.
+  `performance.cache`. **This is a contract change**: the number existing
+  clients read changes meaning. Before shipping, check v3's readers and the
+  owner's other project, and record it in `docs/api_integration.md` and spec
+  §4.
 - **Muse-Glimmer's hand-written `supports_thinking = true` removed from
   `models.toml`.** Its template reads no thinking switch.
 
