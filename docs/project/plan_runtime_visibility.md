@@ -426,7 +426,19 @@ Until then, W5 surfaces the budget and every skip.
   cache at all, for every family;
 - the vision feature cache is keyed by the whole image list, so adding one
   image re-encodes all of them;
-- qwen3_5 hybrids get no reuse even on text.
+- qwen3_5 hybrids get no reuse even on text;
+- sliding-window models stop reusing once a conversation outgrows the
+  window (found live in W5, 2026-09-23). Their windowed layers are
+  `RotatingKVCache`, which mlx-lm trims only while the stored sequence is
+  shorter than the window (`is_trimmable`: offset below `max_size`). A normal
+  follow-up diverges inside the stored tail (the previous reply re-renders
+  differently at its end), so it needs that trim; past the window it is
+  refused, the report says `trim_refused`, and the whole prompt re-prefills.
+  The served families with windowed layers, read from each model's
+  `config.json` `layer_types`: gpt_oss (a window short enough that every
+  real follow-up is refused, confirmed live on gpt-oss-20b) and gemma4 /
+  diffusion_gemma (a larger window: short chats reuse, longer ones do not;
+  derived, not yet observed). qwen3, qwen3_5 and qwen3_vl have none.
 
 "Caching cannot work for qwen3_5 on MLX" is true of heylook's current
 single-slot, after-generation design only:
@@ -503,7 +515,11 @@ PE encoders' long fixed system prompts.
 
 **Verification.**
 - W5's live cache-reuse smoke check is the acceptance test: the MLX vision arm
-  flips from its named known gap to a real pass.
+  flips from its named known gap to a real pass, and so does a sliding-window
+  arm (the check reports `trim_refused` as the same known gap). Whichever
+  outcome wins must restore a follow-up past the window on a rotating-window
+  model, not only on mRoPE and vision; gpt-oss-20b is the smoke model for it,
+  and a gemma-4 conversation longer than its window is the everyday case.
 - Plus the multi-hop greedy chain probe (single hops passed before, so only a
   chain discriminates) and `scripts/vlm_parity_probe.py` on vision restores.
 - Under A2, add the text-model check above.
