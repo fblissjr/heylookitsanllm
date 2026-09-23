@@ -531,6 +531,37 @@ qwen3_vl image-turn gap is accepted, recorded locally with what would need to
 change (`internal/claude/w10/qwen3_vl_image_reuse.md`), and not taken
 upstream for now.
 
+**A2 build sequence (2026-09-23).** Facts it rests on: mlx-vlm no longer
+depends on mlx-lm (its qwen3_5 vendored the one import); it ships its own
+samplers, penalties and streaming detokenizers; no served MLX model uses a
+drafter; the diffusion path already runs on mlx-vlm. Each stage is a release
+with its own verification, and nothing is deleted before the stage that
+replaces it is live-green.
+1. **Engine module** (`providers/common/vlm_engine.py`): one request through
+   one `BatchGenerator` + a per-model in-process `APCManager` (no disk tier),
+   on the pinned executor thread, closed on that thread. Carries every hook:
+   generated-only processors, a per-request sampler, heylook's stop set in
+   its own loop (no constructor stop tokens), streaming detokenization,
+   prefill progress to `AbortEvent`, cancel by `remove()`, the server-style
+   semantic-hash salt, `CacheReport` from APC, per-request timing and
+   peak-memory reset. The pure decisions (salt, checkpoint settings,
+   report mapping) are functions testable without MLX.
+2. **Route every MLX request through it**, text and vision, loading every
+   model with `mlx_vlm.load`. Delete what it replaces: the mlx-lm decode
+   loop in `generation_core`, `prompt_cache.py`, `cache_helpers.py`,
+   `model_wrappers.py`, the vision prefill handoff and position resets,
+   loader routing (the runtime is always mlx-vlm; an unported text
+   `model_type` fails to load, naming gguf), mlx-lm's speculative path and
+   `DraftTuner`, and the MLX `engine.cache` facts, replaced by APC's.
+3. **Remove mlx-lm** from pyproject and the lock; retire the mlx-lm smoke
+   arm into an "mlx text" arm on the same engine; rewrite the MLX sections of
+   CLAUDE.md, the wiki and sharp_edges (most MLX gotchas go with the seam).
+Verification at stages 2 and 3: unit and contract suites,
+`scripts/chain_probe.py` on qwen3_5, gemma-4, qwen3_vl, qwen3 and gpt-oss,
+`scripts/vlm_parity_probe.py` re-aimed at heylook versus mlx-vlm's own loop,
+a live mid-prefill cancel, smoke on all arms, e2e chat and pages, and the
+eval bank on Qwen3.5-27B-8bit-mlx against the pre-W10 baseline.
+
 **Step 2: build the chosen outcome.** In every outcome:
 - **Per-image vision feature cache**, so a new image stops re-encoding the old
   ones (unless APC under A1/A2 already covers it).
