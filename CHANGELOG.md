@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.81]
+
+### Removed (breaking, performance payload)
+
+- **`kv_cache_bytes` (plan W5: "the mislabelled KV figure").** Declared as
+  the KV cache size at the end of the run, it was the MLX prompt-cache
+  store's byte total snapshotted before the run started, gguf never sent it,
+  and the chat status line showed it as "KV". Removed from `GenerationChunk`,
+  `ChunkTelemetry`, `message_stop.performance`, `heylook_saved.timing` and
+  the chat line. What a request reused is `performance.cache`; the MLX slot
+  is described in `engine.cache`.
+
 ## [2.0.80]
 
 ### Added

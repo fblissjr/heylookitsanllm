@@ -4,8 +4,8 @@
 Messages has no timing of its own; consumers that ported off the OpenAI route
 (removed in v1.79.66) must not lose it (spec §4's extension rule): streaming
 message_stop.performance carries the shared timing names (peak_memory_gb,
-kv_cache_bytes, queue_wait_ms, draft_acceptance -- the heylook_saved.timing
-vocabulary), None fields skipped.
+queue_wait_ms, cache, speculative -- the heylook_saved.timing vocabulary),
+None fields skipped.
 
 The heylook_logprobs half of this namespace was removed in v1.79.74 with the
 token explorer, its only consumer.
@@ -104,7 +104,7 @@ def token_chunks():
         GenerationChunk(text="Hello", token=0),
         GenerationChunk(text=" world", token=1,
                         finish_reason="stop", prompt_tokens=3, generation_tokens=2,
-                        peak_memory=1.5, kv_cache_bytes=4096, queue_wait_ms=2.0),
+                        peak_memory=1.5, queue_wait_ms=2.0),
     ]
 
 
@@ -136,7 +136,6 @@ class TestMessageStopTiming:
         stop = next(d for ev, d in sse_events(res.text) if ev == "message_stop")
         perf = stop["performance"]
         assert perf["peak_memory_gb"] == pytest.approx(1.5)
-        assert perf["kv_cache_bytes"] == 4096
         assert perf["queue_wait_ms"] == pytest.approx(2.0)
         # absent telemetry is SKIPPED, never null (no spec decode ran here)
         assert "draft_acceptance" not in perf
@@ -151,7 +150,7 @@ class TestMessageStopTiming:
         })
         stop = next(d for ev, d in sse_events(res.text) if ev == "message_stop")
         perf = stop["performance"]
-        assert "peak_memory_gb" not in perf and "kv_cache_bytes" not in perf
+        assert "peak_memory_gb" not in perf
         # The span the stream can always measure is still there. A measured
         # zero queue wait is NOT absent -- that is the v1.79.58 rule, and this
         # run really did wait zero.

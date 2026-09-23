@@ -39,7 +39,6 @@ def _fully_measured() -> ChunkTelemetry:
     t.prompt_tps = 120.5
     t.generation_tps = 34.5
     t.peak_memory_gb = 12.25
-    t.kv_cache_bytes = 4096
     t.queue_wait_ms = 7.5
     t.cache = CacheReport(prompt_tokens=100, cached_tokens=60, outcome="reused")
     t.spec = SpecReport(accepted=5, drafted=10, emitted=8)

@@ -24,7 +24,7 @@
 //   controller.abort() -- the server's disconnect path persists instead.
 
 import { createPage } from '../page.js';
-import { createEl, autoGrow, armedConfirm, createUnloadGuard, formatBytes, formatTokens, setStatus, dismissPaneOnOutsideClick, lsRead, lsWrite } from '../utils.js';
+import { createEl, autoGrow, armedConfirm, createUnloadGuard, formatTokens, setStatus, dismissPaneOnOutsideClick, lsRead, lsWrite } from '../utils.js';
 import { api } from '../api.js';
 import { streamGenerate, stopGenerate } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
@@ -3438,7 +3438,6 @@ async function finishGenerate(ctx, stream, { content, thinking, usage, aborted, 
     const timing = saved?.timing;
     const parts = [`${usage?.output_tokens ?? '?'} tokens`];
     if (timing?.peak_memory_gb != null) parts.push(`${timing.peak_memory_gb.toFixed(2)} GB peak`);
-    if (timing?.kv_cache_bytes != null) parts.push(`${formatBytes(timing.kv_cache_bytes)} KV`);
     // The two spec-decode rates are different quantities (accepted out of
     // drafted vs out of emitted); say which one this is.
     const spec = timing?.speculative;

@@ -106,7 +106,6 @@ class GenerationChunk:
     prompt_tps: float = 0.0
     generation_tps: float = 0.0
     peak_memory: float = 0.0
-    kv_cache_bytes: int = 0
     queue_wait_ms: float = 0.0
     # Per-request reports (plan W5). None = this chunk does not carry one;
     # ChunkTelemetry.absorb latches the latest not-None value. MLX stamps the

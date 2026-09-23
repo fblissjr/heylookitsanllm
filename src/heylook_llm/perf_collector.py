@@ -64,7 +64,6 @@ class ChunkTelemetry:
     prompt_tokens: int = 0  # the WHOLE prompt, on every engine
     completion_tokens: int = 0
     peak_memory_gb: float = 0.0  # monotonic max across chunks
-    kv_cache_bytes: int = 0  # snapshot tagged on the first chunk
     queue_wait_ms: float = 0.0  # FIFO generation-queue wait
     prompt_tps: float = 0.0  # mlx-lm's own prefill rate
     generation_tps: float = 0.0  # mlx-lm's own decode rate
@@ -85,7 +84,7 @@ class ChunkTelemetry:
         # GenerationChunk carries EVERY field on EVERY chunk (slotted, with
         # zero defaults) -- the old "getattr keeps the last value when the
         # attr is absent" trick no longer protects first-chunk-only snapshots
-        # (cached_tokens / kv_cache_bytes / queue_wait_ms) or rate fields a
+        # (the cache report / queue_wait_ms) or rate fields a
         # sparse chunk (vision first token) legitimately lacks. So: latch on
         # truthy, never overwrite with a default. Counts are monotonic from
         # the engine, rates are per-chunk refinements -- truthy-latch matches
@@ -93,7 +92,6 @@ class ChunkTelemetry:
         self.prompt_tokens = getattr(chunk, "prompt_tokens", 0) or self.prompt_tokens
         self.completion_tokens = getattr(chunk, "generation_tokens", 0) or self.completion_tokens
         self.peak_memory_gb = max(self.peak_memory_gb, getattr(chunk, "peak_memory", 0.0) or 0.0)
-        self.kv_cache_bytes = getattr(chunk, "kv_cache_bytes", 0) or self.kv_cache_bytes
         self.queue_wait_ms = getattr(chunk, "queue_wait_ms", 0.0) or self.queue_wait_ms
         self.prompt_tps = getattr(chunk, "prompt_tps", 0.0) or self.prompt_tps
         self.generation_tps = getattr(chunk, "generation_tps", 0.0) or self.generation_tps
@@ -156,7 +154,7 @@ def build_performance(
       explicit ``int`` or ``None``, so absence is the caller's own statement
       that the span was not measurable.
     * everything read off ``telemetry`` -- both rates, ``peak_memory_gb``,
-      ``kv_cache_bytes`` and ``queue_wait_ms``: no. Zero there only ever
+      and ``queue_wait_ms``: no. Zero there only ever
       means "never reported", so it is spelled as absence.
 
     ``queue_wait_ms`` IS IN THE SECOND GROUP, AND v1.79.58 BRIEFLY PUT IT IN
@@ -228,8 +226,6 @@ def build_performance(
         perf["generation_tps"] = telemetry.generation_tps
     if telemetry.peak_memory_gb:
         perf["peak_memory_gb"] = telemetry.peak_memory_gb
-    if telemetry.kv_cache_bytes:
-        perf["kv_cache_bytes"] = telemetry.kv_cache_bytes
     if telemetry.cache is not None:
         perf["cache"] = telemetry.cache.to_wire()
     if telemetry.spec is not None:

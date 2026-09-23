@@ -157,14 +157,11 @@ class PerformanceInfo(BaseModel):
         ),
     )
     # DECLARED as of v1.79.54. The streaming payload has always merged these
-    # three in, and the model did not declare them -- so a client generated
+    # in, and the model did not declare them -- so a client generated
     # from the schema had no field for them and dropped them off every
     # message_stop, silently. Declaring them is also what lets the
     # NON-streaming builder carry them, which closes the other half: they were
     # absent there by omission, not by design.
-    kv_cache_bytes: Optional[int] = Field(
-        default=None, description="KV cache size in bytes at the end of the run"
-    )
     queue_wait_ms: Optional[float] = Field(
         default=None, description="Time spent waiting in the FIFO generation queue"
     )

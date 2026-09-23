@@ -448,7 +448,7 @@ truncate→stream→persist sequences):**
     end_reason:"complete"|"aborted"|"error", messages:[<full stored rows>],
     dropped_media:{images,audio}, timing:<the performance object, from the
     same builder as message_stop.performance (v2.0.78): peak_memory_gb,
-    kv_cache_bytes, queue_wait_ms, prompt_tps, cache, speculative, ...>}` —
+    queue_wait_ms, prompt_tps, cache, speculative, ...>}` —
     the client's post-stream state is
     ASSIGNMENT from `messages`, never position arithmetic. An ABORTED run also
     reports `stop_reason:"max_tokens"` on `message_delta` (v1.79.40): it used

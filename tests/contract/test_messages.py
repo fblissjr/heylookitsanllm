@@ -351,7 +351,7 @@ class TestNonStreamingPerformance:
         streaming_response` is the one that follows a value end to end.
         """
         perf = self._perf(client)
-        for key in ("kv_cache_bytes", "queue_wait_ms", "cache", "speculative"):
+        for key in ("queue_wait_ms", "cache", "speculative"):
             assert key in perf, key
 
     def test_phase_durations_are_measured_non_streaming_too(self, client):

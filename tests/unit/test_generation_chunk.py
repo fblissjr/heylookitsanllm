@@ -11,7 +11,7 @@
 #   GenerationResponse, mlx-vlm diffusion chunks) drifts from the fields the
 #   API layer scrapes.
 # - telemetry latch tests: ChunkTelemetry.absorb regresses to last-write-wins,
-#   zeroing first-chunk-only telemetry (cached_tokens / kv_cache_bytes /
+#   zeroing first-chunk-only telemetry (the cache report /
 #   queue_wait_ms) now that every field exists on every chunk.
 # - capability-surface tests: neutral code goes back to reading private
 #   MLXProvider attrs (_template_info) or class-name sniffing.
@@ -44,7 +44,6 @@ class TestGenerationChunkShape:
         assert c.generation_tps == 0.0
         assert c.peak_memory == 0.0
         assert c.cache is None and c.spec is None
-        assert c.kv_cache_bytes == 0
         assert c.queue_wait_ms == 0.0
 
     def test_slotted_no_attr_patching(self):
@@ -90,7 +89,7 @@ class TestTelemetryLatch:
     def test_first_chunk_snapshot_fields_survive_later_zeros(self):
         t = ChunkTelemetry()
         report = CacheReport(prompt_tokens=10, cached_tokens=7, outcome="reused")
-        t.absorb(GenerationChunk(text="a", cache=report, kv_cache_bytes=1024,
+        t.absorb(GenerationChunk(text="a", cache=report,
                                  queue_wait_ms=5.5, prompt_tokens=10,
                                  generation_tokens=1, prompt_tps=100.0,
                                  generation_tps=50.0))
@@ -100,7 +99,6 @@ class TestTelemetryLatch:
                                  generation_tokens=2, prompt_tps=100.0,
                                  generation_tps=51.0))
         assert t.cache is report
-        assert t.kv_cache_bytes == 1024
         assert t.queue_wait_ms == 5.5
         assert t.completion_tokens == 2
 

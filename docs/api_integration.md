@@ -191,8 +191,10 @@ first token) returns `"performance": null`. The response model declares it
 "always" and was wrong.
 
 It carries `prompt_tps`, `generation_tps`, `request_duration_ms`,
-`generation_duration_ms`, `peak_memory_gb`, `kv_cache_bytes`, `queue_wait_ms`,
-`cache` and `speculative`, plus the two phase durations.
+`generation_duration_ms`, `peak_memory_gb`, `queue_wait_ms`,
+`cache` and `speculative`, plus the two phase durations. `kv_cache_bytes` was
+removed in v2.0.81: it was the MLX prompt-cache store's size before the run,
+not the run's KV; `performance.cache` says what a request reused.
 
 - `cache` (v2.0.78): `{prompt_tokens, cached_tokens, processed_tokens,
   outcome, cause, reason}`. `outcome` is `reused`, `miss` (reuse was possible but
@@ -527,7 +529,7 @@ a `thinking` block, closes it, then opens a `text` block. Key on
 
 Besides `heylook_progress`, one heylook extension rides the same stream: extra
 telemetry merged into `message_stop.performance` — `prompt_tps`,
-`generation_tps` (both since v1.79.54), `peak_memory_gb`, `kv_cache_bytes`,
+`generation_tps` (both since v1.79.54), `peak_memory_gb`,
 `queue_wait_ms`, `cache`, `speculative`. Absent telemetry is **omitted, never
 null** here; the non-streaming response spells the same absence as an
 explicit `null`, because its fields are declared on a model. Treat missing

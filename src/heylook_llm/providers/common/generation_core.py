@@ -590,10 +590,6 @@ def run_generation(
     if pre_filled_cache is None:
         mx.reset_peak_memory()
 
-    # Snapshot server-wide KV cache byte total once at start; cheap enough to
-    # attach to the first token so the streaming API picks it up via getattr.
-    kv_cache_bytes_snapshot = cache_manager.total_cache_bytes if cache_manager is not None else 0
-
     # Forward prefill_step_size through to mlx-lm when the caller set one.
     # When absent, mlx-lm picks its own default (2048 at the time of writing)
     # -- passing None would suppress the default, so we only pass the kwarg
@@ -653,14 +649,13 @@ def run_generation(
                 # Leading space cleanup (first token only; skipped for a
                 # continuation, where the first token completes prefilled text
                 # and its space is real -- see continuation_detokenizer) +
-                # cache stats snapshot (first chunk only; ChunkTelemetry
-                # latches them). The vision path needs no exemption: since
+                # the cache report (first chunk only; ChunkTelemetry
+                # latches it). The vision path needs no exemption: since
                 # v2.0.55 its first token is sampled and detokenized here too.
                 if first_token:
                     if not continuing and chunk.text.startswith(' '):
                         chunk.text = chunk.text.lstrip()
                     chunk.cache = cache_report
-                    chunk.kv_cache_bytes = kv_cache_bytes_snapshot
                     first_token = False
 
                 yield chunk
