@@ -621,6 +621,95 @@ def thinking_checks(server, r, arm, model_id, caps):
                                          "-- that mechanism is UNCOVERED on this arm")
 
 
+# A system prompt long enough that reusing it dominates the request. Plain
+# prose, no numbers that a template might reformat.
+_CACHE_SYSTEM = " ".join([
+    "You are a careful assistant for a small workshop that repairs clocks.",
+    "You answer briefly, name the part you mean, and never guess a model year.",
+    "When a question is ambiguous you say which reading you took and why.",
+    "You prefer the simplest repair that restores the movement to service.",
+] * 12)
+
+
+def cache_reuse_checks(server, r, arm, model_id, caps):
+    """Prompt reuse across requests, live (plan W5; also W10's acceptance).
+
+    One relation everywhere, never a count: the follow-up REUSES at least half
+    of what the request before it sent. That is what fails under the bugs this
+    exists for -- a fresh cache per request (MLX vision, W10) reuses nothing,
+    and a template that re-renders a finished turn differently makes a
+    checkpointed model fall back to a checkpoint before the history.
+    `ineligible` is reported as the known gap it is, never as a pass.
+    """
+    def ask(messages, system=None):
+        body = {"model": model_id, "max_tokens": 24, "stream": False,
+                "messages": messages,
+                "chat_template_kwargs": {"enable_thinking": False}}
+        if system:
+            body["system"] = system
+        return call(server, "POST", "/v1/messages", body, timeout=300)
+
+    def whole(body):
+        u = (body or {}).get("usage") or {}
+        return (u.get("input_tokens") or 0) + (u.get("cache_read_input_tokens") or 0)
+
+    def reply(body):
+        return "".join(b.get("text") or "" for b in (body or {}).get("content") or []
+                       if b.get("type") == "text")
+
+    def judge(name, first, second):
+        cache = ((second or {}).get("performance") or {}).get("cache") or {}
+        if cache.get("outcome") == "ineligible":
+            r.skip(name, f"known gap: W10 ({cache.get('cause') or cache.get('reason')})")
+            return
+        cached = ((second or {}).get("usage") or {}).get("cache_read_input_tokens")
+        if cached is None:
+            r.skip(name, "the engine reported no cache count")
+            return
+        r.check(name, cached * 2 >= whole(first),
+                f"reused {cached} of a follow-up whose predecessor sent {whole(first)} "
+                f"(cause: {cache.get('cause')}; {cache.get('reason')})")
+
+    # -- a repeated system prompt is reused -----------------------------------
+    st_a, a = ask([{"role": "user", "content": "Which part keeps time?"}], _CACHE_SYSTEM)
+    st_b, b = ask([{"role": "user", "content": "Which part stores the energy?"}], _CACHE_SYSTEM)
+    if st_a != 200 or st_b != 200:
+        r.fail(f"{arm}: a repeated system prompt is reused", f"probes answered {st_a}, {st_b}")
+    else:
+        judge(f"{arm}: a repeated system prompt is reused", a, b)
+
+    # -- a text follow-up processes about the new turn ------------------------
+    turn1 = [{"role": "user", "content": "Name one tool a clockmaker uses."}]
+    st_1, t1 = ask(turn1, _CACHE_SYSTEM)
+    turn2 = turn1 + [{"role": "assistant", "content": reply(t1) or "A loupe."},
+                     {"role": "user", "content": "And what is it for?"}]
+    st_2, t2 = ask(turn2, _CACHE_SYSTEM)
+    if st_1 != 200 or st_2 != 200:
+        r.fail(f"{arm}: a text follow-up reuses the conversation", f"turns answered {st_1}, {st_2}")
+    else:
+        judge(f"{arm}: a text follow-up reuses the conversation", t1, t2)
+
+    # -- turn 2 of an image conversation reuses the first image ---------------
+    if "vision" not in caps:
+        r.skip(f"{arm}: an image conversation reuses its history",
+               "this arm's model does not advertise vision -- UNCOVERED on this arm")
+        return
+    def image(png):
+        return {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                           "data": base64.b64encode(png).decode()}}
+    img1 = [{"role": "user", "content": [
+        {"type": "text", "text": "Describe this image in one sentence."}, image(SMOKE_PNG)]}]
+    st_1, i1 = ask(img1)
+    img2 = img1 + [{"role": "assistant", "content": reply(i1) or "A gradient."},
+                   {"role": "user", "content": [
+                       {"type": "text", "text": "And this one?"}, image(_png(48, 48))]}]
+    st_2, i2 = ask(img2)
+    if st_1 != 200 or st_2 != 200:
+        r.fail(f"{arm}: an image conversation reuses its history", f"turns answered {st_1}, {st_2}")
+    else:
+        judge(f"{arm}: an image conversation reuses its history", i1, i2)
+
+
 def arm_checks(server, r, arm, model_id, load_timeout):
     print(f"\n{DIM}-- {arm}: {model_id} ---------------------------------------{RESET}")
 
@@ -647,6 +736,7 @@ def arm_checks(server, r, arm, model_id, load_timeout):
     audio_checks(server, r, arm, model_id, caps)
     thinking_checks(server, r, arm, model_id, caps)
     conformance_checks(server, r, arm, model_id, caps)
+    cache_reuse_checks(server, r, arm, model_id, caps)
 
     conv_id = None
     try:

@@ -119,6 +119,18 @@ while the run detaches, finishes, and commits the whole answer. The client
 discloses that as of v1.79.26 — and no stubbed suite can tell whether the
 claim is true.
 
+## Prompt reuse
+
+Each arm also checks prompt reuse across requests (plan W5, and W10's
+acceptance test): a repeated system prompt, a text follow-up, and turn 2 of an
+image conversation on a vision model. One relation everywhere, never a count:
+the follow-up reuses at least half of what the request before it sent. A fresh
+cache per request reuses nothing, and a template that re-renders a finished
+turn differently sends a checkpointed model back before the history; both fail
+it. A request the engine reports as `ineligible` (today: every MLX request that
+goes through mlx-vlm, for the mRoPE or vision-path gate) is reported as the
+known gap W10, not as a pass or a failure.
+
 ## Fixtures
 
 The vision arm sends a generated 64×64 PNG built with stdlib `zlib`/`struct`.
