@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.67]
+
+Documentation only.
+
+### Changed
+
+- **`CLAUDE.md` rewritten as a plain operating guide.** It is about half the
+  words it was. The all-caps emphasis written to hold an earlier model's
+  attention is gone, and every rule is kept.
+  - The rationale and incident history moved, close to verbatim, into the new
+    **`docs/architecture/sharp_edges.md`**, grouped by subsystem.
+  - Each rule block in `CLAUDE.md` links to its anchor there.
+  - A rule-by-rule inventory of the old file was checked for losses before
+    commit.
+- **Stale claims corrected on the way:**
+  - the admin fit-panel zero-size hole (closed in v1.79.56);
+  - the eval bank's task list;
+  - the provider-removal checklist (no ARCHITECTURE.md, no extras);
+  - where the VLM position reset happens;
+  - the MLX template ladder (the operator override is its first rung).
+- An E2E note that demanded "run it red first" contradicted the owner rule
+  against a fail-first ritual. It now says a deliberate red is a tool to use
+  when a check is in doubt.
+- Performance figures that had lived in the old `CLAUDE.md` were not carried
+  into the tracked history file; the history states the relationships
+  instead.
+
 ## [2.0.66]
 
 ### Changed

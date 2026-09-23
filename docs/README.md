@@ -26,6 +26,8 @@ plus `/openapi.json`.
 - [architecture/](./architecture/) -- backend design records + invariants (config
   history, provider mechanisms, MLX ecosystem posture, crash postmortems).
   Narrower and decision-shaped. Start at its [README](./architecture/README.md).
+- [architecture/sharp_edges.md](./architecture/sharp_edges.md) -- the rationale and
+  incident history behind each rule in the root CLAUDE.md, by subsystem.
 
 ## Test audits
 Dated evidence records, not living documents: what was measured, on what commit,
