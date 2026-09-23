@@ -512,6 +512,19 @@ fresh-vs-restored equality, `scripts/vlm_parity_probe.py`, and a live
 mid-prefill cancel; propose the two hooks upstream in parallel; fall back
 to B1 if it fails. Reading notes: `internal/claude/w10/spike_reading.md`.
 
+**Spike, hands-on half (2026-09-23): the hooks fit, outcome A1, with A2
+viable.** One request per `BatchGenerator` with an in-process APC (no disk
+tier) passed every gate on qwen3_5, gemma-4, qwen3_vl, and text-only Qwen3
+and gpt-oss: greedy parity with mlx-vlm's own loop (and with mlx-lm on the
+text models, the A2 text-model check), warm restores token-identical to cold
+ones, clean mid-prefill cancel with no leaked blocks, per-chunk progress.
+Follow-up reuse appears on every class, including long sliding-window
+conversations and image turns on the snapshot classes; the one gap is image
+turns on plain-KV vision models (qwen3_vl), which APC serves only from its
+disk tier. Build constraints (semantic-hash salt, checkpoint interval and
+entries, close on the creating thread, no constructor stop tokens) and the
+per-class results: `internal/claude/w10/spike_results.md`.
+
 **Step 2: build the chosen outcome.** In every outcome:
 - **Per-image vision feature cache**, so a new image stops re-encoding the old
   ones (unless APC under A1/A2 already covers it).
