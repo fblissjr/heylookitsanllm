@@ -293,9 +293,11 @@ Extends the existing template panel (`GET/PUT/DELETE
   - **Decided (owner, see Owner decisions): align with Anthropic.**
     `usage.input_tokens` = processed tokens, `usage.cache_read_input_tokens`
     = cached tokens; heylook's detail rides in `performance.cache`. This
-    changes what an existing number means, so before shipping ASK THE OWNER
-    what their other project reads from `usage` (do not infer it), and record
-    the change in `docs/api_integration.md` and spec §4.
+    changes what an existing number means. Checked with the owner
+    (2026-09-23): nothing outside this repo reads `usage`, so no external
+    consumer needs a change. Record it in `docs/api_integration.md` and spec
+    §4, and move the in-repo readers (the frontend's stats and perf lines) in
+    the same commit.
 - **gguf "why".**
   - llama-server reports only the final `cache_n`, not whether it came from
     the slot, the RAM cache or a checkpoint.
