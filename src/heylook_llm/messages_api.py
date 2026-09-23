@@ -586,8 +586,7 @@ async def _non_stream_messages(
             was_streaming=False,
             queue_wait_ms=round(telemetry.queue_wait_ms, 1),
             prompt_tps=telemetry.prompt_tps,
-            draft_tokens=telemetry.draft_counts()[0],
-            draft_accepted=telemetry.draft_counts()[1],
+            **RequestEvent.report_fields(telemetry),
         ))
 
     return response
@@ -731,6 +730,5 @@ async def _stream_messages(
             was_streaming=True,
             queue_wait_ms=round(telemetry.queue_wait_ms, 1),
             prompt_tps=telemetry.prompt_tps,
-            draft_tokens=telemetry.draft_counts()[0],
-            draft_accepted=telemetry.draft_counts()[1],
+            **RequestEvent.report_fields(telemetry),
         ))

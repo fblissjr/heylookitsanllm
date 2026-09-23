@@ -356,7 +356,11 @@ Phase 3b; chat uses its conversation-scoped sibling below; the OpenAI-compatible
   `applied_preset_id` at create (added v1.59.0) is the new-document preset
   inheritance: the document explicitly STARTS as that preset, which counts as
   an apply under the stamp rules below.
-- `GET /{id}` → conv **with** `messages:[{id,role,content,thinking,position,...}]` ordered by position.
+- `GET /{id}` → conv **with** `messages:[{id,role,content,thinking,position,stats,...}]` ordered by position.
+  `stats` (v2.0.82, plan W5) is null or, on an assistant row the generate route wrote, what that
+  generation measured: `heylook_saved.timing`'s fields plus `output_tokens`, with `cache.reason`
+  dropped (counts, rates and enum tokens only; `message_stats` table, additive). Every route that
+  returns a stored row carries it; a continuation replaces it with the latest run's.
 - `PUT /{id}` `{title?,model_id?,system_prompt?,params?,applied_preset_id?}` (only set fields patched; empty→400) → updated conv
   **without messages** (asymmetric — keep your in-memory messages, don't trust PUT to return them).
 - `POST /{id}/clone` (201) `{title?}` → full cloned conv incl messages and cloned media blobs.
@@ -804,8 +808,12 @@ thinking being on: harmony reads it unconditionally and has no enable_thinking a
 cpu_percent}, models:{[id]:{memory_mb,context_used,context_capacity,context_percent,requests_active,
 requests_queued}}}` (30s server cache).
 **Perf profile** `GET /v1/performance/profile/{1h|6h|24h|7d}` → `{timing_breakdown:[{operation,avg_time_ms,
-count,percentage}], trends:[{hour,response_time_ms,tokens_per_second,requests}], resource_timeline,
-bottlenecks}` (in-memory ring buffer, lost on restart; 503/empty if analytics extra not installed).
+count,percentage}], trends:[{hour,response_time_ms,tokens_per_second,requests,errors,cache_share,
+draft_acceptance,draft_share}], cache:[{model,requests,prompt_tokens,cached_tokens,cache_share,
+outcomes:{<outcome>:n},causes:{<cause>:n}}], resource_timeline, bottlenecks}`. The three trend ratios
+(v2.0.82) are token-weighted and null when no request in the hour reported them;
+`draft_acceptance` = accepted/drafted (gguf only), `draft_share` = accepted/emitted (both). `cache`
+counts only requests whose engine sent a cache report (in-memory ring buffer, lost on restart; 503/empty if analytics extra not installed).
 **Clear** `POST /v1/data/clear` (admin) → `{conversations_deleted, notebooks_deleted}`.
 **Capabilities** `GET /v1/capabilities`. Carried a `samplers` block — the bundled
 named-sampler registry, for scripted clients — until v2.0.30 removed that system;
@@ -959,7 +967,8 @@ Single-user tool — keep it very simple. Fetch `GET /v1/system/metrics` **on mo
 button only; NO automatic interval** (the backend caches metrics 30s, so live polling bought nothing).
 Show RAM/CPU stat cards + per-loaded-model cards (memory MB, context used/capacity, requests_active).
 Time-range selector (1h/6h/24h/7d) fetches `GET /v1/performance/profile/{range}` on demand:
-timing_breakdown table + last-8 trends. Graceful empty state if analytics extra absent (profile null/503).
+timing_breakdown table, a per-model Cache table, and last-8 trends (ratio columns only where
+reported). Graceful empty state if analytics extra absent (profile null/503).
 Build stable containers once and update values in place — no full-rebuild-per-refresh. This is the smallest
 honest version of the page; do not add auto-refresh, websockets, or live charts.
 

@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.82]
+
+### Added
+
+- **Per-message stats, kept (plan W5, commit 4).** An additive
+  `message_stats` table holds, per assistant message the generate route
+  wrote, `heylook_saved.timing`'s fields plus `output_tokens`, with the cache
+  report's `reason` sentence dropped: counts, rates and enum tokens only
+  (`perf_collector.message_stats`). Every route that returns a stored row
+  carries `stats` (null when none); a continuation keeps its latest run's.
+  Every message delete and rewrite path collects orphaned stats with the
+  media (`db._gc_orphans`), and the table drops with messages on a schema
+  bump.
+- Chat: an always-visible muted stats line under each assistant message
+  (tokens, speed, cache reuse, the why of a miss or short reuse, draft rates
+  with their counts, peak memory). The transient completion status that
+  carried a subset of it is gone.
+- Perf: a per-model **Cache** table (share of prompt tokens reused,
+  outcomes, causes) and a token-weighted cache column in the trends.
+
+### Changed
+
+- The perf trends' draft column meant accepted/drafted on gguf and
+  accepted/emitted on MLX. Trends now carry `draft_acceptance`
+  (accepted/drafted, gguf only) and `draft_share` (accepted/emitted) apart,
+  from the request's own reports; `RequestEvent` carries them as primitive
+  fields (`report_fields`), replacing `draft_tokens` / `draft_accepted`.
+
+### Release standard
+
+- Unit and contract suites green; `bun run e2e:render` green. `tests/smoke`
+  and the chat/pages e2e are not yet run for v2.0.79-.82 (no dev server up).
+- `scripts/vendor_frontend.py --check`: marked and dompurify each one patch
+  release behind upstream, both matching the manifest.
+- Phase 3 precondition (thinking depth on both MLX arms): unmet.
+
 ## [2.0.81]
 
 ### Removed (breaking, performance payload)

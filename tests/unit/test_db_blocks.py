@@ -298,3 +298,38 @@ class TestModelIdStamp:
         merged = await db.replace_tail_with_update(
             conn, conv["id"], row["position"], row["id"], content="a plus more")
         assert merged["model_id"] == "model-one"
+
+
+class TestMessageStats:
+    """Per-message generation stats (plan W5): every read carries them, and
+    no path that removes a message leaves its stats behind."""
+
+    @pytest.mark.asyncio
+    async def test_stats_ride_every_read_and_die_with_their_message(self, conn, conv):
+        cid = conv["id"]
+        rows = [await db.append_message(conn, cid, role=r, content=r)
+                for r in ("user", "assistant", "user", "assistant")]
+        for row in rows[1::2]:
+            await db.set_message_stats(conn, cid, row["id"], {"output_tokens": 3})
+
+        got = (await db.get_conversation(conn, cid))["messages"]
+        assert [m["stats"] for m in got] == [None, {"output_tokens": 3}, None, {"output_tokens": 3}]
+        edited = await db.update_message(conn, cid, rows[1]["id"], content="edited")
+        assert edited["stats"] == {"output_tokens": 3}
+
+        async def kept():
+            def op(c):
+                return {r[0] for r in c.execute("SELECT message_id FROM message_stats").fetchall()}
+            return await conn.run(op)
+
+        await db.truncate_messages_after(conn, cid, 1)
+        assert await kept() == {rows[1]["id"]}
+        await db.delete_message(conn, cid, rows[1]["id"])
+        assert await kept() == set()
+        # a stats write for a message already gone keeps nothing
+        await db.set_message_stats(conn, cid, rows[3]["id"], {"output_tokens": 1})
+        assert await kept() == set()
+        row = await db.append_message(conn, cid, role="assistant", content="a")
+        await db.set_message_stats(conn, cid, row["id"], {"output_tokens": 1})
+        await db.delete_conversation(conn, cid)
+        assert await kept() == set()

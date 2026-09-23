@@ -176,6 +176,39 @@ class TestAppend:
         assert [m["position"] for m in stored["messages"]] == [0, 1]
 
     @pytest.mark.asyncio
+    async def test_the_assistant_row_keeps_content_free_stats(self, ctx):
+        """The saved row and every later read carry the stats line's numbers
+        (plan W5): counts, rates and tokens -- never a sentence."""
+        from heylook_llm.providers.base import CacheReport
+        client, store, provider = ctx
+        base = provider.create_chat_completion
+
+        def with_cache(request, abort_event=None):
+            yield from base(request, abort_event)
+            yield GenerationChunk(text="", prompt_tokens=40, generation_tokens=2,
+                                  cache=CacheReport(prompt_tokens=40, cached_tokens=0,
+                                                    outcome="miss", cause="cold",
+                                                    reason="a sentence, not kept"))
+        provider.create_chat_completion = with_cache
+        conv, _ = await make_conv(store)
+        res = await client.post(f"/v1/conversations/{conv['id']}/generate",
+                                json={"mode": "append", "user_content": "hi"})
+        saved = saved_event(res.text)["messages"][-1]["stats"]
+        stored = (await db.get_conversation(store, conv["id"]))["messages"][-1]["stats"]
+        assert saved == stored
+        assert stored["cache"]["cause"] == "cold" and stored["output_tokens"] == 2
+
+        def leaves(node):
+            if isinstance(node, dict):
+                for v in node.values():
+                    yield from leaves(v)
+            else:
+                yield node
+        for leaf in leaves(stored):
+            assert leaf is None or isinstance(leaf, (int, float)) or (
+                isinstance(leaf, str) and leaf.isidentifier()), leaf
+
+    @pytest.mark.asyncio
     async def test_store_is_the_request(self, ctx):
         client, store, provider = ctx
         conv, _ = await make_conv(

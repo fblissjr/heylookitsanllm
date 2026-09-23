@@ -140,6 +140,17 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at TEXT NOT NULL
 );
 
+-- Per assistant message, what its generation measured (plan W5): the
+-- heylook_saved.timing fields as JSON, counts, rates and enum tokens only
+-- (perf_collector.message_stats drops the one sentence field). Additive, so
+-- numbers survive a reload with no schema bump; dropped with messages.
+CREATE TABLE IF NOT EXISTS message_stats (
+    message_id      TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    stats           TEXT NOT NULL,
+    created_at      TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS schema_meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -265,12 +276,13 @@ def _externalize_media(conn, conv_id: str, blocks: list[dict], now: str) -> list
     return out
 
 
-def _gc_media(conn, conv_id: str) -> None:
-    """Drop blobs no message in this conversation references any more.
+def _gc_orphans(conn, conv_id: str) -> None:
+    """Drop blobs and stats rows no message in this conversation references
+    any more. Every path that deletes or rewrites messages calls this.
 
-    The reference check is a substring LIKE on the JSON text. Its only
-    false-positive direction is RETENTION (a 64-hex blob id pasted into a
-    text block keeps the blob alive); it can never delete a blob a media
+    Blobs: the reference check is a substring LIKE on the JSON text. Its
+    only false-positive direction is RETENTION (a 64-hex blob id pasted into
+    a text block keeps the blob alive); it can never delete a blob a media
     block still references. Do not "fix" this into a JSON parse -- the safe
     direction is the point.
     """
@@ -278,6 +290,11 @@ def _gc_media(conn, conv_id: str) -> None:
         "DELETE FROM media_blobs WHERE conversation_id = ? AND NOT EXISTS ("
         "  SELECT 1 FROM messages m WHERE m.conversation_id = media_blobs.conversation_id"
         "  AND m.content_blocks LIKE '%' || media_blobs.id || '%')",
+        (conv_id,),
+    )
+    conn.execute(
+        "DELETE FROM message_stats WHERE conversation_id = ? AND NOT EXISTS ("
+        "  SELECT 1 FROM messages m WHERE m.id = message_stats.message_id)",
         (conv_id,),
     )
 
@@ -307,8 +324,26 @@ async def get_media_blobs(db: Store, conv_id: str, media_ids: list[str]) -> dict
     return await db.run(op)
 
 
+async def set_message_stats(db: Store, conv_id: str, message_id: str, stats: dict) -> None:
+    """Keep one assistant message's generation stats (replacing any earlier
+    run's: a continuation's latest run is the one described)."""
+    payload = orjson.dumps(stats).decode()
+    now = _now_iso()
+
+    def op(conn):
+        if conn.execute("SELECT 1 FROM messages WHERE id = ? AND conversation_id = ?",
+                        (message_id, conv_id)).fetchone() is None:
+            return  # deleted meanwhile: keep no orphan
+        conn.execute(
+            "INSERT OR REPLACE INTO message_stats (message_id, conversation_id, stats, created_at) "
+            "VALUES (?, ?, ?, ?)", (message_id, conv_id, payload, now))
+    await db.run(op)
+
+
 def _message_row_to_dict(names: list[str], row) -> dict:
     d = dict(zip(names, row))
+    if "stats" in d:
+        d["stats"] = orjson.loads(d["stats"]) if d["stats"] else None
     blocks = orjson.loads(d.pop("content_blocks"))
     d["content"] = flatten_blocks(blocks)
     d["content_blocks"] = blocks
@@ -374,7 +409,7 @@ class Store:
                 "DuckDB schema v%s != v%d -- recreating (fresh-start store)",
                 row[0], _SCHEMA_VERSION,
             )
-            for table in ("messages", "media_blobs", "conversations", "notebooks", "schema_meta"):
+            for table in ("messages", "message_stats", "media_blobs", "conversations", "notebooks", "schema_meta"):
                 self._conn.execute(f"DROP TABLE IF EXISTS {table}")
             self._create_schema()
             self._conn.execute(
@@ -448,6 +483,7 @@ async def clear_all_data(db: Store) -> dict:
         conv_count = conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
         nb_count = conn.execute("SELECT COUNT(*) FROM notebooks").fetchone()[0]
         conn.execute("DELETE FROM messages")
+        conn.execute("DELETE FROM message_stats")
         conn.execute("DELETE FROM media_blobs")
         conn.execute("DELETE FROM conversations")
         conn.execute("DELETE FROM notebooks")
@@ -474,6 +510,11 @@ _CONV_LIST_NAMES = [n for n in _CONV_NAMES if n not in ("system_prompt", "params
 _CONV_COLS = ", ".join(_CONV_NAMES)
 _CONV_LIST_COLS = ", ".join(_CONV_LIST_NAMES)
 _MSG_COLS = ", ".join(_MSG_NAMES)
+# A message as READ: its stored columns plus its generation stats (null when
+# none were kept), so every row the API returns carries the same keys.
+_MSG_READ_NAMES = _MSG_NAMES + ["stats"]
+_MSG_READ_COLS = (_MSG_COLS + ", (SELECT s.stats FROM message_stats s "
+                  "WHERE s.message_id = messages.id) AS stats")
 
 
 # Per-document sampler settings (`params`) are stored as a JSON TEXT blob, like
@@ -536,10 +577,10 @@ async def get_conversation(db: Store, conv_id: str) -> dict | None:
             return None
         conv = _conv_row_to_dict(row)
         msgs = conn.execute(
-            f"SELECT {_MSG_COLS} FROM messages WHERE conversation_id = ? ORDER BY position",
+            f"SELECT {_MSG_READ_COLS} FROM messages WHERE conversation_id = ? ORDER BY position",
             (conv_id,),
         ).fetchall()
-        conv["messages"] = [_message_row_to_dict(_MSG_NAMES, m) for m in msgs]
+        conv["messages"] = [_message_row_to_dict(_MSG_READ_NAMES, m) for m in msgs]
         return conv
     return await db.run(op)
 
@@ -640,6 +681,7 @@ async def delete_conversation(db: Store, conv_id: str) -> bool:
         if not exists:
             return False
         conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conv_id,))
+        conn.execute("DELETE FROM message_stats WHERE conversation_id = ?", (conv_id,))
         conn.execute("DELETE FROM media_blobs WHERE conversation_id = ?", (conv_id,))
         conn.execute("DELETE FROM conversations WHERE id = ?", (conv_id,))
         return True
@@ -844,7 +886,7 @@ async def update_message(
 
     def op(conn):
         row = conn.execute(
-            f"SELECT {_MSG_COLS} FROM messages WHERE id = ? AND conversation_id = ?",
+            f"SELECT {_MSG_READ_COLS} FROM messages WHERE id = ? AND conversation_id = ?",
             (msg_id, conv_id),
         ).fetchone()
         if row is None:
@@ -857,12 +899,12 @@ async def update_message(
         conn.execute(f"UPDATE messages SET {set_clause}, updated_at=? WHERE id=?", values)
         _touch_conversation(conn, conv_id, now)
         if new_blocks is not None:
-            _gc_media(conn, conv_id)  # an edit can drop the last reference to a blob
+            _gc_orphans(conn, conv_id)  # an edit can drop the last reference to a blob
         # Merge locally instead of re-SELECTing -- content_blocks can carry
         # multi-MB base64 images; one fetch is enough.
-        raw = dict(zip(_MSG_NAMES, row))
+        raw = dict(zip(_MSG_READ_NAMES, row))
         raw.update(col_updates, updated_at=now)
-        return _message_row_to_dict(_MSG_NAMES, [raw[k] for k in _MSG_NAMES])
+        return _message_row_to_dict(_MSG_READ_NAMES, [raw[k] for k in _MSG_READ_NAMES])
     return await db.run(op)
 
 
@@ -883,7 +925,7 @@ async def truncate_messages_after(
             (conv_id, after_position),
         )
         _touch_conversation(conn, conv_id, now)
-        _gc_media(conn, conv_id)
+        _gc_orphans(conn, conv_id)
         return count
     return await db.run(op)
 
@@ -908,7 +950,7 @@ async def delete_message(db: Store, conv_id: str, msg_id: str) -> bool:
             (msg_id, conv_id),
         )
         _touch_conversation(conn, conv_id, now)
-        _gc_media(conn, conv_id)
+        _gc_orphans(conn, conv_id)
         return True
     return await db.run(op)
 
@@ -964,7 +1006,7 @@ async def replace_tail_with_message(
             (msg_id, conv_id, role, orjson.dumps(stored).decode(), thinking, model_id, position, now, now),
         )
         _touch_conversation(conn, conv_id, now)
-        _gc_media(conn, conv_id)  # the truncated tail may have held the last references
+        _gc_orphans(conn, conv_id)  # the truncated tail may have held the last references
         return position, stored
 
     result = await db.run(op)
@@ -1008,7 +1050,7 @@ async def replace_tail_with_update(
 
     def op(conn):
         row = conn.execute(
-            f"SELECT {_MSG_COLS} FROM messages WHERE id = ? AND conversation_id = ?",
+            f"SELECT {_MSG_READ_COLS} FROM messages WHERE id = ? AND conversation_id = ?",
             (msg_id, conv_id),
         ).fetchone()
         if row is None:
@@ -1027,10 +1069,10 @@ async def replace_tail_with_update(
             list(col_updates.values()) + [now, msg_id],
         )
         _touch_conversation(conn, conv_id, now)
-        _gc_media(conn, conv_id)
-        raw = dict(zip(_MSG_NAMES, row))
+        _gc_orphans(conn, conv_id)
+        raw = dict(zip(_MSG_READ_NAMES, row))
         raw.update(col_updates, updated_at=now)
-        return _message_row_to_dict(_MSG_NAMES, [raw[k] for k in _MSG_NAMES])
+        return _message_row_to_dict(_MSG_READ_NAMES, [raw[k] for k in _MSG_READ_NAMES])
 
     return await db.run(op)
 

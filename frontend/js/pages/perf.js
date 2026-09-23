@@ -12,7 +12,7 @@
 //   full replaceChildren() is expected -- row counts change with the range.
 
 import { createPage } from '../page.js';
-import { createEl, formatBytes } from '../utils.js';
+import { causeWords, createEl, formatBytes, formatTokens } from '../utils.js';
 import { api } from '../api.js';
 import * as drawer from '../settings-drawer.js';
 
@@ -227,7 +227,8 @@ async function loadProfile(ctx, range) {
 function renderProfile(ctx, data) {
   const breakdown = data?.timing_breakdown ?? [];
   const trends = data?.trends ?? [];
-  if (!breakdown.length && !trends.length) {
+  const cache = data?.cache ?? [];
+  if (!breakdown.length && !trends.length && !cache.length) {
     renderProfileEmpty(ctx);
     return;
   }
@@ -236,6 +237,10 @@ function renderProfile(ctx, data) {
   if (breakdown.length) {
     children.push(createEl('h3', {}, ['Timing breakdown']));
     children.push(buildTimingTable(breakdown));
+  }
+  if (cache.length) {
+    children.push(createEl('h3', {}, ['Cache']));
+    children.push(buildCacheTable(cache));
   }
   if (trends.length) {
     children.push(createEl('h3', {}, ['Recent trends']));
@@ -279,18 +284,51 @@ function buildPctCell(fraction) {
   ]);
 }
 
+// Per model over the range (plan W5): how much of its prompts was reused,
+// token-weighted, and how many requests had each outcome and cause.
+function buildCacheTable(rows) {
+  const counts = (bag, label = (k) => k) => Object.entries(bag ?? {})
+    .map(([k, n]) => `${label(k)} ${n}`).join(' · ') || '--';
+  const body = rows.map((r) => createEl('tr', {}, [
+    createEl('td', {}, [r.model ?? '--']),
+    createEl('td', { class: 'perf-table__num' }, [fmtInt(r.requests)]),
+    createEl('td', { class: 'perf-table__num' },
+      [`${fmtPct(r.cache_share)} of ${formatTokens(r.prompt_tokens)}`]),
+    createEl('td', {}, [counts(r.outcomes)]),
+    createEl('td', {}, [counts(r.causes, causeWords)]),
+  ]));
+  return createEl('div', { class: 'perf-table-wrap' }, [
+    createEl('table', { class: 'perf-table' }, [
+      createEl('thead', {}, [createEl('tr', {}, [
+        createEl('th', { scope: 'col' }, ['Model']),
+        createEl('th', { scope: 'col' }, ['Requests']),
+        createEl('th', { scope: 'col' }, ['Prompt reused']),
+        createEl('th', { scope: 'col' }, ['Outcomes']),
+        createEl('th', { scope: 'col' }, ['Why']),
+      ])]),
+      createEl('tbody', {}, body),
+    ]),
+  ]);
+}
+
+// Token-weighted ratios, each shown only when the range reported it: an
+// all "--" column is noise. The two draft rates are different quantities
+// (accepted out of drafted, gguf only; out of emitted, both engines).
+const TREND_RATIOS = [
+  ['cache_share', 'Cache'],
+  ['draft_acceptance', 'Draft acc'],
+  ['draft_share', 'Draft share'],
+];
+
 function buildTrendsTable(rows) {
   const last = rows.slice(-8);
-  // Spec-decode column only when the range saw any drafting: an all "--"
-  // column is noise for the (common) MLX-only hours.
-  const hasDraft = last.some((r) => r.draft_acceptance != null);
+  const ratios = TREND_RATIOS.filter(([key]) => last.some((r) => r[key] != null));
   const body = last.map((r) => createEl('tr', {}, [
     createEl('td', { class: 'perf-table__mono' }, [formatHour(r.hour)]),
     createEl('td', { class: 'perf-table__num' }, [formatMs(r.response_time_ms)]),
     createEl('td', { class: 'perf-table__num' }, [r.tokens_per_second != null ? r.tokens_per_second.toFixed(1) : '--']),
     createEl('td', { class: 'perf-table__num' }, [fmtInt(r.requests)]),
-    ...(hasDraft ? [createEl('td', { class: 'perf-table__num' },
-      [r.draft_acceptance != null ? `${(r.draft_acceptance * 100).toFixed(0)}%` : '--'])] : []),
+    ...ratios.map(([key]) => createEl('td', { class: 'perf-table__num' }, [fmtPct(r[key])])),
   ]));
   return createEl('div', { class: 'perf-table-wrap' }, [
     createEl('table', { class: 'perf-table' }, [
@@ -299,12 +337,15 @@ function buildTrendsTable(rows) {
         createEl('th', { scope: 'col' }, ['Resp ms']),
         createEl('th', { scope: 'col' }, ['Tok/s']),
         createEl('th', { scope: 'col' }, ['Requests']),
-        // title: the number is token-weighted acceptance, not a success rate
-        ...(hasDraft ? [createEl('th', { scope: 'col', title: 'Speculative-decode draft acceptance' }, ['Draft acc'])] : []),
+        ...ratios.map(([, label]) => createEl('th', { scope: 'col' }, [label])),
       ])]),
       createEl('tbody', {}, body),
     ]),
   ]);
+}
+
+function fmtPct(v) {
+  return v != null ? `${(v * 100).toFixed(0)}%` : '--';
 }
 
 // ---------------------------------------------------------------------------

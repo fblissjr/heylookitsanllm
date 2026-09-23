@@ -278,6 +278,15 @@ or delete it.
 This is the difference worth remembering: **walking away keeps the whole answer;
 pressing Stop keeps only what had arrived.**
 
+### What each answer cost
+
+Under every answer is a muted line with what its generation measured: tokens,
+speed, how much of the prompt was reused from cache, speculative-decode
+acceptance when a drafter ran, and peak memory. It is saved with the message,
+so it is still there after a reload. When a request reused little or nothing,
+the line says why when the server knows ("cache miss: cold"); a reason starting
+with "probably" is the server's inference, not something the engine reported.
+
 ---
 
 ## 5. Editing messages
@@ -389,7 +398,8 @@ always works — it leaves the model's own default alone.
 In chat, the chip at the end of the bar names the library running the
 selected model; tap it for its context and template, with a link to the full
 panel here.
-- **Perf** — timing and throughput for past generations.
+- **Perf** — timing and throughput for past generations, and a Cache table: per
+  model, how much of its prompts was reused and why the rest was not.
 - **Explore** — per-token inspection of a generation.
 
 Sampler settings are shared across pages. Display preferences (such as showing

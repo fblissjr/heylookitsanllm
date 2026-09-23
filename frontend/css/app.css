@@ -856,6 +856,7 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .message-drop-note { padding: 0.1rem 0.25rem; }
 .message--user .message-drop-note { text-align: right; }
 .message-model-note { padding: 0.1rem 0.25rem; }
+.message-stats { padding: 0.1rem 0.25rem; font-variant-numeric: tabular-nums; }
 
 /* -- image attachments -------------------------------------------------- */
 

@@ -148,6 +148,14 @@ export function fillOptions(select, values) {
   select.replaceChildren(...values.map((v) => createEl('option', { value: v }, [v])));
 }
 
+// A cache cause token as words: `probable_evicted` -> "probably evicted".
+// The server's tokens are the vocabulary (spec §4, performance.cache.cause);
+// no table here to fall out of step with it.
+export function causeWords(cause) {
+  const words = (t) => t.replace(/_/g, ' ');
+  return cause.startsWith('probable_') ? `probably ${words(cause.slice(9))}` : words(cause);
+}
+
 export function formatBytes(bytes) {
   if (bytes == null || !Number.isFinite(bytes)) return '--';
   if (bytes < 1024) return `${bytes} B`;

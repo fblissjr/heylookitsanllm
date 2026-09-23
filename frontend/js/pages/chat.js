@@ -24,7 +24,7 @@
 //   controller.abort() -- the server's disconnect path persists instead.
 
 import { createPage } from '../page.js';
-import { createEl, autoGrow, armedConfirm, createUnloadGuard, formatTokens, setStatus, dismissPaneOnOutsideClick, lsRead, lsWrite } from '../utils.js';
+import { createEl, autoGrow, armedConfirm, causeWords, createUnloadGuard, formatTokens, setStatus, dismissPaneOnOutsideClick, lsRead, lsWrite } from '../utils.js';
 import { api } from '../api.js';
 import { streamGenerate, stopGenerate } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
@@ -1438,6 +1438,7 @@ function msgSignature(msg, { editing, capsKey, provider, modelNote }) {
     modelNote,
     msg.thinking ?? '',
     msg.content ?? '',
+    msg.stats ? JSON.stringify(msg.stats) : '',
     // Media identity only: a text block carries no `source`, and its text is
     // already covered by msg.content. Fingerprint the source rather than
     // spelling it out -- a base64 image would put megabytes in this string.
@@ -1551,6 +1552,35 @@ function buildThinkingEl(thinking, open = false) {
   return details;
 }
 
+// One assistant message's stats line (plan W5), from the stored row's
+// `stats` (db.message_stats: heylook_saved.timing's fields, content-free).
+// A miss or a short reuse says why when the server knows.
+function formatStats(stats) {
+  const parts = [];
+  if (stats.output_tokens != null) parts.push(`${stats.output_tokens} tokens`);
+  if (stats.generation_tps != null) parts.push(`${stats.generation_tps.toFixed(1)} tok/s`);
+  const cache = stats.cache;
+  if (cache) {
+    const why = cache.cause ? causeWords(cache.cause) : '';
+    if (cache.outcome === 'reused') {
+      parts.push(`cache ${formatTokens(cache.cached_tokens)}/${formatTokens(cache.prompt_tokens)}${why ? ` (${why})` : ''}`);
+    } else {
+      const label = cache.outcome === 'miss' ? 'cache miss' : 'cache not used';
+      parts.push(`${label}${why ? `: ${why}` : ''}`);
+    }
+  }
+  // Two different rates (accepted out of drafted, out of emitted); the
+  // counts beside them say which.
+  const spec = stats.speculative;
+  if (spec?.acceptance_rate != null) {
+    parts.push(`draft ${(spec.acceptance_rate * 100).toFixed(0)}% (${spec.accepted}/${spec.drafted})`);
+  } else if (spec?.draft_share != null) {
+    parts.push(`${(spec.draft_share * 100).toFixed(0)}% from draft (${spec.accepted}/${spec.emitted})`);
+  }
+  if (stats.peak_memory_gb != null) parts.push(`${stats.peak_memory_gb.toFixed(1)} GB peak`);
+  return parts.join(' · ');
+}
+
 function buildMessageEl(ctx, msg, modelNote = '') {
   const content = createEl('div', { class: 'message-content' });
   if (msg.role === 'assistant') content.innerHTML = renderMarkdown(msg.content);
@@ -1624,6 +1654,12 @@ function buildMessageEl(ctx, msg, modelNote = '') {
   // models): which model produced this row.
   if (modelNote) {
     children.push(createEl('div', { class: 'message-model-note muted small' }, [modelNote]));
+  }
+  // What this generation measured, always visible (plan W5) and kept with
+  // the row, so it survives a reload.
+  const statsLine = msg.role === 'assistant' && msg.stats ? formatStats(msg.stats) : '';
+  if (statsLine) {
+    children.push(createEl('div', { class: 'message-stats muted small' }, [statsLine]));
   }
   // Unsaved fallback row: say so ON the row, always visible (not
   // hover-gated -- the state must be legible on touch). While it exists,
@@ -3435,18 +3471,9 @@ async function finishGenerate(ctx, stream, { content, thinking, usage, aborted, 
     showStatus(ctx, `Reasoning used the whole ${usage?.output_tokens ?? ''} token `
       + `budget, so there is no answer text. Raise Max tokens and send again.`, true);
   } else if (usage || saved) {
-    const timing = saved?.timing;
-    const parts = [`${usage?.output_tokens ?? '?'} tokens`];
-    if (timing?.peak_memory_gb != null) parts.push(`${timing.peak_memory_gb.toFixed(2)} GB peak`);
-    // The two spec-decode rates are different quantities (accepted out of
-    // drafted vs out of emitted); say which one this is.
-    const spec = timing?.speculative;
-    if (spec?.acceptance_rate != null) parts.push(`draft accepted ${(spec.acceptance_rate * 100).toFixed(0)}%`);
-    else if (spec?.draft_share != null) parts.push(`${(spec.draft_share * 100).toFixed(0)}% from draft`);
-    const cache = timing?.cache;
-    if (cache?.outcome === 'reused') parts.push(`cache ${formatTokens(cache.cached_tokens)}/${formatTokens(cache.prompt_tokens)}`);
-    else if (cache) parts.push(cache.outcome === 'miss' ? 'no cache reuse' : 'cache not used');
-    showStatus(ctx, parts.join(' · '));
+    // A clean finish: the numbers are on the message's own stats line now
+    // (plan W5), so the status line only clears what the run put there.
+    showStatus(ctx, '');
   }
 
   // A stream that ended WITHOUT its heylook_saved is not success (spec §4:

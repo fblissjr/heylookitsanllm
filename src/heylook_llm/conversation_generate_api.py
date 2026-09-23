@@ -66,6 +66,7 @@ from heylook_llm.perf_collector import (
     build_performance,
     get_perf_collector,
     headline_tps,
+    message_stats,
 )
 from heylook_llm.providers.abort import AbortEvent
 from heylook_llm.providers.base import GenerationFailed, InvalidGenerationRequest
@@ -859,10 +860,21 @@ async def _stream_generate(conn, conv_id, generator, http_request, *,
         content, thinking = split_final()
         if not content and not thinking:
             return None  # nothing generated: the thread stays untouched
-        return await _persist_result(
+        row = await _persist_result(
             conn, conv_id, continue_row=continue_row,
             commit_after=commit_after, content=content, thinking=thinking,
             model_id=model_id)
+        if row is not None:
+            # The row the client adopts carries its stats line (plan W5),
+            # and so does every later read of it. Best-effort: a stats
+            # write that fails loses the line, never the message.
+            stats = message_stats(telemetry)
+            try:
+                await db.set_message_stats(conn, conv_id, row["id"], stats)
+                row["stats"] = stats
+            except Exception:
+                logger.warning(f"[CONV-GEN {conv_id[:8]}] message stats not kept", exc_info=True)
+        return row
 
     try:
         try:
@@ -1017,6 +1029,5 @@ def _record_perf(perf_ctx, translator, telemetry, model_id):
         was_streaming=True,
         queue_wait_ms=round(telemetry.queue_wait_ms, 1),
         prompt_tps=telemetry.prompt_tps,
-        draft_tokens=telemetry.draft_counts()[0],
-        draft_accepted=telemetry.draft_counts()[1],
+        **RequestEvent.report_fields(telemetry),
     ))

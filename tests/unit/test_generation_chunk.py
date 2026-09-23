@@ -123,10 +123,10 @@ class TestTelemetryLatch:
         t.absorb(GenerationChunk(peak_memory=1.0))
         assert t.peak_memory_gb == 2.0
 
-    def test_trends_aggregate_draft_acceptance(self):
-        # Perf-page trends: hours with spec-decode traffic report an
-        # acceptance rate; hours without report None (not 0 -- the UI must
-        # distinguish "no drafting" from "everything rejected").
+    def test_profile_weights_by_tokens_and_keeps_the_rates_apart(self):
+        # Perf-page trends and the cache section (plan W5): token-weighted,
+        # None (never 0) where no request reported the quantity, and the two
+        # draft rates never merged -- MLX knows no drafted count.
         import time as _time
 
         from heylook_llm.perf_collector import PerfCollector, RequestEvent
@@ -142,16 +142,32 @@ class TestTelemetryLatch:
             base.update(kw)
             return RequestEvent(**base)
 
+        def reports(cache, spec):
+            t = ChunkTelemetry()
+            t.cache, t.spec = cache, spec
+            return RequestEvent.report_fields(t)
+
         c = PerfCollector(max_events=16)
-        c.record_request(event(draft_tokens=100, draft_accepted=60))
-        c.record_request(event(draft_tokens=100, draft_accepted=20))
-        (row,) = c.build_profile("1h")["trends"]
-        assert row["draft_acceptance"] == 0.4  # (60+20)/200
+        c.record_request(event(**reports(
+            CacheReport(prompt_tokens=100, cached_tokens=90, outcome="reused"),
+            SpecReport(accepted=60, drafted=100, emitted=80))))
+        c.record_request(event(**reports(
+            CacheReport(prompt_tokens=300, cached_tokens=0, outcome="miss", cause="cold"),
+            SpecReport(accepted=20, emitted=50))))
+        profile = c.build_profile("1h")
+        (row,) = profile["trends"]
+        assert row["cache_share"] == round(90 / 400, 3)
+        assert row["draft_acceptance"] == 0.6          # gguf's alone: (60)/100
+        assert row["draft_share"] == round(80 / 130, 3)
+        (model,) = profile["cache"]
+        assert model["outcomes"] == {"reused": 1, "miss": 1}
+        assert model["causes"] == {"cold": 1}
 
         c2 = PerfCollector(max_events=16)
         c2.record_request(event())
         (row2,) = c2.build_profile("1h")["trends"]
-        assert row2["draft_acceptance"] is None
+        assert row2["cache_share"] is None and row2["draft_acceptance"] is None
+        assert c2.build_profile("1h")["cache"] == []
 
     def test_spec_report_latches_the_latest(self):
         # Spec-decode reports are cumulative running totals; the final chunk
@@ -162,7 +178,6 @@ class TestTelemetryLatch:
         t.absorb(GenerationChunk(text="b", spec=SpecReport(accepted=9, emitted=20)))
         t.absorb(GenerationChunk(text=""))
         assert (t.spec.accepted, t.spec.emitted) == (9, 20)
-        assert t.draft_counts() == (20, 9)
 
 
 # ---------------------------------------------------------------------------

@@ -44,10 +44,32 @@ class RequestEvent:
     # mlx-lm's own prefill rate, measured tightly around the prefill loop
     # (chunk.prompt_tps). Defaulted for back-compat with older event records.
     prompt_tps: float = 0.0
-    # Spec-decode acceptance for the request (0/0 when no draft/MTP active).
-    # Defaulted for back-compat with older event records.
-    draft_tokens: int = 0
-    draft_accepted: int = 0
+    # The request's cache and spec-decode reports (plan W5), flattened to
+    # primitives (test_request_event_dataclass_has_only_primitive_fields);
+    # empty/zero = not reported. Built by report_fields, never by hand. The
+    # draft pair this replaced meant accepted/drafted on gguf and
+    # accepted/emitted on MLX under one name; the three counts stay apart.
+    cache_outcome: str = ""
+    cache_cause: str = ""
+    cache_prompt_tokens: int = 0
+    cache_cached_tokens: int = 0
+    spec_accepted: int = 0
+    spec_drafted: int = 0
+    spec_emitted: int = 0
+
+    @staticmethod
+    def report_fields(telemetry: "ChunkTelemetry") -> dict:
+        """The report fields above, from a request's telemetry."""
+        out: dict = {}
+        cache, spec = telemetry.cache, telemetry.spec
+        if cache is not None:
+            out.update(cache_outcome=cache.outcome, cache_cause=cache.cause or "",
+                       cache_prompt_tokens=cache.prompt_tokens,
+                       cache_cached_tokens=cache.cached_tokens)
+        if spec is not None:
+            out.update(spec_accepted=spec.accepted, spec_drafted=spec.drafted or 0,
+                       spec_emitted=spec.emitted or 0)
+        return out
 
 
 @dataclass(slots=True)
@@ -70,15 +92,6 @@ class ChunkTelemetry:
     finish_reason: Optional[str] = None  # "stop" | "length" | None (mlx-lm's)
     cache: Any = None  # providers.base.CacheReport, latest not-None (plan W5)
     spec: Any = None  # providers.base.SpecReport, latest not-None (running totals)
-
-    def draft_counts(self) -> tuple[int, int]:
-        """(denominator, accepted) for the perf records' draft column: the
-        drafter's proposals where the engine knows them (gguf), else what was
-        emitted while drafting (MLX). The same pair these records always
-        held; the wire splits the two quantities (performance.speculative)."""
-        if self.spec is None:
-            return 0, 0
-        return (self.spec.drafted or self.spec.emitted or 0), self.spec.accepted
 
     def absorb(self, chunk) -> None:
         # GenerationChunk carries EVERY field on EVERY chunk (slotted, with
@@ -104,6 +117,14 @@ class ChunkTelemetry:
         # arrives on the FINAL chunk only -- a later chunk without one must
         # not erase it, so this latches rather than overwrites
         self.finish_reason = getattr(chunk, "finish_reason", None) or self.finish_reason
+
+
+def _weighted(events, part, whole) -> Optional[float]:
+    """sum(part) / sum(whole) over the events with a nonzero whole, or None
+    when none has one (not reported is not zero)."""
+    counted = [e for e in events if whole(e)]
+    total = sum(whole(e) for e in counted)
+    return round(sum(part(e) for e in counted) / total, 3) if total else None
 
 
 def usage_counts(prompt_tokens: int, cache) -> tuple[int, Optional[int]]:
@@ -250,6 +271,19 @@ def build_performance(
     return perf
 
 
+def message_stats(telemetry: "ChunkTelemetry") -> dict:
+    """What the store keeps per assistant message (plan W5, db.message_stats):
+    heylook_saved.timing's own fields plus the output count, content-free --
+    counts, rates and enum tokens. The cache report's ``reason`` sentence is
+    the one prose field and is dropped; its ``cause`` token says the same."""
+    stats = build_performance(telemetry)
+    if isinstance(stats.get("cache"), dict):
+        stats["cache"] = {k: v for k, v in stats["cache"].items() if k != "reason"}
+    if telemetry.completion_tokens:
+        stats["output_tokens"] = telemetry.completion_tokens
+    return stats
+
+
 def headline_tps(
     native_tps: float,
     tokens: int,
@@ -352,6 +386,7 @@ class PerfCollector:
             "resource_timeline": self._resource_timeline(snapshots),
             "bottlenecks": self._bottlenecks(events),
             "trends": self._trends(events),
+            "cache": self._cache_by_model(events),
         }
 
     # -- Private aggregation helpers ----------------------------------------
@@ -425,6 +460,37 @@ class PerfCollector:
         return result
 
     @staticmethod
+    def _cache_by_model(events: list[RequestEvent]) -> list[dict]:
+        """Per model, what its requests in the range reused (plan W5): the
+        token-weighted share, and how many requests had each outcome and
+        each cause. Only requests whose engine sent a cache report count."""
+        by_model: dict[str, list[RequestEvent]] = {}
+        for e in events:
+            if e.success and e.cache_outcome:
+                by_model.setdefault(e.model, []).append(e)
+        result = []
+        for model_id, reports in by_model.items():
+            prompt = sum(r.cache_prompt_tokens for r in reports)
+            cached = sum(r.cache_cached_tokens for r in reports)
+            outcomes: dict[str, int] = {}
+            causes: dict[str, int] = {}
+            for r in reports:
+                outcomes[r.cache_outcome] = outcomes.get(r.cache_outcome, 0) + 1
+                if r.cache_cause:
+                    causes[r.cache_cause] = causes.get(r.cache_cause, 0) + 1
+            result.append({
+                "model": model_id,
+                "requests": len(reports),
+                "prompt_tokens": prompt,
+                "cached_tokens": cached,
+                "cache_share": round(cached / prompt, 3) if prompt else None,
+                "outcomes": outcomes,
+                "causes": causes,
+            })
+        result.sort(key=lambda r: r["prompt_tokens"], reverse=True)
+        return result
+
+    @staticmethod
     def _trends(events: list[RequestEvent]) -> list[dict]:
         """Per-hour buckets with response time, TPS, request/error counts, and deltas.
 
@@ -465,12 +531,15 @@ class PerfCollector:
             if prev_tps is not None and prev_tps > 0:
                 tps_change = round((avg_tps - prev_tps) / prev_tps, 4)
 
-            # Spec-decode acceptance: token-weighted over the hour's drafted
-            # tokens. None (not 0) when nothing drafted -- the perf page must
-            # distinguish "no drafting" from "everything rejected".
-            drafted = sum(e.draft_tokens for e in successes)
-            accepted = sum(e.draft_accepted for e in successes)
-            draft_acceptance = round(accepted / drafted, 3) if drafted else None
+            # Token-weighted over the hour, and None (never 0) when no
+            # request reported the quantity: "nothing drafted" and "nothing
+            # reused" are not "everything rejected" / "nothing matched".
+            cache_share = _weighted(successes, lambda e: e.cache_cached_tokens,
+                                    lambda e: e.cache_prompt_tokens)
+            draft_acceptance = _weighted(successes, lambda e: e.spec_accepted,
+                                         lambda e: e.spec_drafted)
+            draft_share = _weighted(successes, lambda e: e.spec_accepted,
+                                    lambda e: e.spec_emitted)
 
             result.append({
                 "hour": hour,
@@ -480,7 +549,9 @@ class PerfCollector:
                 "errors": errors,
                 "response_time_change": rt_change,
                 "tps_change": tps_change,
+                "cache_share": cache_share,
                 "draft_acceptance": draft_acceptance,
+                "draft_share": draft_share,
             })
 
             prev_rt = avg_rt
