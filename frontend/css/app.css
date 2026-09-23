@@ -1186,6 +1186,53 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 }
 /* Saved-but-not-applied marker; persists until a reload/unload clears it. */
 .model-row__stale { color: var(--accent); }
+
+/* ================= engine contract (js/engine.js) =================
+   One renderer for the models-page row panel and the chat bar's compact
+   panel. Provenance is spelled out in words (engine-prov) and only
+   reinforced by colour: configured is accented, observed marked live,
+   unknown / not applicable muted. Every reveal is a native <details>, so
+   touch and keyboard reach the reason the same way (DESIGN.md §7). */
+.engine-panel { margin-top: 0.35rem; }
+.engine-panel__summary { cursor: pointer; }
+.engine-panel__label { font-weight: 550; }
+.engine-panel__body { display: flex; flex-direction: column; gap: 0.6rem; padding: 0.5rem 0 0.25rem; }
+.engine-panel__body--compact { gap: 0.15rem; }
+.engine-section__title { color: var(--ink-muted); font-weight: 550; margin: 0 0 0.15rem; }
+.engine-row__summary {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-size: var(--text-sm);
+  min-width: 0;
+}
+.engine-row__label { min-width: 9rem; overflow-wrap: anywhere; }
+.engine-row__value { flex: 1; min-width: 0; overflow-wrap: anywhere; font-family: var(--mono); }
+.engine-row__reason, .engine-row__auto { padding: 0.1rem 0 0.3rem 1rem; overflow-wrap: anywhere; }
+.engine-prov {
+  font-size: var(--text-sm);
+  border: 1px solid var(--line);
+  border-radius: 0.25rem;
+  padding: 0 0.3rem;
+  white-space: nowrap;
+}
+.engine-prov--configured { border-color: var(--accent); color: var(--accent); font-weight: 550; }
+.engine-prov--observed { border-style: dashed; }
+.engine-row--unknown .engine-row__value,
+.engine-row--not_applicable .engine-row__value,
+.engine-prov--unknown,
+.engine-prov--not_applicable { color: var(--ink-muted); }
+.chat__engine-panel {
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  padding: 0.25rem 1rem 0.5rem;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+@media (max-width: 767px) {
+  .engine-row__label { min-width: 6.5rem; }
+}
 .model-row__actions { flex-shrink: 0; }
 
 .model-badge {

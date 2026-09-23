@@ -275,6 +275,26 @@ export async function runChatSuite({ suite, ctx, config }) {
     await page.select(MODEL_SELECT, config.model);
   });
 
+  await suite.check('the engine chip names the runtime and opens its panel', async () => {
+    const models = await serverGet(page, '/v1/admin/models');
+    const want = models?.models?.find((m) => m.id === config.model)?.engine?.runtime?.value;
+    assert(want, `the admin row for ${config.model} carries no engine.runtime`);
+    await waitFor(async () => (await textOf(page, '.chat__engine-chip')) === want,
+      { message: `engine chip never showed ${want}` });
+    await page.click('.chat__engine-chip');
+    await waitFor(async () => page.$eval('#chat-engine-panel', (e) => !e.hidden),
+      { message: 'engine panel never opened' });
+    const expanded = await page.$eval('.chat__engine-chip', (e) => e.getAttribute('aria-expanded'));
+    assert(expanded === 'true', `aria-expanded=${expanded}`);
+    const runtime = await page.$$eval('#chat-engine-panel .engine-row__summary', (els) =>
+      els.map((e) => [e.querySelector('.engine-row__label')?.textContent,
+        e.querySelector('.engine-row__value')?.textContent]).find(([l]) => l === 'runtime')?.[1]);
+    assert(runtime === want, `panel runtime ${runtime} != ${want}`);
+    await page.click('.chat__engine-chip');
+    await waitFor(async () => page.$eval('#chat-engine-panel', (e) => e.hidden),
+      { message: 'engine panel never closed' });
+  });
+
   await suite.check('empty state before any conversation', async () => {
     // Same race as the select: rendered by the same async setup.
     await waitFor(async () => {

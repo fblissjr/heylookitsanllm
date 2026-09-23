@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.77]
+
+### Added
+
+- **The engine contract in the UI (plan W13, remaining item 4).** One
+  renderer, `frontend/js/engine.js`:
+  - `renderEngine`: each models-page row gets an **Engine** panel (a native
+    `<details>`, filled when opened, open state kept across list
+    re-renders) with the runtime, context and template facts, any later
+    slot the server fills (W5's cache, W2's thinking, ...) with no page
+    code naming it, and every setting grouped by when a change takes
+    effect, per-request defaults included. Provenance is spelled out in
+    words and reinforced by colour: "set" (accented, with what auto would
+    pick), "live", "derived", "unknown", "n/a". Each line's reason is one
+    tap away. A schema `ui:"hidden"` field is omitted only when not
+    configured, so a hand-set `server_binary` or `port` stays visible.
+  - `renderEngineCompact`: a chip in chat's bar names the selected model's
+    runtime and toggles a panel under the bar (runtime, context, template,
+    a link to the models page). No settings in chat; its sampler panel owns
+    the per-request ones.
+  - e2e: one check per page against the real row (the runtime shown is the
+    server's; settings groups render; no absolute path; the chip's
+    aria-expanded follows the panel).
+
 ## [2.0.76]
 
 ### Changed

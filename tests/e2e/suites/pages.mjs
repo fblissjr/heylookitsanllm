@@ -448,6 +448,33 @@ export async function runPagesSuite({ suite, ctx, config }) {
     }
   });
 
+  await suite.check('the engine panel renders the server\'s engine object', async () => {
+    // The shared renderer (js/engine.js) against the REAL row: the runtime
+    // it shows is the one the server reports for this model, the settings
+    // come grouped, and nothing in it is an absolute path (the list is read
+    // over the LAN).
+    await ctx.open('#/models');
+    await waitFor(async () => (await count(page, '.model-row')) > 0, { message: 'no model rows' });
+    const models = await serverGet(page, '/v1/admin/models');
+    const want = models?.models?.find((m) => m.id === config.model)?.engine?.runtime?.value;
+    assert(want, `the admin row for ${config.model} carries no engine.runtime`);
+    const row = await findModelRow(page, config.model);
+    const summary = await row.$('.engine-panel__summary');
+    await summary.click();
+    await waitFor(async () => (await row.$$('.engine-panel .engine-row')).length > 0,
+      { message: 'engine panel never rendered rows' });
+    const shown = await row.$$eval('.engine-panel .engine-row__summary', (els) =>
+      els.map((e) => [e.querySelector('.engine-row__label')?.textContent,
+        e.querySelector('.engine-row__value')?.textContent]));
+    const runtime = shown.find(([label]) => label === 'runtime')?.[1];
+    assert(runtime === want, `panel runtime ${runtime} != server ${want}`);
+    const groups = await row.$$eval('.engine-panel .engine-section__title', (els) => els.map((e) => e.textContent));
+    assert(groups.includes('Applies at the next load'), `no settings groups rendered: ${groups}`);
+    const text = await row.$eval('.engine-panel', (e) => e.textContent);
+    assert(!/(^|\s)(\/Users\/|\/home\/|~\/)/.test(text), 'an absolute path reached the engine panel');
+    await summary.click();  // leave the row as later checks expect it
+  });
+
   await suite.check('Configure opens a schema-driven config editor', async () => {
     // The panel is generated from GET /v1/admin/model-options, so the honest
     // assertion is against that schema: every field the server declares for

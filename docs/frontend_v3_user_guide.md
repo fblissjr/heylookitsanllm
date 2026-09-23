@@ -379,7 +379,16 @@ always works — it leaves the model's own default alone.
   both.
 - **Models** — what is installed, what is resident, and per-model configuration.
   The fields here come from the backend, so this page grows new options
-  automatically.
+  automatically. Each row's **Engine** panel says what runs the model and
+  with what: the library, the context (the ceiling, and what a loaded model
+  actually got), the chat template in force, and every setting with its value,
+  what auto would pick, and why. A value you set is marked "set"; a value
+  reported by the running process is marked "live"; "unknown" and "n/a" say
+  why. Tap a line for its reason.
+
+In chat, the chip at the end of the bar names the library running the
+selected model; tap it for its context and template, with a link to the full
+panel here.
 - **Perf** — timing and throughput for past generations.
 - **Explore** — per-token inspection of a generation.
 

@@ -29,9 +29,9 @@ The application is structured around four primary pages created via [`createPage
 
 | Page | Controller | Primary Role & API Grammar |
 | :--- | :--- | :--- |
-| **Chat** | [`chat.js`](../../frontend/js/pages/chat.js) | Full multi-turn conversation UI, system prompt editor, preset bar, attachments, thinking toggle, and model selection. Drives `POST /v1/conversations/{id}/generate`. |
+| **Chat** | [`chat.js`](../../frontend/js/pages/chat.js) | Full multi-turn conversation UI, system prompt editor, preset bar, attachments, thinking toggle, and model selection. An engine chip in the bar names the selected model's runtime and opens a compact panel (runtime, context, template). Drives `POST /v1/conversations/{id}/generate`. |
 | **Notebook** | [`notebook.js`](../../frontend/js/pages/notebook.js) | A single continuous text document per notebook -- one textarea, a Generate button that **continues writing** into it, its own system prompt and model select, and a notebook list. Stopping keeps the partial text. Drives stateless `POST /v1/messages`. There is no branching or side-by-side comparison. |
-| **Models** | [`models.js`](../../frontend/js/pages/models.js) | Registry browser with residency ("Loaded") state, watch-folder settings (optionally including the HuggingFace cache; everything under a watch folder is served with no `models.toml` entry), per-model **Configure** via the schema-driven editor, and a danger zone. |
+| **Models** | [`models.js`](../../frontend/js/pages/models.js) | Registry browser with residency ("Loaded") state, watch-folder settings (optionally including the HuggingFace cache; everything under a watch folder is served with no `models.toml` entry), per-model **Configure** via the schema-driven editor, a per-row **Engine** panel rendering the engine contract through [`engine.js`](../../frontend/js/engine.js) (every setting with provenance, grouped by effect), and a danger zone. |
 | **Perf** | [`perf.js`](../../frontend/js/pages/perf.js) | Titled "Performance", with **two** sections: **System** (RAM, CPU, currently loaded models) and **Profile** (a timing breakdown by operation, recent trends by hour, and token-weighted speculative-decode draft acceptance -- the last column appearing only when there is draft data). A Refresh control and a set of time ranges sit alongside. |
 
 ```mermaid

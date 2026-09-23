@@ -36,7 +36,7 @@ import { createPresetBar, paintPresetChip } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
 import { createDocumentWriter } from '../document-writer.js';
 import { createContextSelect } from '../context-select.js';
-import { contextRunning } from '../engine.js';
+import { contextRunning, readFact, renderEngineCompact } from '../engine.js';
 import { paintPromptPreview, paintPromptPreviewError } from '../prompt-preview.js';
 
 // A system prompt typed before any conversation exists has no owner: the
@@ -400,6 +400,25 @@ function buildSkeleton(ctx) {
   // Applied-preset chip: which preset this conversation is running (with an
   // "(edited)" suffix once it drifts). Fed by the preset bar's onIndicator;
   // clicking it opens the drawer at the preset controls.
+  // Engine chip: which library runs the selected model. Opens a compact
+  // panel UNDER the bar (the detail strip scrolls horizontally on a phone,
+  // so a popover inside it would be clipped). Painted by refreshLoadBtn,
+  // which runs whenever the selected model or its row changes.
+  s.enginePanelEl = createEl('div', {
+    class: 'chat__engine-panel', id: 'chat-engine-panel', hidden: true,
+  });
+  s.engineChip = createEl('button', {
+    class: 'btn preset-chip chat__engine-chip', hidden: true,
+    'aria-expanded': 'false', 'aria-controls': 'chat-engine-panel',
+    title: 'What runs this model, and with what',
+  });
+  s.engineChip.addEventListener('click', () => {
+    const open = s.enginePanelEl.hidden;
+    s.enginePanelEl.hidden = !open;
+    s.engineChip.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) paintEnginePanel(ctx);
+  });
+
   s.presetChip = createEl('button', {
     class: 'btn preset-chip chat__preset-chip', hidden: true,
     title: 'Preset applied to this conversation -- open settings',
@@ -440,10 +459,12 @@ function buildSkeleton(ctx) {
         s.loadNowBtn,
         s.presetChip,
         s.sysPromptChip,
+        s.engineChip,
       ]),
       createEl('div', { class: 'chat__bar-spacer' }),
       settingsBtn,
     ]),
+    s.enginePanelEl,
     s.messagesEl,
     s.statusEl,
     s.attachStrip,
@@ -577,6 +598,28 @@ function refreshLoadBtn(ctx) {
     ? 'Load this model now so the first message does not pay for it'
     : 'Restart this model with the chosen context size';
   s.loadNowBtn.hidden = !((cold || changed) && !s.loadNowBtn.dataset.busy);
+  paintEngineChip(ctx);
+}
+
+function paintEngineChip(ctx) {
+  const s = ctx.state;
+  const engine = s.adminRows.get(s.modelSelect.value)?.engine;
+  const runtime = readFact(engine?.runtime);
+  s.engineChip.hidden = !runtime;
+  if (runtime) {
+    s.engineChip.textContent = runtime;
+  } else {
+    // A chip that vanished must not leave its panel open, describing nothing.
+    s.enginePanelEl.hidden = true;
+    s.engineChip.setAttribute('aria-expanded', 'false');
+  }
+  if (!s.enginePanelEl.hidden) paintEnginePanel(ctx);
+}
+
+function paintEnginePanel(ctx) {
+  const s = ctx.state;
+  s.enginePanelEl.replaceChildren(
+    renderEngineCompact(s.adminRows.get(s.modelSelect.value)?.engine));
 }
 
 async function loadModelNow(ctx) {

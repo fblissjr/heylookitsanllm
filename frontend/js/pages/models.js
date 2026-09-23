@@ -15,7 +15,7 @@ import { createEl, armedConfirm, createUnloadGuard, formatTokens } from '../util
 import { api } from '../api.js';
 import * as drawer from '../settings-drawer.js';
 import { createModelConfigEditor, configSummary, hasUnsavedTemplate } from '../model-config.js';
-import { contextCeiling } from '../engine.js';
+import { contextCeiling, engineSummary, renderEngine } from '../engine.js';
 
 export default createPage({
   async setup(ctx) {
@@ -27,6 +27,7 @@ export default createPage({
     s.optionsPromise = null;    // in-flight fetch of the above
     s.configOpenId = null;      // model id with the config editor expanded (single panel)
     s.configDrafts = new Map(); // model id -> {field: rawValue} unsaved edits; survives re-renders
+    s.engineOpenIds = new Set(); // model ids whose engine panel is open; survives re-renders
     // Unsaved work on this page is a chat-template body typed into a panel:
     // the one thing here that only a button press can commit, and the one
     // worth thousands of characters. Owned at PAGE level because the draft
@@ -324,6 +325,7 @@ function buildModelRow(ctx, model) {
     main.push(createEl('div', { class: 'model-row__stale small' },
       ['config changed — reload to apply']));
   }
+  main.push(buildEnginePanel(ctx, model));
 
   const btn = createEl('button', { class: 'btn btn--sm' }, [
     busy ? (model.loaded ? 'Unloading…' : 'Loading…') : (model.loaded ? 'Unload' : 'Load'),
@@ -347,6 +349,41 @@ function buildModelRow(ctx, model) {
     createEl('div', { class: 'model-row__main' }, main),
     createEl('div', { class: 'model-row__actions' }, [btn, cfgBtn]),
   ]);
+}
+
+// The engine contract, rendered by the shared renderer (js/engine.js): what
+// runs this model, with what, and why -- every setting included, per-request
+// defaults too, since a default quietly set in models.toml is exactly what
+// this panel exists to show. Built only when opened (the list re-renders
+// often), and its open state outlives the re-render.
+function buildEnginePanel(ctx, model) {
+  const s = ctx.state;
+  const panel = createEl('details', { class: 'engine-panel', dataset: { modelId: model.id } }, [
+    createEl('summary', { class: 'engine-panel__summary small' }, [
+      createEl('span', { class: 'engine-panel__label' }, ['Engine']),
+      ' ',
+      createEl('span', { class: 'muted' }, [engineSummary(model.engine)]),
+    ]),
+  ]);
+  const fill = () => {
+    if (panel.dataset.filled) return;
+    panel.dataset.filled = '1';
+    panel.append(renderEngine(model.engine,
+      { fields: s.optionsSchema?.providers?.[model.provider]?.fields }));
+  };
+  if (s.engineOpenIds.has(model.id)) {
+    panel.open = true;
+    fill();
+  }
+  panel.addEventListener('toggle', () => {
+    if (panel.open) {
+      s.engineOpenIds.add(model.id);
+      fill();
+    } else {
+      s.engineOpenIds.delete(model.id);
+    }
+  });
+  return panel;
 }
 
 async function toggleLoad(ctx, model) {

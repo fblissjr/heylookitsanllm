@@ -607,7 +607,7 @@ and the route-level conformance test.
    after each config load (never fatal; stamp-keyed, so a warm that races a
    reload is ignored). `ModelRouter.warm_model_facts`, started by the app
    lifespan, never by router construction.
-4. The generic frontend renderer, before W5: the full panel on the models
+4. **Done (v2.0.77).** The generic frontend renderer, before W5: the full panel on the models
    page row (ALL settings, per_request included, grouped by `effect`, with
    provenance, since per-request defaults quietly set in models.toml are the
    black box this plan exists to open), and a compact chat popover (runtime,
