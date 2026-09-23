@@ -519,6 +519,42 @@ implementations of one contract instead.
 Define the contract with W5's report as its first member, then W2/W4/W1
 extend it.
 
+### W14. Activation steering (gated on the research track)
+
+A research track lives outside the repo (`internal/claude/steering/`, local).
+It steers a model with a rank-1 LoRA on stock llama-server; no fork, no heylook
+code yet.
+- **Step 1 passed on 2026-09-21:** the adapter loads, a scale of 0 matches no
+  adapter, negative scales work, and a scale change re-processes the prompt.
+- **Step 2** (one real verbosity direction) is next.
+- **Nothing here is built until step 2 shows a real, measured effect.** This
+  section exists so W13, W5 and W0 are built with steering's needs in mind,
+  instead of being reworked later.
+
+**How it fits once the gate passes:**
+- **W13, the contract:** `describe()` lists a model's steering directions and
+  their allowed scale range. It states that steering is gguf-only for now.
+- **W5, the report:** a scale change forces a full prompt re-process. The
+  cache report records that as the reason, not as an unexplained miss.
+- **A provider rule, enforced in code:** a steered gguf model gets its
+  explicit adapter list on every request, never a bare request, and heylook
+  never uses llama-server's global `POST /lora-adapters`. Step 1 found a
+  request that omits the list reuses cache computed at the previous scale, and
+  poisons the next request too. That must be structurally impossible, not a
+  convention.
+- **W0, sidecars:** a model's steering adapters and direction metadata live in
+  its own directory, like the chat-template override. They are discovered, not
+  listed in `models.toml`.
+- **Speculative decoding conflict:** llama.cpp applies a LoRA to the target
+  model only, never the drafter. Steering and a drafter on the same model
+  undercut each other, and `describe()` says so.
+- **Captured data uses the template in force.** Traces for step 2 onward go
+  through heylook's render path, with the fixed Qwen3.8 override. The
+  pre-fix template would bake its whitespace defect into the captured
+  sequences.
+- **MLX:** out of scope until the gguf path proves out. It would need its own
+  mechanism, and W10's cache work must know about scale-dependent state first.
+
 ## Sequencing (revised 2026-09-23, after the measurements)
 
 The first order put W0 first. W0 is gated on its own Phase 0 and two open
@@ -561,6 +597,9 @@ display touch stored config. So W0 runs in parallel instead of blocking.
 - **W12 (any time, small): profile before any native-code question.** Its
   outcomes are named in its section. W10 starts with its own spike (outcomes
   A1/A2/B1/B2) before anything is built.
+- **W14 (gated): activation steering integration.** Only after the research
+  track's step 2 shows a measured effect. Its integration points are written
+  into W13, W5 and W0 so those land steering-ready.
 
 Each workstream ships with its CHANGELOG entry and `frontend_v3_spec.md` §4
 updates in the same commit as any contract change.
