@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-23, v2.0.84, `main`.
+Last updated: 2026-09-23, v2.0.86, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `CLAUDE.md`, the backlog in [TODO.md](./TODO.md), and what each release
@@ -15,16 +15,16 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
-| unit + contract | green | v2.0.84 |
+| unit + contract | green | v2.0.86 |
 | `bun run e2e:render` (model-free) | green, against `marked` 18.0.13 | v2.0.82 |
-| `tests/smoke/` mlx-lm arm | green on `Qwen3-0.6B-8bit-mlx` (reuse checks pass; thinking depth and nested image source UNCOVERED on it) and on `gpt-oss-20b-MXFP4-Q8-mlx` (thinking depth covered; reuse is the known gap W10, `trim_refused`) | v2.0.83 |
-| `tests/smoke/` mlx-vlm arm | green on `Qwen3.5-0.8B-MLX-8bit`, incl. the image-token usage check; reuse is the known gap W10 (mRoPE, vision path); thinking depth UNCOVERED. Also green on `gemma-4-26b-a4b-it-8bit-mlx`, where the text reuse checks pass | v2.0.84 |
+| `tests/smoke/` mlx-lm arm | retired in effect: since v2.0.86 every MLX model reports runtime mlx-vlm, so this arm has no models. Text models (Qwen3-0.6B, gpt-oss-20b) run as the mlx-vlm arm, green except its vision-capability check, which stage 3's taxonomy change retires | v2.0.86 |
+| `tests/smoke/` mlx-vlm arm | green on `Qwen3.5-0.8B-MLX-8bit` on the mlx-vlm engine, incl. every reuse check; a turn that adds a new image is the named known gap; thinking depth covered by gpt-oss-20b on this engine | v2.0.86 |
 | `scripts/vlm_parity_probe.py` | exact token parity with mlx-vlm's `generate_step` on Qwen3.5-0.8B, Qwen-Image-2.1-PE-I21, Qwen3.5-27B-8bit, Qwen3-VL-32B; single- and multi-chunk prefill | v2.0.55; 0.8B re-run at v2.0.60 |
 | `tests/smoke/` gguf arm | green on `unsloth_Qwen3.8-27B-UD-Q8_K_XL`, all three reuse checks pass; audio UNCOVERED (the model declares none) | v2.0.84 |
-| `bun run e2e` (chat + pages) | green on `E2E_MODEL=Qwen3.5-0.8B-MLX-8bit` (mlx-vlm arm). NOT run on the default gemma-4 model, nor on the mlx-lm or gguf arms | v2.0.83 |
-| MLX greedy chain probe (`scripts/chain_probe.py`) | gemma-4-26B-A4B: every extend and edit hop reuses and matches fresh output at temperature 0 | v2.0.84 |
+| `bun run e2e` (chat + pages) | green on `E2E_MODEL=Qwen3.5-0.8B-MLX-8bit`, on the mlx-vlm engine. NOT run on the default gemma-4 model, nor on the gguf arm | v2.0.86 |
+| MLX greedy chain probe (`scripts/chain_probe.py`) | on the mlx-vlm engine (v2.0.86): qwen3_5, gemma-4, Qwen3, gpt-oss every hop identical and reused; Qwen3-VL-32B one hop at an exact top-2 tie (rounding) | v2.0.86 |
 | `bun run e2e:ios` | see `TODO.md` and the harness's own header | -- |
-| `tests/eval/` (behavioural bank) | ported to `/v1/messages` (an adapter in `run.py`). Live on `Qwen3.5-0.8B-MLX-8bit` (mlx-vlm arm), `thinking` + `vision` only: every task got a real, judged response. Two fail on model behaviour, checked from the raw output: two-image discrimination flaps (the same failure is recorded before the port), and the 0.8B's thinking runs past the task's budget. Other categories, the mlx-lm and gguf arms: not run | v2.0.71 |
+| `tests/eval/` (behavioural bank) | full bank on `Qwen3.5-27B-8bit-mlx`: every task passes, before (the W10 baseline) and after the engine switch (v2.0.86); audio tasks run on no model. Records in `internal/claude/w10/`. gguf arm not run | v2.0.86 |
 | gguf runtime harness (`internal/claude/perf/harness/`) | Qwen3.8-27B, Muse-Glimmer-30B, DeepSeek-V4-Flash-Vision Q4: vision cost, system-prompt reuse, multi-turn cache reuse (correct on all three after the Qwen template fix), thinking levels, residency, flash attention, micro-batch. Findings in `docs/testing/gguf_runtime_audit_2026-09-23.md` | v2.0.64 build 11138 |
 
 The standing uncovered mechanism is thinking DEPTH on the mlx-vlm arm: no
