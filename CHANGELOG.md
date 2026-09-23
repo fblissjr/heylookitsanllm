@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `probable_template_diverged`, `probable_budget_skipped`,
     `probable_evicted`. The log patterns are pinned against the build tree's
     format strings.
+  - Best-effort: the log is read on its own thread, so an event can be
+    counted against the request after the one it happened during. A test
+    drives the pump against a real child writing well past the pipe buffer
+    with a log file that dies mid-run, the one check that can see a wedge.
 - `CacheReport.cause` / `performance.cache.cause` on MLX too: the gate token
   of an `ineligible` request (`config`, `draft`, `mrope`, `vision_path`).
 
