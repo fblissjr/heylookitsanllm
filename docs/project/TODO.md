@@ -22,12 +22,16 @@ Sequencing section carries the reasons):
 - W8 non-causal image guard + W9 keep-alive (both small; W9 measured);
 - the eval-bank port (prerequisite, below);
 - W5 cache/spec reporting;
-- W10 MLX checkpoint caching (reopened; the biggest daily win);
+- W10 MLX caching: first a spike ending in a named outcome (A1 mlx-vlm drives
+  vision / A2 remove mlx-lm / B1 own checkpoints / B2 upstream hooks), then
+  build (reopened; the biggest daily win);
 - W2+W3 thinking detection + templates, with W7 thinking budget;
 - W4 image geometry;
 - W0 from Phase 0, then W1 load panel;
 - W6 only if W5 shows budget skips;
 - W11 upstream llama.cpp PRs, optional.
+- W12 profiling (decode overhead + image preprocessing), any time; decides
+  whether any native piece is ever justified.
 
 ## Unit-suite pruning pass, AFTER W5 + W10 (2026-09-23)
 

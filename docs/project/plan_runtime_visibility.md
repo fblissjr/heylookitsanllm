@@ -356,35 +356,119 @@ Until then, W5 surfaces the budget and every skip.
 
 ### W10. MLX prompt cache: checkpoints, vision, and hybrids
 
-The research finding: "caching cannot work for qwen3_5 on MLX" is true of
-heylook's current single-slot, after-generation design only.
+**The problem.** On MLX:
+- a conversation with an image anywhere in its history gets no cross-request
+  cache at all, for every family;
+- the vision feature cache is keyed by the whole image list, so adding one
+  image re-encodes all of them;
+- qwen3_5 hybrids get no reuse even on text.
 
-- The mRoPE blocker is a rope-delta seed that is derivable from token ids and
-  image grids, with no vision tower.
-- The trim blocker disappears once snapshots are taken at prompt positions,
-  llama.cpp-style.
-- Both upstream projects already ship the pattern: mlx-lm's segment
-  checkpoints with `LRUPromptCache`, and mlx-vlm's APC restorable checkpoints.
+"Caching cannot work for qwen3_5 on MLX" is true of heylook's current
+single-slot, after-generation design only:
+- the mRoPE blocker is a rope-delta seed, derivable from token ids and image
+  grids with no vision tower;
+- the trim blocker disappears once state is snapshotted at prompt positions.
 
-**Scope:**
-- Up to three partial-state checkpoints per slot (end of system prompt,
-  history/generation boundary), keyed on the vision path by per-image hashes.
-- Seed the rope delta on restore, and remove `_mrope_reuse_safe`.
-- Bring the vision path into the cache at all. Today every request with an
-  image anywhere in its history re-processes everything.
-- A per-image vision feature cache. Today it is keyed by the whole image list,
-  so a new image re-encodes the old ones.
+**The larger finding (2026-09-23).** heylook straddles two MLX stacks that are
+diverging. Vision models run mlx-vlm's model code and preprocessing but mlx-lm's
+decode loop (`stream_generate`). Most MLX sharp edges in `CLAUDE.md` live on
+that seam:
+- the raw tokenizer versus the TokenizerWrapper, and the detokenizer class;
+- manual position resets;
+- the prefill-all-but-last handoff;
+- the dropped `max_pixels` kwarg;
+- the attention-mask trap.
+
+Meanwhile mlx-vlm has become a full stack of its own:
+- it no longer depends on mlx-lm (the kernels it needed are vendored);
+- it has its own generation loop, cache, restorable checkpoints (APC) and
+  speculative verifier;
+- 150 of its 227 model directories are text-only;
+- it uses the fast paths at least as heavily as mlx-lm;
+- it is far more active, but more concentrated (a few people make most of the
+  commits).
+
+The seam will widen, not close. This also settles an open forward item from
+the 2026-08-07 postmortem: "adopt mlx-vlm's generator, or port its cache and
+prefill into `run_generation`".
+
+**Step 1: spike (decide before building).** Can heylook drive mlx-vlm's own
+generator with its checkpoints, keeping heylook's hooks?
+- the generated-only penalty wrapper;
+- prefill progress;
+- mid-prefill cancel and the abort path;
+- per-request telemetry.
+
+The spike ends in exactly one named outcome:
+
+| Outcome | When | Result |
+|---|---|---|
+| **A1** mlx-vlm drives vision models; mlx-lm stays for text-only models | The hooks fit | The seam is gone for vision, and W10's checkpoints come mostly from upstream. Two engines remain, but never mixed within one request |
+| **A2** mlx-vlm drives everything; mlx-lm is removed | The hooks fit AND the text-model check passes (below) | One MLX engine and one pin. heylook deletes the loader routing between engines, the two tokenizer shapes, the prefill handoff, the manual position resets and its own prompt cache (replaced by APC). The smoke suite goes from two MLX arms to one. It trades Apple's broadly maintained code for a faster, more concentrated project, so it is an owner decision on evidence |
+| **B1** heylook builds llama.cpp-style checkpoints itself | The hooks do not fit | Partial-state snapshots at the end of the system prompt and at the history/generation boundary, keyed by per-image hashes on the vision path. The rope delta is seeded on restore and `_mrope_reuse_safe` is removed. The seam stays |
+| **B2** upstream the missing hooks to mlx-vlm, then A1/A2 | The hooks do not fit, but they are small and general | Less local code; the timing depends on the maintainers |
+
+- **Text-model check for A2.** mlx-vlm must load a plain text-only
+  checkpoint through its normal loader. Its text ports must also match
+  mlx-lm's on the text models actually served: same tokens at greedy, and
+  matched decode speed under matched controls. A model that fails stays on
+  mlx-lm (that is A1).
+- **Who owns model code.** Never heylook. heylook has no architecture ports
+  and keeps it that way. Text-only models are implemented by mlx-lm (A1/B) or
+  by mlx-vlm's ports (A2). A model neither library supports is ported
+  upstream, not here.
+- **Fallback while any of this is in flight:** gguf is already the working
+  multi-turn vision engine for the same families, now that the Qwen3.8
+  template is fixed.
+
+**Step 2: build the chosen outcome.** In every outcome:
+- **Per-image vision feature cache**, so a new image stops re-encoding the old
+  ones (unless APC under A1/A2 already covers it).
+- **The decision logic is a pure table**, separate from the code that applies
+  it and testable without MLX. mlx-swift-lm's `PromptCacheReusePolicy.swift`
+  is the structural reference (extend, append media, rewind, rebuild).
+  - **It is not the mechanism:** for a non-trimmable hybrid whose template
+    re-renders history differently, it rebuilds, with no checkpoints. The
+    mechanisms that solve that case are mlx-vlm's APC and llama.cpp's context
+    checkpoints.
 
 **Why.** It makes the two engines behave the same on hybrid and vision
-multi-turn, and it serves the Qwen-Image PE encoders' long fixed system
-prompts.
+multi-turn. It is the owner's daily path, and it also serves the Qwen-Image
+PE encoders' long fixed system prompts.
 
-**Constraint.** Reopens the 2026-09-20 "leave prompt caching alone" decision,
-so it needs the owner's go-ahead (asked 2026-09-23).
+**Verification.**
+- W5's live cache-reuse smoke check is the acceptance test: the MLX vision arm
+  flips from its named known gap to a real pass.
+- Plus the multi-hop greedy chain probe (single hops passed before, so only a
+  chain discriminates) and `scripts/vlm_parity_probe.py` on vision restores.
+- Under A2, add the text-model check above.
 
-**Verification.** The multi-hop greedy chain probe (single hops passed before,
-so only a chain discriminates), and `scripts/vlm_parity_probe.py` for vision
-restores.
+### W12. Profile before any native-code question
+
+Independent of W10's outcome, and small. It answers whether a native (Swift
+or C++) piece is ever justified.
+- Profile decode on the models as actually loaded (through mlx-vlm for vision
+  models): the fraction of wall time outside MLX evaluation.
+- Measure image preprocessing time per image at the owner's usual sizes. It
+  runs through transformers, PIL and OpenCV on the CPU, which is the likelier
+  Python cost for vision.
+
+The outcomes are named in advance:
+- **Both small** → the native-server question closes; stay Python.
+- **Preprocessing dominates vision TTFT** → MLX-native preprocessing, upstream
+  in mlx-vlm or in heylook. Check first whether mlx-vlm already has it for the
+  served families. A small native sidecar only if that fails.
+- **Overhead matters only on tiny models** → targeted fixes (a compiled
+  sampler), not a rewrite.
+
+Data goes to `internal/claude/perf/` with conditions attached. No figures in
+tracked docs.
+
+Out of scope for this plan, recorded so it is not re-derived: a **native
+on-device client** (mlx-swift on iPhone/iPad, speaking the same Messages wire,
+running small models locally and falling back to heylook). It is a capability
+track, not a server speedup, and mlx-swift-lm has the small vision families it
+would need.
 
 ## Sequencing (revised 2026-09-23, after the measurements)
 
@@ -422,6 +506,10 @@ display touch stored config. So W0 runs in parallel instead of blocking.
     four tokens from the end. The fixed offset sat one position past the
     divergence a template produced in the audit, which is why a one-newline
     defect cost whole turns.
+- **W12 (any time, small): profile before any native-code question.** Its
+  outcomes are named in its section. W10 starts with its own spike (outcomes
+  A1/A2/B1/B2) before anything is built.
+
 
 Each workstream ships with its CHANGELOG entry and `frontend_v3_spec.md` §4
 updates in the same commit as any contract change.
