@@ -82,6 +82,8 @@ on, and both of these found checks that could not.
 - [frontend_v3_spec.md](./frontend_v3_spec.md) -- build contract (§4 = the API contract)
 
 ## Guides
+- [loops.md](./loops.md) -- the loop profile: the sections `/improve`, `/optimize` and
+  `/design-scoreboard` (improvement-loops plugin) read as part of AGENTS.md
 - [api_integration.md](./api_integration.md) -- wiring an EXTERNAL app to this server
   (which wire to pick, capability discovery, media block spellings, SSE, errors, and the
   deliberate differences from Anthropic's Messages spec). A scoped view of

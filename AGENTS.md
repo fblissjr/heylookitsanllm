@@ -17,6 +17,7 @@ subprocess per loaded model), and a vanilla-JS frontend (`frontend/`, served at 
 - [docs/project/CURRENT.md](./docs/project/CURRENT.md) and [TODO.md](./docs/project/TODO.md): status and backlog. Read before starting.
 - [docs/architecture/sharp_edges.md](./docs/architecture/sharp_edges.md): why each rule here and in `.claude/rules/` exists. Read an area's section before changing it, and the [postmortems](./docs/architecture/postmortems/) before touching providers.
 - [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md) §4: the authoritative API contract.
+- Loops (`/improve`, `/optimize`, `/design-scoreboard`): [docs/loops.md](./docs/loops.md) holds this repo's North star, Where things live, How to work, Other sessions, Measurement, Reporting and Loop state sections. It counts as part of this file; read it before any loop run.
 - Everything else: [docs/README.md](./docs/README.md).
 - `internal/` (logs, research, local notes), `models.toml` and `coderef/` are gitignored and never committed. `coderef/llama.cpp` is the checkout the running llama-server was built from (its `heylook-build.json` names the commit); read upstream tip from a separate clone.
 
