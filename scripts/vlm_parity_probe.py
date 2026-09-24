@@ -48,17 +48,11 @@ import base64
 import io
 import json
 import sys
-import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-# One quantum. Logprobs come out of bf16 logits whose magnitude puts the
-# representable step at 0.125, so a top-1/top-2 margin of 0.125 is the SMALLEST
-# nonzero gap the dtype can express -- a tie broken by rounding, not a
-# preference. Measured on the 27B and the PE model against the pre-v2.0.54
-# path, whose all-N prefill was a different float path from upstream's
-# N-1-then-step: every divergence sat at exactly this value.
-NEAR_TIE_MARGIN = 0.125
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _inproc import NEAR_TIE_MARGIN, resolve_config  # noqa: E402  (one bf16 quantum; see there)
 
 
 def _image(variant: int) -> str:
@@ -81,19 +75,13 @@ def _image(variant: int) -> str:
 
 
 def _resolve_config(model_id: str) -> dict:
-    """The provider config the ROUTER would hand MLXProvider: the merged entry
-    validated through ModelConfig and dumped. A raw dict skips the validator
-    that derives `modalities`, and a vision model is then served as text."""
-    from heylook_llm.config import ModelConfig
-    from heylook_llm.model_registry import discover, merge_discovered
-
-    data = tomllib.loads(Path("models.toml").read_text())
-    for m in merge_discovered(data, discover(data))["models"]:
-        if m["id"] == model_id:
-            if m.get("provider") != "mlx":
-                sys.exit(f"{model_id} is provider={m.get('provider')}; this probe is MLX-only")
-            return ModelConfig.model_validate(m).config.model_dump()
-    sys.exit(f"{model_id}: not served (checked models.toml + discovery)")
+    """The provider config the ROUTER would hand MLXProvider (validated: a
+    raw dict skips the validator that derives `modalities`, and a vision
+    model is then served as text). MLX-only."""
+    provider, cfg = resolve_config(model_id)
+    if provider != "mlx":
+        sys.exit(f"{model_id} is provider={provider}; this probe is MLX-only")
+    return cfg
 
 
 def _request(model_id: str, content, max_tokens: int):

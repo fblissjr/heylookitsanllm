@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.98]
+
+### Added
+
+- **`scripts/perf_ab.py`**, a speed and memory A/B for one model across code
+  versions (git revs run from detached worktrees, the imported package
+  checked against the arm) or configs (JSON merged into the model's config).
+  - One arm per fresh process, rounds alternating arm order, warmup dropped,
+    the page cache primed before round 0.
+  - A wait for a quiet machine before each arm: no other inference process,
+    GPU idle.
+  - Sampled during the run: the process tree's physical footprint (the
+    llama-server child included), MLX active/cache/peak, wired and swap
+    memory, the kernel's memory-pressure level, CPU, and GPU utilization and
+    memory from ioreg (no root).
+  - `report` calls a change only when both arms have `MIN_VALUES`, the rep
+    ranges separate and the medians differ by `MIN_EFFECT`. It withholds the
+    overall verdict when another inference process ran or the GPU was busy
+    before load.
+  - Built against a live peer session on the same machine, which is how the
+    contamination rules earned their place: an A/A run of identical code
+    called one arm "better" until the peer's runs were detected. The known
+    v2.0.92 decode fix shows as "better" on gemma-4. Records in
+    `internal/claude/perf/`.
+- **`scripts/chain_probe.py` judges near-ties** (in-process, now the
+  default; `--server` keeps the HTTP mode). At a divergence's first differing
+  token, one fresh forward gives the top two log-probs. NEAR-TIE when the
+  two picked tokens are those two within one bf16 quantum, as vLLM's model
+  tests do; the hop is not compared past it and it is not a failure.
+  `--config` merges JSON into the model's config. The judge was checked on
+  Qwen3-0.6B against constructed swaps: the forward's top-1 matches the
+  engine's greedy token except at exact ties, a swap to the second-best is
+  called a tie exactly when the gap is within the quantum, and an unrelated
+  token never is.
+- `scripts/_inproc.py`: the one copy of the router-style config resolution,
+  the pinned MLX worker, `NEAR_TIE_MARGIN` and the near-tie judge, shared by
+  perf_ab, chain_probe and vlm_parity_probe (which each had their own).
+
 ## [2.0.97]
 
 ### Added

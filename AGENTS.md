@@ -63,6 +63,7 @@ Each file below holds the mechanisms that bite in its area. Claude Code loads it
 - Which check for which change:
   - templates, parsers, stop tokens, vision: the eval bank (unit tests cannot certify these);
   - any cache, KV or position change: `scripts/chain_probe.py` per model class;
+  - any speed or memory claim: `scripts/perf_ab.py` (arms by git rev or config; a contaminated run gets no verdict);
   - the MLX vision path: `scripts/vlm_parity_probe.py`;
   - frontend: the E2E suites that cover the page, and `e2e:render` for the chat message list;
   - streaming or latency, live: the MoE `gemma-4-26B-A4B` (the dense 31B is slow enough to look like a delivery bug).
