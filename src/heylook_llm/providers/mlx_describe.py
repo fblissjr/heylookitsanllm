@@ -165,6 +165,9 @@ def describe_static(model_id: str, cfg: dict, config_obj: Any, *,
                                derived=derived, engine_default="mlx-vlm")
 
     return EngineDescription(
+        speculative={"in_force": Fact(
+            value=False, provenance="not_applicable",
+            source="heylook's MLX path serves without speculative decoding")},
         cache=_cache_static(),
         runtime=Fact(value="mlx-vlm", provenance="derived",
                      source="every MLX model runs on mlx-vlm's engine (plan W10, A2)"),

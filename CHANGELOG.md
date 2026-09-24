@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.120]
+
+### Added
+
+- **`engine.speculative`: what a model drafts with, and why it isn't when it isn't.** Every model's engine report, on the models page and `/v1/models`, now carries three facts:
+  - `drafter`: the drafter file, the built-in MTP head, or none, and where discovery found it. A drafter the model's own file turned off still shows as found.
+  - `type`: the draft type llama.cpp runs, pinned or inferred from the drafter's header.
+  - `in_force`: whether the running process drafts, and when not, why: the drafter was dropped at spawn for fit, llama-server couldn't load it, or none is set.
+
+  MLX reports not applicable. The models page renders the slot without new code, since it draws any fact slot the server fills. Not checked in a browser.
+
 ## [2.0.119]
 
 ### Removed

@@ -949,7 +949,25 @@ class LlamaServerProvider(BaseProvider):
                 else "llama-server's /props did not report a context size"),
             loaded_template=self.loaded_chat_template,
             settings=dict(getattr(self, "_load_report", None) or {}),
+            speculative={"in_force": self._spec_in_force()},
         )
+
+    def _spec_in_force(self):
+        """Whether this process drafts: read from the config it spawned with
+        (a drafter dropped at spawn is gone from it), and why not."""
+        from .contract import Fact
+
+        if getattr(self, "_proc", None) is None:
+            return Fact(provenance="unknown", source="not loaded")
+        drafter, spec = self.config.get("draft_model_path"), self.config.get("spec_type")
+        if drafter:
+            return Fact(value=True, provenance="observed",
+                        source=f"spawned with -md {Path(drafter).name}")
+        if spec:
+            return Fact(value=True, provenance="observed",
+                        source=f"spawned with --spec-type {spec} (the built-in head)")
+        return Fact(value=False, provenance="observed",
+                    source=self.drafter_skipped or "spawned without a drafter")
 
     def load_model(self):
         """Spawn llama-server and wait until it serves.

@@ -624,7 +624,7 @@ server never receives.
 `context_length` and `context_running`. Same keys on every engine:
 `{runtime, context:{length, running}, template:{origin, path, sha256, running_sha256, prefix_stable},
 settings:{<name>: {value, configured, auto, reason, provenance, effect}},
-cache, thinking, image, steering}`.
+cache, thinking, speculative, image, steering}`.
 - Every leaf of `runtime`, `context` and `template` is a Fact
   `{value, provenance, source}`. `provenance` is `derived | configured | observed |
   observed_cached | unknown | not_applicable`; a value whose provenance is `unknown` or
@@ -664,7 +664,12 @@ cache, thinking, image, steering}`.
   (false); `reuse_mode`, `image_reuse` and `memory_budget_bytes` are `unknown` until
   load, then `observed`. What a request actually reused is `usage` and
   `performance.cache`, not this.
-- `thinking`, `image`, `steering` are explicit nulls until W2, W4 and W14 report them.
+- `speculative` (v2.0.120), Facts: `drafter` (basename, `built-in MTP head`, or null with the
+  reason: none found, or turned off in the model's own file), `type` (pinned or inferred from
+  the drafter's header), `in_force` (`unknown` until load; then `observed`: true, or false with
+  why -- the fit check dropped the drafter, llama-server could not load it, or none is set).
+  MLX: `in_force` false, `not_applicable`.
+- `image`, `steering` are explicit nulls until W4 and W14 report them.
 - No absolute path appears anywhere in `engine` (LAN clients read `/v1/models`); paths
   are basenames. The admin row's `config` still carries full paths.
 - Checked through both routes by `tests/contract/test_engine_contract.py`.

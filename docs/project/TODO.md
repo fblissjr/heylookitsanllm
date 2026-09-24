@@ -78,7 +78,7 @@ they ship. Read the plan before touching `model_registry.py`,
   0731 draft with their own. With too little free memory, Q4 dropped its
   drafter at spawn as designed ("short by N GiB"). Record:
   `internal/log/log_2026-09-24.md`.
-- [ ] **Spec decode in the engine report** (`engine.speculative`): whether a
+- [x] **Spec decode in the engine report** (`engine.speculative`, v2.0.120): whether a
   drafter is available, whether it is in force, and why, with provenance, so
   "available, not in use" shows on the models page.
 - [ ] **models.toml becomes `heylook.toml`** with the DuckDB settings
