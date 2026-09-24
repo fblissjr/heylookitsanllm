@@ -38,19 +38,16 @@ _BASE_TOML = textwrap.dedent("""
     [[models]]
     id = "model1-mlx"
     provider = "mlx"
-    enabled = {model1_enabled}
     config = {{ model_path = "{model_root}/model1" }}
 
     [[models]]
     id = "model2-llama"
     provider = "mlx"
-    enabled = {model2_enabled}
     config = {{ model_path = "{model_root}/model2" }}
 
     [[models]]
     id = "model3-mlx"
     provider = "mlx"
-    enabled = {model3_enabled}
     config = {{ model_path = "{model_root}/model3" }}
 """).strip()
 
@@ -59,17 +56,11 @@ def _render_config(
     *,
     default_model: str = "model1-mlx",
     max_loaded_models: int = 2,
-    model1_enabled: bool = True,
-    model2_enabled: bool = True,
-    model3_enabled: bool = True,
 ) -> str:
     return _BASE_TOML.format(
         default_model=default_model,
         max_loaded_models=max_loaded_models,
         model_root=_MODEL_ROOT,
-        model1_enabled=str(model1_enabled).lower(),
-        model2_enabled=str(model2_enabled).lower(),
-        model3_enabled=str(model3_enabled).lower(),
     )
 
 
@@ -91,13 +82,9 @@ class TestModelRouter(unittest.TestCase):
             f.write(_render_config(**overrides))
 
     def test_initialization(self):
-        """Router inits cleanly with no enabled models and no default."""
-        self._rewrite_config(
-            default_model="",
-            model1_enabled=False,
-            model2_enabled=False,
-            model3_enabled=False,
-        )
+        """Router inits cleanly with no models and no default."""
+        with open(self.config_path, "w") as f:
+            f.write('default_model = ""\nmodels = []\n')
         router = ModelRouter(
             config_path=self.config_path, log_level=logging.INFO, initial_model_id=None
         )

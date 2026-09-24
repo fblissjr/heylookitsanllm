@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.0.119]
+## [2.0.121]
 
 ### Performance
 
@@ -29,6 +29,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - On qwen3_5 models (including Qwen3.8-27B), a request restored from the prefix cache decodes slower than the same request run cold, and more so as the context grows: mlx-vlm merges a lone restored row into batch caches. Filed as Blaizzy/mlx-vlm#2356; heylook picks the fix up when the mlx-vlm pin moves past it. More restores now happen, so a long reply after a restore can take as long as before this release even though its first token comes sooner.
 
 Merged from the improvement-loop branch `improve/2026-09-24` (session record `internal/claude/improve/runs/2026-09-24/`). Verification per the release standard: unit + contract green on the merge; `tests/smoke/` green on all three arms on the branch (mlx-text Qwen3-0.6B, mlx-vision Qwen3.5-0.8B, gguf Qwen3.8-27B); audio and thinking depth uncovered on the arms picked; the new-image turn is the named MLX known gap; `vendor_frontend.py --check` not run (no frontend change). Not included: the branch's qwen3_5 vision-feature change (9573911, reverted on the branch as 86349db for a speed-tolerance breach on the small model; ref `improve/2026-09-24-vision-cache`), pending the owner.
+## [2.0.120]
+
+### Added
+
+- **`engine.speculative`: what a model drafts with, and why it isn't when it isn't.** Every model's engine report, on the models page and `/v1/models`, now carries three facts:
+  - `drafter`: the drafter file, the built-in MTP head, or none, and where discovery found it. A drafter the model's own file turned off still shows as found.
+  - `type`: the draft type llama.cpp runs, pinned or inferred from the drafter's header.
+  - `in_force`: whether the running process drafts, and when not, why: the drafter was dropped at spawn for fit, llama-server couldn't load it, or none is set.
+
+  MLX reports not applicable. The models page renders the slot without new code, since it draws any fact slot the server fills. Not checked in a browser.
+
+## [2.0.119]
+
+### Removed
+
+- **The `enabled` field** (owner decision 2026-09-23: a model in a scan folder is served; to stop serving one, move it out). Removed with it:
+  - `AppConfig.get_enabled_models` (callers read `models`) and the filter in `get_model_config`;
+  - `enabled` on the admin model row and the update and validate requests;
+  - the models page's "disabled" label;
+  - the delete route's disabled-override 409, since there is no "off" decision left for a delete to erase.
+
+  An old `enabled` key in a config file is ignored.
 
 ## [2.0.118]
 

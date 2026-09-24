@@ -162,7 +162,6 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
         provider=mc.provider,
         description=mc.description,
         tags=mc.tags,
-        enabled=mc.enabled,
         capabilities=facts.capabilities,
         config=config_dict(mc.config, exclude_unset=True),
         loaded=loaded,
@@ -642,9 +641,8 @@ def update_model_config(model_id: str, request: Request, updates: ModelUpdateReq
     "/{model_id:path}",
     summary="Remove Model Config",
     description=(
-        "Remove a model from configuration. Model files stay on disk. 409 when "
-        "the entry is a DISABLED override for a file discovery still finds -- "
-        "deleting it would silently re-enable the model."
+        "Remove a model's models.toml entry. Model files stay on disk; a model "
+        "under a scan folder is served again from discovery."
     ),
 )
 async def remove_model_config(model_id: str, request: Request):
@@ -663,16 +661,8 @@ async def remove_model_config(model_id: str, request: Request):
         raise HTTPException(status_code=409, detail=str(e))
 
     # to_thread, not a sync handler: this route has to await the unload above,
-    # so the blocking tail (remove_config runs discovery for the disabled-
-    # override guard, then the reload runs it again) goes to a thread by hand.
-    try:
-        removed = await asyncio.to_thread(service.remove_config, model_id)
-    except ValueError as e:
-        # The disabled-override guard. It refuses because deleting the entry
-        # would silently RE-ENABLE a still-discovered model -- a conflict the
-        # caller can act on, and its message is the whole point, so it must not
-        # surface as a bare 500 with the text swallowed.
-        raise HTTPException(status_code=409, detail=str(e))
+    # so the blocking tail (the reload re-runs discovery) goes to a thread by hand.
+    removed = await asyncio.to_thread(service.remove_config, model_id)
     if not removed:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found")
 

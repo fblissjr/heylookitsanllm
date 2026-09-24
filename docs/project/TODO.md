@@ -11,7 +11,7 @@ backlog pass; MLX vision prefill follow-ups added 2026-09-21 without a full
 backlog pass; runtime-visibility plan pointer added 2026-09-23 without a full
 backlog pass*
 
-## From the 2026-09-24 improvement loop (merged as v2.0.119)
+## From the 2026-09-24 improvement loop (merged as v2.0.121)
 
 Record: `internal/claude/improve/runs/2026-09-24/` (report.html has the evidence).
 
@@ -107,14 +107,14 @@ they ship. Read the plan before touching `model_registry.py`,
   0731 draft with their own. With too little free memory, Q4 dropped its
   drafter at spawn as designed ("short by N GiB"). Record:
   `internal/log/log_2026-09-24.md`.
-- [ ] **Spec decode in the engine report** (`engine.speculative`): whether a
+- [x] **Spec decode in the engine report** (`engine.speculative`, v2.0.120): whether a
   drafter is available, whether it is in force, and why, with provenance, so
   "available, not in use" shows on the models page.
 - [ ] **models.toml becomes `heylook.toml`** with the DuckDB settings
   (`observability_level`, `observability_retention_days`,
   `mlx_cache_limit_gb`) folded in (owner decision 2026-09-23). Rename the
   references in `.worktreeinclude` and `docs/loops.md` in the same change.
-- [ ] **Retire the `enabled` field and `watch_hf_cache`** (owner: presence in
+- [x] **Retire the `enabled` field and `watch_hf_cache`** (v2.0.118, v2.0.119; the periodic rescan and `/discovered` went with them) (owner: presence in
   a scan folder is enabled).
 - [ ] **Qwen3.8-Flash-Next's `MTP/` drafter**: a split-out head (no
   `token_embd.weight`) that the llama.cpp build cannot load. Its
@@ -137,7 +137,7 @@ part of AGENTS.md.
   `internal/claude/improve/harness/` into `scripts/` once it has tracked real
   use over several runs; `scripts/perf_ab.py` is the provider-level half.
 - [ ] **Clear the pre-plugin run record** `internal/claude/improve/runs/2026-09-24/`
-  (the run finished and merged as v2.0.119; clear it once its open items above are settled): since improvement-loops 0.4.3 a run folder
+  (the run finished and merged as v2.0.121; clear it once its open items above are settled): since improvement-loops 0.4.3 a run folder
   without `record.json` blocks tidying, so it stays in the way until cleared.
 
 ## e2e: audit for clicks or seeds before an async list lands (2026-09-23)

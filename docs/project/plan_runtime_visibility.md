@@ -662,7 +662,7 @@ server-irrelevant; the pin posture is mlx-vlm alone. It also found and fixed
 a v2.0.86 regression (text models resolved their stop set from the Rust
 backend; Qwen3's was empty). W10 is done; next per the order is W2+W3+W7.
 
-**Follow-up (v2.0.119, the 2026-09-24 improvement loop).** W10 as built
+**Follow-up (v2.0.121, the 2026-09-24 improvement loop).** W10 as built
 reused less than planned on checkpoint models: mlx-vlm spends one number on
 both a request's captures and the store size, so each request evicted every
 other conversation and a new chat with the same system prompt reused

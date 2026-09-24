@@ -155,6 +155,7 @@ def describe_static(model_id: str, cfg: dict, config_obj: Any, *,
         template=_template(model_id, cfg),
         settings=settings,
         thinking=_thinking(model_id, cfg),
+        speculative=_speculative(cfg, derived, written),
     )
 
 
@@ -172,6 +173,58 @@ _KIND_LABEL = {
     "sliding_window": ("checkpointed", "sliding-window attention"),
     "full_attention": ("truncates anywhere", "full attention"),
 }
+
+
+def _where(model_path: Path, drafter: Path) -> str:
+    """Where a drafter sits relative to its model, in folder names only."""
+    home = model_path if model_path.is_dir() else model_path.parent
+    if drafter.parent == home:
+        return "beside the weights"
+    if drafter.parent.parent == home:
+        return f"in subfolder {drafter.parent.name}/"
+    if drafter.parent == home.parent:
+        return "at the repo root, one folder up"
+    if drafter.parent.parent == home.parent:
+        return f"in the neighbouring folder {drafter.parent.name}/"
+    return "at a path outside the model's folders"
+
+
+def _speculative(cfg: dict, derived: dict, written) -> dict:
+    """What spec decode this model is set up to run, before load (the
+    running process's answer is describe_observed's ``in_force``). Read from
+    the config the spawn uses, against what discovery derived, so a drafter
+    the model's own file unset still shows as found."""
+    from heylook_llm import gguf_metadata
+    from heylook_llm.providers.contract import store_name
+
+    drafter, spec = cfg.get("draft_model_path"), cfg.get("spec_type")
+    found = derived.get("draft_model_path") or derived.get("spec_type")
+    set_here = bool(written) and (drafter != derived.get("draft_model_path")
+                                  or spec != derived.get("spec_type"))
+    prov = "configured" if set_here else "derived"
+    how = f"set in this model's {store_name(written)}" if set_here else "found by discovery"
+    if drafter:
+        path = Path(str(drafter)).expanduser()
+        d = Fact(value=path.name, provenance=prov,
+                 source=f"{how}, {_where(Path(str(cfg.get('model_path') or '')), path)}")
+        inferred = gguf_metadata.spec_type_from_gguf(gguf_metadata.splits(path))
+        t = Fact(value=spec or inferred, provenance=prov if spec else "derived",
+                 source="pinned by spec_type" if spec else
+                 "the drafter's own header, as llama.cpp infers it" if inferred
+                 else "not inferable from the drafter's header")
+    elif spec:
+        d = Fact(value="built-in MTP head", provenance=prov,
+                 source=f"{how}: the target's own weights carry the head")
+        t = Fact(value=spec, provenance=prov, source="spec_type")
+    else:
+        d = Fact(value=None, provenance=prov, source=(
+            f"turned off in this model's {store_name(written)}; discovery found one"
+            if found and set_here else
+            "none found beside the weights, in a subfolder, in the weights, or in a "
+            "neighbouring folder whose header names this model"))
+        t = Fact(value=None, provenance=prov, source="no drafter")
+    return {"drafter": d, "type": t,
+            "in_force": Fact(provenance="unknown", source="not loaded")}
 
 
 def _cache_profile(cfg: dict, settings: dict) -> dict:

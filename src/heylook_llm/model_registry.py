@@ -286,10 +286,10 @@ class ServedDiff:
 
 def _served_rows(app) -> dict[str, dict]:
     rows = {}
-    for m in app.get_enabled_models():
+    for m in app.models:
         dumped = m.model_dump(mode="json")
         row = {k: v for k, v in (dumped.pop("config") or {}).items()}
-        row.update({f"entry.{k}": v for k, v in dumped.items() if k not in ("id", "enabled")})
+        row.update({f"entry.{k}": v for k, v in dumped.items() if k != "id"})
         rows[m.id] = row
     return rows
 

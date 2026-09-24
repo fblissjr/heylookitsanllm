@@ -104,9 +104,9 @@ class ModelRouter:
         # (see get_provider) -- it deliberately does NOT preload, so opening the
         # server doesn't pin a multi-GB model into RAM nobody asked for.
         initial_model_to_load = initial_model_id or None
-        enabled_models = self.app_config.get_enabled_models()
+        enabled_models = self.app_config.models
         if not enabled_models:
-            logging.error("No enabled models found in models.toml. Server cannot serve requests.")
+            logging.error("No models found (models.toml and the [scan] folders). Server cannot serve requests.")
             return
 
         # Validate the requested initial model
@@ -534,7 +534,7 @@ class ModelRouter:
                 model_id = self.app_config.default_model
                 logging.debug(f"No model specified, using default: {model_id}")
             else:
-                available = [m.id for m in self.app_config.get_enabled_models()]
+                available = [m.id for m in self.app_config.models]
                 raise ModelNotFound(f"No model specified and no default configured. Available: {available}")
 
         # Fast path: check cache first
@@ -558,7 +558,7 @@ class ModelRouter:
             # Get model config
             model_config = self.app_config.get_model_config(model_id)
             if not model_config:
-                available = [m.id for m in self.app_config.get_enabled_models()]
+                available = [m.id for m in self.app_config.models]
                 raise ModelNotFound(f"Model '{model_id}' not found or disabled. Available: {available}")
 
             # Keep keys in sync with config.PROVIDER_CONFIG_CLASSES.
@@ -701,7 +701,7 @@ class ModelRouter:
                 raise e
 
     def list_available_models(self) -> list[str]:
-        return [m.id for m in self.app_config.get_enabled_models()]
+        return [m.id for m in self.app_config.models]
 
     def clear_cache(self):
         """Clear all loaded models from cache."""

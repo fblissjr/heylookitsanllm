@@ -274,7 +274,6 @@ function modelMetaLine(model) {
     parts.push(`template: ${model.config.chat_template_source}`);
   }
   if (model.tags?.length) parts.push(model.tags.join(', '));
-  if (!model.enabled) parts.push('disabled');
   // A discovered model is served exactly like any other -- this is NOT a
   // warning, and it must not read as one. It is here because the config
   // panel behaves differently (the first save writes an entry) and because

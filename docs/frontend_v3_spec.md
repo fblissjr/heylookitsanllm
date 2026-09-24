@@ -564,7 +564,7 @@ Response bodies are typed in `/openapi.json` (`Preset`, `PresetList`, `PresetDel
   Presets survive `POST /v1/data/clear` AND store schema recreates (they're config, not data).
 
 **Admin models** (`X-Heylook-Admin-Token`): `GET /v1/admin/models` →
-`{models:[{id,provider,description?,tags,enabled,capabilities,config,loaded,source,
+`{models:[{id,provider,description?,tags,capabilities,config,loaded,source,
 stale_reload_fields,engine,thinking_default,sampler_defaults}], total}`.
 `source` (v1.70.0) is `"config"` (a models.toml `[[models]]` entry) or `"discovered"`
 (found under `[scan].folders`, served with no entry). NOT derivable from `config`: a
@@ -624,7 +624,7 @@ server never receives.
 `context_length` and `context_running`. Same keys on every engine:
 `{runtime, context:{length, running}, template:{origin, path, sha256, running_sha256, prefix_stable},
 settings:{<name>: {value, configured, auto, reason, provenance, effect}},
-cache, thinking, image, steering}`.
+cache, thinking, speculative, image, steering}`.
 - Every leaf of `runtime`, `context` and `template` is a Fact
   `{value, provenance, source}`. `provenance` is `derived | configured | observed |
   observed_cached | unknown | not_applicable`; a value whose provenance is `unknown` or
@@ -666,7 +666,12 @@ cache, thinking, image, steering}`.
   (false); `reuse_mode`, `image_reuse` and `memory_budget_bytes` are `unknown` until
   load, then `observed`. What a request actually reused is `usage` and
   `performance.cache`, not this.
-- `thinking`, `image`, `steering` are explicit nulls until W2, W4 and W14 report them.
+- `speculative` (v2.0.120), Facts: `drafter` (basename, `built-in MTP head`, or null with the
+  reason: none found, or turned off in the model's own file), `type` (pinned or inferred from
+  the drafter's header), `in_force` (`unknown` until load; then `observed`: true, or false with
+  why -- the fit check dropped the drafter, llama-server could not load it, or none is set).
+  MLX: `in_force` false, `not_applicable`.
+- `image`, `steering` are explicit nulls until W4 and W14 report them.
 - No absolute path appears anywhere in `engine` (LAN clients read `/v1/models`); paths
   are basenames. The admin row's `config` still carries full paths.
 - Checked through both routes by `tests/contract/test_engine_contract.py`.
@@ -769,10 +774,9 @@ server isolates only the DB, not models.toml).
 `HEYLOOK_READONLY_MODEL_CONFIG` set (dev_server.sh, the E2E harness) refuses every
 model-config write -- config PATCH/POST/DELETE, `/scan-config`, the chat-template
 PUT/DELETE -- with 409 and a `detail` naming why. It still serves the same config.
-`DELETE /v1/admin/models/{id}` → `{status,model_id,warning?}`; **409** when the entry is a
-DISABLED override for a file discovery still finds — deleting it would delete the only
-record of the "off" decision and the next scan would serve the model again, enabled. The
-detail text is the explanation; render it (v1.69.1 — it was an uncaught 500 before).
+`DELETE /v1/admin/models/{id}` → `{status,model_id,warning?}`: removes a models.toml
+entry; a model under a scan folder is served again from discovery. There is no enabled
+flag (retired v2.0.119: presence in a scan folder is served), so no disabled-override 409.
 Every mutating admin route runs in the server's threadpool, not on the event loop: each
 one re-runs the `[scan]` discovery walk (twice, counting the reload), so an `async`
 handler would freeze in-flight SSE streams for its duration. Expect these calls to take

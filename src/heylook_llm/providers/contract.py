@@ -118,6 +118,13 @@ class EngineDescription(BaseModel):
                     "is no template to judge.")
     image: Optional[Dict[str, Any]] = Field(
         default=None, description="Image geometry (plan W4). Null until reported.")
+    speculative: Optional[Dict[str, Fact]] = Field(
+        default=None,
+        description="Speculative decoding: `drafter` (the file, the built-in "
+                    "MTP head, or none, and where discovery found it), `type` "
+                    "(the draft type llama.cpp runs), and `in_force` (whether "
+                    "the running process drafts, and why not when it does not: "
+                    "the drafter did not fit, did not load, or is unset).")
     steering: Optional[Dict[str, Any]] = Field(
         default=None, description="Activation steering (plan W14). Null until reported.")
 
@@ -129,6 +136,7 @@ class Observed:
     loaded_template: Optional[str] = None
     settings: Dict[str, Setting] = field(default_factory=dict)
     cache: Dict[str, Fact] = field(default_factory=dict)
+    speculative: Dict[str, Fact] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +277,8 @@ def with_observed(static: EngineDescription, observed: Observed) -> EngineDescri
     desc.settings.update(observed.settings)
     if observed.cache:
         desc.cache = {**(desc.cache or {}), **observed.cache}
+    if observed.speculative:
+        desc.speculative = {**(desc.speculative or {}), **observed.speculative}
     return desc
 
 

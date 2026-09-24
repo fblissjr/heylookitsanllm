@@ -213,24 +213,6 @@ class TestAnEditWritesTheModelsOwnFile:
         with pytest.raises(ValueError, match="config fields only"):
             svc.update_config("found", {"enabled": False})
 
-    def test_deleting_a_disabled_override_is_refused(
-            self, tmp_path, store, monkeypatch):
-        """Otherwise the delete silently RE-ENABLES the model."""
-        blob = store / "found.gguf"
-        blob.write_text("x")
-        svc, cfg = self._service(tmp_path, store)
-        self._stub_scan(monkeypatch, [entry("found", blob)])
-        cfg.write_text(cfg.read_text() + f"""
-[[models]]
-id = "found"
-provider = "gguf"
-enabled = false
-[models.config]
-model_path = "{blob}"
-""")
-        with pytest.raises(ValueError, match="re-enable"):
-            svc.remove_config("found")
-
 
 @pytest.mark.unit
 class TestAdminSurfaceSeesDiscovered:
@@ -498,3 +480,39 @@ def test_a_read_only_instance_does_not_write_models_toml(tmp_path, monkeypatch):
     with pytest.raises(ModelConfigReadOnly):
         ModelService(str(cfg)).set_scan_config(folders=["a", "b"])
     assert cfg.read_text() == '[scan]\nfolders = ["a"]\n'
+
+
+@pytest.mark.unit
+class TestSpeculativeReport:
+    """engine.speculative says what a gguf model drafts with, where discovery
+    found it, and whether the running process drafts -- the "available, not in
+    use" case the fit and load fallbacks create has to be visible."""
+
+    def test_static_half_names_the_drafter_and_where_it_came_from(self, tmp_path):
+        from heylook_llm.providers.gguf_describe import _speculative
+        model = tmp_path / "vendor-a_Model" / "m.gguf"
+        drafter = tmp_path / "vendor-b_Model" / "dspark-m.gguf"
+        cfg = {"model_path": str(model), "draft_model_path": str(drafter)}
+        slot = _speculative(cfg, {}, False)
+        assert slot["drafter"].value == "dspark-m.gguf"
+        assert "neighbouring folder vendor-b_Model/" in slot["drafter"].source
+        assert str(tmp_path) not in slot["drafter"].source            # never a path
+
+        builtin = _speculative({"model_path": str(model), "spec_type": "draft-mtp"}, {}, False)
+        assert builtin["drafter"].value == "built-in MTP head"
+
+        off = _speculative({"model_path": str(model)}, dict(cfg), "model.heylook.toml")
+        assert off["drafter"].value is None and "turned off" in off["drafter"].source
+        assert off["drafter"].provenance == "configured"
+
+    def test_observed_half_says_why_a_found_drafter_is_not_in_force(self):
+        from heylook_llm.providers.llama_server_provider import LlamaServerProvider
+        p = LlamaServerProvider("m", {"model_path": "/fake/m.gguf"}, False)
+        assert p._spec_in_force().provenance == "unknown"             # not loaded
+        p._proc = object()
+        p.drafter_skipped = "short by 7.4 GiB"
+        fact = p._spec_in_force()
+        assert fact.value is False and fact.source == "short by 7.4 GiB"
+        p.config["spec_type"] = "draft-mtp"
+        assert p._spec_in_force().value is True
+        p._proc = None
