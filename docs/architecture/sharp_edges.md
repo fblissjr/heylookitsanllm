@@ -419,6 +419,17 @@ comes back minus its leading whitespace (measured on b10814), so
 `_continuation_echo_chars` returns a pair and the reasoning strip is sized
 lstripped (it can only under-strip).
 
+The echo is not the thought alone at the other end either (v2.0.131). With
+content prefilled, the thought is closed in the prompt, and llama-server's
+split keeps the template's framing newline before `</think>`: Qwen3.8's echo
+is the thought plus `"\n"`. That newline survived the strip as "new"
+thinking, so every Save & Continue with an edited thought and a partial reply
+stored the thought with a trailing newline. The gguf-arm E2E check caught it
+(the MLX arm never had the echo). `_stream_chunks` now drops whitespace-only
+reasoning right after the echo when both channels were prefilled; an open
+thought keeps it, because a resumed thought can begin with a newline. The
+trace, hop by hop, is in `internal/claude/gguf_continue/`.
+
 MLX resumes a thought by rendering a fresh generation prompt with thinking on
 and appending the trace after the family's opener (`_append_thinking_resume`:
 `<think>\n`, `<|channel>thought\n`, `<|channel|>analysis<|message|>`); all

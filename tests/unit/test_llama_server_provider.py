@@ -935,6 +935,34 @@ class TestContinuationEchoStrip:
         assert "".join(c.text for c in chunks) == "answer"
         assert all(c.text or c.thinking or c.finish_reason for c in chunks)
 
+    def test_a_closed_thoughts_framing_newline_is_not_new_thinking(self):
+        # Save & Continue with an edited thought AND a partial reply: the
+        # thought is closed in the prompt, and llama-server's reasoning echo
+        # carries the template's newline before </think> (frames as sent by
+        # the Qwen3.8-27B gguf, 2026-09-25). Without the drop the stored
+        # thought gained a trailing "\n". An OPEN thought (no content
+        # prefill) resumes, and a leading newline there is real.
+        thought, prefix = "The user is asking. I should answer.", "I sound like"
+        frames = [
+            'data: {"choices":[{"delta":{"reasoning_content":' + json.dumps(thought + "\n") + '},"index":0,"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{"content":' + json.dumps(prefix) + '},"index":0,"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{"content":" a goat"},"index":0,"finish_reason":null}]}',
+            "data: [DONE]",
+        ]
+        p = make_provider()
+        chunks = list(p._stream_chunks(_stream_bytes(*frames), abort_event=None,
+                                       echo_chars=len(prefix), echo_thinking_chars=len(thought)))
+        assert "".join(c.thinking or "" for c in chunks) == ""
+        assert "".join(c.text for c in chunks) == " a goat"
+
+        open_frames = [
+            'data: {"choices":[{"delta":{"reasoning_content":' + json.dumps(thought + "\nmore") + '},"index":0,"finish_reason":null}]}',
+            "data: [DONE]",
+        ]
+        chunks = list(p._stream_chunks(_stream_bytes(*open_frames), abort_event=None,
+                                       echo_chars=0, echo_thinking_chars=len(thought)))
+        assert "".join(c.thinking or "" for c in chunks) == "\nmore"
+
 
 class TestContinuationGuards:
     """What llama-server cannot express must 400, not silently do the wrong

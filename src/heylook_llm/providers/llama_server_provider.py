@@ -1812,7 +1812,14 @@ class LlamaServerProvider(BaseProvider):
         of a continued assistant message back as the first delta(s) of each
         channel it was given (see _continuation_echo_chars). The two counts
         are independent: a channel that was not prefilled is never touched.
+
+        When BOTH channels were prefilled, the thought is closed in the
+        prompt, so whitespace-only reasoning right after the reasoning echo is
+        template framing and is dropped. With no content prefill the thought
+        is still open and resumes, and a resumed thought may begin with a
+        newline, so that case keeps it.
         """
+        closed_thought = echo_thinking_chars > 0 and echo_chars > 0
         for raw_line in fp:
             if abort_event is not None and abort_event.is_set():
                 logging.info(f"[GGUF] generation aborted for '{self.model_id}'")
@@ -1851,6 +1858,13 @@ class LlamaServerProvider(BaseProvider):
                 cut = min(echo_thinking_chars, len(chunk.thinking))
                 echo_thinking_chars -= cut
                 chunk.thinking = chunk.thinking[cut:] or None
+            if closed_thought and echo_thinking_chars == 0 and chunk.thinking:
+                # The rest of a closed thought's echo is the template's framing
+                # before </think>, which llama-server's split keeps (Qwen3.8:
+                # "<thought>\n"); it is not new thinking.
+                chunk.thinking = chunk.thinking.lstrip() or None
+                if chunk.thinking:
+                    closed_thought = False
             if not chunk.text and not chunk.thinking and not chunk.finish_reason \
                     and not chunk.prompt_tokens and not chunk.generation_tokens:
                 continue  # the delta was pure echo -- nothing to emit

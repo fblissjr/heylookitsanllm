@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.131]
+
+### Fixed
+
+- **gguf Save & Continue with an edited thought and a partial reply stored the thought with a trailing newline.** With content prefilled, the thought is closed in the prompt, and llama-server's reasoning echo carries the template's framing newline before `</think>` (Qwen3.8: the thought plus `"\n"`). The echo strip removed exactly the thought, so the newline came through as new thinking and was appended. `_stream_chunks` now drops whitespace-only reasoning right after the echo when both channels were prefilled; an open thought (no content) still keeps a leading newline, since a resumed thought can start with one. Traced hop by hop (page, store, wire, rendered prompt, llama-server's echo, the provider's output): the page, the store and what heylook sends were all correct; the newline first appears in llama-server's echo. Record in `internal/claude/gguf_continue/`.
+
+Verification: unit + contract green; the live probe on JonathanColetti_Qwen3.8-27B-Uncensored-GGUF yields no thinking after the fix; `E2E_ARMS=gguf bun run e2e:chat` 51/51 (the cadence check skips by design on gguf), including the check that failed.
+
 ## [2.0.130]
 
 ### Fixed
