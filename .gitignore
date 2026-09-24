@@ -22,6 +22,10 @@ adapters/*
 archive/
 artifacts/
 coderef/
+# Working clones of upstream projects we send fixes to (origin = the owner's
+# fork, upstream = the original). Nothing installs from here; PR branches
+# start from upstream/main. Read-only references stay in coderef/.
+forks/
 GEMINI.md
 docs/archive
 docs/frontend-mocks/
