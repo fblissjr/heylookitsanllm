@@ -400,6 +400,18 @@ fact: `_materialize_discovered` is called from `update_config` and
 
 ### Phase 4 — migrate and prune
 
+> **Done 2026-09-24 (owner approved).** The owner's models.toml now has no
+> `[[models]]` entries. Eight gguf models carry a `model.heylook.toml` (their
+> context sizes; MiniMax-M3's `n_ubatch`; Qwen3.8-Flash-Next's `unset` of a
+> drafter the current build cannot load); the twelve MLX entries and
+> DeepSeek-V4-Flash-0731's were redundant with discovery. Checked with
+> `served_diff` against the backup: nothing lost or gained; Muse-Glimmer
+> renamed to its folder name; spec decode on for the models the owner's
+> decision covers; Muse's `supports_thinking` differs and is inert (its
+> template is read). Phase 3 (the writers) is now the open step: until it
+> lands, an admin edit to a model without its own file still materializes a
+> models.toml entry.
+
 Driven by Phase 0's diff, never by reading the file.
 
 **This plan deliberately states no inventory here.** models.toml is gitignored,
