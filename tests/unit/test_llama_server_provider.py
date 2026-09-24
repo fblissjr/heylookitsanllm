@@ -1395,3 +1395,34 @@ class TestMediaInTheContinuedTurn:
         monkeypatch.setattr(llama_mod.urllib.request, "urlopen", boom)
         assert p._media_markers_dropped(self._payload(
             [{"role": "user", "content": [self.IMG]}])) is False
+
+
+@pytest.mark.unit
+class TestDrafterGivesWayToFit:
+    """Spec decode is on wherever a drafter ships, but a drafter that turns a
+    model that fits into one that does not is dropped at spawn, never the
+    model. Decided against live reclaimable RAM (ram_fit)."""
+
+    def _sizes(self, monkeypatch, with_drafter, alone, reclaimable=160.0):
+        from types import SimpleNamespace
+        from heylook_llm import ram_fit
+
+        def fake(config, **_):
+            gb = with_drafter if config.get("draft_model_path") else alone
+            return SimpleNamespace(weights_gb=gb, headroom_gb=8.0, reclaimable_gb=reclaimable)
+        monkeypatch.setattr(ram_fit, "fit_for_config", fake)
+
+    def test_short_only_because_of_the_drafter_drops_it(self, monkeypatch):
+        p = make_provider(draft_model_path="/fake/dspark.gguf", spec_type="draft-dspark")
+        self._sizes(monkeypatch, with_drafter=162.5, alone=150.4)
+        p._drop_drafter_if_short()
+        assert "draft_model_path" not in p.config and "spec_type" not in p.config
+        assert "short by 10.5 GiB" in p.drafter_skipped
+
+    @pytest.mark.parametrize("with_drafter,alone", [(150.0, 140.0),    # both fit: keep it
+                                                    (170.0, 160.0)])   # neither fits: not the drafter's fault
+    def test_otherwise_the_drafter_stays(self, monkeypatch, with_drafter, alone):
+        p = make_provider(draft_model_path="/fake/dspark.gguf")
+        self._sizes(monkeypatch, with_drafter, alone)
+        p._drop_drafter_if_short()
+        assert p.config["draft_model_path"] == "/fake/dspark.gguf" and p.drafter_skipped is None

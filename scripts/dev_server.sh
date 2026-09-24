@@ -168,7 +168,9 @@ case "$CMD" in
     mkdir -p "$STATE"
     : > "$LOG"
     cd "$REPO_ROOT"
-    HEYLOOK_DB_PATH="$STATE/db.duckdb" nohup uv run heylookllm \
+    # Read-only model config: this server shares the model folders and the
+    # models.toml with the owner's daily server, so it must not write them.
+    HEYLOOK_DB_PATH="$STATE/db.duckdb" HEYLOOK_READONLY_MODEL_CONFIG=1 nohup uv run heylookllm \
       --host "$HOST" --port "$PORT" --model-id "$MODEL" --log-level "$LOG_LEVEL" \
       >> "$LOG" 2>&1 &
     echo $! > "$PIDFILE"

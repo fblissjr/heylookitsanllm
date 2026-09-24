@@ -17,9 +17,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from heylook_llm import __version__
 from heylook_llm.busy_response import model_busy_response
+from heylook_llm.model_registry import ModelConfigReadOnly
 from heylook_llm.monitoring_api import get_metrics_collector
 from heylook_llm.openapi_doc import build_openapi
 from heylook_llm.perf_collector import ResourceSnapshot, get_perf_collector
@@ -201,6 +203,14 @@ app = FastAPI(
 @app.exception_handler(ModelBusyError)
 async def _model_busy_handler(request: Request, exc: ModelBusyError):
     return model_busy_response(exc)
+
+
+# Same shape for a model-config write on a read-only instance: every writer
+# raises it (model_registry.refuse_if_readonly), so every route that lets it
+# out answers 409 without remembering to.
+@app.exception_handler(ModelConfigReadOnly)
+async def _model_config_readonly_handler(request: Request, exc: ModelConfigReadOnly):
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
 # Add CORS middleware

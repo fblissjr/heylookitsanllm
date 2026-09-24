@@ -353,6 +353,9 @@ def write_override(model_path: str, body: str, *, provider: str,
     # a template legitimately declining a shape is normal -- but the caller
     # must be able to say so, or the operator learns about it from a 500.
     refused_shapes = validate(body, provider=provider, config=config)
+    from heylook_llm.model_registry import refuse_if_readonly
+
+    refuse_if_readonly(path.name)
     # ATOMIC: write a temp file beside it, then rename. A plain write_text
     # truncates and then fills, so a load racing the write can read a
     # zero-length or half-written template -- on gguf that is a jinja parse
@@ -391,6 +394,9 @@ def remove_override(model_path: str) -> bool:
     path = override_path(model_path)
     if path is None or not path.is_file():
         return False
+    from heylook_llm.model_registry import refuse_if_readonly
+
+    refuse_if_readonly(path.name)
     try:
         path.unlink()
     except OSError as exc:

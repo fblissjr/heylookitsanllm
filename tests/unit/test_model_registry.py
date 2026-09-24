@@ -538,3 +538,14 @@ class TestModelHeylookToml:
         with pytest.raises(ValueError, match="model.heylook.toml"):
             ModelService(str(cfg)).update_config("m", {"config": {"ctx_size": 4096}})
         assert "[[models]]" not in cfg.read_text()
+
+
+@pytest.mark.unit
+def test_a_read_only_instance_does_not_write_models_toml(tmp_path, monkeypatch):
+    from heylook_llm.model_registry import READONLY_ENV, ModelConfigReadOnly
+    cfg = tmp_path / "models.toml"
+    cfg.write_text('[scan]\nfolders = ["a"]\n')
+    monkeypatch.setenv(READONLY_ENV, "1")
+    with pytest.raises(ModelConfigReadOnly):
+        ModelService(str(cfg)).set_scan_config(folders=["a", "b"])
+    assert cfg.read_text() == '[scan]\nfolders = ["a"]\n'

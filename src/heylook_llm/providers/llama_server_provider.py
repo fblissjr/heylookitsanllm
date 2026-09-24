@@ -713,6 +713,48 @@ class LlamaServerProvider(BaseProvider):
                           exc_info=True)
             return None
 
+    # Why this spawn runs without the drafter its config names, or None.
+    drafter_skipped: Optional[str] = None
+
+    def _drop_drafter_if_short(self) -> None:
+        """Spawn without the drafter when the model fits and the model plus
+        its drafter does not.
+
+        Spec decode is on wherever a model ships a drafter (owner decision
+        2026-09-24), and a drafter can cost enough memory to make a model
+        that fits stop fitting (DeepSeek-V4-Flash-Vision's is ~10 GiB). A
+        model that will not load is a loss; a model without spec decode only
+        runs slower, so the drafter is what gives way. Decided HERE, at
+        spawn, against live reclaimable RAM (ram_fit, the pre-flight's own
+        measure): the binding limit is RAM left after everything else on the
+        machine, which moves, and llama.cpp's own --fit sizes against the
+        Metal working set, which does not see it. Both numbers are logged, so
+        "short by N GiB" can be answered by freeing memory instead.
+        Best-effort: a sizing failure keeps the configured spawn.
+        """
+        if not self.config.get("draft_model_path"):
+            return
+        alone_cfg = {k: v for k, v in self.config.items()
+                     if k not in ("draft_model_path", "spec_type")}
+        try:
+            both = ram_fit.fit_for_config(dict(self.config), hard_working_set=False)
+            alone = ram_fit.fit_for_config(alone_cfg, hard_working_set=False)
+        except Exception:  # noqa: BLE001 -- best-effort by design
+            logging.debug(f"[GGUF] {self.model_id}: drafter fit sizing failed", exc_info=True)
+            return
+        need = both.weights_gb + both.headroom_gb
+        if need <= both.reclaimable_gb:
+            return
+        if alone.weights_gb + alone.headroom_gb > alone.reclaimable_gb:
+            return  # the model does not fit on its own; the drafter is not the difference
+        self.drafter_skipped = (
+            f"drafter skipped for this spawn: model + drafter need {both.weights_gb:.1f} GiB "
+            f"+ {both.headroom_gb:.0f} GiB headroom, {both.reclaimable_gb:.1f} GiB is "
+            f"reclaimable now (short by {need - both.reclaimable_gb:.1f} GiB); the model "
+            f"alone fits. Free that much memory and reload to run spec decode")
+        logging.warning(f"[GGUF] {self.model_id}: {self.drafter_skipped}")
+        self.config = alone_cfg
+
     def _auto_ubatch(self) -> Optional[int]:
         """AUTO_UBATCH when the headroom clears ram_fit.THIN_HEADROOM_GB,
         else None (inherit llama-server's default). Logged at spawn either
@@ -953,6 +995,7 @@ class LlamaServerProvider(BaseProvider):
                 f"longer means the embedded template unconditionally."
             )
 
+        self._drop_drafter_if_short()
         auto_ubatch = self._auto_ubatch()
         self._last_image_cap = self._image_token_cap(auto_ubatch)
         args = self._build_args(binary, port, resolved_template, True,

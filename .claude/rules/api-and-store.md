@@ -31,7 +31,7 @@ paths:
 ## Observability
 
 - One ingestion path, `record_event(type, *, tier, min_level, source, fields=<dict>)` in `observability.py`, writing level-gated JSONL under `logs/`. `metrics.jsonl` is content-free; `events.jsonl` may carry bounded error text but never prompts, responses or token IDs. `fields` is an explicit dict, not `**kwargs`. It never raises. `diag_event` delegates here.
-- Control is one setting, `observability_level` (off|minimal|standard|debug), resolved DB > default, default `off`: file logging is opt-in (owner rule). No env override; env is bootstrap-only (`HEYLOOK_LOGS_DIR`, `HEYLOOK_DB_PATH`). `off` also silences memory.py's streams and the llama-server `.log`, which is decided at spawn, so capturing llama-server output needs the level raised before load, then a reload. `minimal` is not content-free; only the metrics tier is.
+- Control is one setting, `observability_level` (off|minimal|standard|debug), resolved DB > default, default `off`: file logging is opt-in (owner rule). No env override; env is bootstrap-only (`HEYLOOK_LOGS_DIR`, `HEYLOOK_DB_PATH`, `HEYLOOK_READONLY_MODEL_CONFIG`). `off` also silences memory.py's streams and the llama-server `.log`, which is decided at spawn, so capturing llama-server output needs the level raised before load, then a reload. `minimal` is not content-free; only the metrics tier is.
 - Settings live in the `settings` table (`db.get_setting`/`set_setting`), contract in `settings.py` (`SettingsSchema` + `resolve_settings`), CRUD via `/v1/admin/config`; level and retention are cached in-process (`observability.configure`) and refreshed at startup and on PUT.
 
 Why and history: [sharp_edges.md](../../docs/architecture/sharp_edges.md) "API and store".

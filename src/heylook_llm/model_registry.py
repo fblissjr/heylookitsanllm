@@ -40,6 +40,30 @@ from pathlib import Path
 from typing import NamedTuple
 
 
+# Bootstrap-only, like HEYLOOK_DB_PATH: set by every launcher that is NOT the
+# owner's daily server (scripts/dev_server.sh, the E2E harness, loop runs).
+# Model folders, and the models.toml a dev server reads, are shared by every
+# instance, so an automated run must not be able to change the owner's real
+# model settings; it still serves them exactly (owner decision 2026-09-24).
+READONLY_ENV = "HEYLOOK_READONLY_MODEL_CONFIG"
+
+
+class ModelConfigReadOnly(RuntimeError):
+    """A model-config write on an instance started read-only. The app maps
+    it to 409 wherever it escapes a route (api.py)."""
+
+
+def refuse_if_readonly(what: str) -> None:
+    """Raise :class:`ModelConfigReadOnly` when this instance is read-only.
+    Called inside every writer of model settings, so a new route inherits it."""
+    import os
+
+    if os.environ.get(READONLY_ENV, "") not in ("", "0"):
+        raise ModelConfigReadOnly(
+            f"this server was started with {READONLY_ENV} set, so it does not write "
+            f"model settings ({what}); make the change on the daily server")
+
+
 def path_identity(path: str) -> str:
     """Resolved, symlink-followed spelling of a model path -- THE identity rule.
 

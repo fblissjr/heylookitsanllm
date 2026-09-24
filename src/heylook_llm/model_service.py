@@ -199,6 +199,9 @@ class ModelService:
         existing file are carried onto it best-effort (see toml_comments) --
         a failed carry degrades to a comment-less write, never a refusal.
         """
+        from heylook_llm.model_registry import refuse_if_readonly
+
+        refuse_if_readonly(self.config_path.name)
         tmp_path = self.config_path.with_suffix(".toml.tmp")
         backup_path = self.config_path.with_suffix(".toml.bak")
 

@@ -429,8 +429,9 @@ norm.
 
 ## Open, and not to be hand-waved
 
-- **Which server instances may write a model's file** (raised 2026-09-24,
-  owner answer pending; gates Phase 3). The file lives in the model folder,
+- **Which server instances may write a model's file** (raised 2026-09-24;
+  DECIDED the same day, owner: only the daily server, built v2.0.112 as
+  `HEYLOOK_READONLY_MODEL_CONFIG`). The file lives in the model folder,
   which every instance shares: the daily server, `scripts/dev_server.sh`, the
   E2E harness and loop worktrees. A worktree copy of the server config
   (`.worktreeinclude`) isolates nothing here. Recommendation: only the daily

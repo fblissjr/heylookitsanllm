@@ -92,7 +92,8 @@ export async function startServer({ port, dbPath, modelId, repoRoot, logPath }) 
   ];
   const proc = spawn('uv', args, {
     cwd: repoRoot,
-    env: { ...process.env, HEYLOOK_DB_PATH: dbPath },
+    // Read-only model config: model folders and models.toml are the owner's.
+    env: { ...process.env, HEYLOOK_DB_PATH: dbPath, HEYLOOK_READONLY_MODEL_CONFIG: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   proc.stdout.pipe(log);

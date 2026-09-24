@@ -108,3 +108,14 @@ class TestChatTemplateRoutes:
         assert client.get(missing).status_code == 404
         assert client.put(missing, json={"template": OVERRIDE}).status_code == 404
         assert client.delete(missing).status_code == 404
+
+
+def test_a_read_only_instance_refuses_the_write_with_409(client, model_dir, monkeypatch):
+    """Model folders are shared by every instance; one started read-only (a
+    dev server, E2E, a loop run) must not change the owner's real settings.
+    The refusal lives in the writer and the 409 in one app handler."""
+    from heylook_llm.model_registry import READONLY_ENV
+    monkeypatch.setenv(READONLY_ENV, "1")
+    r = client.put(URL, json={"template": OVERRIDE})
+    assert r.status_code == 409 and READONLY_ENV in r.text
+    assert not (model_dir / HEYLOOK_TEMPLATE_FILENAME).exists()

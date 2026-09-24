@@ -761,6 +761,10 @@ post-save config-reload failure. A value TOML can't store returns 400, not 500.
 CAUTION for harnesses: the PATCH rewrites models.toml through `tomli_w`, which drops
 every comment in the file — E2E checks must intercept it, never let it land (the E2E
 server isolates only the DB, not models.toml).
+**409 on a read-only instance** (v2.0.112): a server started with
+`HEYLOOK_READONLY_MODEL_CONFIG` set (dev_server.sh, the E2E harness) refuses every
+model-config write -- config PATCH/POST/DELETE, `/scan-config`, the chat-template
+PUT/DELETE -- with 409 and a `detail` naming why. It still serves the same config.
 `DELETE /v1/admin/models/{id}` → `{status,model_id,warning?}`; **409** when the entry is a
 DISABLED override for a file discovery still finds — deleting it would delete the only
 record of the "off" decision and the next scan would serve the model again, enabled. The

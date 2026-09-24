@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.112]
+
+### Added
+
+- **Only the owner's daily server writes model settings** (owner decision). A server started with `HEYLOOK_READONLY_MODEL_CONFIG` set refuses every model-config write with a 409 naming why. It still serves the same config. Covered writes: config edits, adds and removes, `/scan-config`, and the chat-template override's write and delete.
+  - The refusal lives inside the writers (`model_registry.refuse_if_readonly`, called from `ModelService._write_toml` and `chat_template_files`), and one app handler maps it to 409, so a new route inherits it.
+  - `scripts/dev_server.sh` and the E2E harness set the variable. Model folders, and the models.toml a dev server reads, are shared with the daily server, and no worktree copy isolates them.
+- **A drafter gives way to fit, at spawn.** When a model fits in live reclaimable RAM on its own but not with its drafter, the spawn drops the drafter and warns with both numbers ("short by N GiB"). The model then runs without spec decode instead of failing to load. The check uses live reclaimable RAM, because llama.cpp's own `--fit` sizes against the Metal working set and cannot see a total-RAM shortfall. DeepSeek-V4-Flash-Vision's drafter is the case that prompted it.
+
 ## [2.0.111]
 
 ### Added
