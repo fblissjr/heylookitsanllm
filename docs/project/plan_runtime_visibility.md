@@ -596,7 +596,13 @@ eval bank on Qwen3.5-27B-8bit-mlx against the pre-W10 baseline.
 through it) shipped as v2.0.86 with every gate above green; the new-image
 gap and the smoke taxonomy are named in its changelog. Stage 2b shipped as
 v2.0.87 (the old path deleted; MLX misses report `cold` / `new_image_set`).
-Next: stage 3.
+Stage 3 shipped as v2.0.88: mlx-lm left the dependency set (its streaming
+detokenizer vendored and pruned, samplers from mlx-vlm), the MLX loader,
+draft and KV fields retired, and the harness arms became mlx-text /
+mlx-vision / gguf. Owner answers: optloop-lib keeps its mlx-lm half, marked
+server-irrelevant; the pin posture is mlx-vlm alone. It also found and fixed
+a v2.0.86 regression (text models resolved their stop set from the Rust
+backend; Qwen3's was empty). W10 is done; next per the order is W2+W3+W7.
 
 **Step 2: build the chosen outcome.** In every outcome:
 - **Per-image vision feature cache**, so a new image stops re-encoding the old

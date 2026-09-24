@@ -1337,6 +1337,14 @@ tokenizer, primed at load with `model_path`, and the stop set is the
 provider's own, resolved once at load and checked in `vlm_engine`'s loop. The
 Naive-default and `_seedable` lessons above still hold for that source.
 
+(v2.0.88) `BaseProvider.get_tokenizer` took `processor._tokenizer` first, a
+branch for mlx-lm's wrapper (whose `_tokenizer` was the HF tokenizer). Under
+mlx-vlm a text model's "processor" IS the HF tokenizer, and its `_tokenizer`
+is the Rust backend, which resolves no eos ids: from v2.0.86 Qwen3-0.6B ran
+every reply to its budget. Nothing noticed because every smoke check
+accepted `max_tokens` as an ending, and the population run checked "loads
+and answers". Smoke now asserts a one-word reply ends on `end_turn`.
+
 mlx-lm's `TokenizerWrapper.apply_chat_template` silently injects
 `enable_thinking=True` when the kwarg is absent. The kwarg is the cross-model
 thinking control: transformers forwards extra apply_chat_template kwargs as

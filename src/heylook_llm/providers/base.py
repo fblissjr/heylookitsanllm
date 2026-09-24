@@ -388,12 +388,18 @@ class BaseProvider(ABC):
         return False
 
     def get_tokenizer(self):
-        """Return the tokenizer, or None if unavailable."""
+        """Return the HF tokenizer, or None if unavailable.
+
+        A vision model's processor carries it as ``.tokenizer``; a text
+        model's "processor" (mlx-vlm's load) IS the tokenizer. Never
+        ``._tokenizer``: that was mlx-lm's wrapper holding the HF tokenizer,
+        and on an HF fast tokenizer it is the Rust backend, which resolves no
+        eos set -- text models generated with an empty stop set (Qwen3)
+        from v2.0.86 until v2.0.88.
+        """
         processor = getattr(self, 'processor', None)
         if processor is None:
             return None
-        if hasattr(processor, '_tokenizer'):
-            return processor._tokenizer
         if hasattr(processor, 'tokenizer'):
             return processor.tokenizer
         return processor if hasattr(processor, 'decode') else None

@@ -3,10 +3,10 @@
 Covers all branches:
 1. No processor attribute -> None
 2. processor is None -> None
-3. processor._tokenizer exists -> returns it
-4. processor.tokenizer exists -> returns it
-5. processor has decode() -> returns processor itself
-6. processor has no decode() -> None
+3. processor.tokenizer exists -> returns it
+4. processor has decode() -> returns processor itself, even with a private
+   ``_tokenizer`` backend (an HF tokenizer as a text model's processor)
+5. processor has no decode() -> None
 """
 
 import pytest
@@ -37,16 +37,20 @@ class TestGetTokenizer:
         provider.processor = None
         assert provider.get_tokenizer() is None
 
-    def test_processor_with_private_tokenizer(self):
-        """Processor with _tokenizer attr returns _tokenizer."""
+    def test_a_tokenizer_processor_is_returned_not_its_backend(self):
+        """A text model's processor IS the HF tokenizer, whose ``_tokenizer``
+        is the Rust backend: returning that resolved an empty stop set."""
         provider = ConcreteProvider("test-model", {}, verbose=False)
-        sentinel = object()
 
-        class FakeProcessor:
-            _tokenizer = sentinel
+        class FakeHfTokenizer:
+            _tokenizer = object()
 
-        provider.processor = FakeProcessor()
-        assert provider.get_tokenizer() is sentinel
+            def decode(self, ids):
+                return "decoded"
+
+        proc = FakeHfTokenizer()
+        provider.processor = proc
+        assert provider.get_tokenizer() is proc
 
     def test_processor_with_public_tokenizer(self):
         """Processor with tokenizer attr (no _tokenizer) returns tokenizer."""

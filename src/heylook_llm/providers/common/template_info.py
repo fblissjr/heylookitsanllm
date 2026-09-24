@@ -423,8 +423,7 @@ def should_force_install(info: ModelTemplateInfo, source: Optional[str]) -> bool
 
 def install_chat_template(tokenizer, info: ModelTemplateInfo, *, force: bool,
                           processor=None) -> bool:
-    """Attach the resolved template to a live tokenizer (and an inner
-    ``_tokenizer`` where the tokenizer wraps one), plus the PROCESSOR.
+    """Attach the resolved template to a live tokenizer, plus the PROCESSOR.
 
     ``force=True`` (explicit ``chat_template_source``, or our own override
     file): always overwrite -- the registry entry is authoritative.
@@ -457,7 +456,7 @@ def install_chat_template(tokenizer, info: ModelTemplateInfo, *, force: bool,
         return False
     if not force and getattr(tokenizer, "chat_template", None):
         return False
-    candidates = [tokenizer, getattr(tokenizer, "_tokenizer", None)]
+    candidates = [tokenizer]
     if force:
         candidates.append(processor)
     targets: list = []

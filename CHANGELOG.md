@@ -5,6 +5,94 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.88]
+
+### Fixed
+
+- **Text-only MLX models generated with an empty or partial stop set since
+  v2.0.86.** mlx-vlm's `load` hands a text model its HF tokenizer as the
+  "processor", and `BaseProvider.get_tokenizer` took `processor._tokenizer`
+  first, a branch written for mlx-lm's wrapper. On an HF tokenizer that is
+  the Rust backend, which resolves no eos ids: Qwen3-0.6B's stop set was
+  empty and every reply ran to its budget (gpt-oss happened to resolve the
+  same set either way). The branch is gone, and so is the matching
+  `_tokenizer` target in `install_chat_template`. Smoke could not see it:
+  every check accepted `max_tokens` as an ending. It now asserts a one-word
+  reply ends on `end_turn` on every arm.
+
+### Removed (plan W10 stage 3)
+
+- **mlx-lm is no longer a dependency** (dropped from `pyproject.toml`, its
+  `[tool.uv.sources]` pin and the lock; protobuf left with it). Its
+  streaming detokenizer is vendored as
+  `providers/common/lm_detokenizer.py` (upstream c69d1288, MIT notice kept;
+  upstream classes unchanged, heylook's edits listed in the header), built
+  on the tokenizer mlx-vlm already loaded rather than a second
+  `AutoTokenizer`. Samplers and penalty processors come from mlx-vlm's
+  `sample_utils`, which gave identical results to mlx-lm's on seeded runs
+  of every knob heylook sends. Every MLX model here ships a `tokenizer.json`;
+  a sentencepiece-only checkpoint would now fail at load with transformers
+  naming protobuf.
+- MLX config fields `loader`, `cache_type`, `max_kv_size`, `kv_bits`,
+  `kv_group_size`, `draft_model_path` and `num_draft_tokens` (an entry
+  carrying one fails validation), with `get_smart_defaults` and the
+  RAM-relative KV defaults (owner decision: f16 KV everywhere). Loader
+  routing reads declared modalities and mlx-vlm registration only.
+- The wrapper-template branches (`has_chat_template`, mlx-lm's
+  `chat_template_type`), `tests/integration/mlx_perf` (it benchmarked
+  mlx-lm's `stream_generate`), and the hand-kept file list and coverage
+  matrix in `tests/README.md`.
+
+### Changed
+
+- **Engine taxonomy.** Config's `engines` vocabulary is `mlx-vlm` / `gguf`,
+  and the wire text that named mlx-lm (`engine.runtime`'s description,
+  `/v1/admin/model-options`, the engine build report, the
+  `prefill_step_size` default) follows. The live-harness arms are
+  `mlx-text` / `mlx-vision` / `gguf`: MLX splits on the served `vision`
+  capability, exact now that `loader` cannot make it disagree with
+  `is_vlm`. Classifying by runtime alone left the mlx-lm arm empty on every
+  run. The older-server fallbacks and their "unconfirmable" bookkeeping went,
+  and so did smoke's "reports the vision capability" check (the arm is that
+  capability).
+- Smoke's walk-away check streams greedy: it tests persistence, and at 0.7
+  Qwen3.5-0.8B sometimes answered "1" and ended the turn (`<|im_end|>` sits at
+  the top_p boundary after "1"), which no comparison could tell from a
+  truncation.
+- E2E seeding requires every capability-gated control the selected model
+  advertises (the gate read from the app's `PARAM_META`). The drawer could
+  open before capabilities landed, skip `enable_thinking`, and run gemma-4
+  thinking through every fast check.
+- Docs: CLAUDE.md, the wiki, spec section 4, `api_integration.md`,
+  `ecosystem_strategy.md` (an update note), sharp_edges (dated notes), and
+  the smoke, e2e and scripts READMEs. The ecosystem posture now applies to
+  mlx-vlm alone.
+
+### Verification
+
+- Unit and contract suites green.
+- `tests/smoke` 82/82 on all three arms: mlx-text (Qwen3-0.6B-8bit),
+  mlx-vision (Qwen3.5-0.8B) and gguf (`JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`).
+  Uncovered on the arms picked: audio, and thinking depth.
+- `bun run e2e:chat` 52/52 twice on gemma-4-26B-A4B after the seeding fix;
+  `e2e:pages` 32/32 in the run before it.
+- `scripts/vlm_parity_probe.py` on Qwen3.5-0.8B: MATCH on both cases.
+- `scripts/chain_probe.py`: Qwen3.5-0.8B and Qwen3-0.6B pass (Qwen3-0.6B's
+  first run right after model swaps showed an exact logit tie and one
+  0-token restore; two reruns clean).
+- The vendored detokenizers, live on Qwen3.5, Qwen3, Qwen3-VL, gemma-4 and
+  gpt-oss tokenizers: the right class chosen, per-token streaming of
+  space-free text, joined text equal to `decode`, the continuation space
+  kept.
+- `tests/eval` stop/thinking/text: Qwen3-0.6B 6/6; gpt-oss-20b 2/4 (two
+  thinking-off tasks whose 10- and 30-token budgets harmony's analysis
+  channel uses up; not a regression).
+- NOT run: the eval bank on Qwen3.5-27B against the W10 baseline; the chain
+  probe on gpt-oss, gemma-4 and Qwen3-VL. The 235B long-context check at
+  f16 KV was inconclusive (no answer, stopped); see CURRENT.md.
+- `scripts/vendor_frontend.py --check`: marked and dompurify each one patch
+  behind upstream, both matching the manifest.
+
 ## [2.0.87]
 
 ### Removed (plan W10 stage 2b: the path 2a replaced)

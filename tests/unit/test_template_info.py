@@ -382,10 +382,8 @@ class TestChatTemplateJsonFallback:
 
 
 class _FakeTokenizer:
-    def __init__(self, chat_template=None, inner=None):
+    def __init__(self, chat_template=None):
         self.chat_template = chat_template
-        if inner is not None:
-            self._tokenizer = inner
 
 
 class TestInstallChatTemplate:
@@ -437,16 +435,6 @@ class TestInstallChatTemplate:
 
         assert installed is False
         assert tok.chat_template is None
-
-    def test_installs_on_inner_tokenizer_too(self):
-        from heylook_llm.providers.common.template_info import install_chat_template
-
-        inner = _FakeTokenizer(chat_template=None)
-        tok = _FakeTokenizer(chat_template=None, inner=inner)
-        install_chat_template(tok, self._info(), force=True)
-
-        assert tok.chat_template == "{{ 'resolved' }}"
-        assert inner.chat_template == "{{ 'resolved' }}"
 
     def test_none_tokenizer_is_safe(self):
         from heylook_llm.providers.common.template_info import install_chat_template

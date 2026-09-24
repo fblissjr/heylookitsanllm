@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-23, v2.0.87, `main`.
+Last updated: 2026-09-23, v2.0.88, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `CLAUDE.md`, the backlog in [TODO.md](./TODO.md), and what each release
@@ -15,24 +15,82 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
-| unit + contract | green | v2.0.87 |
+| unit + contract | green | v2.0.88 |
 | `bun run e2e:render` (model-free) | green, against `marked` 18.0.13 | v2.0.82 |
-| `tests/smoke/` mlx-lm arm | retired in effect: since v2.0.86 every MLX model reports runtime mlx-vlm, so this arm has no models. Text models (Qwen3-0.6B, gpt-oss-20b) run as the mlx-vlm arm, green except its vision-capability check, which stage 3's taxonomy change retires | v2.0.86 |
-| `tests/smoke/` mlx-vlm arm | green on `Qwen3.5-0.8B-MLX-8bit` on the mlx-vlm engine, incl. every reuse check; a turn that adds a new image is the named known gap; thinking depth covered by gpt-oss-20b on this engine | v2.0.86 |
-| `scripts/vlm_parity_probe.py` | exact token parity with mlx-vlm's `generate_step` on Qwen3.5-0.8B, Qwen-Image-2.1-PE-I21, Qwen3.5-27B-8bit, Qwen3-VL-32B; single- and multi-chunk prefill | v2.0.55; 0.8B re-run at v2.0.60 |
+| `tests/smoke/` (arms `mlx-text` / `mlx-vision` / `gguf` since v2.0.88) | 82/82 on `Qwen3-0.6B-8bit-mlx`, `Qwen3.5-0.8B-MLX-8bit` and `JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`, including the new "a short answer ends on end_turn" row on all three; a turn that adds a new image is the named known gap; audio and thinking depth uncovered on the arms picked | v2.0.88 |
+| `scripts/vlm_parity_probe.py` | MATCH on both cases, Qwen3.5-0.8B, against mlx-vlm's own loop. Earlier: Qwen-Image-2.1-PE-I21, Qwen3.5-27B-8bit, Qwen3-VL-32B at v2.0.55 | v2.0.88 (0.8B) |
 | `tests/smoke/` gguf arm | green on `unsloth_Qwen3.8-27B-UD-Q8_K_XL`, all three reuse checks pass; audio UNCOVERED (the model declares none) | v2.0.84 |
-| `bun run e2e` (chat + pages) | green on `E2E_MODEL=Qwen3.5-0.8B-MLX-8bit`, on the mlx-vlm engine. NOT run on the default gemma-4 model, nor on the gguf arm | v2.0.86 |
-| MLX greedy chain probe (`scripts/chain_probe.py`) | on the mlx-vlm engine (v2.0.86): qwen3_5, gemma-4, Qwen3, gpt-oss every hop identical and reused; Qwen3-VL-32B one hop at an exact top-2 tie (rounding) | v2.0.86 |
+| `bun run e2e` (chat + pages) | on the default gemma-4-26B-A4B: chat 52/52 twice after the seeding fix; pages 32/32 in the one run before it (not re-run after). One Save & Continue thinking failure seen once before the fix (see handoff) | v2.0.88 |
+| MLX greedy chain probe (`scripts/chain_probe.py`) | v2.0.88: Qwen3.5-0.8B and Qwen3-0.6B pass (Qwen3-0.6B's first run right after model swaps: one exact logit tie and one 0-token restore; two reruns clean). gemma-4, gpt-oss and Qwen3-VL last run at v2.0.86 | v2.0.88 / v2.0.86 |
 | `bun run e2e:ios` | see `TODO.md` and the harness's own header | -- |
-| `tests/eval/` (behavioural bank) | full bank on `Qwen3.5-27B-8bit-mlx`: every task passes, before (the W10 baseline) and after the engine switch (v2.0.86); audio tasks run on no model. Records in `internal/claude/w10/`. gguf arm not run | v2.0.86 |
+| `tests/eval/` (behavioural bank) | full bank on `Qwen3.5-27B-8bit-mlx` matches the W10 baseline at v2.0.86 (NOT re-run at v2.0.88). v2.0.88, stop/thinking/text on the text models: Qwen3-0.6B 6/6; gpt-oss-20b 2/4, the two failures are thinking-off text tasks with 10- and 30-token budgets that harmony's analysis channel uses up. Records in `internal/claude/w10/` | v2.0.88 / v2.0.86 |
 | gguf runtime harness (`internal/claude/perf/harness/`) | Qwen3.8-27B, Muse-Glimmer-30B, DeepSeek-V4-Flash-Vision Q4: vision cost, system-prompt reuse, multi-turn cache reuse (correct on all three after the Qwen template fix), thinking levels, residency, flash attention, micro-batch. Findings in `docs/testing/gguf_runtime_audit_2026-09-23.md` | v2.0.64 build 11138 |
 
-The standing uncovered mechanism is thinking DEPTH on the mlx-vlm arm: no
-candidate model. The mlx-lm half is covered since v2.0.83 by
-`gpt-oss-20b-MXFP4-Q8-mlx` (owner-cleared for smoke 2026-09-23), run as a
-second mlx-lm arm (`--arm mlx-lm --model mlx-lm=gpt-oss-20b-MXFP4-Q8-mlx`).
+Thinking DEPTH is covered only by pinning `gpt-oss-20b-MXFP4-Q8-mlx`
+(owner-cleared for smoke) as the text arm:
+`--arm mlx-text --model mlx-text=gpt-oss-20b-MXFP4-Q8-mlx`. No vision model
+advertises `reasoning_effort`.
 
-## Handoff -- start here
+## Handoff -- start here (end of 2026-09-23)
+
+**Where things stand.** Plan W10 is done (v2.0.86 - v2.0.88): every MLX model
+runs on mlx-vlm's engine, mlx-lm is no longer a dependency (its streaming
+detokenizer is vendored and pruned in `providers/common/lm_detokenizer.py`),
+the MLX loader/draft/KV config fields are retired, and the live-harness arms
+are `mlx-text` / `mlx-vision` / `gguf`. v2.0.88 also fixed a v2.0.86
+regression: text-only MLX models resolved their stop set from the Rust
+tokenizer backend, and Qwen3-0.6B's was empty.
+
+**The plan, in order** ([plan_runtime_visibility.md](./plan_runtime_visibility.md),
+"Sequencing"): W2+W3+W7 next, then W4, W0 (registry sidecars,
+[plan_registry_sidecars.md](./plan_registry_sidecars.md); Phase 0
+`served_diff` first), then W1.
+
+**Open items, first things first:**
+
+1. **235B long context at f16 KV: inconclusive, re-run it before W2.**
+   Retiring the KV settings removed the 8-bit KV the 235B used to get
+   automatically. `Qwen3-VL-235B-A22B-Instruct-4bit-mlx` loaded and warmed
+   inside the RAM pre-flight, but a long-context needle request ran for well
+   over half an hour with the server near 0% CPU and never answered; it was
+   stopped with no result, so slow and stuck are not told apart. Re-run with
+   observability raised before load (to get a server log), `python -u`, and a
+   short prompt first, stepping up. If it cannot answer at f16, tell the
+   owner: that is the cost of the "retire all KV settings" decision, and the
+   remedy is theirs to pick.
+2. **Stage-3 gates not yet re-run:** `scripts/chain_probe.py` on gpt-oss-20b
+   (a text model the stop-set fix touched), gemma-4 and Qwen3-VL-32B; the
+   eval bank on `Qwen3.5-27B-8bit-mlx` against the W10 baseline; `bun run
+   e2e:pages` after the seeding fix.
+3. **One unexplained E2E failure:** the Save & Continue check with edited
+   thinking once stored the edited thought with more thought text appended
+   (a new thought channel during the continuation, on gemma-4). It did not
+   recur in three runs. If it returns, read the continuation's raw output
+   before touching the parser.
+4. **Eval task budgets vs harmony:** `text_factual_qa_capital` and
+   `text_single_word_instruction` give 10 and 30 tokens with thinking off,
+   which gpt-oss cannot honour (harmony always writes analysis first). Owner
+   call: raise the budgets, or mark the tasks ineligible for harmony models.
+5. **Owner questions from stage 3 (not blocking):**
+   - config's `engines` tag now carries almost nothing (every field follows
+     its config class except `max_queue_depth`); remove it, or keep it for a
+     future engine?
+   - `effective_loader` still returns the string `"mlx-lm"` internally to
+     mean "text path" (it no longer reaches the wire); rename to a bool?
+   - the vendored detokenizer could later give way to a small incremental
+     decoder on transformers' `decode` (the "option 2" discussed 2026-09-23).
+   - `internal/bin/latest.py` still writes an mlx-lm rev; it needs the mlx-lm
+     half removed (owner's local tool).
+6. **Known gaps carried from W10:** a turn that adds a new image re-prefills
+   (`internal/claude/w10/apc_new_image_turns.md`); Qwen3-VL image turns do
+   not reuse with the disk tier off (`qwen3_vl_image_reuse.md`); mlx-vlm's
+   BPE detokenizer bug is recorded locally, not filed
+   (`mlx_vlm_bpe_detokenizer.md`).
+7. **gemma-4 vision is unverified on the v2.0.55 prefill path**, by owner
+   decision ("another time"); see `TODO.md`, "MLX vision prefill".
+
+## Handoff as of v2.0.87 (superseded by the block above)
+
 
 1. **The approved plan is [plan_runtime_visibility.md](./plan_runtime_visibility.md)**,
    and its "Sequencing" section is the order. W8 + W9 shipped in v2.0.70 (the

@@ -81,6 +81,22 @@ export function createPageContext(page, { base, maxTokens }) {
         const sel = document.querySelector('#app select[title="Model"]');
         return !sel || (sel.options.length > 0 && Boolean(sel.value));
       }, { timeout: 30000 });
+      // A selected model is not a model whose capabilities have landed: the
+      // drawer can still open without `#set-enable_thinking`, and the fast
+      // checks then run a thinking-capable model thinking (2026-09-23, a
+      // chat run with every content check empty). So a gated key the
+      // SELECTED model advertises is required too. The gate is the app's own
+      // PARAM_META and the capabilities are the server's, never a copy here.
+      const advertised = await page.evaluate(async (keys) => {
+        const sel = document.querySelector('#app select[title="Model"]');
+        if (!sel) return [];
+        const { PARAM_META } = await import('/js/settings.js');
+        const body = await (await fetch('/v1/models')).json();
+        const caps = (body.data || []).find((m) => m.id === sel.value)?.capabilities || [];
+        return keys.filter((k) => PARAM_META[k]?.requiresCap
+          && caps.includes(PARAM_META[k].requiresCap));
+      }, Object.keys(params));
+      required = [...new Set([...required, ...advertised])];
       await openDrawer(page);
       // The panel is built from capabilities; wait for the required control
       // rather than racing it.
@@ -102,7 +118,8 @@ export function createPageContext(page, { base, maxTokens }) {
       const fatal = missing.filter((k) => required.includes(k));
       if (fatal.length) {
         throw new Error(`seedPanel: no control for ${fatal.join(', ')} -- `
-          + 'the run would have been uncapped. Did a sampler key get renamed?');
+          + 'the run would have run without it (uncapped, or thinking on a model '
+          + 'that advertises it). Did a sampler key get renamed?');
       }
       return missing;
     },

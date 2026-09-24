@@ -473,6 +473,20 @@ def conformance_checks(server, r, arm, model_id, caps):
                 f"got {stop!r} -- 'stop'/'length' is the provider's OpenAI "
                 f"finish_reason reaching the wire unrenamed")
 
+    # 1b. The model STOPS on its own. Every other generation here accepts
+    #     max_tokens as an ending, so a stop set that resolved empty (text
+    #     MLX models, v2.0.86-87: get_tokenizer handed back the Rust backend)
+    #     passed every row while each reply ran to its budget. A one-word
+    #     answer with a budget far past it must end on end_turn.
+    st, body = _messages_probe(server, model_id, "Reply with the single word: ok",
+                               extra={"max_tokens": 512, "thinking": False})
+    if st == 200:
+        stop = (body or {}).get("stop_reason")
+        r.check(f"{arm}: a short answer ends on end_turn, not the budget",
+                stop == "end_turn",
+                f"got {stop!r} with a 512-token budget for a one-word reply: "
+                f"the model's stop tokens are not being honoured")
+
     # 2. Anthropic's NESTED source object is accepted on a media block.
     if "vision" not in caps:
         r.skip(f"{arm}: nested image source accepted",
@@ -852,7 +866,13 @@ def arm_checks(server, r, arm, model_id, load_timeout):
                        say("Count slowly from one to twenty, one number per line."),
                        "append refused (is a run still active?)"):
             return
-        res = stream_until(server, conv_id, {"mode": "append"}, stop_after_bytes=400)
+        # Greedy: this checks persistence, not sampling. At 0.7 a small model
+        # sometimes answered "1" and ended the turn (Qwen3.5-0.8B after an
+        # image turn: <|im_end|> sits right at the top_p boundary), and a
+        # whole reply the size of what we saw cannot tell a detach from a
+        # truncation.
+        res = stream_until(server, conv_id, {"mode": "append", "overrides": {"temperature": 0}},
+                           stop_after_bytes=400)
         if res.http_error or not res.saw_delta:
             r.skip(f"{arm}: a walked-away run finishes and commits",
                    res.http_error or "no delta arrived before the disconnect")
