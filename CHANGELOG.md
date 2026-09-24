@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.125]
+
+### Added
+
+- `scripts/hooks/git_add_guard.py`, a Claude Code PreToolUse hook (Bash):
+  refuses `git add -A/--all/-u/--update/./:/` and `git commit -a/--all`,
+  because parallel sessions share this checkout and a broad stage sweeps
+  another session's uncommitted files into a commit (owner-approved; proposed
+  by the 2026-09-24 improvement loop). Heredoc bodies are ignored, so a commit
+  message that names these commands passes. Pinned by
+  `tests/unit/test_git_add_guard.py`.
+
+### Fixed
+
+- The heylook config edit hook had gone silent: it validated only a file
+  named `models.toml`, and the config became `heylook.toml` in v2.0.122.
+  Renamed to `scripts/hooks/config_toml_posttool.py`, it now validates
+  `heylook.toml` (same `AppConfig` check the server runs), and
+  `.claude/settings.json` wires both hooks.
+
 ## [2.0.124]
 
 ### Changed
