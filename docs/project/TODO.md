@@ -535,7 +535,7 @@ Verified by token parity against `mlx_vlm.generate.ar.generate_step`
   Documented in `docs/api_integration.md`; nothing to build unless upstream
   grows a generated-only switch.
 
-## Batch + rlm MODEL_BUSY, OUT OF SCOPE by owner decision (2026-08-31)
+## Batch + rlm MODEL_BUSY (2026-08-31) -- all closed by deletion; kept as record
 
 The two batch items below CLOSED in v1.79.66 by deletion: the OpenAI route,
 its batch sibling and `batch_processor.py`'s processing modes are gone. Only
@@ -563,7 +563,7 @@ sequential loop and there is no server-side batch inference of any kind.)
   message, i.e. the zero-completed-groups case where the tradeoff is free.
 - [x] **rlm answers a bare 503 / an in-band `rlm_error`** (P3): CLOSED by
   deletion, RLM removed in v2.0.123.
-- **THE FIX FOR ALL THREE IS PROBABLY NOT A HANDLER.** `batch_processor` never
+- **(Record only: model pinning itself was removed in v2.0.126.) THE FIX FOR ALL THREE IS PROBABLY NOT A HANDLER.** `batch_processor` never
   calls `pin_model`; `rlm.py:919/964` and `jspace_api.py:116` (removed v1.79.75) both pinned with
   try/finally for exactly this multi-round-over-one-model shape, and batch is
   the outlier. A pinned model cannot be evicted between groups, so the only

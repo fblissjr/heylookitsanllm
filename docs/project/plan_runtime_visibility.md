@@ -1,6 +1,6 @@
 # Plan: runtime visibility and one behaviour across engines
 
-last updated: 2026-09-23 (APPROVED by the owner; W8 + W9 shipped v2.0.70)
+last updated: 2026-09-24 (APPROVED by the owner). Shipped: W0 (v2.0.107 - v2.0.122), W2, W3, W4, W5 (spec reporting completed by `engine.speculative`, v2.0.120), W7, W8, W9, W13. In progress: W10 (stages shipped through v2.0.121; the qwen3_5 vision-feature re-apply is next, see `TODO.md`). Open: W1, W6 (only if W5 shows budget skips), W12, W14.
 
 ## Context
 
@@ -59,7 +59,7 @@ is, where it came from, and what it would be if left alone.
 
 ## Workstreams
 
-### W0. Registry sidecars + per-field provenance (foundation)
+### W0. Registry sidecars + per-field provenance (foundation) (shipped v2.0.107 - v2.0.122)
 
 The structural fix is already planned and owner-approved:
 [plan_registry_sidecars.md](./plan_registry_sidecars.md) (2026-09-08).
@@ -323,7 +323,7 @@ send-time resize is worth a round trip per image.
 - It cannot know the lead pad DeepSeek adds per image (0-3 tokens, it depends
   on the preceding text), or whether more tokens help quality.
 
-### W5. Cache and speculative reporting, end to end
+### W5. Cache and speculative reporting, end to end (shipped v2.0.78 - v2.0.83; `engine.speculative` v2.0.120)
 
 **Progress:** commit 1 shipped v2.0.78 (per-request `CacheReport`/`SpecReport`, Anthropic-shaped `usage`, `performance.cache`/`performance.speculative`). Commit 2 shipped v2.0.79 (the `engine.cache` slot: gguf reuse class from the header, KV shift, RAM budget and checkpoint settings as spawned; MLX text reuse, fresh cache for image requests, one slot; MLX `prompt_cache` left `settings` for it). Commit 3 shipped v2.0.80 (gguf "why": the cache witness, fingerprint plus the pipe-read cache log lines, `cause` on every `CacheReport`; unit-verified, live check pending with the smoke run). v2.0.81 removed the mislabelled `kv_cache_bytes`. Commit 4 shipped v2.0.82 (`message_stats` table, the per-message stats line, the perf Cache table and token-weighted trend ratios with the two draft rates apart). v2.0.83 closed it: MLX miss causes (`cold`, `no_common_prefix`, `trim_refused`) and the live cache-reuse smoke check, with smoke green on all three arms and e2e chat/pages green. **W5 is done.**
 

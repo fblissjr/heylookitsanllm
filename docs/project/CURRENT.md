@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-24, v2.0.115, `main`.
+Last updated: 2026-09-24, v2.0.127, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md), and what each release
@@ -15,14 +15,14 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
-| unit + contract | green (1757 passed) | v2.0.115 |
+| unit + contract | green (1618 passed) | v2.0.127 |
 | `tests/smoke/` on `improve/2026-09-24` | green on all three arms (mlx-text Qwen3-0.6B, mlx-vision Qwen3.5-0.8B, gguf Qwen3.8-27B); the new system-prompt and back-to-A reuse checks fail on the base commit | improve/2026-09-24, merged as v2.0.121 |
 | `bun run e2e:render` (model-free) | 98/98, including the thinking-depth control check | v2.0.95 |
 | `tests/smoke/` (arms `mlx-text` / `mlx-vision` / `gguf` since v2.0.88) | 82/82 at v2.0.95 on `gpt-oss-20b-MXFP4-Q8-mlx`, `Qwen3.5-0.8B-MLX-8bit` and `JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`: depth covered on mlx-text and gguf (an offered value accepted, an unoffered one a 400 on gguf); a turn that adds a new image is the named known gap; audio uncovered on the arms picked | v2.0.95 |
-| `scripts/vlm_parity_probe.py` | MATCH on both cases, Qwen3.5-0.8B, against mlx-vlm's own loop. Earlier: Qwen-Image-2.1-PE-I21, Qwen3.5-27B-8bit, Qwen3-VL-32B at v2.0.55 | v2.0.88 (0.8B) |
+| `scripts/vlm_parity_probe.py` | v2.0.124 (mlx-vlm 0.7.3, `ac737ef3`): ok on Qwen3.5-0.8B, the image case a near-tie at upstream margin 0.0. Before: MATCH on both cases, Qwen3.5-0.8B, against mlx-vlm's own loop. Earlier: Qwen-Image-2.1-PE-I21, Qwen3.5-27B-8bit, Qwen3-VL-32B at v2.0.55 | v2.0.124 / v2.0.88 (0.8B) |
 | `tests/smoke/` gguf arm | green on `unsloth_Qwen3.8-27B-UD-Q8_K_XL`, all three reuse checks pass; audio UNCOVERED (the model declares none) | v2.0.84 |
 | `bun run e2e` (chat + pages) | on the default gemma-4-26B-A4B: 84/84 at v2.0.95 (chat + pages). Earlier the same day: 83/84 at v2.0.92, the one failure fixed in v2.0.93 | v2.0.95 |
-| MLX greedy chain probe (`scripts/chain_probe.py`) | v2.0.92: gemma-4-26B-A4B and gpt-oss-20b pass every hop; Qwen3-VL-32B's extend-3 mismatched once and matched on rerun, the same hop and flap as its v2.0.86 record (a near-tie). v2.0.88: Qwen3.5-0.8B and Qwen3-0.6B pass. Records in `internal/claude/chain_probe/` | v2.0.92 / v2.0.88 |
+| MLX greedy chain probe (`scripts/chain_probe.py`) | v2.0.124 (mlx-vlm 0.7.3): Qwen3.5-0.8B matches and reuses on every hop. v2.0.92: gemma-4-26B-A4B and gpt-oss-20b pass every hop; Qwen3-VL-32B's extend-3 mismatched once and matched on rerun, the same hop and flap as its v2.0.86 record (a near-tie). v2.0.88: Qwen3.5-0.8B and Qwen3-0.6B pass. Records in `internal/claude/chain_probe/` | v2.0.124 / v2.0.92 / v2.0.88 |
 | `bun run e2e:ios` | see `TODO.md` and the harness's own header | -- |
 | `tests/eval/` (behavioural bank) | full bank on `Qwen3.5-27B-8bit-mlx` matches the W10 baseline at v2.0.86 (NOT re-run at v2.0.88). v2.0.88, stop/thinking/text on the text models: Qwen3-0.6B 6/6; gpt-oss-20b 2/4, the two failures are thinking-off text tasks with 10- and 30-token budgets that harmony's analysis channel uses up. Records in `internal/claude/w10/`. v2.0.91, thinking tasks: `thinking_requested_split` (now under a 256-token budget) passes on Qwen3.5-0.8B and gemma-4-26B-A4B; the one failure is Qwen3.5-0.8B's known two-image colour flap (`internal/claude/w7/eval_w7.jsonl`) | v2.0.91 / v2.0.88 / v2.0.86 |
 | gguf runtime harness (`internal/claude/perf/harness/`) | Qwen3.8-27B, Muse-Glimmer-30B, DeepSeek-V4-Flash-Vision Q4: vision cost, system-prompt reuse, multi-turn cache reuse (correct on all three after the Qwen template fix), thinking levels, residency, flash attention, micro-batch. Findings in `docs/testing/gguf_runtime_audit_2026-09-23.md` | v2.0.64 build 11138 |
@@ -34,7 +34,21 @@ advertises `reasoning_effort`.
 
 ## Handoff -- start here (end of 2026-09-24)
 
-**Where things stand (latest first).** Late afternoon, v2.0.102 - v2.0.115,
+**Where things stand (latest first).** Evening, v2.0.124 - v2.0.127 (`mragents`):
+- **mlx-vlm pin moved to upstream main** `ac737ef3` (0.7.3, includes #2328;
+  owner: "the current latest commit"); `coderef/mlx-vlm` matches. Suite green,
+  parity and chain probe ok on Qwen3.5-0.8B. **Smoke not run on it yet.**
+- **Model pinning removed** (RLM was its last caller); protection of a model
+  in use is the generating check and the gate, as before.
+- **The partial inference API key removed** (owner: LAN-only, never set);
+  the admin token stays. Inference is unauthenticated by design.
+- **Hooks**: `scripts/hooks/git_add_guard.py` refuses broad staging; the
+  config-edit hook had gone silent after the heylook.toml rename and now
+  validates `heylook.toml`.
+- The improvement run's record is archived; the qwen3_5 vision-feature
+  re-apply is an owner yes, to be done the reworked way (`TODO.md`).
+
+Late afternoon, v2.0.102 - v2.0.115,
 two sessions on main (`mrblue`: the registry and spec decode; `mragents`:
 agent docs and the loop profile) while `mropt`, the improvement loop, worked
 on its own branch.
@@ -135,12 +149,14 @@ one side left at f16.
 
 **Open items, first things first:**
 
-0. **Registry and spec decode, what is left** (details in `TODO.md`; all
-   three are `mrblue`'s, in this order):
-   - retire the `enabled` field (`watch_hf_cache` went in v2.0.118);
-   - spec decode in the engine report (`engine.speculative`);
-   - models.toml becomes `heylook.toml` with the DuckDB settings folded in.
-   The DeepSeek live checks are done: every DeepSeek build drafts when there
+0. **Registry and spec decode: done** (`mrblue`: `enabled` retired v2.0.119,
+   `engine.speculative` v2.0.120, the config file is `heylook.toml` with its
+   `[settings]` table v2.0.122). Left, per `mrblue`'s end-of-day list: live
+   smoke on all three arms after today's provider and lifecycle changes (owner
+   go), `engine.speculative` checked in a browser, the `memory` cache cause
+   verified live, `scan_interval_seconds` now only meaning on/off (renaming it
+   is the owner's call), and Qwen3.8-Flash-Next's `unset` until a llama.cpp
+   build loads its split-out MTP head. The DeepSeek live checks are done: every DeepSeek build drafts when there
    is room, and Vision Q4 took the drop path ("short by N GiB") when there was
    not. Results are in the 2026-09-24 session log.
    **Environment (owner):**
