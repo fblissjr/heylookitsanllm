@@ -1011,9 +1011,12 @@ class MLXProvider(BaseProvider):
                 Path(model_path),
                 self.config.get("chat_template_source"),
             )
+            import hashlib
+            _body = self._template_info.chat_template or ""
             logging.info(
-                "template: source=%s harmony=%s thinking=%s specials=%d (model=%s)",
+                "template: source=%s sha256=%s harmony=%s thinking=%s specials=%d (model=%s)",
                 self._template_info.template_source,
+                hashlib.sha256(_body.encode("utf-8")).hexdigest()[:12] if _body else "none",
                 self._template_info.has_harmony_structure,
                 self._template_info.has_thinking_markers,
                 len(self._template_info.special_tokens),

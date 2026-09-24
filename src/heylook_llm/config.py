@@ -1673,6 +1673,14 @@ class ChatTemplateResponse(BaseModel):
                      "re-processes history, `prefix_note` says where; null = could "
                      "not be told. A warning, never a refusal."))
     prefix_note: Optional[str] = None
+    sources: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description=("Every copy of the template present for this model (plan W3), "
+                     "in ladder order: {source, file, sha256, in_force, provenance "
+                     "(downloaded | modified since download | no download record | "
+                     "heylook override | explicit path | embedded), download_commit, "
+                     "prefix_stable, prefix_note, template}. An editor can start an "
+                     "override from any of them."))
     notes: List[str] = Field(default_factory=list)
 
 

@@ -224,7 +224,17 @@ translated between models. Detail and reasoning:
 - **Not in scope: editing templates to add levels.** A level is prompt text
   the model was trained on; an invented level is untrained text.
 
-### W3. Templates: every copy visible, copy-to-override, lint
+### W3. Templates: every copy visible, copy-to-override, lint (shipped v2.0.94 + v2.0.99)
+
+As built: `chat_template_files.template_sources` lists every copy with its
+provenance read from huggingface_hub's per-file download record (a small
+file's etag is its git blob SHA-1, so "modified since download" is a hash
+comparison, not a guess). The record carries the commit, not the repo id, so
+repo@commit is commit only. The lint runs on every listed source and on the
+in-force template; on a write it is the in-force (the new override) answer.
+The five in-place-edited gemma templates now show as "modified since
+download"; moving them into overrides stays the owner's op (the panel's
+"Start an override from this" is the path).
 
 Extends the existing template panel (`GET/PUT/DELETE
 /v1/admin/models/{id}/chat-template`).

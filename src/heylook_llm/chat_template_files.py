@@ -225,6 +225,105 @@ def _mlx_view(config: dict, present: bool) -> tuple[Optional[str], str, Optional
     return (info.chat_template or None), origin, inert
 
 
+def _download_record(path: Path) -> Optional[tuple[str, str]]:
+    """(commit, etag) from huggingface_hub's per-file download record
+    (``<dir>/.cache/huggingface/download/<name>.metadata``: commit, etag,
+    timestamp, one per line), or None when the file has no record."""
+    meta = path.parent / ".cache" / "huggingface" / "download" / f"{path.name}.metadata"
+    try:
+        lines = meta.read_text().splitlines()
+    except OSError:
+        return None
+    return (lines[0].strip(), lines[1].strip()) if len(lines) >= 2 else None
+
+
+def _file_provenance(path: Path) -> tuple[str, Optional[str]]:
+    """Where a template file came from: ("downloaded", commit) when its bytes
+    still hash to the download record's etag (a small file's etag is its git
+    blob SHA-1), ("modified since download", commit) when they do not, and
+    ("no download record", None) otherwise -- which is what a hand-placed
+    file looks like, but also a model fetched some other way."""
+    import hashlib
+
+    record = _download_record(path)
+    if record is None:
+        return "no download record", None
+    commit, etag = record
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return "no download record", None
+    blob = hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+    return ("downloaded" if blob == etag.strip('"') else "modified since download"), commit
+
+
+def template_sources(model_id: str, provider: str, config: dict,
+                     in_force: Optional[str]) -> list[dict]:
+    """EVERY copy of the chat template present for a model (plan W3), in
+    ladder order, each with where it came from, a hash, whether it is the one
+    in force, and the prefix-stability lint. The body rides along so an
+    editor can start an override from any of them.
+
+    Only copies that exist are listed. `in_force` marks the first copy whose
+    body equals what the ladder resolved, which is the one a load uses."""
+    import hashlib
+
+    directory = model_directory(str(config.get("model_path") or ""))
+    entries: list[tuple[str, Optional[Path], Optional[str], Optional[str]]] = []
+
+    def file_entry(label: str, path: Optional[Path], body: Optional[str] = None):
+        if path is not None and path.is_file():
+            entries.append((label, path, body if body is not None else _read(path), None))
+
+    if provider == "gguf":
+        explicit = config.get("chat_template_path")
+        file_entry("explicit path", Path(explicit).expanduser() if explicit else None)
+        if directory is not None:
+            file_entry("heylook override", directory / HEYLOOK_TEMPLATE_FILENAME)
+            file_entry("chat_template.jinja beside the .gguf", directory / "chat_template.jinja")
+        from . import gguf_metadata
+        embedded = gguf_metadata.chat_template(Path(str(config.get("model_path") or "")))
+        if embedded:
+            entries.append(("embedded in the GGUF", None, embedded, "embedded"))
+    else:
+        from .providers.common.template_info import SOURCE_FILES, _read_embedded_template
+        source = config.get("chat_template_source")
+        if is_explicit_source(source) and ("/" in str(source) or str(source).startswith("~")):
+            file_entry("explicit path", Path(str(source)).expanduser())
+        if directory is not None:
+            for label, name in SOURCE_FILES.items():
+                path = directory / name
+                if name.endswith(".json"):
+                    body = _read_embedded_template(path) if path.is_file() else None
+                    if body:
+                        entries.append((f"{name} (its chat_template)", path, body, None))
+                else:
+                    file_entry("heylook override" if label == HEYLOOK_OVERRIDE else name, path)
+
+    out, claimed = [], False
+    for label, path, body, fixed in entries:
+        if not body:
+            continue
+        if fixed:
+            provenance, commit = fixed, None
+        elif label == "heylook override":
+            provenance, commit = "heylook override", None
+        elif label == "explicit path":
+            provenance, commit = "explicit path", None
+        else:
+            provenance, commit = _file_provenance(path)
+        is_in_force = not claimed and in_force is not None and body == in_force
+        claimed = claimed or is_in_force
+        stable, note = prefix_stability(body)
+        out.append({
+            "source": label, "file": path.name if path else None,
+            "sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+            "in_force": is_in_force, "provenance": provenance, "download_commit": commit,
+            "prefix_stable": stable, "prefix_note": note, "template": body,
+        })
+    return out
+
+
 def write_override(model_path: str, body: str, *, provider: str,
                    config: dict) -> "tuple[Path, list[str]]":
     """Validate ``body``, then write it as this model's override.

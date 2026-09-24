@@ -512,7 +512,10 @@ def _template_view(request: Request, model_id: str):
         loaded_template=getattr(provider, "loaded_chat_template", None),
     )
     stable, note = chat_template_files.prefix_stability(view.template)
-    return ChatTemplateResponse(**asdict(view), prefix_stable=stable, prefix_note=note)
+    sources = chat_template_files.template_sources(
+        model_id, model.provider, config_dict(model.config), view.template)
+    return ChatTemplateResponse(**asdict(view), prefix_stable=stable, prefix_note=note,
+                                sources=sources)
 
 
 @admin_router.get(

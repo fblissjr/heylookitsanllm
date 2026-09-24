@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.99]
+
+### Added (plan W3, the rest)
+
+- **Every copy of a model's chat template, listed** on the template view
+  (`sources`, in ladder order) with a hash, whether it is in force, the
+  prefix-stability lint, and where it came from: `downloaded` (the bytes
+  still hash to huggingface_hub's download record, commit named),
+  `modified since download`, `no download record`, `heylook override`,
+  `explicit path` or `embedded` in the GGUF. On the owner's disk it shows the
+  gemma-4 templates as modified since download (the in-place edits the plan
+  names) and the Qwen ones as downloaded.
+- The models page's template panel lists them, each with "Start an override
+  from this" (the copy's body becomes an unsaved draft; Save is the usual
+  validated write), and shows the in-force template's thinking controls
+  (plan W2's `engine.thinking`) in one line.
+- Both engines' load logs name the in-force template's sha256 prefix beside
+  the rung that won.
+
 ## [2.0.98]
 
 ### Added

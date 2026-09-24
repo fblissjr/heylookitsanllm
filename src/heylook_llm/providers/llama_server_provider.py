@@ -959,16 +959,6 @@ class LlamaServerProvider(BaseProvider):
                                 auto_ubatch=auto_ubatch,
                                 image_max_tokens=self._last_image_cap)
 
-        # Say which template is in force, every spawn. A sidecar is discovered
-        # from the filesystem, so the answer can change without models.toml
-        # changing -- dropping a chat_template.jinja next to the weights is now
-        # enough to alter the prompt format. Unannounced, that is a behaviour
-        # change with no artifact naming it; this line is the artifact.
-        logging.info(
-            f"[GGUF] {self.model_id}: chat template {template_origin}"
-            + (f" ({resolved_template})" if resolved_template else "")
-        )
-
         # Snapshot the BODY this process spawned with, so the admin template
         # view can tell an edited-on-disk file from the one llama-server is
         # running. Read here rather than lazily: the file can change under us
@@ -984,6 +974,21 @@ class LlamaServerProvider(BaseProvider):
             from .. import gguf_metadata
             self.loaded_chat_template = gguf_metadata.chat_template(
                 Path(str(self.config.get("model_path") or "")))
+        # Say which template is in force, every spawn, with its hash (plan
+        # W3). A sidecar is discovered from the filesystem, so the answer can
+        # change without models.toml changing -- dropping a chat_template.jinja
+        # next to the weights is enough to alter the prompt format.
+        # Unannounced, that is a behaviour change with no artifact naming it;
+        # this line is the artifact, and the hash tells two spawns apart by
+        # what the model actually saw, not only by which rung won.
+        import hashlib
+        body_hash = (hashlib.sha256(self.loaded_chat_template.encode("utf-8")).hexdigest()[:12]
+                     if self.loaded_chat_template else "unreadable")
+        logging.info(
+            f"[GGUF] {self.model_id}: chat template {template_origin}"
+            + (f" ({resolved_template})" if resolved_template else "")
+            + f" sha256={body_hash}"
+        )
 
         # Subprocess output honors the file-logging master switch: at
         # observability_level=off (the default) NOTHING is written under

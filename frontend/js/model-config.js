@@ -283,6 +283,21 @@ function stabilityNote(view) {
   return ` This template breaks multi-turn prompt caching: ${view.prefix_note}.`;
 }
 
+// The in-force template's thinking controls (plan W2), in one line.
+function thinkingSummary(thinking) {
+  if (!thinking) return 'Thinking controls: unknown (no template to judge).';
+  const parts = [thinking.switch ? `switch ${thinking.switch}` : 'no thinking switch'];
+  const d = thinking.depth;
+  if (d) {
+    const values = d.unknown === 'verbatim' ? `any word${d.values.length ? ` (names ${d.values.join(', ')})` : ''}`
+      : d.values.join(', ');
+    parts.push(`depth ${d.variable}: ${values}${d.default ? `, default ${d.default}` : ''}`);
+  } else {
+    parts.push('no depth control');
+  }
+  return `Thinking controls: ${parts.join('; ')}.`;
+}
+
 function buildChatTemplatePanel({ model, draft, onDraftChange }) {
   const statusEl = createEl('div', { class: 'cfg-tmpl__status', role: 'status' });
   const originEl = createEl('div', { class: 'cfg-tmpl__origin muted small' });
@@ -306,8 +321,12 @@ function buildChatTemplatePanel({ model, draft, onDraftChange }) {
   const saveBtn = createEl('button', { class: 'btn btn--sm', disabled: true }, ['Save template']);
   const revertBtn = createEl('button', { class: 'btn btn--sm', hidden: true }, ['Revert to model default']);
   const actions = createEl('div', { class: 'cfg-actions' }, [saveBtn, revertBtn]);
+  // Plan W2 + W3: what the in-force template offers for thinking, and every
+  // copy of the template present, with where it came from. Filled by render().
+  const thinkingEl = createEl('div', { class: 'cfg-tmpl__thinking muted small' });
+  const sourcesEl = createEl('ul', { class: 'cfg-tmpl__sources' });
   const body = createEl('div', { class: 'cfg-tmpl__inner' },
-    [originEl, label, area, actions, statusEl]);
+    [originEl, thinkingEl, sourcesEl, label, area, actions, statusEl]);
 
   const el = createEl('details', { class: 'cfg-section cfg-tmpl' }, [
     createEl('summary', { class: 'cfg-section__title' }, ['Chat template']),
@@ -355,6 +374,8 @@ function buildChatTemplatePanel({ model, draft, onDraftChange }) {
     const bits = [`In force: ${view.origin}`];
     if (view.override_present) bits.push('your override is on disk');
     originEl.textContent = bits.join(' · ');
+    thinkingEl.textContent = thinkingSummary(model.engine?.thinking);
+    renderSources(view.sources ?? []);
 
     // Ordered worst-first: an edit that cannot land at all matters more than
     // one that has landed but needs a reload.
@@ -378,6 +399,31 @@ function buildChatTemplatePanel({ model, draft, onDraftChange }) {
       say('');
     }
     syncDirty();
+  }
+
+  // One row per copy: which it is, where it came from, a short hash, whether
+  // it is in force, the lint, and "Start an override from this", which puts
+  // its body in the editor as an unsaved draft (Save writes the override
+  // through the usual validated path; nothing is written until then).
+  function renderSources(sources) {
+    sourcesEl.replaceChildren(...sources.map((src) => {
+      const facts = [src.provenance + (src.download_commit ? ` @${src.download_commit.slice(0, 8)}` : ''),
+        src.sha256.slice(0, 12)];
+      if (src.prefix_stable === false) facts.push(`breaks prompt caching: ${src.prefix_note}`);
+      const copy = createEl('button', { class: 'btn btn--sm btn--ghost', type: 'button',
+        disabled: area.disabled }, ['Start an override from this']);
+      copy.addEventListener('click', () => {
+        area.value = src.template;
+        syncDirty();
+        say(`Editing a copy of ${src.source}. Save to make it this model's override.`);
+      });
+      return createEl('li', { class: `cfg-tmpl__source${src.in_force ? ' cfg-tmpl__source--in-force' : ''}` }, [
+        createEl('span', { class: 'cfg-tmpl__source-name' },
+          [src.source + (src.in_force ? ' (in force)' : '')]),
+        createEl('span', { class: 'muted small' }, [` ${facts.join(' · ')} `]),
+        src.source === 'heylook override' ? null : copy,
+      ]);
+    }));
   }
 
   async function load() {

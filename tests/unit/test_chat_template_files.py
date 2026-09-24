@@ -28,3 +28,34 @@ def test_prefix_stability_flags_what_costs_every_turn_its_cache():
     stable, why = prefix_stability(rewrites)
     assert stable is False and "differently" in why
     assert prefix_stability(None)[0] is None
+
+
+def test_template_sources_mark_download_state_and_in_force(tmp_path):
+    """Plan W3: each copy says where it came from. A file whose bytes still
+    hash to huggingface_hub's download record (a small file's etag is its git
+    blob SHA-1) is downloaded; an edit makes it modified; no record is no
+    record. The in-force copy is the one whose body the ladder resolved."""
+    import hashlib
+
+    from heylook_llm.chat_template_files import template_sources
+
+    body = "{% for m in messages %}{{ m.content }}{% endfor %}"
+    (tmp_path / "chat_template.jinja").write_text(body)
+    record = tmp_path / ".cache" / "huggingface" / "download"
+    record.mkdir(parents=True)
+    blob = hashlib.sha1(b"blob %d\0" % len(body.encode()) + body.encode()).hexdigest()
+    (record / "chat_template.jinja.metadata").write_text(f"abc123\n{blob}\n0\n")
+    (tmp_path / "chat_template.heylook.jinja").write_text(body + "!")
+    cfg = {"model_path": str(tmp_path)}
+
+    rows = {r["source"]: r for r in template_sources("m", "mlx", cfg, body + "!")}
+    assert rows["heylook override"]["in_force"] and rows["heylook override"]["provenance"] == "heylook override"
+    assert rows["chat_template.jinja"]["provenance"] == "downloaded" and rows["chat_template.jinja"]["download_commit"] == "abc123"
+    assert not rows["chat_template.jinja"]["in_force"]
+
+    (tmp_path / "chat_template.jinja").write_text(body + " edited")
+    rows = {r["source"]: r for r in template_sources("m", "mlx", cfg, None)}
+    assert rows["chat_template.jinja"]["provenance"] == "modified since download"
+    (record / "chat_template.jinja.metadata").unlink()
+    assert {r["source"]: r for r in template_sources("m", "mlx", cfg, None)}["chat_template.jinja"]["provenance"] \
+        == "no download record"

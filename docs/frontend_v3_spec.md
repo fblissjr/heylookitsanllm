@@ -772,7 +772,7 @@ as long as a scan takes; other requests keep flowing meanwhile.
 
 **Chat template** (v2.0.22). `GET /v1/admin/models/{id}/chat-template` →
 `{model_id, provider, template, origin, override_present, override_path,
-writable, inert_reason, override_template, stale, prefix_stable, prefix_note, notes}`. It reads FILES (and, for gguf, the GGUF header),
+writable, inert_reason, override_template, stale, prefix_stable, prefix_note, sources, notes}`. It reads FILES (and, for gguf, the GGUF header),
 never a running process, so it answers for models that are NOT resident — the prompt
 format a model will load with is the thing worth seeing before loading it.
 `origin` is the ladder rung that won, the same phrase the load log prints.
@@ -790,6 +790,15 @@ loaded, which is NOT the same as `false`** — render the two differently.
 previous one's, as a prompt cache needs; `false` means every turn re-processes history
 and `prefix_note` says where, `null` means it could not be told. It is a warning, never a
 refusal, and the same answer rides `engine.template.prefix_stable`.
+`sources` (v2.0.99, plan W3) lists every copy of the template present, in ladder order:
+`{source, file, sha256, in_force, provenance, download_commit, prefix_stable, prefix_note,
+template}`. `provenance` is `downloaded` (the bytes still hash to huggingface_hub's
+download record) | `modified since download` | `no download record` | `heylook override`
+| `explicit path` | `embedded`. v3 lists them in the template panel with "Start an
+override from this", which puts that copy's body in the editor as an unsaved draft; Save
+is the usual validated write. The panel also shows the in-force template's
+`engine.thinking` in one line. Both engines' load logs carry the in-force body's
+sha256 prefix.
 
 `PUT .../chat-template` body `{template}` writes `chat_template.heylook.jinja` beside
 the weights and touches NO config; `DELETE` removes it (**404** when there is none, so a
