@@ -203,6 +203,14 @@ _PAYLOAD_KEY_MAP = (
 )
 
 
+class LlamaServerLoadExit(RuntimeError):
+    """llama-server exited before it was ready."""
+
+
+# (drafter path, binary) pairs this process has seen llama-server refuse.
+_UNLOADABLE_DRAFTERS: set = set()
+
+
 class LlamaServerProvider(BaseProvider):
     """Serve a GGUF model through a managed llama-server subprocess."""
 
@@ -747,13 +755,11 @@ class LlamaServerProvider(BaseProvider):
             return
         if alone.weights_gb + alone.headroom_gb > alone.reclaimable_gb:
             return  # the model does not fit on its own; the drafter is not the difference
-        self.drafter_skipped = (
-            f"drafter skipped for this spawn: model + drafter need {both.weights_gb:.1f} GiB "
-            f"+ {both.headroom_gb:.0f} GiB headroom, {both.reclaimable_gb:.1f} GiB is "
-            f"reclaimable now (short by {need - both.reclaimable_gb:.1f} GiB); the model "
-            f"alone fits. Free that much memory and reload to run spec decode")
-        logging.warning(f"[GGUF] {self.model_id}: {self.drafter_skipped}")
-        self.config = alone_cfg
+        self._without_drafter(
+            f"model + drafter need {both.weights_gb:.1f} GiB + {both.headroom_gb:.0f} GiB "
+            f"headroom, {both.reclaimable_gb:.1f} GiB is reclaimable now (short by "
+            f"{need - both.reclaimable_gb:.1f} GiB); the model alone fits. Free that much "
+            f"memory and reload to run spec decode")
 
     def _auto_ubatch(self) -> Optional[int]:
         """AUTO_UBATCH when the headroom clears ram_fit.THIN_HEADROOM_GB,
@@ -946,6 +952,44 @@ class LlamaServerProvider(BaseProvider):
         )
 
     def load_model(self):
+        """Spawn llama-server and wait until it serves.
+
+        A drafter never costs the model (owner decision 2026-09-24: spec
+        decode is on wherever a drafter ships, so discovery pairs files the
+        build may not be able to run -- Qwen3.8-Flash-Next's split-out MTP
+        head has no embeddings of its own and this build will not load it as
+        a draft model). When llama-server exits during load with a drafter
+        set, the spawn is retried once without it; if that loads, the
+        drafter is remembered as unloadable by this binary for the life of
+        the process, so later loads skip straight to it.
+        """
+        drafter = self.config.get("draft_model_path")
+        key = (drafter, str(self._resolve_binary()))
+        if drafter and key in _UNLOADABLE_DRAFTERS:
+            self._without_drafter(f"drafter {Path(drafter).name} failed to load in this "
+                                  f"llama-server build earlier in this process")
+        try:
+            return self._load_once()
+        except LlamaServerLoadExit as first:
+            if not self.config.get("draft_model_path"):
+                raise
+            self._without_drafter(f"llama-server exited while loading with drafter "
+                                  f"{Path(drafter).name} ({first}); retried without it")
+        self._load_once()
+        _UNLOADABLE_DRAFTERS.add(key)
+        logging.warning(
+            f"[GGUF] {self.model_id}: loaded without its drafter, so the drafter is the "
+            f"cause. To stop paying the failed first spawn after a restart, put "
+            f'unset = ["draft_model_path", "spec_type"] in this model\'s model.heylook.toml')
+
+    def _without_drafter(self, reason: str) -> None:
+        """Run this spawn without its drafter, saying why (``drafter_skipped``)."""
+        self.drafter_skipped = reason
+        logging.warning(f"[GGUF] {self.model_id}: speculative decoding off for this spawn: {reason}")
+        self.config = {k: v for k, v in self.config.items()
+                       if k not in ("draft_model_path", "spec_type")}
+
+    def _load_once(self):
         binary = self._resolve_binary()
         host = self.config.get("host", "127.0.0.1")
         port = int(self.config.get("port") or 0) or self._free_port()
@@ -1141,7 +1185,7 @@ class LlamaServerProvider(BaseProvider):
             rc = self._proc.poll()
             if rc is not None:
                 self._cleanup_handles()
-                raise RuntimeError(
+                raise LlamaServerLoadExit(
                     f"llama-server exited with code {rc} while loading "
                     f"'{self.model_id}' -- {log_ref}"
                 )

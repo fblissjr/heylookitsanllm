@@ -325,6 +325,8 @@ Speculative decoding is **on by default whenever a model ships a drafter** (owne
 
 A drafter never costs a model its load: at spawn, if the model fits in live reclaimable RAM and the model plus its drafter does not, the drafter is dropped for that spawn and the warning says by how much it was short (`_drop_drafter_if_short`). The binding limit is RAM left after everything else running, which moves; llama.cpp's own `--fit` sizes against the Metal working set and cannot see it.
 
+Nor does a drafter the build cannot load: if llama-server exits while loading with one set, the spawn is retried once without it, and the pair is remembered for the life of the process. Discovery pairs by what a model ships, and a publisher can ship a drafter ahead of llama.cpp's support for it (a split-out MTP head with no embeddings of its own is the case seen).
+
 Whether it pays on a given model is still unmeasured here, and the measurement discipline below is how to find out:
 
 - On the one case examined most carefully -- a dense gemma-4 MTP model at vendor sampling, realistic context, matched warm cache and a long generation -- spec on versus off was **a wash**, indistinguishable from noise. Every larger effect seen alongside it dissolved once one more variable was controlled: an apparent tuning win was a greedy artifact, an apparent cost was a short-generation artifact, an apparent context effect was a prompt-cache ordering mistake, and a "broken drafter" was refuted by the drafter's own output.

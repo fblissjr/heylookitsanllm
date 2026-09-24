@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.113]
+
+### Added
+
+- **A drafter the llama.cpp build cannot load costs one retry, never the model.** When llama-server exits during load with a drafter set, the spawn is retried once without it. The drafter is then remembered as unloadable by that binary for the life of the process, so later loads skip straight to the working spawn, and the warning names the `unset` line for the model's `model.heylook.toml`. Found by the live check of discovery's new pairings: Qwen3.8-Flash-Next's `MTP/` drafter is a split-out MTP head without its own embeddings, and llama.cpp at the current build loads a `-md` file as a whole model. The same live check confirmed that both Qwen3.8-27B builds run their built-in MTP head (`spec_type = "draft-mtp"`, no file) on text and image requests. The DeepSeek pairings are not yet run live: they need more reclaimable memory than was free.
+
 ## [2.0.112]
 
 ### Added

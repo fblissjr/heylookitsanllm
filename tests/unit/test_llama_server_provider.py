@@ -1426,3 +1426,45 @@ class TestDrafterGivesWayToFit:
         self._sizes(monkeypatch, with_drafter, alone)
         p._drop_drafter_if_short()
         assert p.config["draft_model_path"] == "/fake/dspark.gguf" and p.drafter_skipped is None
+
+
+@pytest.mark.unit
+def test_a_drafter_the_build_cannot_load_costs_one_retry_not_the_model(monkeypatch):
+    """Discovery pairs drafters the build may not run (a split-out MTP head
+    with no embeddings). A load that exits with a drafter set is retried once
+    without it; the next load of the same drafter skips straight there."""
+    from heylook_llm.providers import llama_server_provider as lsp
+    monkeypatch.setattr(lsp, "_UNLOADABLE_DRAFTERS", set())
+    monkeypatch.setattr(LlamaServerProvider, "_resolve_binary", lambda self: Path("/fake/llama-server"))
+    spawns = []
+
+    def load_once(self):
+        spawns.append(self.config.get("draft_model_path"))
+        if self.config.get("draft_model_path"):
+            raise lsp.LlamaServerLoadExit("llama-server exited with code 1 while loading")
+    monkeypatch.setattr(LlamaServerProvider, "_load_once", load_once)
+
+    p = make_provider(draft_model_path="/fake/mtp-shared.gguf", spec_type="draft-mtp")
+    p.load_model()
+    assert spawns == ["/fake/mtp-shared.gguf", None]
+    assert "draft_model_path" not in p.config and "spec_type" not in p.config
+    assert "retried without it" in p.drafter_skipped
+
+    spawns.clear()
+    make_provider(draft_model_path="/fake/mtp-shared.gguf").load_model()
+    assert spawns == [None]
+
+
+@pytest.mark.unit
+def test_a_load_failure_without_a_drafter_is_not_retried(monkeypatch):
+    from heylook_llm.providers import llama_server_provider as lsp
+    monkeypatch.setattr(LlamaServerProvider, "_resolve_binary", lambda self: Path("/fake/llama-server"))
+    calls = []
+
+    def load_once(self):
+        calls.append(1)
+        raise lsp.LlamaServerLoadExit("exited")
+    monkeypatch.setattr(LlamaServerProvider, "_load_once", load_once)
+    with pytest.raises(lsp.LlamaServerLoadExit):
+        make_provider().load_model()
+    assert calls == [1]
