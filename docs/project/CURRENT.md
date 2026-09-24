@@ -95,13 +95,11 @@ one side left at f16.
 **Open items, first things first:**
 
 0. **Environment (owner):**
-   - `modelzoo/` is gone and `[scan].folders` now points at a folder outside the repo, but
-     13 explicit `models.toml` entries still point at `modelzoo/` paths, so
-     those models do not load. That covers every gemma-4, Qwen3.5 and
-     Qwen3-VL MLX entry, gpt-oss-120b and one Muse. The moved copies
-     are discovered, but not served: their ids collide with
-     the dead entries. The default E2E model (gemma-4) is among them; E2E ran
-     with `E2E_MODEL=Qwen3-0.6B-8bit-mlx`.
+   - Resolved later on 2026-09-24: no `models.toml` entry points at `modelzoo/`
+     any more (checked against the local file), and the repo no longer names it
+     outside `.gitignore` and dated history (v2.0.104). Not yet re-run: E2E on
+     its default gemma-4 model, which earlier ran on `E2E_MODEL=Qwen3-0.6B-8bit-mlx`
+     while the gemma-4 entries were dead.
    - W4 frontend: show a staged image's cost and resize to the planned size
      at send? The latter costs a round trip per image; the owner decides.
 
