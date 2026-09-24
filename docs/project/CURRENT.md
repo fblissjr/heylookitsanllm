@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-23, v2.0.88, `main`.
+Last updated: 2026-09-24, v2.0.92, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `CLAUDE.md`, the backlog in [TODO.md](./TODO.md), and what each release
@@ -15,15 +15,15 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
-| unit + contract | green | v2.0.88 |
-| `bun run e2e:render` (model-free) | green, against `marked` 18.0.13 | v2.0.82 |
-| `tests/smoke/` (arms `mlx-text` / `mlx-vision` / `gguf` since v2.0.88) | 82/82 on `Qwen3-0.6B-8bit-mlx`, `Qwen3.5-0.8B-MLX-8bit` and `JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`, including the new "a short answer ends on end_turn" row on all three; a turn that adds a new image is the named known gap; audio and thinking depth uncovered on the arms picked | v2.0.88 |
+| unit + contract | green | v2.0.92 |
+| `bun run e2e:render` (model-free) | 97/97 | v2.0.93 |
+| `tests/smoke/` (arms `mlx-text` / `mlx-vision` / `gguf` since v2.0.88) | 82/82 on `Qwen3-0.6B-8bit-mlx`, `Qwen3.5-0.8B-MLX-8bit` and `JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`; a turn that adds a new image is the named known gap; audio and thinking depth uncovered on the arms picked | v2.0.92 |
 | `scripts/vlm_parity_probe.py` | MATCH on both cases, Qwen3.5-0.8B, against mlx-vlm's own loop. Earlier: Qwen-Image-2.1-PE-I21, Qwen3.5-27B-8bit, Qwen3-VL-32B at v2.0.55 | v2.0.88 (0.8B) |
 | `tests/smoke/` gguf arm | green on `unsloth_Qwen3.8-27B-UD-Q8_K_XL`, all three reuse checks pass; audio UNCOVERED (the model declares none) | v2.0.84 |
-| `bun run e2e` (chat + pages) | on the default gemma-4-26B-A4B: chat 52/52 twice after the seeding fix; pages 32/32 in the one run before it (not re-run after). One Save & Continue thinking failure seen once before the fix (see handoff) | v2.0.88 |
-| MLX greedy chain probe (`scripts/chain_probe.py`) | v2.0.88: Qwen3.5-0.8B and Qwen3-0.6B pass (Qwen3-0.6B's first run right after model swaps: one exact logit tie and one 0-token restore; two reruns clean). gemma-4, gpt-oss and Qwen3-VL last run at v2.0.86 | v2.0.88 / v2.0.86 |
+| `bun run e2e` (chat + pages) | on the default gemma-4-26B-A4B: chat + pages 83/84 at v2.0.92 (the one failure was the Save & Continue edited-thinking check, fixed in v2.0.93); chat 52/52 at v2.0.93. Pages last run at v2.0.92 | v2.0.93 / v2.0.92 |
+| MLX greedy chain probe (`scripts/chain_probe.py`) | v2.0.92: gemma-4-26B-A4B and gpt-oss-20b pass every hop; Qwen3-VL-32B's extend-3 mismatched once and matched on rerun, the same hop and flap as its v2.0.86 record (a near-tie). v2.0.88: Qwen3.5-0.8B and Qwen3-0.6B pass. Records in `internal/claude/chain_probe/` | v2.0.92 / v2.0.88 |
 | `bun run e2e:ios` | see `TODO.md` and the harness's own header | -- |
-| `tests/eval/` (behavioural bank) | full bank on `Qwen3.5-27B-8bit-mlx` matches the W10 baseline at v2.0.86 (NOT re-run at v2.0.88). v2.0.88, stop/thinking/text on the text models: Qwen3-0.6B 6/6; gpt-oss-20b 2/4, the two failures are thinking-off text tasks with 10- and 30-token budgets that harmony's analysis channel uses up. Records in `internal/claude/w10/` | v2.0.88 / v2.0.86 |
+| `tests/eval/` (behavioural bank) | full bank on `Qwen3.5-27B-8bit-mlx` matches the W10 baseline at v2.0.86 (NOT re-run at v2.0.88). v2.0.88, stop/thinking/text on the text models: Qwen3-0.6B 6/6; gpt-oss-20b 2/4, the two failures are thinking-off text tasks with 10- and 30-token budgets that harmony's analysis channel uses up. Records in `internal/claude/w10/`. v2.0.91, thinking tasks: `thinking_requested_split` (now under a 256-token budget) passes on Qwen3.5-0.8B and gemma-4-26B-A4B; the one failure is Qwen3.5-0.8B's known two-image colour flap (`internal/claude/w7/eval_w7.jsonl`) | v2.0.91 / v2.0.88 / v2.0.86 |
 | gguf runtime harness (`internal/claude/perf/harness/`) | Qwen3.8-27B, Muse-Glimmer-30B, DeepSeek-V4-Flash-Vision Q4: vision cost, system-prompt reuse, multi-turn cache reuse (correct on all three after the Qwen template fix), thinking levels, residency, flash attention, micro-batch. Findings in `docs/testing/gguf_runtime_audit_2026-09-23.md` | v2.0.64 build 11138 |
 
 Thinking DEPTH is covered only by pinning `gpt-oss-20b-MXFP4-Q8-mlx`
@@ -31,102 +31,75 @@ Thinking DEPTH is covered only by pinning `gpt-oss-20b-MXFP4-Q8-mlx`
 `--arm mlx-text --model mlx-text=gpt-oss-20b-MXFP4-Q8-mlx`. No vision model
 advertises `reasoning_effort`.
 
-## Handoff -- start here (end of 2026-09-23)
+## Handoff -- start here (end of 2026-09-24)
 
-**Where things stand.** Plan W10 is done (v2.0.86 - v2.0.88): every MLX model
-runs on mlx-vlm's engine, mlx-lm is no longer a dependency (its streaming
-detokenizer is vendored and pruned in `providers/common/lm_detokenizer.py`),
-the MLX loader/draft/KV config fields are retired, and the live-harness arms
-are `mlx-text` / `mlx-vision` / `gguf`. v2.0.88 also fixed a v2.0.86
-regression: text-only MLX models resolved their stop set from the Rust
-tokenizer backend, and Qwen3-0.6B's was empty.
+**Where things stand.** v2.0.89 - v2.0.93 landed on 2026-09-24 (v2.0.93:
+`reasoning_content` now reaches the template on MLX vision models; see item
+4):
+- v2.0.89 cleanup: the config `engines` tag is gone (it could only restate
+  the config class once W10 left one engine per provider), and
+  `effective_loader` became the bool `resolve_serves_vision`. Both were the
+  owner questions from stage 3.
+- v2.0.90, from an independent review of the W10 engine:
+  - a cancel during MLX prefill no longer pins prefix-cache blocks;
+  - a token mlx-vlm stops on but heylook's stop set lacks is no longer
+    streamed as text;
+  - the progress total now counts a prefix hit.
+- v2.0.91 **W7 shipped**: a hard thinking budget on both engines, verified
+  live on all three formats against same-seed controls
+  (`internal/claude/w7/`). The eval split task now runs under the budget.
+- v2.0.92 perf: every MLX request carried an identity logits processor (the
+  floor's repetition penalty of 1.0), which forced a GPU sync in mlx-vlm's
+  engine on every decode step. Found by the first throughput comparison of
+  the W10 engine, which W10 itself never ran
+  (`internal/claude/perf/throughput_2026-09-24/`).
 
 **The plan, in order** ([plan_runtime_visibility.md](./plan_runtime_visibility.md),
-"Sequencing"): W2+W3+W7 next, then W4, W0 (registry sidecars,
-[plan_registry_sidecars.md](./plan_registry_sidecars.md); Phase 0
-`served_diff` first), then W1.
+"Sequencing"): W2+W3 next (W7 is done), then W4, W0 (Phase 0 `served_diff`
+first), then W1.
 
 **Open items, first things first:**
 
-1. **235B long context at f16 KV: inconclusive, re-run it before W2.**
-   Retiring the KV settings removed the 8-bit KV the 235B used to get
-   automatically. `Qwen3-VL-235B-A22B-Instruct-4bit-mlx` loaded and warmed
-   inside the RAM pre-flight, but a long-context needle request ran for well
-   over half an hour with the server near 0% CPU and never answered; it was
-   stopped with no result, so slow and stuck are not told apart. Re-run with
-   observability raised before load (to get a server log), `python -u`, and a
-   short prompt first, stepping up. If it cannot answer at f16, tell the
-   owner: that is the cost of the "retire all KV settings" decision, and the
-   remedy is theirs to pick.
-2. **Stage-3 gates not yet re-run:** `scripts/chain_probe.py` on gpt-oss-20b
-   (a text model the stop-set fix touched), gemma-4 and Qwen3-VL-32B; the
-   eval bank on `Qwen3.5-27B-8bit-mlx` against the W10 baseline; `bun run
-   e2e:pages` after the seeding fix.
-3. **One unexplained E2E failure:** the Save & Continue check with edited
-   thinking once stored the edited thought with more thought text appended
-   (a new thought channel during the continuation, on gemma-4). It did not
-   recur in three runs. If it returns, read the continuation's raw output
-   before touching the parser.
-4. **Eval task budgets vs harmony:** `text_factual_qa_capital` and
-   `text_single_word_instruction` give 10 and 30 tokens with thinking off,
-   which gpt-oss cannot honour (harmony always writes analysis first). Owner
-   call: raise the budgets, or mark the tasks ineligible for harmony models.
-5. **Owner questions from stage 3 (not blocking):**
-   - (settled 2026-09-24, v2.0.89: the `engines` tag is removed and
-     `effective_loader` is the bool `resolve_serves_vision`.)
-   - the vendored detokenizer could later give way to a small incremental
-     decoder on transformers' `decode` (the "option 2" discussed 2026-09-23).
-   - `internal/bin/latest.py` still writes an mlx-lm rev; it needs the mlx-lm
-     half removed (owner's local tool).
-6. **Known gaps carried from W10:** a turn that adds a new image re-prefills
-   (`internal/claude/w10/apc_new_image_turns.md`); Qwen3-VL image turns do
-   not reuse with the disk tier off (`qwen3_vl_image_reuse.md`); mlx-vlm's
-   BPE detokenizer bug is recorded locally, not filed
-   (`mlx_vlm_bpe_detokenizer.md`).
-7. **gemma-4 vision is unverified on the v2.0.55 prefill path**, by owner
-   decision ("another time"); see `TODO.md`, "MLX vision prefill".
-
-## Handoff as of v2.0.87 (superseded by the block above)
-
-
-1. **The approved plan is [plan_runtime_visibility.md](./plan_runtime_visibility.md)**,
-   and its "Sequencing" section is the order. W8 + W9 shipped in v2.0.70 (the
-   non-causal image-token guard and the Metal residency keep-alive, both at
-   spawn), the eval-bank port in v2.0.71, and W13 (the one engine contract)
-   in v2.0.73 - v2.0.77. W5 (cache and speculative reporting) shipped in
-   v2.0.78 - v2.0.83, including the live cache-reuse smoke check that is
-   W10's acceptance test. Next, per the owner's order: W10 (after its full
-   eval baseline on Qwen3.5-27B-8bit-mlx), then W2+W3+W7, W4, W0, W1. The evidence behind every step is
-   [../testing/gguf_runtime_audit_2026-09-23.md](../testing/gguf_runtime_audit_2026-09-23.md).
-2. **Retiring per-model entries from `models.toml`** ([plan_registry_sidecars.md](./plan_registry_sidecars.md))
-   is the plan's W0. It runs in parallel rather than first. Phase 0
-   (`served_diff`) has not started and nothing else in that plan may start
-   first. Its open questions are all decided (280b748); nothing is open.
-3. **gemma-4 vision is unverified on the v2.0.55 prefill path**, by owner
-   decision ("another time"). Its output changed with nothing having checked
-   it, and the path it replaced ran non-causal attention on gemma-4. The probe
-   to run and why gemma-4 is the interesting family: `TODO.md`, "MLX vision
-   prefill". Do not cite a gemma-4 vision observation from before v2.0.55
-   without that caveat.
-4. **`bun run e2e` is green on one arm only.** It ran at v2.0.63 on
-   `Qwen3.5-0.8B-MLX-8bit`: a vision-capable qwen3_5, so it took the prefill
-   path verified that day, and a failure there would have pointed at the app.
-   The default `E2E_MODEL` is a gemma-4, whose vision path is item 3's open
-   question -- run the parity probe on gemma-4 BEFORE reading an image-check
-   failure there as a frontend bug. The mlx-lm and gguf arms (`E2E_ARMS`) were
-   not run.
-5. **Penalties are not the same knob on the two engines** (v2.0.60): MLX counts
-   generated tokens only, llama.cpp also counts the tail of the prompt, and no
-   request field aligns them. Documented, nothing to build.
-
-Known-stale elsewhere: every section under History describes the repo as of
-its own version. Two claims in the previous top of this file were checked on
-2026-09-21 and found false, and are gone rather than corrected: that `uv.lock`
-is deliberately left dirty (the engine pins have been COMMITTED since
-2026-09-05 and the file is clean), and that the contract suite cannot run while
-a server holds the default database (it has isolated its own database at
-import time since v1.79.54 -- `tests/contract/conftest.py` -- so it never opens
-the real one).
+1. **235B long context: an owner decision.** At f16 KV,
+   `Qwen3-VL-235B-A22B-Instruct-4bit-mlx` answers the needle at ~32k tokens.
+   At ~53-56k it fails mid-prefill with a Metal "Impacting Interactivity"
+   command-buffer error, the OS GPU watchdog. It fails at the same point with
+   a 4x smaller prefill chunk, so chunk size is not the lever. The failure
+   comes back as a clean error and the server keeps serving. Evidence and
+   options are in `internal/claude/w10/longctx_235b_2026-09-24/README.md`:
+   - accept a ~50k ceiling on this model;
+   - bring back a KV-quantization field for large models;
+   - trace memory over one ~60k run first.
+   Last night's "stuck" run is consistent with a long GPU-bound prefill.
+2. **Upstream candidates (mlx-vlm), not filed; filing is the owner's call:**
+   - `BatchGenerator.remove()` during prefill leaks APC block references
+     (heylook now releases them itself);
+   - any logits processor makes `_step` sync on `inputs.tolist()`;
+   - `prompt_utils.apply_chat_template(return_messages=True)` drops every
+     message key but role and content (heylook restores them itself);
+   - the BPE detokenizer holds space-free text
+     (`internal/claude/w10/mlx_vlm_bpe_detokenizer.md`).
+3. **APC cold-miss cost is a known tradeoff, not a bug.** On a miss, heylook's
+   first token trails mlx-vlm's own loop by a roughly fixed amount: the
+   checkpoint splits and clones the W10 spike tuned for follow-up reuse. It
+   matters on short prompts only. Any change goes through the chain probe;
+   data is in the perf record above.
+4. **Closed in v2.0.93: the "unexplained" Save & Continue E2E failure.**
+   It recurred today, and replaying it through the API found the cause.
+   mlx-vlm's message rebuild drops `reasoning_content`, so gemma-4's
+   continued turn had no thought channel and degenerated. It is fixed on
+   every vision-capable MLX model; the replays are in
+   `internal/claude/continue_gemma/`.
+5. **Eval task budgets vs harmony (carried, owner call):**
+   `text_factual_qa_capital` and `text_single_word_instruction` give 10 and
+   30 tokens with thinking off, and gpt-oss spends them on its analysis
+   channel.
+6. **Known gaps carried from W10:**
+   - a new-image turn re-prefills;
+   - Qwen3-VL image turns do not reuse;
+   - gemma-4 vision is unverified on the v2.0.55 prefill path (owner:
+     "another time").
+7. `internal/bin/latest.py` still writes an mlx-lm rev (owner's local tool).
 
 ## What landed 2026-09-23 (v2.0.65 - v2.0.77)
 
