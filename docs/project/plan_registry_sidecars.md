@@ -1,6 +1,6 @@
 # Plan: retire per-model entries from models.toml
 
-last updated: 2026-09-24 (Phase 0 built, v2.0.107: `model_registry.scan`/`served`/`served_diff` and `scripts/served_diff.py`; the rest is not built.)
+last updated: 2026-09-24 (Phases 0-4 built, v2.0.107 to v2.0.115; open items are in docs/project/TODO.md.)
 
 ## The decision
 
@@ -346,7 +346,8 @@ building either.**
   subdirectory rule leaves it unpaired, and its explicit models.toml entry
   would keep spec decode off regardless. One file in `MTP/` is the simplest
   version of the policy question (a single variant needs no choosing).
-  Enabling it is still a measured, per-model opt-in.
+  Enabling it is still a measured, per-model opt-in. (Superseded 2026-09-24: spec
+  decode is on by default wherever a drafter ships; see the Phase 1 note.)
 
 ### Phase 2 — the sidecar format and reader
 
@@ -357,9 +358,9 @@ building either.**
 > `unset = [...]` to drop a derived field (the spec-decode off switch), and
 > relative `*_path` values resolved against the folder; `model_path` and `id`
 > are refused. A bad file rejects that model alone, reported by `scan()`. The
-> contract reports its values as configured in the file. Until Phase 3, an
-> admin edit to a model with a file is refused, since materializing an entry
-> would shadow the file.
+> contract reports its values as configured in the file. (Until Phase 3
+> landed in v2.0.115, an admin edit to a model with a file was refused; the
+> edit now writes the file.)
 
 - One optional file per model directory, layered over derived defaults; the same
   scan that finds the model finds it.
@@ -417,9 +418,8 @@ fact: `_materialize_discovered` is called from `update_config` and
 > `served_diff` against the backup: nothing lost or gained; Muse-Glimmer
 > renamed to its folder name; spec decode on for the models the owner's
 > decision covers; Muse's `supports_thinking` differs and is inert (its
-> template is read). Phase 3 (the writers) is now the open step: until it
-> lands, an admin edit to a model without its own file still materializes a
-> models.toml entry.
+> template is read). Phase 3 landed the same day (v2.0.115): an admin edit
+> writes the model's own file and nothing writes a models.toml entry.
 
 Driven by Phase 0's diff, never by reading the file.
 
