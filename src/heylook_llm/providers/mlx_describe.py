@@ -17,6 +17,7 @@ from heylook_llm.providers.contract import (
     ContextFacts,
     EngineDescription,
     Fact,
+    prefix_stable_fact,
     StaticInputs,
     TemplateFacts,
     config_digest,
@@ -142,6 +143,7 @@ def _template(model_id: str, cfg: dict) -> TemplateFacts:
                     provenance="derived" if view.template else "unknown",
                     source=path or "no template body resolved"),
         running_sha256=Fact(provenance="unknown", source="not loaded"),
+        prefix_stable=prefix_stable_fact(view.template),
     )
 
 

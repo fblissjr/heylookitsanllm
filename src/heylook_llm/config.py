@@ -1678,6 +1678,13 @@ class ChatTemplateResponse(BaseModel):
                      "a template that raises on a system message saves cleanly and then "
                      "fails at generation for every conversation that has a system "
                      "prompt, which is the default."))
+    prefix_stable: Optional[bool] = Field(
+        default=None,
+        description=("Whether each turn's prompt extends the previous one's, as a "
+                     "prompt cache needs (plan W3's lint). false = every turn "
+                     "re-processes history, `prefix_note` says where; null = could "
+                     "not be told. A warning, never a refusal."))
+    prefix_note: Optional[str] = None
     notes: List[str] = Field(default_factory=list)
 
 

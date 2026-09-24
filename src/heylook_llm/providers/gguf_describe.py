@@ -18,6 +18,7 @@ from heylook_llm.providers.contract import (
     ContextFacts,
     EngineDescription,
     Fact,
+    prefix_stable_fact,
     Setting,
     StaticInputs,
     TemplateFacts,
@@ -86,6 +87,7 @@ def _template(model_id: str, cfg: dict) -> TemplateFacts:
                     source=(public_value(path) if path else "the GGUF header")
                     if view.template else "no template body resolved"),
         running_sha256=Fact(provenance="unknown", source="not loaded"),
+        prefix_stable=prefix_stable_fact(view.template),
     )
 
 

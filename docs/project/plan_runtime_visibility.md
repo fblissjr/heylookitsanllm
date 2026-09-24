@@ -226,11 +226,18 @@ Extends the existing template panel (`GET/PUT/DELETE
   into the spawn log line.
 - **Copy to override.** Start an override from any listed source, then edit.
   The existing validate-then-atomic-write path does the rest.
-- **Prefix-stability lint.** Render turn 1 with the generation prompt, then
+- **Prefix-stability lint. Shipped v2.0.94** for the template in force
+  (`chat_template_files.prefix_stability`, on `engine.template.prefix_stable`
+  and the template panel); running it over every listed source waits for the
+  sources list. Render turn 1 with the generation prompt, then
   the same conversation plus the assistant reply and a new user turn, and check
-  the history prefix is stable. Run it on every source and on every override
-  write. It is a warning, not a refusal. This is the check that would have
-  caught the defect in the audit.
+  the history prefix is stable. As built: the history before the generation
+  prompt must re-render identically, and the generation prompt must share at
+  least its start with the next turn's render of the reply (a pre-filled
+  empty thought block that the history drops passes; the checkpoints absorb
+  it). Checked against every template on disk and against the audit's
+  defective sidecar rebuilt from its fix, which fails. It is a warning, not a
+  refusal.
 - The W2 detection results are shown beside the in-force template.
 - **Owner op:** move the five in-place-edited MLX gemma templates into
   overrides, so a re-download cannot revert them.

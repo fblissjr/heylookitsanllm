@@ -28,6 +28,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
@@ -338,6 +339,106 @@ _PROBE_SHAPES = (
 )
 
 
+def _engine_environment():
+    """A jinja2 environment that MIRRORS what the engines provide: chat
+    templates routinely call ``raise_exception``, ``strftime_now`` and
+    ``tojson``, which transformers and llama.cpp inject. A bare environment
+    would reject most real templates as broken. None when jinja2 is missing."""
+    try:
+        import jinja2
+        from jinja2.sandbox import ImmutableSandboxedEnvironment
+    except ImportError:  # pragma: no cover -- jinja2 ships with transformers
+        return None
+
+    def _raise_exception(message):
+        raise jinja2.exceptions.TemplateError(message)
+
+    env = ImmutableSandboxedEnvironment(
+        trim_blocks=True, lstrip_blocks=True, extensions=["jinja2.ext.loopcontrols"],
+    )
+    env.globals["raise_exception"] = _raise_exception
+    env.globals["strftime_now"] = lambda fmt: ""
+    env.filters["tojson"] = lambda value, **kw: "{}"
+    return env
+
+
+# One turn, then that turn answered and a new user turn. With a system
+# message first (the default in chat) and, for a template that refuses one,
+# without.
+_STABILITY_OPENINGS = (
+    ({"role": "system", "content": "be brief"}, {"role": "user", "content": "ping"}),
+    ({"role": "user", "content": "ping"},),
+)
+_STABILITY_NEXT = ({"role": "assistant", "content": "pong"}, {"role": "user", "content": "again"})
+
+
+def _common_prefix(a: str, b: str) -> int:
+    n = min(len(a), len(b))
+    return next((i for i in range(n) if a[i] != b[i]), n)
+
+
+@lru_cache(maxsize=64)
+def prefix_stability(body: Optional[str]) -> tuple[Optional[bool], str]:
+    """Does the next turn's prompt extend this turn's, the way a prompt cache
+    needs it to? (plan W3's prefix-stability lint.) ``(None, why)`` when it
+    cannot be told.
+
+    Renders turn 1 without and with the generation prompt, then turn 1
+    answered plus a new user turn, with thinking off and on. Two things must
+    hold, and the audit's defect broke both (a hand-placed Qwen3.8 template
+    whose `{# #}` comments leaked newlines; every turn re-processed the
+    previous reply and re-encoded its image):
+    - the conversation BEFORE the generation prompt renders identically in
+      the next turn (history is not rewritten);
+    - the generation prompt shares its start -- at least the role header --
+      with how the next turn renders the reply. A template that pre-fills an
+      empty thought block (Qwen3.5, gemma-4 thinking off) keeps the header
+      and drops the block; that is by design and the caches' checkpoints
+      absorb it, so it passes.
+    Rendered in the engine-mirroring environment, not by an engine itself.
+    """
+    env = _engine_environment()
+    if env is None or not body:
+        return None, "no template body to check"
+    try:
+        template = env.from_string(body)
+    except Exception:
+        return None, "the template does not compile"
+    checked = False
+    for opening in _STABILITY_OPENINGS:
+        for thinking in (False, True):
+            def render(messages, gen):
+                return template.render(messages=[dict(m) for m in messages],
+                                       add_generation_prompt=gen, bos_token="",
+                                       eos_token="", enable_thinking=thinking)
+            try:
+                history = render(opening, False)
+                turn = render(opening, True)
+                following = render(opening + _STABILITY_NEXT, True)
+            except Exception:
+                continue
+            checked = True
+            state = "on" if thinking else "off"
+            if not (turn.startswith(history) and following.startswith(history)):
+                at = _common_prefix(turn, following)
+                return False, (
+                    f"with thinking {state}, the next turn renders the conversation "
+                    f"before the reply differently ({turn[at:at + 24]!r} becomes "
+                    f"{following[at:at + 24]!r}), so every turn re-processes it")
+            generation = turn[len(history):]
+            if generation and _common_prefix(generation, following[len(history):]) == 0:
+                return False, (
+                    f"with thinking {state}, the generation prompt "
+                    f"({generation[:24]!r}) shares nothing with how the next turn "
+                    f"renders the reply ({following[len(history):len(history) + 24]!r}), "
+                    "so every turn re-processes the previous reply")
+        if checked:
+            break
+    if not checked:
+        return None, "the template raised on every conversation tried"
+    return True, "each turn's prompt extends the previous one's"
+
+
 def validate(body: str, *, provider: str, config: dict) -> list[str]:
     """Raise TemplateWriteRefused unless ``body`` compiles AND renders.
 
@@ -361,10 +462,8 @@ def validate(body: str, *, provider: str, config: dict) -> list[str]:
     A bare environment would reject most real templates as broken, which is
     worse than no validation -- it would refuse valid work.
     """
-    try:
-        import jinja2
-        from jinja2.sandbox import ImmutableSandboxedEnvironment
-    except ImportError:  # pragma: no cover -- jinja2 ships with transformers
+    env = _engine_environment()
+    if env is None:
         logger.warning("[template] jinja2 unavailable; skipping validation")
         # `[]`, not a bare return: this is annotated `-> list[str]` and the
         # value reaches `PUT .../chat-template`'s `refused_shapes: List[str]`.
@@ -372,16 +471,7 @@ def validate(body: str, *, provider: str, config: dict) -> list[str]:
         # raised at RESPONSE SERIALIZATION -- turning a write that SUCCEEDED
         # into a 500, on the one path where validation was already skipped.
         return []
-
-    def _raise_exception(message):
-        raise jinja2.exceptions.TemplateError(message)
-
-    env = ImmutableSandboxedEnvironment(
-        trim_blocks=True, lstrip_blocks=True, extensions=["jinja2.ext.loopcontrols"],
-    )
-    env.globals["raise_exception"] = _raise_exception
-    env.globals["strftime_now"] = lambda fmt: ""
-    env.filters["tojson"] = lambda value, **kw: "{}"
+    import jinja2
 
     try:
         template = env.from_string(body)

@@ -67,6 +67,21 @@ class TemplateFacts(BaseModel):
     running_sha256: Fact[str] = Field(
         description="The body the running process loaded. Differs from "
                     "sha256 when the template changed since load.")
+    prefix_stable: Fact[bool] = Field(
+        default_factory=lambda: Fact(provenance="unknown", source="not checked"),
+        description="Whether each turn's prompt extends the previous one's, "
+                    "which a prompt cache needs (plan W3's lint, "
+                    "chat_template_files.prefix_stability). false = every "
+                    "turn re-processes history; the source says where.")
+
+
+def prefix_stable_fact(body: Optional[str]) -> "Fact[bool]":
+    """The lint's answer as a Fact, the same way on every engine."""
+    from ..chat_template_files import prefix_stability
+
+    stable, why = prefix_stability(body)
+    return Fact(value=stable, provenance="derived" if stable is not None else "unknown",
+                source=f"rendered in an engine-mirroring jinja environment: {why}")
 
 
 class Setting(BaseModel):

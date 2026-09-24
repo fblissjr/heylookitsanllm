@@ -275,6 +275,14 @@ function refusalNote(view) {
     + ` — requests of that shape will fail: ${shapes.join('; ')}`;
 }
 
+// The server's prefix-stability lint (plan W3): a template whose next turn
+// does not extend this turn's prompt costs every turn its prompt cache.
+// A warning, never a block: the template still works, just slowly.
+function stabilityNote(view) {
+  if (view?.prefix_stable !== false) return '';
+  return ` This template breaks multi-turn prompt caching: ${view.prefix_note}.`;
+}
+
 function buildChatTemplatePanel({ model, draft, onDraftChange }) {
   const statusEl = createEl('div', { class: 'cfg-tmpl__status', role: 'status' });
   const originEl = createEl('div', { class: 'cfg-tmpl__origin muted small' });
@@ -357,15 +365,15 @@ function buildChatTemplatePanel({ model, draft, onDraftChange }) {
     } else if (view.stale) {
       // stale is null for an unloaded model, which is NOT "up to date" --
       // only an explicit true means the running process differs from disk.
-      say(`Edited since this model loaded. Reload it to apply.${refusalNote(view)}`, 'warn');
-    } else if (refusalNote(view)) {
+      say(`Edited since this model loaded. Reload it to apply.${refusalNote(view)}${stabilityNote(view)}`, 'warn');
+    } else if (refusalNote(view) || stabilityNote(view)) {
       // A write that SUCCEEDED can still have installed a template that raises
       // on shapes this app sends. The server validated and told us which; if
       // nothing paints that, the operator sees "saved", reloads, and every
       // conversation carrying a system prompt 500s from llama-server turning a
       // raised jinja exception into one. This was computed, returned, and
       // rendered nowhere.
-      say(`Saved.${refusalNote(view)}`, 'warn');
+      say(`${refusalNote(view) ? 'Saved.' : ''}${refusalNote(view)}${stabilityNote(view)}`.trim(), 'warn');
     } else {
       say('');
     }

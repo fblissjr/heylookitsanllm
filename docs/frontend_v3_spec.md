@@ -620,7 +620,7 @@ server never receives.
 `engine` (v2.0.73, plan W13) is the ONE ENGINE CONTRACT, the same object on every
 `/v1/models` entry (`providers/contract.py`). It replaced the top-level `effective_loader`,
 `context_length` and `context_running`. Same keys on every engine:
-`{runtime, context:{length, running}, template:{origin, path, sha256, running_sha256},
+`{runtime, context:{length, running}, template:{origin, path, sha256, running_sha256, prefix_stable},
 settings:{<name>: {value, configured, auto, reason, provenance, effect}},
 cache, thinking, image, steering}`.
 - Every leaf of `runtime`, `context` and `template` is a Fact
@@ -772,7 +772,7 @@ as long as a scan takes; other requests keep flowing meanwhile.
 
 **Chat template** (v2.0.22). `GET /v1/admin/models/{id}/chat-template` →
 `{model_id, provider, template, origin, override_present, override_path,
-writable, inert_reason, override_template, stale, notes}`. It reads FILES (and, for gguf, the GGUF header),
+writable, inert_reason, override_template, stale, prefix_stable, prefix_note, notes}`. It reads FILES (and, for gguf, the GGUF header),
 never a running process, so it answers for models that are NOT resident — the prompt
 format a model will load with is the thing worth seeing before loading it.
 `origin` is the ladder rung that won, the same phrase the load log prints.
@@ -786,6 +786,10 @@ writes go nowhere is worse than no editor, so this is a field, not a note.
 `stale` is `true` when the LOADED model renders with something other than what is on
 disk now (edited since load — reload to apply), and **`null` when the model is not
 loaded, which is NOT the same as `false`** — render the two differently.
+`prefix_stable` (v2.0.94, plan W3's lint) says whether each turn's prompt extends the
+previous one's, as a prompt cache needs; `false` means every turn re-processes history
+and `prefix_note` says where, `null` means it could not be told. It is a warning, never a
+refusal, and the same answer rides `engine.template.prefix_stable`.
 
 `PUT .../chat-template` body `{template}` writes `chat_template.heylook.jinja` beside
 the weights and touches NO config; `DELETE` removes it (**404** when there is none, so a

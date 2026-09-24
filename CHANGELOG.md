@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.94]
+
+### Added (plan W3, first piece)
+
+- **Prefix-stability lint** (`chat_template_files.prefix_stability`): does
+  each turn's prompt extend the previous one's, as a prompt cache needs? The
+  history before the generation prompt must re-render identically, and the
+  generation prompt must share its start with the next turn's render of the
+  reply; a pre-filled empty thought block that the history drops (Qwen3.5,
+  gemma-4) passes. Reported as `engine.template.prefix_stable` on both
+  engines and as `prefix_stable` / `prefix_note` on the chat-template view,
+  and the models page's template panel warns on a failure. A warning, never
+  a refusal. Every template on disk passes, and the audit's defective
+  Qwen3.8 sidecar (rebuilt from its fix) fails, the check that would have
+  caught it. The render environment `validate()` used is now one shared
+  function.
+
+### Docs
+
+- The wiki's MLX cache facts described the pre-W10 single-slot cache.
+
 ## [2.0.93]
 
 ### Fixed
