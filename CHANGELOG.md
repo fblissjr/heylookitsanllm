@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.109]
+
+### Changed
+
+- The spec-decode field descriptions in `config.py`, which the models page's
+  config editor shows, match the on-by-default decision (v2.0.108).
+  `spec_type` now says it has two uses: pinning a drafter's type, and, with
+  no drafter, switching on an MTP head built into the model's GGUF (llama.cpp
+  loads it from the target). It used to say "inert without a drafter".
+  `spec_draft_n_max`, `spec_draft_p_min` and `spec_draft_n_min` are inert
+  when spec decode is off rather than "without a drafter"; `n_gpu_layers_draft`
+  is inert without a drafter file. `draft_model_path` drops "unproven as a
+  win" for the owner's decision. Flagged by the 2026-09-24 improvement run.
+
 ## [2.0.108]
 
 Documentation only.

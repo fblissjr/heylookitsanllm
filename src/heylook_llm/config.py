@@ -731,8 +731,9 @@ class GGUFModelConfig(BaseModel):
             "Discovery pairs a sidecar automatically and leaves `spec_type` "
             "unset on purpose, so a model can be running spec decode with no "
             "models.toml entry at all. To keep it OFF, the drafter must not "
-            "be paired. Unproven as a win here in general -- check your own "
-            "model at your own context."),
+            "be paired. Spec decode is meant to be on whenever a model ships a "
+            "drafter (owner decision 2026-09-24); see .claude/rules/gguf.md for "
+            "what discovery does and does not pair yet."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-md"},
     )
     # llama-server --spec-type (e.g. "draft-mtp"). NB coupled to LoRA: a loaded
@@ -741,12 +742,14 @@ class GGUFModelConfig(BaseModel):
     spec_type: Optional[str] = Field(
         default=None,
         description=(
-            "PINS the speculative draft type (e.g. \"draft-mtp\"). NOT the "
-            "on/off switch -- `draft_model_path` is, and an unset spec_type "
-            "does NOT mean spec decode is off. Strictly required only for a "
-            "SHARDED drafter, where llama.cpp's header read sees the first "
-            "split alone; sharding of the TARGET is irrelevant. Inert without "
-            "a drafter. Coupled to LoRA: an adapter reaches the target "
+            "The speculative draft type (e.g. \"draft-mtp\"). Two uses. With a "
+            "drafter it only PINS the type, which is strictly required only "
+            "for a SHARDED drafter (llama.cpp's header read sees the first "
+            "split alone; sharding of the TARGET is irrelevant). With NO "
+            "drafter, \"draft-mtp\" switches on an MTP head built into the "
+            "model's own GGUF: llama.cpp loads it from the target. An unset "
+            "spec_type does NOT mean spec decode is off: a paired drafter runs "
+            "regardless. Coupled to LoRA: an adapter reaches the target "
             "context only, so the drafter proposes the base distribution."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
                            "arg": "--spec-type"},
@@ -754,8 +757,8 @@ class GGUFModelConfig(BaseModel):
     spec_draft_n_max: Optional[int] = Field(
         default=None, ge=1, le=16,
         description=(
-            "Ceiling on draft tokens per speculation round. Inert without a "
-            "drafter. TUNE IT TOGETHER WITH `spec_draft_p_min` -- they "
+            "Ceiling on draft tokens per speculation round. Inert when spec "
+            "decode is off. TUNE IT TOGETHER WITH `spec_draft_p_min` -- they "
             "interact and the interaction inverts, so a one-dimensional sweep "
             "finds a different and wrong optimum. Per-model: no defensible "
             "global value exists."),
@@ -821,7 +824,7 @@ class GGUFModelConfig(BaseModel):
         default=None, ge=0.0, le=1.0,
         description=(
             "Minimum probability for a drafted token to be kept. Inert "
-            "without a drafter. Not a minor knob: it INTERACTS with "
+            "when spec decode is off. Not a minor knob: it INTERACTS with "
             "`spec_draft_n_max`, so tune the two together or not at all. "
             "Strictly per-model -- the same value that helps both gemmas "
             "costs Qwen3.6-27B at every setting tried."),
@@ -835,7 +838,7 @@ class GGUFModelConfig(BaseModel):
         default=None, ge=0,
         description=(
             "Floor on how many draft tokens a speculation round keeps. Inert "
-            "without a drafter, and the same caveat as its two siblings: the "
+            "when spec decode is off, and the same caveat as its two siblings: the "
             "levers interact, tune together, per-model."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
                            "arg": "--spec-draft-n-min"},
@@ -1005,7 +1008,8 @@ class GGUFModelConfig(BaseModel):
             "GPU layers for the DRAFTER. Its own knob because the pair can "
             "exceed the GPU budget when the target alone does not. 0 keeps "
             "the drafter off the GPU entirely; unset inherits llama-server's "
-            "default. Inert without a drafter."),
+            "default. Inert without a drafter file (a built-in head runs with "
+            "the target)."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ngld"},
     )
     # llama-server's OWN idle sleep (--sleep-idle-seconds): frees the model and
