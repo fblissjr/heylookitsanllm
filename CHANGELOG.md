@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.97]
+
+### Added
+
+- `tests/unit/test_rule_paths.py`: every path pattern in `.claude/rules/`
+  must match a file, and every rule file must carry a `paths:` block. A
+  renamed file would otherwise stop its rules loading with no error, and a
+  rule file without `paths:` would load in every session.
+
+### Changed
+
+- `AGENTS.md` "Done means": the CHANGELOG entry and `__version__` bump apply
+  to a change landing on main. A branch someone else will merge (a loop run)
+  leaves both alone and proposes the entry, as the loop prompts already said.
+- `AGENTS.md` "Rules by area" names the new test and prefers directory
+  patterns to lists of file names.
+
+Both from a review of the 2.0.96 cut. The review's worktree concern was
+checked and holds only for worktrees older than 2.0.96: a worktree made from
+2.0.96 or later loads its own `CLAUDE.md`, `AGENTS.md` and path-scoped rules
+when a file in it is read.
+
 ## [2.0.96]
 
 Documentation only.

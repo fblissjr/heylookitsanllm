@@ -36,6 +36,8 @@ Each file below holds the mechanisms that bite in its area. Claude Code loads it
 | pyproject, uv.lock, the mlx-vlm pin | [.claude/rules/dependencies.md](./.claude/rules/dependencies.md) |
 | scripts/, apps/ | [.claude/rules/scripts-and-apps.md](./.claude/rules/scripts-and-apps.md) |
 
+`tests/unit/test_rule_paths.py` fails when a rule file's pattern matches no file, so a rename can't silently stop a rule from loading. Prefer a directory pattern to a list of file names where the area allows it.
+
 ## Commands
 
 - Set up: `uv sync` (dev tooling included). Serve: `heylookllm --log-level INFO` (API and UI on :8000). Isolated server for live checks: the `dev-server` skill (`scripts/dev_server.sh`).
@@ -50,7 +52,7 @@ Each file below holds the mechanisms that bite in its area. Claude Code loads it
 - `tests/unit/` and `tests/contract/` are fully green (Metal-gated skips are fine). Any failure is a regression to investigate; there is no pre-existing-failure allowlist.
 - The checks the Tests section names for what you touched have run, and you say which did not.
 - Docs moved in the same commit: the matching wiki page when a subsystem's behaviour changed, spec §4 when an API contract changed, and `sharp_edges.md` when a new rule has a story behind it.
-- `CHANGELOG.md` has the entry and `src/heylook_llm/__init__.py` `__version__` matches it (a pre-commit guard checks this).
+- For a change landing on main, `CHANGELOG.md` has the entry and `src/heylook_llm/__init__.py` `__version__` matches it (a pre-commit guard checks this). On a branch someone else will merge, such as a loop run's, leave both alone and propose the entry in your report: sessions on main bump the version constantly, so a branch that bumps it conflicts at merge.
 - `internal/log/log_YYYY-MM-DD.md` is updated before the session ends.
 
 ## Tests
