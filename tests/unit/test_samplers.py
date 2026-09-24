@@ -76,3 +76,17 @@ class TestPresencePenaltyProcessor:
         logits = mx.zeros(10)
         result = proc(tokens, logits)
         assert result.tolist()[3] == pytest.approx(-0.5)
+
+
+def test_knobs_off_build_no_processors():
+    """Every OFF knob builds nothing: any logits processor makes the engine
+    read the previous tokens back before each forward (a GPU sync that costs
+    decode rate), so an identity processor is pure cost. The floor's values
+    are the ones every request without an opinion carries."""
+    from heylook_llm.providers.common.samplers import build
+    from heylook_llm.samplers import GLOBAL_SAMPLER_FLOOR
+
+    _, processors = build(None, dict(GLOBAL_SAMPLER_FLOOR))
+    assert processors == []
+    _, processors = build(None, {**GLOBAL_SAMPLER_FLOOR, "repetition_penalty": 1.1})
+    assert len(processors) == 1

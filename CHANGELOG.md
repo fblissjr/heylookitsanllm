@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.92]
+
+### Fixed
+
+- **Every MLX request decoded slower than it needed to.** The sampler floor's
+  "off" repetition penalty is 1.0, and mlx-vlm builds a processor for any
+  value but 0, so each request carried an identity logits processor; any
+  processor makes `BatchGenerator._step` read the previous tokens back before
+  the next forward, a GPU sync that defeats its double buffering. An off knob
+  now builds nothing. Found by the first throughput comparison of the W10
+  engine against the pre-W10 mlx-lm loop and mlx-vlm's own loop; conditions
+  and data in `internal/claude/perf/throughput_2026-09-24/`. A request with a
+  real penalty still pays the sync.
+
 ## [2.0.91]
 
 ### Added (plan W7: a hard thinking budget)

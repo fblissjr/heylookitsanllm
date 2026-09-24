@@ -110,9 +110,17 @@ def build(tokenizer: PreTrainedTokenizer | None, params: dict) -> tuple[callable
         xtc_special_tokens=_xtc_special_tokens(tokenizer),
     )
 
+    # An OFF knob builds NO processor. mlx-vlm's make_logits_processors adds a
+    # repetition processor for any value but 0, and the floor's "off" is 1.0
+    # (an identity), so every request carried one -- and any logits
+    # processor makes BatchGenerator._step read the previous tokens back
+    # (`inputs.tolist()`) before the next forward, a GPU sync that breaks its
+    # double buffering, and it cost decode rate on every MLX request
+    # (measured: internal/claude/perf/throughput_2026-09-24/).
+    repetition_penalty = params.get("repetition_penalty", GLOBAL_SAMPLER_FLOOR["repetition_penalty"])
     processors = make_logits_processors(
         logit_bias=params.get("logit_bias"),
-        repetition_penalty=params.get("repetition_penalty", GLOBAL_SAMPLER_FLOOR["repetition_penalty"]),
+        repetition_penalty=None if repetition_penalty == 1.0 else repetition_penalty,
         repetition_context_size=params.get("repetition_context_size", 20),
     )
 
