@@ -578,6 +578,14 @@ class ModelService:
         for entry in (merged.get("models") or [])[existing:]:
             if str(entry.get("id")) != str(model_id):
                 continue
+            if entry.get("sidecar"):
+                # A models.toml entry would shadow the model's own file for
+                # good (an entry wins wholesale), so a later edit there would
+                # silently do nothing. Writing the file itself is Phase 3 of
+                # plan_registry_sidecars; until then, edit it by hand.
+                raise ValueError(
+                    f"'{model_id}' keeps its settings in {entry['sidecar']}; edit that file "
+                    f"(the admin editor does not write it yet)")
             # Materialize the WHOLE derived config, not just identity.
             #
             # This used to write a thin `{id, provider, enabled, model_path}`

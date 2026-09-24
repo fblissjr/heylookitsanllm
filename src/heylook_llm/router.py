@@ -184,6 +184,9 @@ class ModelRouter:
     # re-runs discovery to say which settings are really configured.
     written_ids: frozenset = frozenset()
     derived_configs: dict = {}
+    # id -> where its stored values live, for every model that has any: a
+    # models.toml entry, or its own model.heylook.toml.
+    stored_in: dict = {}
 
     def _with_discovered(self, config_data: dict) -> AppConfig:
         """Fold `[scan].folders` discoveries into the parsed config."""
@@ -198,7 +201,16 @@ class ModelRouter:
         self.written_ids = frozenset(
             str(e["id"]) for e in config_data.get("models") or [] if e.get("id"))
         self.derived_configs = derived_for_explicit(config_data, discovered)
-        return served(config_data, discovered)
+        app = served(config_data, discovered)
+        stored = {mid: "models.toml entry" for mid in self.written_ids}
+        by_id = {str(e.get("id")): e for e in discovered if e.get("sidecar")}
+        for m in app.models:
+            e = by_id.get(m.id)
+            if m.id not in stored and e is not None:
+                stored[m.id] = "model.heylook.toml"
+                self.derived_configs[m.id] = e["derived"]
+        self.stored_in = stored
+        return app
 
     # Last audit report emitted, so a reload re-reports only on CHANGE.
     # `None` (never audited) is deliberately distinct from `""` (audited,

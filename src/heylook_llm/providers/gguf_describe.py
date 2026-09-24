@@ -26,6 +26,7 @@ from heylook_llm.providers.contract import (
     config_settings,
     public_value,
     sha256_text,
+    store_name,
 )
 
 
@@ -108,7 +109,7 @@ def describe_static(model_id: str, cfg: dict, config_obj: Any, *,
         if clamp:
             settings["n_ubatch"] = settings["n_ubatch"].model_copy(update={
                 "value": effective,
-                "reason": f"set in this model's models.toml entry; in force: {clamp}"})
+                "reason": f"set in this model's {store_name(written)}; in force: {clamp}"})
     else:
         settings["n_ubatch"] = settings["n_ubatch"].model_copy(update={
             "value": None, "auto": None, "provenance": "unknown",

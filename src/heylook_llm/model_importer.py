@@ -13,6 +13,7 @@ defaults, and HF cache paths are defined in model_service.py.
 import glob
 import logging
 import os
+import tomllib
 from pathlib import Path
 from typing import Any, Optional
 
@@ -27,6 +28,11 @@ from heylook_llm.modality_detect import (
 __all__ = ["ModelImporter", "get_hf_cache_paths"]
 
 HF_CACHE_PATHS = get_hf_cache_paths()
+
+# A model's own settings, in its own folder (plan_registry_sidecars Phase 2).
+# The `<what>.heylook.<ext>` shape of chat_template.heylook.jinja: no vendor
+# ships the name, so a re-download never overwrites it.
+SIDECAR_FILENAME = "model.heylook.toml"
 
 
 class ModelImporter:
@@ -140,6 +146,52 @@ class ModelImporter:
             models.append(model)
 
         return self._validate(models)
+
+    def _apply_sidecar(self, entry: dict, folder: Path) -> Optional[dict]:
+        """Layer ``folder/model.heylook.toml`` over the derived ``entry``.
+
+        The file holds provider-config fields by name, plus ``unset``, a list
+        of derived fields to drop (TOML has no null: ``unset =
+        ["draft_model_path", "spec_type"]`` turns off a spec decode discovery
+        found). A relative ``*_path`` value is relative to the model folder.
+        ``model_path`` and an id are not settable: the file's location is the
+        model's identity, and the id is the folder name (owner decision
+        2026-09-24).
+
+        Returns the entry with ``derived`` (the config before the file) and
+        ``sidecar`` (the file) recorded, so the engine contract can say which
+        values the file set. A file that does not parse, or sets what it may
+        not, rejects the model into ``self.rejected`` (None): serving it on
+        derived defaults would silently drop the owner's settings.
+        """
+        f = folder / SIDECAR_FILENAME
+        if not f.is_file():
+            return entry
+        try:
+            with open(f, "rb") as fp:
+                data = tomllib.load(fp)
+            unset = data.pop("unset", [])
+            if not isinstance(unset, list) or not all(isinstance(k, str) for k in unset):
+                raise ValueError("`unset` must be a list of field names")
+            for key in ("model_path", "id"):
+                if key in data or key in unset:
+                    raise ValueError(f"`{key}` is not settable here: the folder is the model")
+            from heylook_llm.config import PROVIDER_CONFIG_CLASSES
+
+            fields = PROVIDER_CONFIG_CLASSES[entry["provider"]].model_fields
+            if unknown := sorted(set(unset) - set(fields)):
+                raise ValueError(f"`unset` names no field of this engine: {', '.join(unknown)}")
+        except (OSError, tomllib.TOMLDecodeError, ValueError) as e:
+            logging.warning("[scan] not served: %s: %s", f, e)
+            self.rejected.append((str(f), str(e)))
+            return None
+        derived = dict(entry["config"])
+        config = {k: v for k, v in derived.items() if k not in unset}
+        for key, value in data.items():
+            if key.endswith("_path") and isinstance(value, str) and not Path(value).expanduser().is_absolute():
+                value = str(folder / value)
+            config[key] = value
+        return {**entry, "config": config, "derived": derived, "sidecar": str(f)}
 
     def _validate(self, models: list[dict]) -> list[dict]:
         """Drop entries that would not load, at scan time, and record each in
@@ -541,9 +593,8 @@ class ModelImporter:
         if spec_why:
             logging.info(f"[import] {model_id}: speculative decoding on -- {spec_why}")
 
-        return {
-            "id": model_id, "provider": "gguf", "enabled": True, "config": config,
-        }
+        return self._apply_sidecar(
+            {"id": model_id, "provider": "gguf", "enabled": True, "config": config}, path)
 
     def _has_vision_files(self, path: Path) -> bool:
         """Delegates to the shared detector (modality_detect.py, 6a)."""
@@ -577,6 +628,5 @@ class ModelImporter:
         # model dir changes in place.
         config: dict[str, Any] = {"model_path": str(path)}
 
-        return {
-            "id": model_id, "provider": "mlx", "enabled": True, "config": config,
-        }
+        return self._apply_sidecar(
+            {"id": model_id, "provider": "mlx", "enabled": True, "config": config}, path)

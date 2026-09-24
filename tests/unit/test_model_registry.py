@@ -481,3 +481,60 @@ class TestServedDiff:
                         ({"models": []}, found))
         assert d.renamed == {"my-name": "a"} and not d.lost and not d.gained
         assert d.changed == {"a": {"ctx_size": [4096, None]}}
+
+
+@pytest.mark.unit
+class TestModelHeylookToml:
+    """Plan_registry_sidecars Phase 2: a model's own settings in its own
+    folder, layered over what discovery derives."""
+
+    def _model(self, root, name="m", sidecar=None):
+        from helpers.gguf import STR, write_gguf
+        d = root / name
+        d.mkdir(parents=True)
+        write_gguf(d / f"{name}.gguf", [("general.architecture", STR, "llama")])
+        (d / "mtp-drafter.gguf").write_bytes(b"x")
+        if sidecar is not None:
+            (d / "model.heylook.toml").write_text(sidecar)
+        return d
+
+    def test_values_layer_over_derivation_and_unset_drops_one(self, tmp_path):
+        d = self._model(tmp_path, sidecar='ctx_size = 8192\nchat_template_path = "t.jinja"\n'
+                                           'unset = ["draft_model_path"]\n')
+        found = scan({"scan": {"folders": [str(tmp_path)]}})
+        (e,) = found.entries
+        assert e["config"]["ctx_size"] == 8192
+        assert e["config"]["chat_template_path"] == str(d / "t.jinja")   # relative to the folder
+        assert "draft_model_path" not in e["config"]                       # spec decode off
+        assert e["derived"]["draft_model_path"] == str(d / "mtp-drafter.gguf")
+        assert found.failed == []
+
+    @pytest.mark.parametrize("body", ['model_path = "/elsewhere"\n', 'unset = ["not_a_field"]\n',
+                                      'ctx_size = \n', 'not_a_field = 1\n'])
+    def test_a_bad_file_rejects_that_model_alone(self, tmp_path, body):
+        self._model(tmp_path, "bad", sidecar=body)
+        self._model(tmp_path, "good")
+        found = scan({"scan": {"folders": [str(tmp_path)]}})
+        assert [e["id"] for e in found.entries] == ["good"]
+        assert len(found.failed) == 1 and "bad" in found.failed[0]
+
+    def test_the_contract_names_the_file(self, tmp_path):
+        from heylook_llm.providers import contract
+        from heylook_llm.router import ModelRouter
+        self._model(tmp_path, sidecar="ctx_size = 8192\n")
+        router = object.__new__(ModelRouter)
+        app = router._with_discovered({"models": [], "scan": {"folders": [str(tmp_path)]}})
+        setting = contract.describe(app.models[0], router).settings["ctx_size"]
+        assert setting.provenance == "configured" and setting.value == 8192
+        assert "model.heylook.toml" in setting.reason
+
+    def test_an_admin_edit_does_not_shadow_the_file(self, tmp_path):
+        """An edit would materialize a models.toml entry, which wins wholesale
+        and would silently void every later edit to the model's own file."""
+        store = tmp_path / "store"
+        self._model(store, sidecar="ctx_size = 8192\n")
+        cfg = tmp_path / "models.toml"
+        cfg.write_text(f'[scan]\nfolders = ["{store}"]\n')
+        with pytest.raises(ValueError, match="model.heylook.toml"):
+            ModelService(str(cfg)).update_config("m", {"config": {"ctx_size": 4096}})
+        assert "[[models]]" not in cfg.read_text()

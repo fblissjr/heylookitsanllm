@@ -350,6 +350,17 @@ building either.**
 
 ### Phase 2 — the sidecar format and reader
 
+> **Read path built 2026-09-24 (v2.0.111).** Owner decisions the same day:
+> the file is `model.heylook.toml`; ids are always the folder name (Muse-
+> Glimmer's hand-picked id goes with its entry); the server file keeps the
+> 2026-09-23 name, `heylook.toml`. Format: provider-config fields by name,
+> `unset = [...]` to drop a derived field (the spec-decode off switch), and
+> relative `*_path` values resolved against the folder; `model_path` and `id`
+> are refused. A bad file rejects that model alone, reported by `scan()`. The
+> contract reports its values as configured in the file. Until Phase 3, an
+> admin edit to a model with a file is refused, since materializing an entry
+> would shadow the file.
+
 - One optional file per model directory, layered over derived defaults; the same
   scan that finds the model finds it.
 - Read-only path first. Nothing writes it until Phase 3.
@@ -417,6 +428,16 @@ rather than a layer, which makes a per-model entry the leftover rather than the
 norm.
 
 ## Open, and not to be hand-waved
+
+- **Which server instances may write a model's file** (raised 2026-09-24,
+  owner answer pending; gates Phase 3). The file lives in the model folder,
+  which every instance shares: the daily server, `scripts/dev_server.sh`, the
+  E2E harness and loop worktrees. A worktree copy of the server config
+  (`.worktreeinclude`) isolates nothing here. Recommendation: only the daily
+  server writes; other launchers start with a bootstrap env var that makes
+  model settings read-only there, and a write gets a 409 naming why. The
+  alternative, a per-instance override directory, is a second central
+  override store, which is what this plan removes.
 
 - **The twin is the ONLY mechanism available, not a convenience.** `loader` is a
   model-config field and appears nowhere on the request surface (verified), so a

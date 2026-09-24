@@ -200,7 +200,15 @@ def _same(a: Any, b: Any) -> bool:
     return False
 
 
-def config_settings(config_cls: type, config_obj: Any, *, written: bool,
+DEFAULT_STORE = "models.toml entry"
+
+
+def store_name(written: Any) -> str:
+    """Where a model's stored values live, for a reason string."""
+    return written if isinstance(written, str) else DEFAULT_STORE
+
+
+def config_settings(config_cls: type, config_obj: Any, *, written: Any,
                     derived: Optional[dict], engine_default: str) -> Dict[str, Setting]:
     """One Setting per configurable field of ``config_cls``.
 
@@ -228,12 +236,12 @@ def config_settings(config_cls: type, config_obj: Any, *, written: bool,
             out[name] = Setting(
                 value=public_value(current), configured=public_value(current),
                 auto=public_value(baseline),
-                reason="set in this model's models.toml entry",
+                reason=f"set in this model's {store_name(written)}",
                 provenance="configured", effect=effect)
         elif name in explicit:
             out[name] = Setting(
                 value=public_value(current), auto=public_value(baseline),
-                reason="stored in this model's models.toml entry, same as derived",
+                reason=f"stored in this model's {store_name(written)}, same as derived",
                 provenance="derived", effect=effect)
         elif not _same(current, default):
             out[name] = Setting(
@@ -284,17 +292,21 @@ _STATIC_CACHE: Dict[tuple, tuple] = {}
 _STATIC_LOCK = threading.Lock()
 
 
-def _provenance_inputs(model_id: str, router: Any) -> tuple[bool, dict]:
+def _provenance_inputs(model_id: str, router: Any) -> tuple[Any, dict]:
     """(written, derived) for one model, from what the router recorded at
-    its last config load."""
+    its last config load. ``written`` is where the model's stored values live
+    (a models.toml entry, or its model.heylook.toml), or False."""
     written_ids = getattr(router, "written_ids", None) if router is not None else None
     derived_all = getattr(router, "derived_configs", None) if router is not None else None
     derived = derived_all.get(model_id, {}) if isinstance(derived_all, dict) else {}
+    stored_in = getattr(router, "stored_in", None) if router is not None else None
+    if isinstance(stored_in, dict) and model_id in stored_in:
+        return stored_in[model_id], derived
     if isinstance(written_ids, (set, frozenset)):
-        return model_id in written_ids, derived
+        return (DEFAULT_STORE if model_id in written_ids else False), derived
     # Unknown (no router, or a stand-in without the attribute): read the
     # entry's keys against the schema defaults, as an entry-backed row.
-    return True, derived
+    return DEFAULT_STORE, derived
 
 
 _THINKING_CACHE: Dict[tuple, tuple] = {}

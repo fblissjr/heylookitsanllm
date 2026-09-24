@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.111]
+
+### Added
+
+- **`model.heylook.toml`: a model's own settings, in its own folder** (plan_registry_sidecars Phase 2, read path). The scan that finds a model reads the file and layers it over the model's derived config. Every field the file does not set keeps being derived, which is the difference from a models.toml entry: an entry replaces the derived config wholesale and freezes it.
+  - The file holds provider-config fields by name.
+  - `unset = [...]` drops a derived field. `unset = ["draft_model_path", "spec_type"]` is the spec-decode off switch.
+  - A relative `*_path` value is resolved against the model's folder.
+  - `model_path` and `id` are refused: the folder is the model, and its name is the id (owner decision).
+  - A file that does not parse or validate rejects that model alone, and `scan()` names it.
+  - The engine contract reports the file's values as configured, naming the file (`router.stored_in`).
+  - Nothing writes the file yet. An admin edit to a model that has one is refused, because materializing a models.toml entry would shadow the file.
+
 ## [2.0.110]
 
 ### Added
