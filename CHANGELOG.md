@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.114]
+
+Documentation only.
+
+### Changed
+
+- `docs/loops.md` and `.worktreeinclude` follow the models.toml migration:
+  models.toml now holds only server-wide settings, per-model settings live in
+  each model folder's `model.heylook.toml` (shared by every instance, so no
+  worktree copy isolates them), and loop servers started through
+  `scripts/dev_server.sh` run read-only and refuse config writes.
+- `.gitignore` ignores `forks/` (upstream clones kept for contribution work),
+  committed earlier as `74d226f` without an entry.
+
 ## [2.0.113]
 
 ### Added
