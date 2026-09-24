@@ -34,6 +34,7 @@ from .common.template_info import (
     missing_template_error,
     read_template_info,
     should_force_install,
+    thinking_budget_markers,
 )
 
 # -- transformers 5.x compatibility patches (no torchvision) --
@@ -106,13 +107,50 @@ def _resolve_enable_thinking(effective_request: dict) -> bool:
     layer -- request field, then model config. There is nothing left to
     resolve here.
 
-    It must stay an explicit bool: an ABSENT kwarg is uncontrollable, because
-    mlx-lm's TokenizerWrapper silently injects ``enable_thinking=True`` when
-    the caller omits it. Same value ``BaseProvider.effective_thinking``
+    It must stay an explicit bool: an ABSENT kwarg hands the decision to the
+    template's own default. Same value ``BaseProvider.effective_thinking``
     reports to the parser -- by construction now, not by two call sites
     agreeing to read the same thing.
     """
     return bool(effective_request.get("enable_thinking"))
+
+
+def _thinking_budget_criteria(request: ChatRequest, effective_request: dict,
+                              template_info, tokenizer):
+    """mlx-vlm's ThinkingBudgetCriteria for this request, or None (plan W7).
+
+    None when no budget was asked for, the model has no thinking format, or
+    thinking is off: there is nothing to cap. A budget on a format the engine
+    cannot force shut (harmony) is refused rather than ignored, whatever the
+    switch says: harmony has no switch and always reasons, so dropping the
+    budget would let it think uncapped while the client believes it capped.
+    The capability report never offers it there. The count starts where the
+    parser starts reading thinking (``starts_inside_thinking``); a resumed
+    thought's earlier text is not counted against the new budget.
+    """
+    budget = effective_request.get("thinking_budget_tokens")
+    if not budget:
+        return None
+    markers = thinking_budget_markers(template_info)
+    if markers is None and getattr(template_info, "has_harmony_structure", False):
+        raise InvalidGenerationRequest(
+            "thinking budget_tokens is not supported for this model: its thinking "
+            "format cannot be closed by the engine (harmony models leave the "
+            "analysis channel with a multi-token sequence)")
+    thinking = _resolve_enable_thinking(effective_request) or request.resumes_thinking()
+    if markers is None or not thinking:
+        return None
+    from mlx_vlm.utils import ThinkingBudgetCriteria
+    from ..reasoning_parser import starts_inside_thinking
+
+    opener, closer = markers
+    return ThinkingBudgetCriteria(
+        tokenizer, int(budget), thinking_end_token=closer, thinking_start_token=opener,
+        enable_thinking=True,
+        prompt_preopens_thinking=starts_inside_thinking(
+            template_info, thinking_enabled=True,
+            continuing=request.is_continuation(),
+            resumes_thinking=request.resumes_thinking()))
 
 
 def _thinking_resume(request: ChatRequest) -> str | None:
@@ -392,6 +430,8 @@ class UnifiedTextStrategy:
             model_id=self.model_id,
             detokenizer=(self.owner.streaming_detokenizer(request.is_continuation())
                          if self.owner is not None else None),
+            thinking_budget=_thinking_budget_criteria(
+                request, effective_request, self.template_info, tokenizer),
         )
 
     def _prepare_messages(self, messages) -> list[dict]:
@@ -654,6 +694,9 @@ class VLMVisionStrategy:
             reset_peak=False,
             detokenizer=(self.owner.streaming_detokenizer(request.is_continuation())
                          if self.owner is not None else None),
+            thinking_budget=_thinking_budget_criteria(
+                request, effective_request, self.template_info,
+                getattr(processor, "tokenizer", processor)),
         )
 
     def _prepare_vlm_inputs_parallel(self, messages: List, processor, config,

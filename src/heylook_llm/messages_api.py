@@ -444,11 +444,17 @@ async def _non_stream_messages(
     # Before this the non-streaming `performance` carried both durations as
     # null while the stream filled them -- the schema promises the two modes
     # the same telemetry.
+    # The same watcher counts thinking and content deltas the way the
+    # streaming translator counts them (one per emitted segment), so
+    # `usage.thinking_tokens` / `content_tokens` mean the same thing in both
+    # modes. Non-streaming used to leave them null.
     timing_parser = make_parser()
     thinking_start = thinking_end = content_start = None
+    seen = {"thinking": 0, "text": 0}
 
     def _saw(kind: str, at: float) -> None:
         nonlocal thinking_start, thinking_end, content_start
+        seen["thinking" if kind == "thinking" else "text"] += 1
         if kind == "thinking":
             if thinking_start is None:
                 thinking_start = at
@@ -531,6 +537,9 @@ async def _non_stream_messages(
             "completion_tokens": telemetry.completion_tokens or token_count,
         },
     }
+    if seen["thinking"]:
+        openai_dict["usage"]["thinking_tokens"] = seen["thinking"]
+        openai_dict["usage"]["content_tokens"] = seen["text"]
 
     # Performance: the SAME builder the streaming half uses, so the two
     # payloads cannot disagree by hand (v1.79.58). `generation_start` is

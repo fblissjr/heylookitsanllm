@@ -368,12 +368,19 @@ Until then, W5 surfaces the budget and every skip.
 - The chosen value and the reasoning are shown on the admin row. Over-budget
   skips are reported through W5.
 
-### W7. Thinking budget: a hard cap per request
+### W7. Thinking budget: a hard cap per request (shipped v2.0.91)
+
+Shipped ahead of W2/W3 because it touches neither detection nor templates.
+One change from this section as first written: MLX uses mlx-vlm's own
+`ThinkingBudgetCriteria` (per request, through `BatchGenerator.insert`)
+instead of a heylook logits processor, following upstream. It forces one
+close token, so harmony gets no budget on MLX (`thinking_budget_markers`);
+the `thinking_budget` capability says where it applies.
 
 - The Messages API already has `thinking.budget_tokens`. heylook honours it:
   - on gguf as llama-server's per-request `reasoning_budget_tokens`;
-  - on MLX with a logits processor that closes the thinking block at the
-    budget.
+  - on MLX with mlx-vlm's thinking-budget criteria, which close the thinking
+    block at the budget.
 - Exposed in the chat settings panel.
 - The quality cost of a hard cut is unmeasured. The control is disclosed as a
   cap, not a quality-neutral setting.

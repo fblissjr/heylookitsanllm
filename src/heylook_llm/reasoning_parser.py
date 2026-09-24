@@ -543,6 +543,27 @@ def specials_stripper(template_info: Any) -> Callable[[str], str] | None:
     return lambda text: _strip_specials(text, pattern)
 
 
+def starts_inside_thinking(template_info: Any, *, thinking_enabled: bool | None,
+                           continuing: bool = False, resumes_thinking: bool = False) -> bool:
+    """Whether the model's output starts INSIDE an open thinking block.
+
+    A resumed thought always does (every family). Otherwise only a marker
+    template that pre-fills an unclosed ``<think>`` into the generation
+    prompt (``prefills_thinking``) with thinking on, and never for a
+    continuation, which renders no generation prompt. The reasoning parser
+    and the MLX thinking budget both read this, so where the parser starts
+    counting thinking and where the budget starts counting it cannot differ.
+    """
+    if resumes_thinking:
+        return True
+    if (getattr(template_info, "has_harmony_structure", False)
+            or getattr(template_info, "has_gemma_channel_structure", False)):
+        return False
+    return (bool(thinking_enabled)
+            and bool(getattr(template_info, "prefills_thinking", False))
+            and not continuing)
+
+
 def select_reasoning_parser(
     template_info: Any = None, *, thinking_enabled: bool | None = None,
     continuing: bool = False, strip_specials: bool = True,
@@ -591,20 +612,17 @@ def select_reasoning_parser(
 
     strip_tokens = declared_specials(template_info)
 
+    initial = starts_inside_thinking(
+        template_info, thinking_enabled=thinking_enabled,
+        continuing=continuing, resumes_thinking=resumes_thinking)
     parser: ReasoningParser
     if getattr(template_info, "has_harmony_structure", False):
-        parser = HarmonyChannelParser(initial_thinking=resumes_thinking)
+        parser = HarmonyChannelParser(initial_thinking=initial)
     elif getattr(template_info, "has_gemma_channel_structure", False):
-        parser = GemmaChannelParser(initial_thinking=resumes_thinking)
+        parser = GemmaChannelParser(initial_thinking=initial)
     elif getattr(template_info, "has_thinking_markers", False):
         from heylook_llm.thinking_parser import HybridThinkingParser
-        parser = HybridThinkingParser(
-            initial_thinking=resumes_thinking or (
-                bool(thinking_enabled)
-                and getattr(template_info, "prefills_thinking", False)
-                and not continuing
-            ),
-        )
+        parser = HybridThinkingParser(initial_thinking=initial)
     else:
         parser = PassThroughParser()
 

@@ -191,6 +191,27 @@ def _cached_template_info(model_dir: str, source: Optional[str],
     return read_template_info(Path(model_dir), source)
 
 
+def thinking_budget_markers(info: Optional["ModelTemplateInfo"]) -> Optional[tuple[str, str]]:
+    """(open, close) for a thinking format an engine can force shut with ONE
+    token, or None.
+
+    The MLX thinking budget (mlx-vlm's ``ThinkingBudgetCriteria``) closes an
+    over-budget block by forcing a newline and the close token. That works
+    for ``<think>``/``</think>`` and gemma-4's ``<|channel>``/``<channel|>``.
+    Harmony (gpt-oss) leaves its analysis channel with a multi-token
+    sequence into the final channel, which the criteria cannot force, so it
+    gets no budget. The capability report and the provider both read this,
+    so the control is offered exactly where it is enforced.
+    """
+    if info is None or info.has_harmony_structure:
+        return None
+    if info.has_gemma_channel_structure:
+        return ("<|channel>", "<channel|>")
+    if info.has_thinking_markers:
+        return ("<think>", "</think>")
+    return None
+
+
 def cached_template_info(model_dir: Path, source: Optional[str] = None) -> "ModelTemplateInfo":
     """read_template_info, parsed once per state of its input files.
 

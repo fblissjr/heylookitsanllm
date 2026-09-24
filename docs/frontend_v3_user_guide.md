@@ -364,9 +364,8 @@ images need a vision model, audio is gguf-only. Dropping or pasting a file onto
 a model without the capability refuses immediately and stages nothing, rather
 than accepting it and failing later.
 
-Oversized images are downscaled before they go on the wire. **Vision tokens /
-image** in the advanced settings controls how much detail the model spends on
-each image.
+Oversized images are downscaled before they go on the wire; that client-side
+size is the one lever on how much an image costs the model.
 
 **Thinking** is a three-way choice, not a checkbox: *Model default (on)* or
 *(off)*, *On*, *Off*. Since v1.79.62 a model that can think thinks by default
@@ -378,6 +377,13 @@ group these live in is open by default.
 **Thinking depth** lists the union of what different model families accept, so
 a value one model takes another will reject. The control says so, and `auto`
 always works — it leaves the model's own default alone.
+
+**Thinking budget** is a hard cap on thinking tokens. Past it the engine
+forces the thinking block shut and the model goes on to answer. Depth levels
+are instructions the model may overrun; the budget is the control that
+actually bounds how long a reply thinks. A cut can cost answer quality, which
+has not been measured. It appears only for models whose thinking format the
+engine can close (not gpt-oss). Empty means no cap.
 
 ---
 

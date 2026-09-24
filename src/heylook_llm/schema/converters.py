@@ -32,6 +32,14 @@ from heylook_llm.schema.responses import (
 )
 
 
+def thinking_switch(thinking) -> Optional[bool]:
+    """The thinking switch from either wire form: a bool as given, the
+    object form's ``type`` as a bool, absent as None (the model's default)."""
+    if thinking is None or isinstance(thinking, bool):
+        return thinking
+    return None if thinking.type is None else thinking.type == "enabled"
+
+
 def to_chat_request(request: MessageCreateRequest) -> ChatRequest:
     """Convert a new-format MessageCreateRequest to the existing ChatRequest.
 
@@ -111,7 +119,8 @@ def to_chat_request(request: MessageCreateRequest) -> ChatRequest:
         max_tokens=request.max_tokens,
         stream=request.stream,
         seed=request.seed,
-        enable_thinking=request.thinking,
+        enable_thinking=thinking_switch(request.thinking),
+        thinking_budget_tokens=getattr(request.thinking, "budget_tokens", None),
         reasoning_effort=request.reasoning_effort,
         stream_options=stream_options,
     )

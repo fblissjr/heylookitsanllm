@@ -24,10 +24,10 @@ from heylook_llm.schema.messages import MessageCreateRequest
 
 
 # Knobs that exist on BOTH wires under different names. The Messages wire
-# renames deliberately (its own docstring: "thinking is a top-level bool
-# instead of enable_thinking"); v3 derives the rename in messagesParams()
-# rather than keeping a second bag.
-WIRE_ALIASES = {"enable_thinking": "thinking"}
+# renames deliberately: `thinking` carries the switch (a bool, or Anthropic's
+# object form) and the budget (`thinking.budget_tokens`, plan W7); v3 derives
+# the rename in messagesParams() rather than keeping a second bag.
+WIRE_ALIASES = {"enable_thinking": "thinking", "thinking_budget_tokens": "thinking"}
 
 # Fields that live on ONE side ON PURPOSE, each with the reason. A field that
 # shows up here without being added deliberately is the bug this file exists to
@@ -41,6 +41,7 @@ WIRE_ALIASES = {"enable_thinking": "thinking"}
 # catch. All of them left with the route in v1.79.66.
 INTERNAL_ONLY = {
     "enable_thinking": "spelled `thinking` on Messages (see WIRE_ALIASES)",
+    "thinking_budget_tokens": "`thinking.budget_tokens` on Messages (see WIRE_ALIASES)",
     "continue_final_message": (
         "explicit override of the continuation CONVENTION. Messages can still "
         "continue -- ChatRequest.is_continuation() falls back to 'final message "
@@ -53,7 +54,8 @@ INTERNAL_ONLY = {
 
 MESSAGES_ONLY = {
     "system": "top-level on Messages; a system ROLE in the message array internally",
-    "thinking": "the Messages spelling of enable_thinking (see WIRE_ALIASES)",
+    "thinking": "the Messages spelling of enable_thinking and thinking_budget_tokens "
+                "(see WIRE_ALIASES)",
     "metadata": "Anthropic passthrough; the provider request has no use for it",
 }
 

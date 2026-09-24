@@ -187,14 +187,27 @@ TASK_VISION_THINKING_OFF_PURITY = EvalTask(
 # Thinking tasks
 # ---------------------------------------------------------------------------
 
+# The hard thinking cap the split task runs under (plan W7). Without one the
+# task measured verbosity, not the split: a small model that thinks past the
+# token budget failed it with a clean split (Qwen3.5-0.8B, v2.0.71 port).
+THINKING_BUDGET = 256
+# Streamed thinking is counted per chunk and the engine forces a newline and
+# the close marker after the budget is passed, so allow a few over.
+THINKING_BUDGET_SLACK = 8
+
+
 def _judge_thinking_split(ctx: dict) -> Verdict:
     has_thinking = bool((ctx["thinking"] or "").strip())
     thinking_v = Verdict(passed=has_thinking, evidence=f"thinking field {'present' if has_thinking else 'MISSING'}")
-    # Budget is sized for a real thought channel + answer (768), so exhausting
-    # it is a genuine no-stop signal -- this is where thinking-ON runaway is
-    # caught (the stop_discipline tasks run thinking-off on purpose).
+    has_answer = bool((ctx["content"] or "").strip())
+    answer_v = Verdict(passed=has_answer,
+                       evidence=f"answer after the thinking {'present' if has_answer else 'MISSING'}")
+    spent = ctx.get("thinking_tokens")
+    cap = THINKING_BUDGET + THINKING_BUDGET_SLACK
+    budget_v = Verdict(passed=spent is not None and spent <= cap,
+                       evidence=f"thinking tokens {spent} (budget {THINKING_BUDGET}, allowed {cap})")
     return combine_verdicts(
-        thinking_v,
+        thinking_v, answer_v, budget_v,
         marker_leak(ctx["content"]),
         token_budget_exhausted(ctx["completion_tokens"], ctx["max_tokens"],
                                ctx.get("stop_reason")),
@@ -204,9 +217,10 @@ def _judge_thinking_split(ctx: dict) -> Verdict:
 TASK_THINKING_REQUESTED_SPLIT = EvalTask(
     name="thinking_requested_split",
     category="thinking",
-    required_capabilities=("thinking",),
-    description="enable_thinking=True on a plain prompt; requires a non-empty `thinking` field AND content free of leak markers (<think>, <|channel>, 'thought'-prefix).",
-    build_request=lambda: _text_body("Explain briefly why the sky appears blue.", max_tokens=1536, enable_thinking=True),
+    required_capabilities=("thinking", "thinking_budget"),
+    description=f"thinking on with a {THINKING_BUDGET}-token hard budget on a plain prompt; requires non-empty `thinking`, an answer after it, thinking within the budget, and content free of leak markers (<think>, <|channel>, 'thought'-prefix).",
+    build_request=lambda: _text_body("Explain briefly why the sky appears blue.", max_tokens=1536,
+                                     thinking={"type": "enabled", "budget_tokens": THINKING_BUDGET}),
     judge=_judge_thinking_split,
     timeout=600,
 )

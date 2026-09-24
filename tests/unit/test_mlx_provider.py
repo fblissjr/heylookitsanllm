@@ -945,3 +945,30 @@ class TestNoContentCache:
         # Call twice -- should work fine without cache
         assert mock_mlx_provider._detect_images_optimized(messages) is False
         assert mock_mlx_provider._detect_images_optimized(messages) is False
+
+
+@pytest.mark.unit
+class TestThinkingBudgetCriteria:
+    """Plan W7: when the MLX budget applies, when it is a no-op, and that a
+    harmony model refuses it whatever the switch says (it always reasons, so
+    dropping the budget would let it think uncapped)."""
+
+    def _call(self, mock_mlx, info, budget, thinking):  # noqa: ARG002
+        from heylook_llm.providers.mlx_provider import _thinking_budget_criteria
+
+        req = ChatRequest(messages=[ChatMessage(role="user", content="hi")])
+        eff = {"thinking_budget_tokens": budget, "enable_thinking": thinking}
+        return _thinking_budget_criteria(req, eff, info, tokenizer=None)
+
+    def test_no_op_and_refusal(self, mock_mlx):
+        from heylook_llm.providers.base import InvalidGenerationRequest
+        from heylook_llm.providers.common.template_info import ModelTemplateInfo
+
+        think = ModelTemplateInfo(has_thinking_markers=True)
+        assert self._call(mock_mlx, think, None, True) is None      # no budget asked
+        assert self._call(mock_mlx, think, 64, False) is None       # thinking off
+        assert self._call(mock_mlx, ModelTemplateInfo(), 64, True) is None  # no format
+        harmony = ModelTemplateInfo(has_harmony_structure=True)
+        for switch in (True, False):
+            with pytest.raises(InvalidGenerationRequest, match="harmony"):
+                self._call(mock_mlx, harmony, 64, switch)

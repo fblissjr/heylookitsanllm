@@ -36,8 +36,11 @@ export const PARAM_META = {
   // here rather than to imply every value works everywhere.
   reasoning_effort:        { label: 'Thinking depth', type: 'select', options: ['low', 'medium', 'high', 'xhigh'], section: 'advanced', requiresCap: 'reasoning_effort',
                              note: 'Accepted values differ by model — a rejected one fails the request. "auto" always works.' },
-  // Target visual tokens per image; the backend snaps to what the model's
-  // processor supports (gemma-4 buckets 70..1120, qwen continuous).
+  // A hard cap on thinking tokens (plan W7), enforced by the engine: past it
+  // the thinking block is forced shut and the reply continues. Offered only
+  // where the engine can close the model's thinking format. Empty = no cap.
+  thinking_budget_tokens:  { label: 'Thinking budget', type: 'number', min: 1, max: 65536, step: 1, section: 'advanced', requiresCap: 'thinking_budget',
+                             note: 'Hard cap: thinking is cut off here and the answer follows. Empty = no cap.' },
 };
 
 function emptySettings() {
@@ -195,8 +198,15 @@ export function samplerParams(caps = null) {
 // is that Messages says `thinking` where the OpenAI wire said
 // `enable_thinking` (same tri-state: absent = the model's own default).
 export function messagesParams(caps = null) {
-  const { enable_thinking, ...out } = samplerParams(caps);
-  if (enable_thinking !== undefined) out.thinking = enable_thinking;
+  const { enable_thinking, thinking_budget_tokens, ...out } = samplerParams(caps);
+  if (thinking_budget_tokens !== undefined) {
+    // The budget rides Anthropic's object form; an omitted `type` keeps the
+    // model's own thinking default, as an absent bool would.
+    out.thinking = { budget_tokens: thinking_budget_tokens };
+    if (enable_thinking !== undefined) out.thinking.type = enable_thinking ? 'enabled' : 'disabled';
+  } else if (enable_thinking !== undefined) {
+    out.thinking = enable_thinking;
+  }
   return out;
 }
 

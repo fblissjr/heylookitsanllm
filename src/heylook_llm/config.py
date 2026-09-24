@@ -100,6 +100,18 @@ class ChatRequest(BaseModel):
                     "default.",
     )
 
+    # A hard cap on thinking tokens (plan W7). Enforced by the ENGINE, not by
+    # the template: llama-server's per-request `reasoning_budget_tokens`, and
+    # on MLX mlx-vlm's ThinkingBudgetCriteria, which forces the block closed
+    # once the count is passed. Absent = no cap. Ignored when thinking is off.
+    # Offered only where the engine can close the model's thinking format
+    # (the `thinking_budget` capability).
+    thinking_budget_tokens: Optional[int] = Field(
+        default=None, ge=1,
+        description="Hard cap on thinking tokens: the block is forced closed "
+                    "once this many are generated and the reply continues. "
+                    "A cap, not a quality-neutral setting. Absent = no cap.")
+
     # Additional sampler parameters
     presence_penalty: Optional[float] = Field(default=None, ge=0.0, le=2.0, description="Reduce repetition (0-2, recommended 1.5 for Qwen3 thinking)")
 

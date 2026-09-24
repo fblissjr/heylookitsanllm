@@ -167,6 +167,7 @@ def generate(
     prefill_step_size: Optional[int] = None,
     model_id: Optional[str] = None,
     reset_peak: bool = True,
+    thinking_budget=None,
 ) -> Generator[GenerationChunk, None, None]:
     """One request, start to finish, yielding GenerationChunks.
 
@@ -178,6 +179,9 @@ def generate(
     choice); None takes mlx-vlm's. mlx-vlm's BPE detokenizer holds ALL text
     until finalize when no token starts with a space (a count, code, CJK) --
     the answer then arrives in one lump at the end.
+    ``thinking_budget``: mlx-vlm's ``ThinkingBudgetCriteria`` for this
+    request (plan W7), or None. The engine forces the thinking block shut
+    once it is passed; the forced tokens stream like any other.
     ``embed_extras`` reach ``get_input_embeddings`` only, never the
     generator's prompt kwargs (heylook's ``cached_image_features``; mlx-vlm's
     server strips its own vision-cache kwargs the same way).
@@ -228,7 +232,8 @@ def generate(
         if apc_manager is not None:
             gen_kwargs["_apc_semantic_hash"] = semantic_hash(raw_inputs, model, processor)
         (uid,) = bg.insert([prompt_list], max_tokens=max_tokens, prompt_kwargs=[gen_kwargs],
-                           logits_processors=[generated_only(processors) or []])
+                           logits_processors=[generated_only(processors) or []],
+                           thinking_budget_criteria=[thinking_budget])
 
         if detokenizer is not None:
             detok = detokenizer

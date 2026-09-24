@@ -623,6 +623,8 @@ class TestPayload:
         assert payload["max_tokens"] == 64
         assert payload["seed"] == 7
         assert payload["presence_penalty"] == 1.5
+        assert "reasoning_budget_tokens" not in payload   # no cap unless asked
+        assert p._build_payload(req(thinking_budget_tokens=128))["reasoning_budget_tokens"] == 128
         assert payload["top_k"] == 20
 
     def test_model_config_max_tokens_beats_floor(self):

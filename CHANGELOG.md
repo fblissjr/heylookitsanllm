@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.91]
+
+### Added (plan W7: a hard thinking budget)
+
+- **`thinking.budget_tokens`**: `/v1/messages` accepts Anthropic's object
+  form of `thinking` beside the bool, `{"type": "enabled", "budget_tokens":
+  N}`. Both fields are optional (absent `type` = the model's default; absent
+  budget = no cap). The conversation's params bag carries it as
+  `thinking_budget_tokens`, gated like `reasoning_effort`, and the chat and
+  notebook settings panels show a "Thinking budget" control.
+- The ENGINE enforces it: on gguf as llama-server's per-request
+  `reasoning_budget_tokens`; on MLX with mlx-vlm's `ThinkingBudgetCriteria`
+  through `BatchGenerator.insert`, which forces a newline and the close
+  token once the budget is passed. That forces ONE token, so
+  `template_info.thinking_budget_markers` offers `<think>` and gemma-4's
+  channel and refuses harmony; a new `thinking_budget` capability reports
+  exactly that, and a budget sent to a harmony MLX model is a 400 whatever
+  the thinking switch says (harmony always reasons).
+  Verified live on Qwen3.5-0.8B and gemma-4-26B-A4B (MLX) and unsloth
+  Qwen3.8-27B (gguf), each against a same-seed control; data in
+  `internal/claude/w7/`.
+- `reasoning_parser.starts_inside_thinking`: the parser's "output starts
+  inside a thinking block" rule, now one function the budget also reads.
+- The eval bank's `thinking_requested_split` runs under a 256-token budget
+  and checks it holds, so it tests the split rather than verbosity; it
+  requires the `thinking_budget` capability.
+
+### Fixed
+
+- Non-streaming `/v1/messages` reported `usage.thinking_tokens` and
+  `content_tokens` as null; they are now counted the way the stream counts
+  them.
+
 ## [2.0.90]
 
 ### Fixed (from an independent review of the W10 engine)

@@ -187,7 +187,8 @@ async def _subscribe(run: _Run):
 # conversation, sent it, and silently dropped it (2026-08-17).
 _SAMPLER_KEYS = REQUEST_SAMPLER_FIELDS
 # Cap-gated keys (the server-side twin of v3's PARAM_META requiresCap).
-_CAP_GATED = {"enable_thinking": "thinking", "reasoning_effort": "reasoning_effort"}
+_CAP_GATED = {"enable_thinking": "thinking", "reasoning_effort": "reasoning_effort",
+              "thinking_budget_tokens": "thinking_budget"}
 
 
 class GenerateRequest(BaseModel):

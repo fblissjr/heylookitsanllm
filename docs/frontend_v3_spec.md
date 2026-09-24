@@ -188,7 +188,9 @@ backend):**
   `thinking`; unchecking sets `null` not `false`); reasoning_effort (advanced SELECT, v1.71.1, shown only if
   model caps include `reasoning_effort` — a capability distinct from `thinking`, because the two come apart:
   Qwen3.5's template reads enable_thinking and never reasoning_effort, gpt-oss/harmony the exact reverse.
-  Empty option = send nothing, leaving the template's own default). `vision_tokens` was an advanced control
+  Empty option = send nothing, leaving the template's own default); thinking_budget_tokens (advanced number,
+  v2.0.91, shown only if model caps include `thinking_budget`: a hard cap the engine enforces by forcing the
+  thinking block shut; empty = no cap). `vision_tokens` was an advanced control
   here until v2.0.64; it was removed with the field (it never reached the Qwen-family processor).
 
 ### 3f. utils / markdown — keep
@@ -305,7 +307,11 @@ Phase 3b; chat uses its conversation-scoped sibling below; the OpenAI-compatible
   repetition_context_size?, presence_penalty?, seed?, thinking?,
   reasoning_effort?, stream?}`. `system` is TOP-LEVEL (no system role in the array); `thinking`
   is the Messages spelling of `enable_thinking` (same tri-state — v3 derives
-  the rename in `messagesParams()`, settings.js, never a second bag); a
+  the rename in `messagesParams()`, settings.js, never a second bag). It also
+  takes Anthropic's object form `{type?: "enabled"|"disabled", budget_tokens?}`
+  (v2.0.91): `budget_tokens` is the hard thinking cap (`thinking_budget_tokens`
+  in the conversation's params bag, where it is gated on the `thinking_budget`
+  capability), and an absent `type` keeps the model's default; a
   request still sending `sampler` (or `preset`) gets a 422 naming the v2.0.30
   removal rather than a silent drop, one sending `chat_template_kwargs` (llama-server's
   spelling) gets a 422 naming `thinking` and `reasoning_effort` (v2.0.86), and one sending `show_special_tokens`

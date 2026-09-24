@@ -92,6 +92,22 @@ class TestToRequestConversion:
         chat_req = to_chat_request(req)
         assert chat_req.enable_thinking is True
 
+    @pytest.mark.parametrize("thinking,switch,budget", [
+        (True, True, None), (False, False, None), (None, None, None),
+        ({"type": "enabled", "budget_tokens": 256}, True, 256),
+        ({"type": "disabled"}, False, None),
+        # heylook relaxation: a budget without a switch keeps the model default
+        ({"budget_tokens": 64}, None, 64),
+    ])
+    def test_thinking_wire_forms(self, thinking, switch, budget):
+        """Both wire forms of `thinking` flatten onto the internal request
+        (plan W7): the switch and the hard budget."""
+        req = MessageCreateRequest.model_validate({
+            "model": "test", "messages": [{"role": "user", "content": "hi"}],
+            "thinking": thinking})
+        chat_req = to_chat_request(req)
+        assert (chat_req.enable_thinking, chat_req.thinking_budget_tokens) == (switch, budget)
+
     def test_sampler_params_forwarded(self):
         req = MessageCreateRequest(
             model="test",

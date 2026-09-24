@@ -75,7 +75,8 @@ EFFECTIVE_SAMPLER_KEYS = (
     'repetition_penalty', 'repetition_context_size', 'presence_penalty',
     'enable_thinking', 'reasoning_effort',
 )
-REQUEST_SAMPLER_FIELDS = EFFECTIVE_SAMPLER_KEYS + ('seed',)
+# Request-only: no model or vendor layer supplies these.
+REQUEST_SAMPLER_FIELDS = EFFECTIVE_SAMPLER_KEYS + ('seed', 'thinking_budget_tokens')
 
 
 def resolve_effective_sampling(request: Any, model_config: dict,

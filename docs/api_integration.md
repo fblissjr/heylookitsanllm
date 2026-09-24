@@ -35,7 +35,7 @@ themselves.)
 { "id": "...", "object": "model", "owned_by": "user",
   "provider": "mlx" | "gguf",
   "modalities": ["text", "vision", ...],
-  "capabilities": ["chat", "vision", "thinking", "reasoning_effort", ...],
+  "capabilities": ["chat", "vision", "thinking", "reasoning_effort", "thinking_budget", ...],
   "thinking_default": true,
   "sampler_defaults": { ... },
   "engine": { "runtime": {...}, "context": {...}, "template": {...},
@@ -475,6 +475,15 @@ the TAIL of your prompt is counted along with the reply. A value tuned on one
 engine will not behave identically on the other; on gguf in particular a long
 final user message is inside the window.
 
+`thinking` also takes Anthropic's object form: `{"type": "enabled",
+"budget_tokens": 256}` caps thinking at that many tokens. The engine enforces
+it (llama-server's reasoning budget; on MLX, mlx-vlm's thinking-budget
+criteria): once the cap is passed the thinking block is forced shut and the
+answer follows. It is a cap, not a quality-neutral setting. Offered on models
+with the `thinking_budget` capability; on an MLX model whose thinking format
+the engine cannot close (harmony) a budget is a 400. With thinking off it does
+nothing.
+
 `reasoning_effort` values are **model-specific** and the schema accepts the
 union of every model's set, so a wrong-for-this-model value reaches the
 template and comes back as a 500. Gate it on the `reasoning_effort`
@@ -725,9 +734,12 @@ rather than a guarantee, for reasons the closing note gives:
 
 - **`max_tokens` is optional.** Anthropic requires it. Here, absent means the
   server's sampler cascade decides, which is the point.
-- **`thinking` is a bool**, not Anthropic's `{"type": "adaptive"}` config
-  object. It is the local-model `enable_thinking` template switch, a
-  different mechanism that happens to share a name. The template variables
+- **`thinking` is a bool or Anthropic's object form.** The bool is the
+  local-model `enable_thinking` template switch. The object form takes
+  `type` (`enabled`/`disabled`, no `adaptive`) and `budget_tokens`, and
+  relaxes Anthropic in two ways: `budget_tokens` is optional (absent = no
+  cap, and there is no 1024 minimum), and so is `type` (absent = the model's
+  own default, so a budget can be set without deciding the switch). The template variables
   are top-level fields (`thinking`, `reasoning_effort`); a request sending
   llama-server's `chat_template_kwargs` gets a 422 naming them (v2.0.86)
   rather than a silent drop.

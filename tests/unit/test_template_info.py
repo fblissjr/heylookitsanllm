@@ -614,3 +614,19 @@ class TestReadsReasoningContent:
         _write_model_dir(other, jinja="{% for m in messages %}{{ m.content }}{% endfor %}",
                          tokenizer_config=_HARMONY_TOKENIZER_CONFIG)
         assert read_template_info(other, source=None).reads_reasoning_content is False
+
+
+def test_thinking_budget_markers_are_offered_only_where_one_token_closes_the_block():
+    """Plan W7: the MLX budget forces a newline and ONE close token. Harmony
+    leaves its analysis channel with a multi-token sequence, so it gets none;
+    the capability report and the provider read this one answer."""
+    from heylook_llm.providers.common.template_info import (
+        ModelTemplateInfo, thinking_budget_markers)
+
+    assert thinking_budget_markers(ModelTemplateInfo(has_thinking_markers=True)) == ("<think>", "</think>")
+    assert thinking_budget_markers(
+        ModelTemplateInfo(has_gemma_channel_structure=True)) == ("<|channel>", "<channel|>")
+    assert thinking_budget_markers(
+        ModelTemplateInfo(has_harmony_structure=True, has_thinking_markers=True)) is None
+    assert thinking_budget_markers(ModelTemplateInfo()) is None
+    assert thinking_budget_markers(None) is None

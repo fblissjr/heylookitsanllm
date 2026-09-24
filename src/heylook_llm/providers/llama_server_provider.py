@@ -196,6 +196,9 @@ _PAYLOAD_KEY_MAP = (
     ("repetition_penalty", "repeat_penalty"),
     ("presence_penalty", "presence_penalty"),
     ("seed", "seed"),
+    # Per-request since llama.cpp's reasoning-budget sampler; applied only
+    # where llama-server found the template's thinking end tags.
+    ("thinking_budget_tokens", "reasoning_budget_tokens"),
 )
 
 

@@ -126,6 +126,7 @@ def read_messages_response(r: dict) -> dict:
         "content": "".join(b.get("text", "") for b in blocks if b.get("type") == "text"),
         "thinking": "".join(thinking) if thinking else None,
         "completion_tokens": (r.get("usage") or {}).get("output_tokens"),
+        "thinking_tokens": (r.get("usage") or {}).get("thinking_tokens"),
         "stop_reason": r.get("stop_reason"),
     }
 

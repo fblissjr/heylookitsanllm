@@ -31,6 +31,15 @@ class Message(BaseModel):
         )
 
 
+class ThinkingConfig(BaseModel):
+    """Anthropic's ``thinking`` object, with two heylook relaxations: both
+    fields are optional. An absent ``type`` keeps the model's own thinking
+    default (as an absent bool does), so a budget can be set without also
+    deciding the switch; an absent ``budget_tokens`` means no cap."""
+    type: Optional[Literal["enabled", "disabled"]] = None
+    budget_tokens: Optional[int] = Field(default=None, ge=1)
+
+
 class StreamOptions(BaseModel):
     """Options that control streaming behavior."""
     include_usage: bool = Field(
@@ -44,7 +53,7 @@ class MessageCreateRequest(BaseModel):
     Differences from the current ChatRequest (OpenAI format):
     - system is a top-level parameter, not in the messages array
     - content uses typed blocks instead of OpenAI's content_parts
-    - thinking is a top-level bool instead of enable_thinking
+    - thinking may be a bool as well as Anthropic's object form
     - no batch-processing or image-resize params: Messages clients resize
       before sending (the server-side resize left with the OpenAI chat
       route in v1.79.66)
@@ -74,10 +83,16 @@ class MessageCreateRequest(BaseModel):
     stream: bool = False
     stream_options: Optional[StreamOptions] = None
 
-    # Thinking mode (Qwen3 models)
-    thinking: Optional[bool] = Field(
-        default=None, description="Enable thinking mode for models that support it (e.g. Qwen3)"
-    )
+    # Thinking: heylook's bool, or Anthropic's object form, which also carries
+    # the hard budget (plan W7). Both mean the same switch; the converter
+    # flattens them onto ChatRequest.enable_thinking / thinking_budget_tokens.
+    thinking: Optional[Union[bool, ThinkingConfig]] = Field(
+        default=None,
+        description="Thinking on or off: a bool, or Anthropic's "
+                    '{"type": "enabled"|"disabled", "budget_tokens": N}. '
+                    "budget_tokens is a hard cap the engine enforces (models "
+                    "with the thinking_budget capability; a 400 elsewhere). "
+                    "Absent = the model's default.")
     # Same vocabulary as ChatRequest.reasoning_effort -- shared alias, so the
     # two APIs cannot drift into accepting different value sets. Phase 3b is
     # migrating v3 onto this API, so a knob missing here is a control the next

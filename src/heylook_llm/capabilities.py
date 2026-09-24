@@ -141,6 +141,17 @@ def template_supports_thinking(model_path: str) -> bool:
     return _template_supports_thinking(model_path, _template_stamp(model_path))
 
 
+def template_supports_thinking_budget(model_path: str) -> bool:
+    """Whether the MLX engine can enforce a thinking budget on this model's
+    format (``template_info.thinking_budget_markers``)."""
+    try:
+        from heylook_llm.providers.common.template_info import (
+            cached_template_info, thinking_budget_markers)
+        return thinking_budget_markers(cached_template_info(Path(model_path))) is not None
+    except Exception:
+        return False
+
+
 def template_supports_reasoning_effort(model_path: str) -> bool:
     """Public probe: cached, but re-read when a template file changes.
 
@@ -213,6 +224,13 @@ def infer_model_capabilities(model_config, serves_vision: bool | None = None) ->
         ):
             capabilities.append("thinking")
 
+        # A hard thinking cap (plan W7), where the engine can close the
+        # model's thinking format with one forced token.
+        if "thinking" in capabilities and template_supports_thinking_budget(
+            str(getattr(config, "model_path", "") or "")
+        ):
+            capabilities.append("thinking_budget")
+
         # Depth is probed PRECISELY here: the template file is readable, so
         # emit the cap only when it actually reads reasoning_effort. Note this
         # is NOT implied by thinking -- Qwen3.5 reads enable_thinking and not
@@ -246,6 +264,10 @@ def infer_model_capabilities(model_config, serves_vision: bool | None = None) ->
             capabilities.append("audio")
         if getattr(config, "supports_thinking", None):
             capabilities.append("thinking")
+            # llama-server's reasoning budget, applied where it found the
+            # template's thinking end tags (its own analysis; not visible
+            # from here, so a template it cannot read runs uncapped).
+            capabilities.append("thinking_budget")
 
     return capabilities
 
