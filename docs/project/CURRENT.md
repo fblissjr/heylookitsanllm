@@ -205,10 +205,10 @@ one side left at f16.
    continued turn had no thought channel and degenerated. It is fixed on
    every vision-capable MLX model; the replays are in
    `internal/claude/continue_gemma/`.
-5. **Eval task budgets vs harmony (carried, owner call):**
-   `text_factual_qa_capital` and `text_single_word_instruction` give 10 and
-   30 tokens with thinking off, and gpt-oss spends them on its analysis
-   channel.
+5. **Eval task budgets vs harmony: settled (v2.0.134, owner).** Every task
+   now gives at least `tasks.ANSWER_BUDGET`, so an always-reasoning model
+   reaches its answer. gpt-oss's two thinking-off text failures have not been
+   re-run under the new floor.
 6. **Known gaps carried from W10:**
    - a new-image turn re-prefills;
    - Qwen3-VL image turns do not reuse;

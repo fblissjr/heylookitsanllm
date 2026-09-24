@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.134]
+
+### Changed
+
+- **Eval bank: no task gives a model fewer than 256 tokens to answer**
+  (`tests/eval/tasks.py` `ANSWER_BUDGET`, owner call). gpt-oss reasons in its
+  harmony analysis channel even with thinking off, and the 10- and 30-token
+  text tasks ran out before any answer, which read as a wrong answer. Ten
+  tasks moved up to the floor; the three that already asked for more are
+  unchanged. Not re-run live: no server was up, and one is not spawned for
+  this.
+
 ## [2.0.133]
 
 Documentation only.

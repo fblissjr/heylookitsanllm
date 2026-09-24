@@ -60,8 +60,8 @@ Record: `internal/claude/improve/archive/runs-2026-09-24/` (report.html has the 
   cache by content rather than by URL comes with the qwen3_5 re-apply above.
 - [ ] **Host check (owner agreed, not built).** No Host check, so DNS rebinding
   can reach the API through a browser already inside the LAN (LAN-only does
-  not cover this one). An allowlist must include every LAN name and IP the
-  owner's clients use, including the separate ComfyUI machine.
+  not cover this one). The allowed hosts come from local config (heylook.toml),
+  never from a tracked file.
 - [ ] **Upstream PR to separate APC captures from store size** and let a
   caller name boundaries; it would delete heylook's local capture rule
   (`vlm_engine.install_capture_policy`). Drafted in `internal/claude/improve/ledger.md`, under "Upstream drafts (NOT posted)".

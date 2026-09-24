@@ -85,6 +85,13 @@ _YELLOW = _data_url(_color_letter_png((225, 210, 20), "D"))
 _HEATMAP = _data_url(_heatmap_png())
 
 
+# The least any task gives a model to answer in. An always-reasoning model
+# (gpt-oss's harmony analysis channel) reasons even with thinking off, and a
+# budget below this ran out mid-analysis: empty content, judged as a wrong
+# answer when nothing was answered at all. Tasks that need more say so.
+ANSWER_BUDGET = 256
+
+
 def _vision_content(urls: list[str], prompt: str) -> list[dict]:
     content = [{"type": "image_url", "image_url": {"url": u}} for u in urls]
     content.append({"type": "text", "text": prompt})
@@ -116,7 +123,7 @@ TASK_VISION_SINGLE_COLOR_LETTER = EvalTask(
     category="vision",
     required_capabilities=("vision",),
     description="One generated solid-color image with a letter overlay; checks color mention, no leak markers, no runaway repetition. (Letter-mention is not separately judged -- color_mention alone is the property check; see README.)",
-    build_request=lambda: _vision_body([_RED], "What color is this image? Also name any letter you see on it.", max_tokens=60, enable_thinking=False),
+    build_request=lambda: _vision_body([_RED], "What color is this image? Also name any letter you see on it.", max_tokens=ANSWER_BUDGET, enable_thinking=False),
     judge=_judge_single_color,
     timeout=300,
 )
@@ -135,7 +142,7 @@ TASK_VISION_TWO_IMAGE_DISCRIMINATION = EvalTask(
     category="vision",
     required_capabilities=("vision",),
     description="Two distinct-color images, one prompt; requires BOTH colors mentioned. Ordering is recorded as a soft signal, never hard-failed.",
-    build_request=lambda: _vision_body([_GREEN, _YELLOW], "Describe each image in one short sentence.", max_tokens=100, enable_thinking=False),
+    build_request=lambda: _vision_body([_GREEN, _YELLOW], "Describe each image in one short sentence.", max_tokens=ANSWER_BUDGET, enable_thinking=False),
     judge=_judge_two_image,
     timeout=300,
 )
@@ -161,7 +168,7 @@ TASK_VISION_LARGE_HEATMAP_SANITY = EvalTask(
     category="vision",
     required_capabilities=("vision",),
     description="~1400x900 four-quadrant color-block image; requires >=2 quadrant colors named, non-refusal, non-gibberish, no leak markers -- large-image budget sanity WITH ground truth.",
-    build_request=lambda: _vision_body([_HEATMAP], "Describe this image.", max_tokens=150, enable_thinking=False),
+    build_request=lambda: _vision_body([_HEATMAP], "Describe this image.", max_tokens=ANSWER_BUDGET, enable_thinking=False),
     judge=_judge_heatmap,
     timeout=600,
 )
@@ -177,7 +184,7 @@ TASK_VISION_THINKING_OFF_PURITY = EvalTask(
     category="vision",
     required_capabilities=("vision",),
     description="One image with enable_thinking=False; checks the vision answer stays clean (color mentioned, no leak markers) with thinking off.",
-    build_request=lambda: _vision_body([_BLUE], "Describe this image in one short sentence.", max_tokens=60, enable_thinking=False),
+    build_request=lambda: _vision_body([_BLUE], "Describe this image in one short sentence.", max_tokens=ANSWER_BUDGET, enable_thinking=False),
     judge=_judge_vision_thinking_off,
     timeout=300,
 )
@@ -236,7 +243,7 @@ TASK_THINKING_OFF_PURITY = EvalTask(
     category="thinking",
     required_capabilities=("thinking",),
     description="enable_thinking=False; requires NO `thinking` field in the response and no explicit leak markers in content (does not attempt to detect 'reasoning-sounding' prose -- that's model-version-brittle).",
-    build_request=lambda: _text_body("Explain briefly why the sky appears blue.", max_tokens=100, enable_thinking=False),
+    build_request=lambda: _text_body("Explain briefly why the sky appears blue.", max_tokens=ANSWER_BUDGET, enable_thinking=False),
     judge=_judge_thinking_off,
     timeout=300,
 )
@@ -279,7 +286,7 @@ TASK_STOP_DISCIPLINE_SHORT_ANSWER = EvalTask(
     category="stop",
     required_capabilities=(),
     description="Short-answer prompt with a generous max_tokens; fails on runaway sentence repetition or on hitting the token cap exactly (proxy for never finding a stopping point).",
-    build_request=lambda: _text_body("What is 2+2? Answer in one short sentence.", max_tokens=200, enable_thinking=False),
+    build_request=lambda: _text_body("What is 2+2? Answer in one short sentence.", max_tokens=ANSWER_BUDGET, enable_thinking=False),
     judge=_judge_stop,
     timeout=300,
 )
@@ -304,7 +311,7 @@ TASK_TEXT_FACTUAL_QA_CAPITAL = EvalTask(
     category="text",
     required_capabilities=(),
     description="'What is the capital of France?' -- checks 'paris' appears (case-insensitive). The one task allowed an exact-ish string check: it's ground truth, not phrasing.",
-    build_request=lambda: _text_body("What is the capital of France?", max_tokens=30, enable_thinking=False),
+    build_request=lambda: _text_body("What is the capital of France?", max_tokens=ANSWER_BUDGET, enable_thinking=False),
     judge=lambda ctx: substring_present(ctx["content"], "paris"),
     timeout=120,
 )
@@ -322,7 +329,7 @@ TASK_TEXT_SINGLE_WORD_INSTRUCTION = EvalTask(
     category="text",
     required_capabilities=(),
     description="'Respond with exactly one word: the color of the sky.' -- checks content is exactly one whitespace-separated token; does not hard-require the word be 'blue' (content-brittleness).",
-    build_request=lambda: _text_body("Respond with exactly one word: the color of the sky.", max_tokens=10, enable_thinking=False),
+    build_request=lambda: _text_body("Respond with exactly one word: the color of the sky.", max_tokens=ANSWER_BUDGET, enable_thinking=False),
     judge=_judge_single_word,
     timeout=120,
 )
@@ -394,7 +401,7 @@ TASK_AUDIO_SPEECH_KEYWORDS = EvalTask(
     category="audio",
     required_capabilities=("audio",),
     description="Real speech clip (committed fixture); the transcription/description must surface a keyword actually said ('six'/'seven'). Property, not exact-transcript: proves the audio embedding reaches the model.",
-    build_request=lambda: _audio_body(_SPEECH_B64, "Briefly, what do you hear in this audio? Quote any words or numbers you can make out.", max_tokens=200, enable_thinking=False),
+    build_request=lambda: _audio_body(_SPEECH_B64, "Briefly, what do you hear in this audio? Quote any words or numbers you can make out.", max_tokens=ANSWER_BUDGET, enable_thinking=False),
     judge=_judge_speech_keywords,
     timeout=300,
 )
@@ -412,7 +419,7 @@ TASK_AUDIO_TONE_VS_SPEECH = EvalTask(
     category="audio",
     required_capabilities=("audio",),
     description="Synthesized 440Hz sine (deterministic, stdlib): asked speech-or-tone, the answer must use tone vocabulary -- discriminates listening from confabulating speech.",
-    build_request=lambda: _audio_body(_TONE_B64, "Is this sound human speech or a simple synthesized tone? Describe it in one sentence.", max_tokens=80, enable_thinking=False),
+    build_request=lambda: _audio_body(_TONE_B64, "Is this sound human speech or a simple synthesized tone? Describe it in one sentence.", max_tokens=ANSWER_BUDGET, enable_thinking=False),
     judge=_judge_tone,
     timeout=300,
 )
