@@ -1130,6 +1130,19 @@ gguf, whose server rewrites an image part into a positional media marker at
 any role. Owner decision 2026-09-07: not forking mlx-vlm for this.
 Assistant-turn media is gguf-only, and that is the answer, not a backlog item.
 
+The images themselves had to arrive in that same order, and until 2026-09-24
+they did not: `BatchVisionProcessor.load_images_parallel` sorted its results by
+`enumerate(as_completed(...))`, which is completion order, so a request whose
+first image decoded slowest handed the model its images shuffled against the
+markers (found by the improvement loop's request-path review; live, a large
+red image followed by a small blue one read as two reds at temperature 0).
+Results are now collected in submission order. In the same path every
+unreadable image used to become a small red image and the request succeeded;
+`utils.load_image` now raises and `prepare_vlm_inputs_parallel` turns it into
+a 400 naming the problem. The unit tests had mocked the loader, which is why
+neither was ever seen; `test_images_reach_the_model_in_the_order_they_were_sent`
+runs the real one with staggered load times.
+
 ### Vision prefill
 
 (v2.0.55) The vision path prefills all but the last prompt token and hands

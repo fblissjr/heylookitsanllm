@@ -48,35 +48,23 @@ class BatchVisionProcessor:
             # Single image, no need for parallelization
             return [load_image(image_urls[0])]
         
-        # Load images in parallel
-        with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = [executor.submit(load_image, url) for url in image_urls]
-            images = []
-            
-            for i, future in enumerate(concurrent.futures.as_completed(futures)):
-                try:
-                    image = future.result()
-                    images.append((i, image))
-                except Exception as e:
-                    logging.error(f"Failed to load image {i}: {e}")
-                    # Create placeholder for failed image
-                    images.append((i, Image.new('RGB', (64, 64), color='red')))
-            
-            # Sort by original index to maintain order
-            images.sort(key=lambda x: x[0])
-            sorted_images = [img for _, img in images]
-            
-            load_time = time.time() - start_time
-            # Calculate total size info
-            total_pixels = sum(img.width * img.height for img in sorted_images)
-            sizes_summary = ", ".join([f"{img.size}" for img in sorted_images[:3]])
-            if len(sorted_images) > 3:
-                sizes_summary += f", ... ({len(sorted_images)} total)"
-            
-            logging.info(f"[BATCH VISION] Loaded {len(sorted_images)} images in {load_time*1000:.1f}ms | "
-                       f"Sizes: [{sizes_summary}] | Total pixels: {total_pixels:,}")
-            
-            return sorted_images
+        # Submission order IS marker order: the caller lines this list up
+        # with the image markers the template renders, so results are
+        # collected in the order they were submitted, never as they finish.
+        # (Until 2026-09-24 this enumerated as_completed(), so the "sort by
+        # original index" sorted by completion order and a multi-image
+        # request could hand the model its images shuffled.)
+        futures = [self._executor.submit(load_image, url) for url in image_urls]
+        images = [f.result() for f in futures]
+
+        load_time = time.time() - start_time
+        total_pixels = sum(img.width * img.height for img in images)
+        sizes_summary = ", ".join([f"{img.size}" for img in images[:3]])
+        if len(images) > 3:
+            sizes_summary += f", ... ({len(images)} total)"
+        logging.info(f"[BATCH VISION] Loaded {len(images)} images in {load_time*1000:.1f}ms | "
+                     f"Sizes: [{sizes_summary}] | Total pixels: {total_pixels:,}")
+        return images
     
     def __del__(self):
         """Clean up executor on deletion."""

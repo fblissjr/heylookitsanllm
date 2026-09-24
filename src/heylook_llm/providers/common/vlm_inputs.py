@@ -237,7 +237,11 @@ def prepare_vlm_inputs_parallel(
 
     # Load all images in parallel
     if image_urls:
-        images = batch_vision_processor.load_images_parallel(image_urls)
+        try:
+            images = batch_vision_processor.load_images_parallel(image_urls)
+        except Exception as e:  # noqa: BLE001 - any unreadable image is the client's to fix
+            from ..base import InvalidGenerationRequest
+            raise InvalidGenerationRequest(f"An image in this request could not be read: {e}") from e
     else:
         images = []
 
