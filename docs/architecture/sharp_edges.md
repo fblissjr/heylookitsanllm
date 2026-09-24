@@ -1130,6 +1130,22 @@ gguf, whose server rewrites an image part into a positional media marker at
 any role. Owner decision 2026-09-07: not forking mlx-vlm for this.
 Assistant-turn media is gguf-only, and that is the answer, not a backlog item.
 
+### The template draws the image markup
+
+(v2.0.100) Since March 2026 heylook flattened mlx-vlm's structured message
+content to a string, substituting a bare image token for each image marker,
+because mistral3/pixtral templates cannot render list content. Every other
+template lost its own image markup with it: Qwen3.5 and Qwen3-VL prompts
+carried a bare `<|image_pad|>` with no `<|vision_start|>`/`<|vision_end|>`
+(and their mRoPE counts images by `vision_start`, so image tokens took text
+positions), and gemma-4 prompts carried a stray space after `<|image|>`.
+mlx-vlm's own rendering had neither. Answers stayed mostly right, which is
+why nothing noticed; `vlm_parity_probe` could not see it because it replays
+heylook's own captured inputs into mlx-vlm. The template now renders the
+structured content and only a template that refuses it is flattened, and the
+probe compares heylook's prompt with mlx-vlm's own rendering of the same
+request.
+
 ### Vision prefill
 
 (v2.0.55) The vision path prefills all but the last prompt token and hands

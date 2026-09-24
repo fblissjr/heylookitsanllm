@@ -120,12 +120,24 @@ def _run(args) -> dict:
         sys.exit(f"{args.model} is served as text; nothing to compare")
 
     captured: list[dict] = []
+    prompts: list[str] = []
     real_prepare = mp.vlm_prepare_inputs
 
     def recording_prepare(*a, **kw):
         out = real_prepare(*a, **kw)
         captured.append(dict(out))
+        prompts.append(kw.get("prompts"))
         return out
+
+    def reference_prompt(content) -> str:
+        """The same request as mlx-vlm renders it itself. Replaying heylook's
+        captured tensors (below) cannot see a prompt heylook BUILT wrong --
+        until 2026-09-24 every MLX image prompt lacked Qwen's vision markers
+        and this probe said MATCH."""
+        from mlx_vlm.prompt_utils import apply_chat_template
+        text = next(p["text"] for p in content if p["type"] == "text")
+        return apply_chat_template(provider.processor, provider.model.config, text,
+                                   num_images=1, enable_thinking=False)
 
     mp.vlm_prepare_inputs = recording_prepare
     tokenizer = provider.get_tokenizer()
@@ -133,6 +145,7 @@ def _run(args) -> dict:
 
     def heylook(content) -> list[int]:
         captured.clear()
+        prompts.clear()
         return [c.token for c in provider.create_chat_completion(
             _request(args.model, content, args.tokens)) if c.token is not None]
 
@@ -150,10 +163,14 @@ def _run(args) -> dict:
             lps.append(lp)
         return toks, lps
 
-    def compare(label: str, ours: list[int], theirs: list[int], lps) -> dict:
+    def compare(label: str, ours: list[int], theirs: list[int], lps, content=None) -> dict:
         n = min(len(ours), len(theirs))
         first = next((i for i in range(n) if ours[i] != theirs[i]), None)
-        row = {"case": label, "heylook_tokens": len(ours), "upstream_tokens": len(theirs),
+        prompt_ok = None
+        if content is not None and prompts:
+            prompt_ok = prompts[-1] == reference_prompt(content)
+        row = {"case": label, "prompt_matches_mlx_vlm": prompt_ok,
+               "heylook_tokens": len(ours), "upstream_tokens": len(theirs),
                "compared": n, "first_divergence": first,
                "heylook_text": tokenizer.decode(ours), "upstream_text": tokenizer.decode(theirs[:n])}
         if first is not None:
@@ -177,16 +194,18 @@ def _run(args) -> dict:
         heylook("Say hello in five words.")
         ours_a = heylook(_vision_content(0))
         theirs_a, lps_a = upstream()
-        rows.append(compare("vision after text", ours_a, theirs_a, lps_a))
+        rows.append(compare("vision after text", ours_a, theirs_a, lps_a, _vision_content(0)))
 
         ours_b = heylook(_vision_content(1))
         theirs_b, lps_b = upstream()
-        rows.append(compare("vision after vision (different image)", ours_b, theirs_b, lps_b))
+        rows.append(compare("vision after vision (different image)", ours_b, theirs_b, lps_b,
+                            _vision_content(1)))
 
     control_ok = ours_a != ours_b
     return {"model": args.model, "tokens": args.tokens, "prefill_step_size": args.step,
             "negative_control_images_differ": control_ok, "cases": rows,
-            "ok": control_ok and all(r["verdict"] in ("MATCH", "NEAR-TIE") for r in rows)}
+            "ok": control_ok and all(r["verdict"] in ("MATCH", "NEAR-TIE")
+                                     and r["prompt_matches_mlx_vlm"] is not False for r in rows)}
 
 
 def main() -> int:

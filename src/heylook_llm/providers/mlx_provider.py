@@ -296,10 +296,10 @@ def vlm_apply_chat_template(processor, config, messages, num_images=None, enable
     """
     Apply chat template using mlx-vlm's prompt_utils.
 
-    Uses mlx-vlm to build messages with image tokens, then flattens any
-    list-typed content to strings before passing to the tokenizer's
-    apply_chat_template.  Some models (mistral3, pixtral) produce list
-    content that their own Jinja templates cannot render.
+    Uses mlx-vlm to build messages with image markers, then renders them
+    through the tokenizer's own template so the template draws the image
+    markup. Only a template that cannot render list content (mistral3,
+    pixtral) gets it flattened to strings first.
 
     Args:
         processor: The model processor (contains tokenizer)
@@ -328,12 +328,30 @@ def vlm_apply_chat_template(processor, config, messages, num_images=None, enable
     # per input, same order).
     formatted_messages = carry_message_extras(messages, formatted_messages)
 
-    # Step 2: flatten any list content to strings so all tokenizer
-    # Jinja templates can handle them
     tokenizer = getattr(processor, "tokenizer", processor)
+
+    def render(msgs):
+        return _apply_chat_template(
+            tokenizer, msgs, enable_thinking=enable_thinking,
+            depth=depth, continuing=continue_final_message, model_id=model_id)
+
+    # Step 2: the model's OWN template over mlx-vlm's structured content, so
+    # the template draws its own image markup. Flattening first (below) was
+    # the path for every model until 2026-09-24, and it hand-built that markup
+    # as a bare image token: Qwen lost the <|vision_start|>/<|vision_end|> its
+    # template wraps an image in -- and its mRoPE finds images by
+    # vision_start, so image tokens got text positions -- and gemma-4 gained
+    # a stray space after <|image|>. mlx-vlm's own rendering has neither.
+    if any(isinstance(m.get("content"), list) for m in formatted_messages):
+        try:
+            return render(formatted_messages)
+        except Exception as e:  # noqa: BLE001 - the fallback below re-raises its own
+            # Step 3: a template that cannot take list content (mistral3,
+            # pixtral: "can only concatenate str") gets it flattened.
+            logging.debug(f"structured chat content refused, flattening: {e}")
+
     image_token = getattr(processor, "image_token",
                           getattr(tokenizer, "image_token", "<image>"))
-
     for msg in formatted_messages:
         content = msg.get("content")
         if isinstance(content, list):
@@ -351,16 +369,9 @@ def vlm_apply_chat_template(processor, config, messages, num_images=None, enable
                     parts.append(item)
             msg["content"] = " ".join(parts).strip() if parts else ""
 
-    # Step 3: the tokenizer's own chat template, through the shared renderer.
     # A template that still cannot take these messages RAISES. (It used to
-    # return a "role: content" join here -- a prompt with no template in it.
-    # Checked before removing, 2026-09-21: no installed mlx-vlm-routed model
-    # reaches that branch, across image, multi-turn and thinking-history
-    # shapes.)
-    return _apply_chat_template(
-        tokenizer, formatted_messages, enable_thinking=enable_thinking,
-        depth=depth, continuing=continue_final_message,
-        model_id=model_id)
+    # return a "role: content" join here -- a prompt with no template in it.)
+    return render(formatted_messages)
 
 
 class UnifiedTextStrategy:

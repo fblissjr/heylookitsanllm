@@ -350,3 +350,49 @@ def test_reasoning_content_survives_mlx_vlms_message_rebuild():
     except Exception as e:  # a missing mlx-vlm model registry entry, say
         pytest.skip(f"mlx-vlm could not rebuild gemma4 messages here: {e}")
     assert seen["messages"][-1].get("reasoning_content") == "THOUGHT"
+
+
+def test_the_models_own_template_draws_the_image_markup():
+    """heylook used to flatten mlx-vlm's structured content to a string with a
+    bare image token before rendering, so Qwen lost the
+    <|vision_start|>/<|vision_end|> its template wraps an image in (and its
+    mRoPE finds images by vision_start) and gemma-4 gained a stray space.
+    The template now renders the structured content itself; only a template
+    that cannot take list content is flattened. Both halves, through the
+    real Qwen3.5 template fixture and a string-only one."""
+    from pathlib import Path
+
+    from heylook_llm.chat_template_files import _engine_environment
+    from heylook_llm.providers.mlx_provider import vlm_apply_chat_template
+
+    env = _engine_environment()
+
+    class Tok:
+        def __init__(self, body):
+            self.template = env.from_string(body)
+
+        def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True, **kw):
+            return self.template.render(messages=messages, add_generation_prompt=add_generation_prompt,
+                                        bos_token="", eos_token="", **kw)
+
+    class Proc:
+        image_token = "<|image_pad|>"
+
+        def __init__(self, body):
+            self.tokenizer = Tok(body)
+
+    class Cfg(dict):  # the family the fixture template belongs to
+        def __init__(self):
+            super().__init__(model_type="qwen3_5")
+            self.model_type = "qwen3_5"
+
+    qwen = (Path(__file__).resolve().parents[1] / "fixtures" / "chat_templates" / "qwen3_5.jinja").read_text()
+    out = vlm_apply_chat_template(Proc(qwen), Cfg(), [{"role": "user", "content": "x"}],
+                                  num_images=1, enable_thinking=False)
+    assert "<|vision_start|><|image_pad|><|vision_end|>x" in out
+
+    string_only = ("{% for m in messages %}{{ '<' + m['role'] + '>' + m['content'] }}{% endfor %}"
+                   "{% if add_generation_prompt %}<assistant>{% endif %}")
+    out = vlm_apply_chat_template(Proc(string_only), Cfg(), [{"role": "user", "content": "x"}],
+                                  num_images=1, enable_thinking=False)
+    assert out == "<user><|image_pad|> x<assistant>"

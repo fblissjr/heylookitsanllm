@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.100]
+
+### Fixed
+
+- **Every MLX image prompt was built off the model's own format.** heylook
+  flattened mlx-vlm's structured content to a string with a bare image token
+  before rendering (a March workaround for mistral3/pixtral templates that
+  cannot take list content), so Qwen3.5 and Qwen3-VL prompts lost the
+  `<|vision_start|>`/`<|vision_end|>` their templates wrap an image in, and
+  their mRoPE, which finds images by `vision_start`, gave image tokens text
+  positions. gemma-4 prompts carried a stray space after `<|image|>`. The
+  template now renders the structured content itself, and only a template
+  that refuses list content is flattened.
+  - All four installed MLX vision families now render exactly as mlx-vlm's
+    own `apply_chat_template` does, with one image and with two.
+  - A greedy A/B on Qwen3.5-27B answered a spatial test correctly both ways
+    but differently throughout.
+  - Eval vision tasks 4/4 and smoke mlx-vision 36/36 on a qwen3_5 model after
+    the fix.
+  - Found while building W4's image-plan: MLX counted 2 fewer tokens per
+    image than llama.cpp on the same template.
+- `scripts/vlm_parity_probe.py` now also checks heylook's prompt against
+  mlx-vlm's own rendering of the same request. Replaying heylook's captured
+  tensors into mlx-vlm (what it did) could not see a prompt heylook built
+  wrong: against the old code it reports token MATCH and prompt mismatch.
+
 ## [2.0.99]
 
 ### Added (plan W3, the rest)
