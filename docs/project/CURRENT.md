@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-24, v2.0.95, `main`.
+Last updated: 2026-09-24, v2.0.101, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md), and what each release
@@ -33,7 +33,24 @@ advertises `reasoning_effort`.
 
 ## Handoff -- start here (end of 2026-09-24)
 
-**Where things stand.** v2.0.89 - v2.0.94 landed on 2026-09-24:
+**Where things stand (latest first).** Afternoon, v2.0.98 - v2.0.101. A
+peer session (`mropt`, the improvement loop) worked in parallel and shipped
+v2.0.96-97 (AGENTS.md split into `.claude/rules/`).
+- v2.0.101 **W4 backend**: `POST /v1/models/{id}/image-plan` asks the
+  resident engine what an image costs. Open: the frontend half, an owner
+  call (see item 0).
+- v2.0.100 **fix**: every MLX image prompt had been built off the model's
+  format. Qwen had no `<|vision_start|>`/`<|vision_end|>` (its mRoPE then gave
+  image tokens text positions) and gemma-4 had a stray space. It is now
+  rendered by the template, identical to mlx-vlm's own rendering on all four
+  local families. `vlm_parity_probe` now checks the prompt too.
+- v2.0.99 **W3 done**: every template copy listed with its provenance, and
+  "start an override from this". The gemma-4 templates show as modified
+  since download.
+- v2.0.98: `scripts/perf_ab.py` (speed and memory A/B, contamination-aware)
+  and chain_probe's in-process near-tie verdict (`scripts/_inproc.py`).
+
+Morning, v2.0.89 - v2.0.95:
 - v2.0.93: `reasoning_content` now reaches the template on MLX vision
   models (see item 4).
 - v2.0.94: W3's prefix-stability lint, on `engine.template.prefix_stable`
@@ -76,6 +93,17 @@ MLX, mlx-vlm offers only both-at-one-width or TurboQuant per-side widths, not
 one side left at f16.
 
 **Open items, first things first:**
+
+0. **Environment (owner):**
+   - `modelzoo/` is gone and `[scan].folders` now points at a folder outside the repo, but
+     13 explicit `models.toml` entries still point at `modelzoo/` paths, so
+     those models do not load. That covers every gemma-4, Qwen3.5 and
+     Qwen3-VL MLX entry, gpt-oss-120b and one Muse. The moved copies
+     are discovered, but not served: their ids collide with
+     the dead entries. The default E2E model (gemma-4) is among them; E2E ran
+     with `E2E_MODEL=Qwen3-0.6B-8bit-mlx`.
+   - W4 frontend: show a staged image's cost and resize to the planned size
+     at send? The latter costs a round trip per image; the owner decides.
 
 1. **235B long context: decided (owner, 2026-09-24): accept the finding; a
    larger MLX model comes later for optimizing.** The record follows. At f16 KV,
