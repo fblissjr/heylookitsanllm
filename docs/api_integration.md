@@ -484,11 +484,13 @@ with the `thinking_budget` capability; on an MLX model whose thinking format
 the engine cannot close (harmony) a budget is a 400. With thinking off it does
 nothing.
 
-`reasoning_effort` values are **model-specific** and the schema accepts the
-union of every model's set, so a wrong-for-this-model value reaches the
-template and comes back as a 500. Gate it on the `reasoning_effort`
-capability from `/v1/models` and, if you expose it, read the accepted set per
-model rather than offering a fixed three.
+`reasoning_effort` values are **the model's own**. Read them off the model's
+row on `/v1/models`: `engine.thinking.depth.values` (and `aliases`), with
+`default` for what "unset" means. A value the model does not offer is a 400
+before any stream, naming the model's values. Where `depth.unknown` is
+`verbatim` the template pastes any word in, and any value is accepted. The
+server sends the value under the template's own variable name, so the same
+field reaches Muse's `reasoning_strength` or MiniMax's `thinking_mode`.
 
 ---
 

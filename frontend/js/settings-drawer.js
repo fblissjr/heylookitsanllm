@@ -120,6 +120,8 @@ export function mountSettingsDrawer(navDesktop, navBottom) {
 //                                           an UNSET sampler key to (today:
 //                                           enable_thinking); labels the
 //                                           tri-state's "Model default"
+//   thinking?(): engine.thinking | null   -- the model's own thinking controls
+//                                           (plan W2): builds the depth control
 //   samplerDefaults?(): {temperature,...}  -- the server's sampler_defaults for
 //                                           the current model; labels every
 //                                           blank field with its real value
@@ -219,6 +221,7 @@ function render() {
       scope: current?.scope?.() ?? null,
       modelDefaults: current?.modelDefaults?.() ?? {},
       samplerDefaults: current?.samplerDefaults?.() ?? null,
+      thinking: current?.thinking?.() ?? null,
     });
     if (samplers === 'disabled') {
       for (const el of panel.querySelectorAll('input, button')) el.disabled = true;

@@ -109,7 +109,23 @@ today's design would freeze into every existing entry.
   slower and nothing faster. The field exists so a new architecture can be
   tested, not to change the default.
 
-### W2. Thinking controls: detect from the template, show its own values
+### W2. Thinking controls: detect from the template, show its own values (shipped v2.0.95)
+
+As built (`thinking_controls.py`): detection renders the in-force template
+with thinking on over a four-turn conversation. The depth variable is one
+whose NAME matches `reason|think|effort` and whose value changes the prompt;
+rendering alone cannot tell it from another free-form variable (gpt-oss
+pastes `model_identity` the same way). Strictness is reported as `unknown`:
+raises | ignored | verbatim | fallback, not a bool. A verbatim template
+lists only the literals it ties to the variable, and the UI gives it a text
+box. Checked against the audit's by-hand table on eight real templates
+(fixtures in `tests/fixtures/chat_templates/`), and live on Muse (gguf, its
+`reasoning_strength` reached llama-server's own render), Qwen3.8 official
+(`high` is a 400 naming xhigh/medium/low) and gpt-oss (MLX). Not done here:
+moving the remaining capability branches into the describers (no behaviour
+change; the thinking and depth answers already come from detection), and the
+e2e check with a real model pair (replaced by a model-free render check plus
+the live smoke rows, since both depth vocabularies need large models).
 
 **Owner decision (2026-09-23): no hardcoded thinking levels.** The controls
 show what the in-force template offers, in its own spellings. There is no

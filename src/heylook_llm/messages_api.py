@@ -294,6 +294,26 @@ class StreamingEventTranslator:
 # Endpoint
 # ---------------------------------------------------------------------------
 
+def _refuse_unoffered_depth(router, chat_request) -> None:
+    """A thinking depth the model's template does not offer is a 400 BEFORE
+    any stream opens and before any load (plan W2). The provider checks
+    again inside the cascade; this is the half that keeps it out of a 200.
+    Detection reads files only, so it answers for unloaded models."""
+    value = chat_request.reasoning_effort
+    model_id = chat_request.model or getattr(router.app_config, "default_model", None)
+    if value is None or not model_id:
+        return
+    model_config = router.app_config.get_model_config(model_id)
+    if model_config is None:
+        return  # routing reports the unknown model with its own 400
+    from heylook_llm.providers.contract import thinking_controls
+    from heylook_llm.thinking_controls import check_depth
+
+    why = check_depth(value, thinking_controls(model_config))
+    if why:
+        raise HTTPException(status_code=400, detail=why)
+
+
 @messages_router.post(
     "/messages",
     summary="Create a Message",
@@ -325,6 +345,7 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
 
     # Convert to internal ChatRequest
     chat_request = to_chat_request(msg_request)
+    _refuse_unoffered_depth(router, chat_request)
 
     provider_get_ms = 0.0
     provider = None

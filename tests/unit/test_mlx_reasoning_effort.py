@@ -1,14 +1,17 @@
 # tests/unit/test_mlx_reasoning_effort.py
-"""The MLX half of reasoning_effort -- template kwargs on all three paths.
+"""The MLX half of thinking depth -- template kwargs on all three paths.
 
 Claims (what breaks if a test is deleted):
-- kwarg tests: thinking depth silently stops reaching MLX models.
-- the retry test: someone moves reasoning_effort into `base_kwargs`, and every
+- kwarg tests: thinking depth silently stops reaching MLX models, or reaches
+  them under a name the template does not read (plan W2: the variable is the
+  template's own, e.g. Muse's reasoning_strength).
+- the retry test: someone moves the depth kwarg into `base_kwargs`, and every
   request to a model whose tokenizer wrapper has a narrow signature becomes a
-  hard TypeError. The comment at the call site reasons about exactly this and
-  nothing executed it before.
+  hard TypeError.
 - the vision test: depth works on a text turn and reverts the moment an image
   is attached -- same model, same conversation, no error.
+- the capability tests: depth is offered where the template has a depth
+  variable, and not inferred from thinking.
 """
 import pytest
 
@@ -32,8 +35,7 @@ class FakeProcessor:
 
 class FakeConfig(dict):
     """mlx_vlm's prompt_utils does `config["model_type"]`; heylook's own code
-    reads it as an attribute. Support both so this fake matches the real
-    contract rather than half of it."""
+    reads it as an attribute. Support both."""
 
     def __init__(self):
         super().__init__(model_type="qwen2_vl")
@@ -46,87 +48,64 @@ def _msgs():
 
 @pytest.mark.unit
 class TestVlmTemplateKwargs:
-    def test_effort_is_forwarded(self):
+    def test_depth_is_forwarded_under_the_templates_own_variable(self):
         p = FakeProcessor()
         vlm_apply_chat_template(p, FakeConfig(), _msgs(), num_images=0,
-                                enable_thinking=True, reasoning_effort="low")
-        assert p.calls[-1].get("reasoning_effort") == "low"
+                                enable_thinking=False, depth={"reasoning_strength": "low"})
+        assert p.calls[-1].get("reasoning_strength") == "low"
 
-    def test_effort_is_forwarded_without_thinking(self):
-        """Not gated: harmony templates read it unconditionally and have no
-        enable_thinking at all."""
+    def test_absent_depth_sends_no_kwarg(self):
         p = FakeProcessor()
-        vlm_apply_chat_template(p, FakeConfig(), _msgs(), num_images=0,
-                                enable_thinking=False, reasoning_effort="high")
-        assert p.calls[-1].get("reasoning_effort") == "high"
+        vlm_apply_chat_template(p, FakeConfig(), _msgs(), num_images=0, enable_thinking=True)
+        assert set(p.calls[-1]) == {"enable_thinking", "tokenize", "add_generation_prompt"}
 
-    def test_absent_effort_sends_no_kwarg(self):
-        p = FakeProcessor()
-        vlm_apply_chat_template(p, FakeConfig(), _msgs(), num_images=0,
-                                enable_thinking=True)
-        assert "reasoning_effort" not in p.calls[-1]
+    def test_the_variable_comes_from_detection(self):
+        from types import SimpleNamespace
+
+        from heylook_llm.providers.mlx_provider import _depth_kwargs
+
+        info = SimpleNamespace(chat_template="Reasoning strength: {{ reasoning_strength | default('high') }}")
+        assert _depth_kwargs({"reasoning_effort": "low"}, info) == {"reasoning_strength": "low"}
+        assert _depth_kwargs({}, info) is None
 
 
 @pytest.mark.unit
-class TestVisionPathForwardsEffort:
+def test_depth_reaches_the_template_through_the_vision_path():
     """prepare_vlm_inputs_parallel is the ONLY path an image-bearing request
     takes; the parameter existing on vlm_apply_chat_template is not enough."""
+    import inspect
 
-    def test_reasoning_effort_reaches_the_template_through_the_vision_path(self):
-        from heylook_llm.providers.common.vlm_inputs import prepare_vlm_inputs_parallel
+    from heylook_llm.providers.common.vlm_inputs import prepare_vlm_inputs_parallel
 
-        seen = {}
+    seen = {}
 
-        def fake_template(processor, config, messages, num_images=None,
-                          enable_thinking=None, reasoning_effort=None, **kw):
-            seen["reasoning_effort"] = reasoning_effort
-            seen["enable_thinking"] = enable_thinking
-            return "PROMPT"
+    def fake_template(processor, config, messages, num_images=None,
+                      enable_thinking=None, depth=None, **kw):
+        seen["depth"] = depth
+        return "PROMPT"
 
-        class Msg:
-            role = "user"
-            content = "hi"
+    class Msg:
+        role = "user"
+        content = "hi"
 
-        prepare_vlm_inputs_parallel(
-            [Msg()], FakeProcessor(), FakeConfig(), None, fake_template,
-            enable_thinking=True, reasoning_effort="low",
-        )
-        assert seen == {"reasoning_effort": "low", "enable_thinking": True}
-
-    def test_the_signature_actually_accepts_it(self):
-        """Guard the guard: if the parameter were dropped, the test above would
-        pass it as **kw and still 'work'."""
-        import inspect
-        from heylook_llm.providers.common.vlm_inputs import prepare_vlm_inputs_parallel
-        assert "reasoning_effort" in inspect.signature(
-            prepare_vlm_inputs_parallel).parameters
+    prepare_vlm_inputs_parallel([Msg()], FakeProcessor(), FakeConfig(), None, fake_template,
+                                enable_thinking=True, depth={"reasoning_effort": "low"})
+    assert seen == {"depth": {"reasoning_effort": "low"}}
+    # guard the guard: dropped, the call above would pass it as **kw
+    assert "depth" in inspect.signature(prepare_vlm_inputs_parallel).parameters
 
 
 @pytest.mark.unit
 class TestTextTemplateRetry:
-    """The text path passes template kwargs SEPARATELY from base_kwargs so the
-    TypeError fallback can drop them. In base_kwargs they would survive the
-    retry and fail it identically."""
-
-    def test_reasoning_effort_is_not_baked_into_base_kwargs(self):
-        from pathlib import Path
-        src = (Path(__file__).resolve().parents[2] / "src" / "heylook_llm"
-               / "providers" / "mlx_provider.py").read_text()
-        # The assignment must go through the retry-droppable dict.
-        assert 'template_kwargs["reasoning_effort"] = reasoning_effort' in src
-        assert 'base_kwargs["reasoning_effort"]' not in src, (
-            "in base_kwargs the TypeError retry re-passes it and fails again")
+    """Template kwargs travel SEPARATELY from base_kwargs so the TypeError
+    fallback can drop them."""
 
     def test_a_narrow_wrapper_still_renders_after_the_retry(self):
-        """A tokenizer that rejects a template variable must not take the
-        request down: the shared renderer retries WITHOUT the template
-        variables and renders. Driven through `_apply_chat_template` itself --
-        the one renderer both the text and the VLM path use since v2.0.58."""
         from heylook_llm.providers.mlx_provider import _apply_chat_template
 
         p = FakeProcessor(reject={"reasoning_effort"})
         out = _apply_chat_template(p, _msgs(), enable_thinking=True,
-                                   reasoning_effort="low", continuing=False)
+                                   depth={"reasoning_effort": "low"}, continuing=False)
         assert out == "PROMPT"
         (kwargs,) = p.calls
         assert "reasoning_effort" not in kwargs and "enable_thinking" not in kwargs
@@ -135,62 +114,47 @@ class TestTextTemplateRetry:
     def test_a_stack_that_cannot_continue_is_refused_not_restarted(self):
         """When `continue_final_message` itself is what the wrapper rejects,
         the retry fails the same way. A continuation is then a 400; rendering
-        a closed turn would silently restart the message. A NON-continuing
-        request has nothing to refuse on the client's behalf, so the TypeError
-        propagates -- it used to become a "role: content" join on the VLM
-        path, a prompt with no template in it."""
+        a closed turn would silently restart the message."""
         from heylook_llm.providers.base import InvalidGenerationRequest
         from heylook_llm.providers.mlx_provider import _apply_chat_template
 
         with pytest.raises(InvalidGenerationRequest, match="cannot continue"):
             _apply_chat_template(FakeProcessor(reject={"continue_final_message"}), _msgs(),
-                                 enable_thinking=True, reasoning_effort=None, continuing=True)
+                                 enable_thinking=True, depth=None, continuing=True)
         with pytest.raises(TypeError):
             _apply_chat_template(FakeProcessor(reject={"tokenize"}), _msgs(),
-                                 enable_thinking=True, reasoning_effort=None, continuing=False)
+                                 enable_thinking=True, depth=None, continuing=False)
 
 
 @pytest.mark.unit
 class TestReasoningEffortCapability:
-    """Depth is its own capability, NOT implied by thinking.
-
-    The two really do come apart in this model zoo: Qwen3.5 reads
-    enable_thinking and never reasoning_effort; gpt-oss the exact reverse.
-    Deriving one from the other hides the control on whichever family is the
-    counterexample.
-    """
+    """Depth is its own capability, NOT implied by thinking: Qwen3.5 has a
+    switch and no depth, gpt-oss the reverse."""
 
     def _caps(self, provider, cfg):
-        from heylook_llm.config import ModelConfig
         from heylook_llm.capabilities import infer_model_capabilities
+        from heylook_llm.config import ModelConfig
         return infer_model_capabilities(ModelConfig.model_validate(
-            {"id": "x", "provider": provider, "config": cfg}))
+            {"id": f"x-{cfg['model_path']}", "provider": provider, "config": cfg}))
 
-    def test_gguf_thinking_model_offers_depth(self):
-        caps = self._caps("gguf", {"model_path": "/x.gguf", "supports_thinking": True})
-        assert "reasoning_effort" in caps
+    def test_a_gguf_model_with_no_readable_template_offers_no_depth(self):
+        """Nothing to detect from, so nothing is offered; the thinking switch
+        falls back to the stored supports_thinking."""
+        caps = self._caps("gguf", {"model_path": "/synthetic/x.gguf", "supports_thinking": True})
+        assert "thinking" in caps and "reasoning_effort" not in caps
 
-    def test_gguf_without_thinking_does_not(self):
-        caps = self._caps("gguf", {"model_path": "/x.gguf"})
-        assert "reasoning_effort" not in caps
-
-    def test_mlx_depth_is_probed_from_the_template_not_inferred(self, tmp_path):
-        """An MLX model whose template never mentions reasoning_effort must
-        NOT advertise it, even with thinking on -- that is the Qwen3.5 case."""
-        d = tmp_path / "m"
-        d.mkdir()
-        (d / "chat_template.jinja").write_text("{% if enable_thinking %}x{% endif %}")
-        caps = self._caps("mlx", {"model_path": str(d), "enable_thinking": True})
+    def test_mlx_switch_without_depth(self, tmp_path):
+        (tmp_path / "chat_template.jinja").write_text("{% if enable_thinking %}x{% endif %}")
+        caps = self._caps("mlx", {"model_path": str(tmp_path), "enable_thinking": True})
         assert "thinking" in caps
         assert "reasoning_effort" not in caps
 
-    def test_mlx_template_reading_effort_advertises_it_without_thinking(self, tmp_path):
+    def test_mlx_depth_without_switch(self, tmp_path):
         """The gpt-oss/harmony case: depth, no enable_thinking anywhere."""
-        d = tmp_path / "m"
-        d.mkdir()
-        (d / "chat_template.jinja").write_text(
+        (tmp_path / "chat_template.jinja").write_text(
             '{%- if reasoning_effort is not defined %}'
-            '{%- set reasoning_effort = "medium" %}{%- endif %}')
-        caps = self._caps("mlx", {"model_path": str(d)})
+            '{%- set reasoning_effort = "medium" %}{%- endif %}'
+            'Reasoning: {{ reasoning_effort }}{% for m in messages %}{{ m.content }}{% endfor %}')
+        caps = self._caps("mlx", {"model_path": str(tmp_path)})
         assert "reasoning_effort" in caps
         assert "thinking" not in caps

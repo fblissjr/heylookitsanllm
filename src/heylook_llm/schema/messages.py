@@ -8,7 +8,7 @@ from typing import Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from heylook_llm.config import ReasoningEffort
+from heylook_llm.config import ThinkingDepth
 from heylook_llm.schema.content_blocks import InputContentBlock, TextBlock
 
 
@@ -93,15 +93,15 @@ class MessageCreateRequest(BaseModel):
                     "budget_tokens is a hard cap the engine enforces (models "
                     "with the thinking_budget capability; a 400 elsewhere). "
                     "Absent = the model's default.")
-    # Same vocabulary as ChatRequest.reasoning_effort -- shared alias, so the
-    # two APIs cannot drift into accepting different value sets. Phase 3b is
-    # migrating v3 onto this API, so a knob missing here is a control the next
-    # surface to migrate silently loses.
-    reasoning_effort: Optional[ReasoningEffort] = Field(
+    # Same type as ChatRequest.reasoning_effort -- shared alias, so the two
+    # schemas cannot drift into accepting different values.
+    reasoning_effort: Optional[ThinkingDepth] = Field(
         default=None,
-        description="Thinking depth when thinking is on. Values are "
-                    "MODEL-SPECIFIC (Qwen3.8: xhigh|medium|low; harmony: "
-                    "low|medium|high). Absent = the template's own default.",
+        description="Thinking depth, in the model's own template spelling: "
+                    "one of `engine.thinking.depth.values` (or an alias) on "
+                    "/v1/models. Sent as the template's own depth variable. "
+                    "A value the model does not offer is a 400. Absent = the "
+                    "template's own default.",
     )
 
     # NO `include_performance` here, deliberately (removed v1.79.49). This wire

@@ -107,28 +107,6 @@ def _template_supports_thinking(model_path: str, _stamp: tuple) -> bool:
         return False
 
 
-@lru_cache(maxsize=64)
-def _template_supports_reasoning_effort(model_path: str, _stamp: tuple) -> bool:
-    """Whether the model's template reads ``reasoning_effort``.
-
-    Separate from the thinking capability on purpose: harmony models read
-    reasoning_effort and never mention enable_thinking, so a UI gating depth
-    on `thinking` hides it exactly where it is the only control that works.
-
-    Cached like its sibling above -- and not as an optimization nicety: this
-    probe shipped UNCACHED (v1.71.0) and read+parsed every MLX model's
-    template files on every /v1/models call, which delayed every page's first
-    paint-to-usable window (and every generation start paid the single-model
-    slice via effective_capabilities). Keyed on the template files' identity,
-    not on the path -- see `_template_stamp`.
-    """
-    try:
-        from heylook_llm.providers.common.template_info import cached_template_info
-        return cached_template_info(Path(model_path)).supports_reasoning_effort
-    except Exception:
-        return False
-
-
 def template_supports_thinking(model_path: str) -> bool:
     """Public probe: cached, but re-read when a template file changes.
 
@@ -150,14 +128,6 @@ def template_supports_thinking_budget(model_path: str) -> bool:
         return thinking_budget_markers(cached_template_info(Path(model_path))) is not None
     except Exception:
         return False
-
-
-def template_supports_reasoning_effort(model_path: str) -> bool:
-    """Public probe: cached, but re-read when a template file changes.
-
-    Same shape and same reason as its sibling above.
-    """
-    return _template_supports_reasoning_effort(model_path, _template_stamp(model_path))
 
 
 def _mlx_serves_vision(model_config, serves_vision: bool | None = None) -> bool:
@@ -198,6 +168,25 @@ def _mlx_serves_vision(model_config, serves_vision: bool | None = None) -> bool:
     return bool(serves_vision_for_config(model_config.provider, resolved))
 
 
+def _has_depth(model_config) -> bool:
+    from heylook_llm.providers.contract import thinking_controls
+
+    controls = thinking_controls(model_config)
+    return bool(controls and controls.get("depth"))
+
+
+def gguf_thinking_capable(model_config) -> bool:
+    """A gguf model thinks when its in-force template reads the thinking
+    switch. `supports_thinking` (read from the EMBEDDED template at
+    discovery) answers only when no template can be read."""
+    from heylook_llm.providers.contract import thinking_controls
+
+    controls = thinking_controls(model_config)
+    if controls is not None:
+        return controls.get("switch") is not None
+    return bool(getattr(model_config.config, "supports_thinking", None))
+
+
 def infer_model_capabilities(model_config, serves_vision: bool | None = None) -> list[str]:
     """Infer model capabilities from config when not explicitly set."""
     capabilities = []
@@ -231,38 +220,30 @@ def infer_model_capabilities(model_config, serves_vision: bool | None = None) ->
         ):
             capabilities.append("thinking_budget")
 
-        # Depth is probed PRECISELY here: the template file is readable, so
-        # emit the cap only when it actually reads reasoning_effort. Note this
-        # is NOT implied by thinking -- Qwen3.5 reads enable_thinking and not
-        # reasoning_effort, gpt-oss the reverse.
-        if getattr(config, "model_path", None) and template_supports_reasoning_effort(
-            str(config.model_path)
-        ):
+        # Depth: the in-force template offers a depth variable (plan W2's
+        # detection). NOT implied by thinking -- Qwen3.5 has a switch and no
+        # depth, gpt-oss the reverse.
+        if _has_depth(model_config):
             capabilities.append("reasoning_effort")
 
-    # GGUF via llama-server subprocess. Capabilities come from the entry's
-    # own description (mmproj sidecar / modalities / explicit thinking flag)
-    # -- no template probing (the template lives inside GGUF metadata). The
-    # explicit ModelConfig.capabilities override short-circuits this entirely.
+    # GGUF via llama-server subprocess. Thinking and depth come from the
+    # IN-FORCE template (plan W2), which is not always the embedded one
+    # `supports_thinking` was read from at discovery: an override or a
+    # sidecar beside the weights wins at spawn. The explicit
+    # ModelConfig.capabilities override short-circuits this entirely.
     elif provider == "gguf":
         capabilities.append("chat")
         modalities = getattr(config, "modalities", None) or []
         if getattr(config, "mmproj_path", None) or "vision" in modalities:
             capabilities.append("vision")
-        # Depth on gguf rides supports_thinking, which is BEST-EFFORT rather
-        # than probed: the template lives inside GGUF metadata, so there is no
-        # cheap file to scan the way the MLX branch does. A thinking-capable
-        # GGUF whose template ignores reasoning_effort therefore shows the
-        # control and the kwarg goes unread -- the alternative was hiding it on
-        # Qwen3.8, the model the knob exists for.
-        if getattr(config, "supports_thinking", False):
+        if _has_depth(model_config):
             capabilities.append("reasoning_effort")
         if "audio" in modalities:
             # gguf only: MLX strips audio towers at load, so the mlx branch
             # above must never emit this cap even when the model declares
             # the modality.
             capabilities.append("audio")
-        if getattr(config, "supports_thinking", None):
+        if gguf_thinking_capable(model_config):
             capabilities.append("thinking")
             # llama-server's reasoning budget, applied where it found the
             # template's thinking end tags (its own analysis; not visible

@@ -153,7 +153,17 @@ def describe_static(model_id: str, cfg: dict, config_obj: Any, *,
         ),
         template=_template(model_id, cfg),
         settings=settings,
+        thinking=_thinking(model_id, cfg),
     )
+
+
+def _thinking(model_id: str, cfg: dict):
+    """The in-force template's thinking controls (plan W2): rendered from
+    the template, never listed. Null when there is no template to judge."""
+    from heylook_llm import chat_template_files
+    from heylook_llm.thinking_controls import detect
+
+    return detect(chat_template_files.view(model_id, "gguf", cfg).template)
 
 
 _KIND_LABEL = {

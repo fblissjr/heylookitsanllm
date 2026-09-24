@@ -482,3 +482,25 @@ class TestUsageIsAnthropicShaped:
         assert deltas, "no message_delta on the stream"
         usage = deltas[-1]["usage"]
         assert (usage["input_tokens"], usage["cache_read_input_tokens"]) == (40, 60)
+
+
+def test_an_unoffered_thinking_depth_is_a_400_before_any_stream(client, monkeypatch):
+    """Plan W2: the model's own template decides which depths exist. A value
+    it does not offer is refused through the route, as a 400 and before a
+    streaming 200 -- llama-server would answer the raised jinja exception
+    with a 500 mid-stream, and a template that ignores unknown values would
+    run silently at its default. The refusal names the model's values."""
+    from pathlib import Path
+
+    import heylook_llm.providers.contract as contract
+    from heylook_llm.thinking_controls import detect
+
+    body = (Path(__file__).resolve().parents[1] / "fixtures" / "chat_templates"
+            / "qwen3_8_official.jinja").read_text()
+    monkeypatch.setattr(contract, "thinking_controls", lambda mc: detect(body))
+    req = {"model": "test-mlx-model", "messages": [{"role": "user", "content": "hi"}],
+           "max_tokens": 8, "stream": True}
+    r = client.post("/v1/messages", json={**req, "reasoning_effort": "high"})
+    assert r.status_code == 400 and "xhigh, medium, low" in r.text, r.text[:200]
+    r = client.post("/v1/messages", json={**req, "reasoning_effort": "medium"})
+    assert r.status_code == 200

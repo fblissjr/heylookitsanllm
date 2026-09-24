@@ -22,20 +22,11 @@ export const PARAM_META = {
   // the server had already decided -- and there was no way to ask for OFF.
   enable_thinking:         { label: 'Thinking', type: 'tristate', section: 'advanced', requiresCap: 'thinking',
                              defaultLabel: 'Model default', onLabel: 'On', offLabel: 'Off' },
-  // Thinking DEPTH, only meaningful with thinking on. The accepted set is
-  // per-model (Qwen3.8 takes xhigh/medium/low and RAISES otherwise; harmony
-  // models take low/medium/high), so this offers the union and the backend
-  // rejects a value the request schema does not know. 'auto' = send nothing,
-  // leaving the template's own default -- xhigh on Qwen3.8, which is why the
-  // control exists at all.
-  // The offered list is the UNION across model families, so a value valid for
-  // one model reaches another's chat template and is rejected there -- for a
-  // gguf model a raised jinja exception comes back as a 500. The backend
-  // cannot narrow this per model (the accepted set lives in the template, and
-  // for gguf inside the GGUF's own metadata), so the honest move is to say so
-  // here rather than to imply every value works everywhere.
-  reasoning_effort:        { label: 'Thinking depth', type: 'select', options: ['low', 'medium', 'high', 'xhigh'], section: 'advanced', requiresCap: 'reasoning_effort',
-                             note: 'Accepted values differ by model — a rejected one fails the request. "auto" always works.' },
+  // Thinking DEPTH (plan W2): no list of levels lives here. The options are
+  // the CURRENT model's own values, detected from its chat template and read
+  // off the model row (`engine.thinking.depth`), in the template's spelling.
+  // 'auto' = send nothing, the template's own default.
+  reasoning_effort:        { label: 'Thinking depth', type: 'depth', section: 'advanced', requiresCap: 'reasoning_effort' },
   // A hard cap on thinking tokens (plan W7), enforced by the engine: past it
   // the thinking block is forced shut and the reply continues. Offered only
   // where the engine can close the model's thinking format. Empty = no cap.
@@ -61,6 +52,9 @@ function valid(key, v) {
   if (meta.type === 'number') return typeof v === 'number' && Number.isFinite(v);
   if (meta.type === 'tristate') return v === true || v === false;
   if (meta.type === 'select') return meta.options.includes(v);
+  // Validity of a depth VALUE is per model (depthOffered); stored here is any
+  // bounded word, so a value from another model survives to be restored.
+  if (meta.type === 'depth') return typeof v === 'string' && /^[A-Za-z0-9_-]{1,32}$/.test(v);
   if (meta.type === 'checkbox') return typeof v === 'boolean';
   return true;
 }
@@ -181,7 +175,7 @@ export function applySettings(params, { silent = false } = {}) {
 // every request to an incapable one invisibly ("pinned") until Reset.
 // The cache itself is untouched: switch back to a capable model and the
 // value (and its control) return.
-export function samplerParams(caps = null) {
+export function samplerParams(caps = null, thinking = null) {
   const out = snapshotSettings();
   if (!(out.top_k > 0)) delete out.top_k;
   if (!(out.presence_penalty > 0)) delete out.presence_penalty;
@@ -190,15 +184,34 @@ export function samplerParams(caps = null) {
       if (meta.requiresCap && !caps.includes(meta.requiresCap)) delete out[key];
     }
   }
+  // The same drop for a VALUE (plan W2): a depth this model does not offer
+  // (a preset saved on another model) is left off, and the model runs at its
+  // own default. The cache keeps it, so switching back restores it. The
+  // server applies the same rule to stored params and refuses an explicit one.
+  if (out.reasoning_effort !== undefined && !depthOffered(out.reasoning_effort, thinking)) {
+    delete out.reasoning_effort;
+  }
   return out;
+}
+
+// Whether `value` is a thinking depth the model offers, read off its
+// `engine.thinking` (the server's thinking_controls.check_depth, mirrored).
+// Unknown controls (no row yet, no template to judge) accept: refusing on a
+// detection that never ran would drop a value the model may take.
+export function depthOffered(value, thinking) {
+  if (!thinking) return true;
+  const depth = thinking.depth;
+  if (!depth) return false;
+  if (depth.unknown === 'verbatim') return true;
+  return depth.values.includes(value) || Object.hasOwn(depth.aliases ?? {}, value);
 }
 
 // The same bag spelled for /v1/messages (Phase 3b): DERIVED from
 // samplerParams, never a second hand-written copy -- the one wire difference
 // is that Messages says `thinking` where the OpenAI wire said
 // `enable_thinking` (same tri-state: absent = the model's own default).
-export function messagesParams(caps = null) {
-  const { enable_thinking, thinking_budget_tokens, ...out } = samplerParams(caps);
+export function messagesParams(caps = null, thinking = null) {
+  const { enable_thinking, thinking_budget_tokens, ...out } = samplerParams(caps, thinking);
   if (thinking_budget_tokens !== undefined) {
     // The budget rides Anthropic's object form; an omitted `type` keeps the
     // model's own thinking default, as an absent bool would.
@@ -298,7 +311,8 @@ function defaultText(v) {
 // default comes from, and `enable_thinking` still answers from a different
 // source than the rest. (It also used to depend on the live thinking switch,
 // which is why the indirection exists at all -- see the lookup itself.)
-function bindControl(key, meta, lookup = () => null) {
+function bindControl(key, meta, lookup = () => null, thinking = null) {
+  if (meta.type === 'depth') return bindDepthControl(key, lookup, thinking);
   if (meta.type === 'tristate') {
     // The default option NAMES the value it stands for when the page knows
     // it (`modelDefaults[key]`, the admin row's thinking_default) -- a
@@ -352,6 +366,58 @@ function bindControl(key, meta, lookup = () => null) {
   return input;
 }
 
+// The thinking-depth control, built from the model's own values. A template
+// that pastes any word in (gpt-oss, Muse) gets a text box with its known
+// values as suggestions; every other template a select. A stored value this
+// model does not offer shows as a disabled option saying so (the wire filter
+// drops it), and an alias selects the spelling it stands for.
+function bindDepthControl(key, lookup, thinking) {
+  const depth = thinking?.depth ?? null;
+  const values = depth?.values ?? [];
+  const fallback = lookup(key) ?? depth?.default ?? null;
+  const autoLabel = fallback ? `auto (${fallback})` : 'auto (template default)';
+  const stored = cache[key] ?? null;
+  if (depth?.unknown === 'verbatim') {
+    const listId = `set-${key}-values`;
+    const input = createEl('input', {
+      id: `set-${key}`, class: 'input', type: 'text',
+      placeholder: autoLabel, value: stored ?? '', maxLength: 32,
+    });
+    // An attribute, not createEl's property path: HTMLInputElement.list is
+    // read-only, so assigning it is silently ignored.
+    input.setAttribute('list', listId);
+    // The suggestions ride beside the input (buildSettingsPanel places it);
+    // a <datalist> renders nothing itself.
+    input.suggestions = createEl('datalist', { id: listId },
+      values.map((v) => createEl('option', { value: v })));
+    input.addEventListener('change', () => {
+      const v = input.value.trim();
+      setSetting(key, v === '' ? null : v);
+    });
+    return input;
+  }
+  const canonical = stored === null ? '' : (depth?.aliases?.[stored] ?? stored);
+  const offered = stored === null || depthOffered(stored, thinking);
+  const sel = createEl('select', { id: `set-${key}`, class: 'input' }, [
+    createEl('option', { value: '' }, [autoLabel]),
+    ...values.map((v) => createEl('option', { value: v }, [v])),
+    offered ? null : createEl('option', { value: stored, disabled: true },
+      [`${stored} (not offered by this model)`]),
+  ]);
+  sel.value = offered ? canonical : stored;
+  sel.addEventListener('change', () => setSetting(key, sel.value || null));
+  return sel;
+}
+
+// A note for the depth row: where the depth enters the prompt decides what a
+// mid-conversation change costs (disclosed, never confirmed).
+function depthNote(thinking) {
+  if (thinking?.depth?.changes_prefix) {
+    return 'Changing it mid-conversation re-processes the whole conversation.';
+  }
+  return null;
+}
+
 // The panel's scope line, composed in ONE place so chat and notebook cannot
 // drift apart on the wording (they differ by a noun). `hasActive` is the
 // difference that actually matters to the reader: with a document open these
@@ -377,7 +443,7 @@ export function documentScopeNote(noun, hasActive) {
 // resolves an UNSET key to, keyed like PARAM_META (today: enable_thinking
 // from the admin row's thinking_default) -- read by the tri-state control.
 export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {},
-                                    samplerDefaults = null } = {}) {
+                                    samplerDefaults = null, thinking = null } = {}) {
   const rows = { core: [], advanced: [] };
   const controls = [];
 
@@ -396,7 +462,8 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
 
   for (const [key, meta] of Object.entries(PARAM_META)) {
     if (meta.requiresCap && !caps.includes(meta.requiresCap)) continue;
-    const control = bindControl(key, meta, lookup);
+    const control = bindControl(key, meta, lookup, thinking);
+    const note = meta.type === 'depth' ? depthNote(thinking) : meta.note;
     // Shown only while the key is overridden, so its presence IS the "you
     // changed this" signal and there is nothing extra on screen otherwise.
     // Not a hover reveal -- state, not pointer -- so DESIGN.md §7's
@@ -416,11 +483,11 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
     const row = createEl('div', { class: 'settings-row' }, [
       createEl('label', { for: `set-${key}` }, [
         meta.label,
-        meta.note ? createEl('span', { class: 'settings-row__note muted small' }, [meta.note]) : null,
+        note ? createEl('span', { class: 'settings-row__note muted small' }, [note]) : null,
       ]),
       // The control and its reset share ONE wrapper: .settings-row is a
       // two-child space-between flex row and a third child re-spaces it.
-      createEl('div', { class: 'settings-row__control' }, [control, reset]),
+      createEl('div', { class: 'settings-row__control' }, [control, control.suggestions ?? null, reset]),
     ]);
     const sync = () => {
       // DERIVED from samplerParams, not from `cache[key] != null`. The two
@@ -429,7 +496,7 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
       // typed 0 used to light the row accent and offer a reset for a value the
       // server never sees and never applies. Marking is a CLAIM about what the
       // model is running, so it has to be read off the thing that decides it.
-      const overridden = key in samplerParams(caps);
+      const overridden = key in samplerParams(caps, thinking);
       row.classList.toggle('settings-row--overridden', overridden);
       reset.classList.toggle('settings-row__reset--on', overridden);
     };

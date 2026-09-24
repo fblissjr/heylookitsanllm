@@ -146,6 +146,7 @@ export default createPage({
       onIndicator: (info) => { paintPresetChip(s.presetChip, info); paintSysPromptChip(ctx); },
       getStamp: () => s.appliedPresetId,
       setStamp: (id) => setAppliedPreset(ctx, id),
+      thinking: () => currentThinking(ctx),
     });
     // The chip needs preset names before the drawer's first lazy fetch.
     s.presetBar.refresh().then(() => { if (ctx.alive) s.presetBar.syncIndicator(); });
@@ -179,6 +180,7 @@ export default createPage({
       // default (on|off)". Null until the admin rows land.
       modelDefaults: () => ({ enable_thinking: currentThinkingDefault(ctx) }),
       samplerDefaults: () => currentModelRow(ctx)?.sampler_defaults ?? null,
+      thinking: () => currentThinking(ctx),
     });
     ctx.onTeardown(unregisterSettings);
 
@@ -830,6 +832,11 @@ function currentModelRow(ctx) {
   return s.models.find((m) => m.id === s.modelSelect.value) ?? null;
 }
 
+// The selected model's own thinking controls (plan W2), off its row.
+function currentThinking(ctx) {
+  return currentModelRow(ctx)?.engine?.thinking ?? null;
+}
+
 function currentThinkingDefault(ctx) {
   return currentModelRow(ctx)?.thinking_default ?? null;
 }
@@ -866,7 +873,7 @@ async function previewNextPrompt(ctx) {
     const body = await api.previewPrompt(s.activeId, {
       mode: 'append',
       user_content: draft || undefined,
-      overrides: { model: s.modelSelect.value, ...samplerParams(currentCaps(ctx)) },
+      overrides: { model: s.modelSelect.value, ...samplerParams(currentCaps(ctx), currentThinking(ctx)) },
     });
     if (!ctx.alive) return;
     paintPromptPreview(host, body, close);
@@ -1952,7 +1959,7 @@ function buildEditEl(ctx, msg) {
       try {
         const body = await api.previewPrompt(s.activeId, {
           ...shape, edits,
-          overrides: { model: s.modelSelect.value, ...samplerParams(currentCaps(ctx)) },
+          overrides: { model: s.modelSelect.value, ...samplerParams(currentCaps(ctx), currentThinking(ctx)) },
         });
         if (!ctx.alive) return;
         paintPromptPreview(previewHost, body, close);
@@ -3125,7 +3132,7 @@ function startStream(ctx, opts = {}) {
   // the debounced params PUT is FLUSHED first, because a CLEARED value is
   // expressed by absence and only the PUT can spell that (overrides
   // cannot un-set a stored key).
-  const overrides = { model: s.modelSelect.value, ...samplerParams(currentCaps(ctx)) };
+  const overrides = { model: s.modelSelect.value, ...samplerParams(currentCaps(ctx), currentThinking(ctx)) };
   const launch = () => streamGenerate(stream.targetConvId,
     { mode, message_id: messageId, overrides }, {
     signal: controller.signal,

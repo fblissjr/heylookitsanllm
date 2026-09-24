@@ -594,20 +594,18 @@ def audio_checks(server, r, arm, model_id, caps):
                 "gguf" in detail.lower(), f"detail: {detail[:200]}")
 
 
-def thinking_checks(server, r, arm, model_id, caps):
+def thinking_checks(server, r, arm, model_id, caps, thinking=None):
     """Thinking, and thinking DEPTH -- one feature, two mechanisms each.
 
-    Capability:  MLX probes the model's template FILE for `enable_thinking`;
-                 gguf rides the entry's `supports_thinking`, because the
-                 template lives inside GGUF metadata with nothing cheap to scan.
-    Depth:       MLX passes `reasoning_effort` as an apply_chat_template kwarg;
-                 gguf sends it in `chat_template_kwargs`.
+    Both are detected from the in-force template (plan W2) and reported on
+    the row as `engine.thinking`. Depth: MLX passes the template's own depth
+    variable as an apply_chat_template kwarg; gguf sends it in
+    `chat_template_kwargs`.
 
     What is checked is that a model ADVERTISING the capability ACCEPTS the
-    corresponding request. That pairing is the invariant worth holding: a
-    capability nothing honours is a control the UI shows and the model ignores,
-    and on gguf a value the template rejects is a raised jinja exception, which
-    llama-server returns as a 500.
+    corresponding request, with a value the MODEL ITSELF offers, and that a
+    value it does not offer is refused before any stream (a clean 400, where
+    llama-server would answer a raised jinja exception with a 500).
     """
     if "thinking" in caps:
         st, body = _messages_probe(server, model_id, "Name one colour.",
@@ -618,17 +616,21 @@ def thinking_checks(server, r, arm, model_id, caps):
         r.skip(f"{arm}: thinking capability", "this arm's model does not advertise thinking "
                                               "-- that mechanism is UNCOVERED on this arm")
 
-    if "reasoning_effort" in caps:
-        # "medium" is the one value in BOTH published sets (Qwen3.8 takes
-        # xhigh|medium|low, harmony low|medium|high) and the accepted set is
-        # PER MODEL -- a wrong-for-this-model value reaches the template, where
-        # llama-server turns a raised jinja exception into a 500. Picking the
-        # intersection is what keeps this a check about the MECHANISM rather
-        # than about one model's vocabulary.
+    depth = (thinking or {}).get("depth")
+    if "reasoning_effort" in caps and depth:
+        # A value from the model's OWN list: the accepted set is per model,
+        # read off the row rather than guessed.
+        value = (depth.get("values") or [depth.get("default") or "medium"])[-1]
         st, body = _messages_probe(server, model_id, "Name one colour.",
-                                   {"reasoning_effort": "medium"})
-        r.check(f"{arm}: a depth-capable model accepts reasoning_effort=medium",
+                                   {"reasoning_effort": value})
+        r.check(f"{arm}: a depth-capable model accepts a depth it offers ({value})",
                 st == 200, f"got {st}: {str(body)[:300]}")
+        if depth.get("unknown") != "verbatim":
+            st, body = _messages_probe(server, model_id, "Name one colour.",
+                                       {"reasoning_effort": "zz-not-offered"})
+            r.check(f"{arm}: a depth the model does not offer is a 400 naming its values",
+                    st == 400 and all(v in str(body) for v in depth.get("values") or []),
+                    f"got {st}: {str(body)[:300]}")
     else:
         r.skip(f"{arm}: thinking depth", "this arm's model does not advertise reasoning_effort "
                                          "-- that mechanism is UNCOVERED on this arm")
@@ -754,13 +756,15 @@ def arm_checks(server, r, arm, model_id, load_timeout):
 
     st, models = call(server, "GET", "/v1/models", timeout=30)
     caps = next((set(m.get("capabilities") or []) for m in models["data"] if m["id"] == model_id), set())
+    thinking = next(((m.get("engine") or {}).get("thinking") for m in models["data"]
+                     if m["id"] == model_id), None)
 
     # Phase 3 rows, before the lifecycle: they are cheap (one short
     # non-streaming request each) and they run on a model that is now loaded
     # and warm. A failure here says something about the ENGINE rather than
     # about the store, so it is worth knowing before the long checks.
     audio_checks(server, r, arm, model_id, caps)
-    thinking_checks(server, r, arm, model_id, caps)
+    thinking_checks(server, r, arm, model_id, caps, thinking)
     conformance_checks(server, r, arm, model_id, caps)
     cache_reuse_checks(server, r, arm, model_id, caps)
 

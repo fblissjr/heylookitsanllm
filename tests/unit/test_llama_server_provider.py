@@ -1135,12 +1135,23 @@ class TestReasoningEffort:
                            reasoning_effort="low", max_tokens=32)["chat_template_kwargs"]
         assert kw["reasoning_effort"] == "low"
 
-    def test_a_typo_is_rejected_before_it_reaches_the_template(self):
-        # llama-server surfaces a raised jinja exception as a 500, so a bad
-        # value has to fail here where the error can name the field.
-        import pydantic
-        with pytest.raises(pydantic.ValidationError):
-            req(enable_thinking=True, reasoning_effort="xtreme")
+    def test_the_templates_own_list_decides_and_names_the_variable(self):
+        """Plan W2: a value the in-force template does not offer is refused
+        before it reaches llama-server (which answers a raised jinja
+        exception with a 500), and an offered one is sent under the
+        template's OWN variable name."""
+        from heylook_llm.providers.base import InvalidGenerationRequest
+
+        p = make_provider()
+        p.loaded_chat_template = (
+            "{% if reasoning_strength not in ['low', 'high'] %}"
+            "{{ raise_exception('bad') }}{% endif %}"
+            "Strength: {{ reasoning_strength | default('high') }}"
+            "{% for m in messages %}{{ m.content }}{% endfor %}")
+        with pytest.raises(InvalidGenerationRequest, match="low, high"):
+            p._build_payload(req(reasoning_effort="xtreme", max_tokens=32))
+        kw = p._build_payload(req(reasoning_effort="low", max_tokens=32))["chat_template_kwargs"]
+        assert kw["reasoning_strength"] == "low" and "reasoning_effort" not in kw
 
 
 # ---------------------------------------------------------------------------

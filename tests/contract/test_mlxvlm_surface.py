@@ -228,7 +228,7 @@ class TestApplyChatTemplate:
         `vlm_apply_chat_template` (mlx_provider.py), which is what reaches
         `mlx_vlm.prompt_utils`. So this watches OUR call keeping its kwargs.
 
-        WHAT IT STILL DOES NOT COVER: `reasoning_effort` reaches mlx-vlm only
+        WHAT IT STILL DOES NOT COVER: the depth kwarg reaches mlx-vlm only
         through `**kwargs`, so the swallow case -- a library that quietly stops
         forwarding it to the template -- remains unpinned by anything here.
         """
@@ -243,8 +243,8 @@ class TestApplyChatTemplate:
             "vlm_inputs.py no longer passes num_images to the chat-template call "
             "as written -- a reformat here is a false alarm, a moved call is not"
         )
-        assert "reasoning_effort=reasoning_effort" in src, (
-            "vlm_inputs.py stopped forwarding reasoning_effort to the template"
+        assert "depth=depth" in src, (
+            "vlm_inputs.py stopped forwarding the thinking depth to the template"
         )
 
 

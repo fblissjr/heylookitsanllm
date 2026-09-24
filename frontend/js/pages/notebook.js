@@ -58,6 +58,7 @@ export default createPage({
       onIndicator: (info) => paintPresetChip(s.presetChip, info),
       getStamp: () => s.appliedPresetId,
       setStamp: (id) => setAppliedPreset(ctx, id),
+      thinking: () => notebookThinking(ctx),
     });
     // The chip needs preset names before the drawer's first lazy fetch.
     s.presetBar.refresh().then(() => { if (ctx.alive) s.presetBar.syncIndicator(); });
@@ -82,6 +83,7 @@ export default createPage({
     // lead the panel.
     const unregisterSettings = drawer.registerSettings({
       caps: () => notebookCaps(ctx),
+      thinking: () => notebookThinking(ctx),
       // The tri-state thinking control labels "Model default" with the
       // server's answer, off the /v1/models row (v1.79.63).
       modelDefaults: () => ({
@@ -231,6 +233,11 @@ function buildSkeleton(ctx) {
 function fillModelSelect(ctx) {
   const s = ctx.state;
   fillOptions(s.modelSelect, s.models.map((m) => m.id));
+}
+
+// The selected model's own thinking controls (plan W2), off its row.
+function notebookThinking(ctx) {
+  return ctx.state.models.find((m) => m.id === ctx.state.modelSelect.value)?.engine?.thinking ?? null;
 }
 
 function notebookCaps(ctx) {
@@ -494,7 +501,7 @@ function startGenerate(ctx) {
     model: s.modelSelect.value,
     system: s.systemPrompt || undefined,
     messages: [{ role: 'user', content: head.trim() ? head : 'Continue writing.' }],
-    ...messagesParams(notebookCaps(ctx)),
+    ...messagesParams(notebookCaps(ctx), notebookThinking(ctx)),
   }, {
     signal: controller.signal,
     onToken: (_, full) => { gen.content = full; if (ctx.alive) s.paint(); },

@@ -802,20 +802,23 @@ LOAD, so a successful write still needs a reload; that is what `stale` says.
 Harnesses: this writes a real file into the model directory, so an E2E check must point
 the model at a temp dir or intercept the PUT.
 
-`ChatRequest.reasoning_effort` (v1.71.0) is thinking DEPTH: `low|medium|high|xhigh`,
-sent as a chat-template kwarg beside `enable_thinking` and dropped when thinking is off
-(every template that reads it reads it inside its thinking branch). The accepted set is
-MODEL-SPECIFIC — Qwen3.8 takes `xhigh|medium|low` and raises on anything else, harmony
-models take `low|medium|high` — so the schema Literal is their union and a value this
-model rejects surfaces as a template error. Absent = don't send the kwarg, leaving the
-template's own default (`xhigh` on Qwen3.8, which is why the control exists). v3 renders
-it as a `reasoning_effort`-gated select in the sampler panel; `samplerParams(caps)` drops
-it at the wire for models without the capability, like every other gated key. That
-capability is NOT implied by `thinking`: MLX probes the template file directly (precise),
-while gguf rides `supports_thinking` because the template lives inside GGUF metadata with
-no cheap file to scan (best-effort — a thinking-capable GGUF whose template ignores the
-variable shows the control and the kwarg goes unread). Sent whenever set, NOT gated on
-thinking being on: harmony reads it unconditionally and has no enable_thinking at all.
+`ChatRequest.reasoning_effort` is thinking DEPTH (v2.0.95, plan W2): a bounded word in the
+MODEL's own template spelling. The server renders the in-force template to find its
+controls and reports them as `engine.thinking` on every model row:
+`{switch: "enable_thinking"|null, depth: {variable, values, aliases, default,
+unknown: "raises"|"ignored"|"verbatim"|"fallback", changes_prefix} | null}` — or null when
+there is no template to judge. `values` are the distinct choices in template order;
+`aliases` map other accepted spellings to them; `unknown: "verbatim"` means the template
+pastes any word in (gpt-oss, Muse), so any value is accepted. The value is sent under the
+template's OWN variable (`depth.variable`: Muse's `reasoning_strength`, MiniMax's
+`thinking_mode`), whenever set and never gated on thinking being on. A value the model
+does not offer is a **400 before any stream** on `/v1/messages`; the conversation generate
+route drops it from stored params instead (the model runs at its default), as
+`samplerParams(caps, thinking)` does client-side. The `reasoning_effort` capability means
+`engine.thinking.depth` is non-null. v3's control is built from `depth` (a select, or a
+text box with suggestions for a verbatim template); a stored value the model does not
+offer shows as a disabled "(not offered by this model)" option, and `changes_prefix`
+adds the note that changing it mid-conversation re-processes the conversation.
 
 **Models list** `GET /v1/models` → `{data:[{id,provider?,capabilities?,modalities?,thinking_default?,sampler_defaults?,engine?}]}` (enabled models only; `engine` is the contract described under Admin models). `modalities` (v1.34.43) is the model's declared capability set (`["text","vision","audio","video"]`); `capabilities` stays gated to what the server actually serves (image input) -- description != served. Since v1.79.43 the MLX `vision` capability is DERIVED FROM THE LOADER ROUTER (`effective_loader == "mlx-vlm"`), the same answer `MLXProvider`'s image guard reads, so the advertised capability and the 400 cannot disagree. Before that it read the checkpoint's DECLARATION, and a hand-made text-only variant whose directory still carried vision blocks advertised `vision` and was then refused -- a client gating on `capabilities` exactly as this spec instructs got the refusal anyway. (The `loader` field that could force a dual-capable VLM to text was retired in v2.0.88.) NB `modalities` is UNCHANGED by this: the checkpoint still declares what it declares, which is why chat's history-media drop disclosure reads capabilities and not modalities. `thinking` (v1.34.60) is auto-detected from whether the model's chat template references `enable_thinking` (Qwen3 `<think>` blocks, gemma-4 thought channels) -- no `models.toml` flag needed; this is what shows/hides the drawer checkbox and composer icon.
 **Metrics** `GET /v1/system/metrics?force_refresh?` → `{system:{ram_used_gb,ram_available_gb,ram_total_gb,

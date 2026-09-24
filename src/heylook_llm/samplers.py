@@ -81,7 +81,8 @@ REQUEST_SAMPLER_FIELDS = EFFECTIVE_SAMPLER_KEYS + ('seed', 'thinking_budget_toke
 
 def resolve_effective_sampling(request: Any, model_config: dict,
                                vendor: dict | None = None, *,
-                               thinking_capable: bool = False) -> dict[str, Any]:
+                               thinking_capable: bool = False,
+                               thinking: dict | None = None) -> dict[str, Any]:
     """THE effective-request cascade, shared by every provider.
 
     ``thinking_capable`` is whether the MODEL can think at all (the same
@@ -109,6 +110,15 @@ def resolve_effective_sampling(request: Any, model_config: dict,
 
     Nothing is applied now that the model did not ask for: the values come
     from the model's own files, its models.toml entry, or the request.
+
+    ``thinking`` is the model's detected thinking controls
+    (``thinking_controls.detect``; plan W2), passed by the provider that
+    holds the template. The thinking DEPTH is checked against the model's own
+    values here, the one place both providers pass through: a requested value
+    the template does not offer raises ``InvalidGenerationRequest`` (a 400
+    instead of llama-server's 500, or of a value a template silently
+    ignores); a stored models.toml default it does not offer is dropped with
+    a warning, never a failure.
     """
     merged = dict(GLOBAL_SAMPLER_FLOOR)
     if vendor:
@@ -147,6 +157,18 @@ def resolve_effective_sampling(request: Any, model_config: dict,
         value = getattr(request, field, None)
         if value is not None:
             merged[field] = value
+
+    if thinking is not None and merged.get('reasoning_effort') is not None:
+        from heylook_llm.thinking_controls import check_depth
+
+        why = check_depth(merged['reasoning_effort'], thinking)
+        if why:
+            if getattr(request, 'reasoning_effort', None) is not None:
+                from heylook_llm.providers.base import InvalidGenerationRequest
+                raise InvalidGenerationRequest(why)
+            import logging
+            logging.warning("stored reasoning_effort not sent: %s", why)
+            merged.pop('reasoning_effort')
     return merged
 
 

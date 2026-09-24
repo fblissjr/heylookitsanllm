@@ -71,7 +71,7 @@
 
 import { createEl, armedConfirm } from './utils.js';
 import { api } from './api.js';
-import { applySettings, snapshotSettings, PARAM_META, onSettingsChange } from './settings.js';
+import { applySettings, snapshotSettings, PARAM_META, onSettingsChange, depthOffered } from './settings.js';
 import * as drawer from './settings-drawer.js';
 
 // adapter = {
@@ -87,7 +87,18 @@ import * as drawer from './settings-drawer.js';
 //   setStamp?(id|null): void         -- persist it (the page owns the write,
 //                                       same division as setPrompt)
 // }
-export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, onIndicator, getStamp, setStamp }) {
+// A preset keeps the depth it was saved with (plan W2: a value means what
+// THAT template says, so nothing is translated). Applied on a model that
+// does not offer it, the value stays stored and is left off the wire; say so.
+function depthDisclosure(value, thinking) {
+  if (!value || depthOffered(value, thinking)) return '';
+  const fallback = thinking?.depth?.default;
+  return ` Its thinking depth "${value}" isn't offered by this model, so the model's `
+    + (fallback ? `default (${fallback}) is used.` : 'own default is used.');
+}
+
+export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, onIndicator, getStamp, setStamp,
+                                       thinking = () => null }) {
   let presets = [];
   // Select-box state only -- applying copies, it never binds. THREE states,
   // not two: `undefined` = no explicit pick yet, so the select FOLLOWS the
@@ -451,9 +462,10 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
       const incoming = presetPrompt(preset);
       if (incoming) setPrompt(incoming);
       if (docId?.()) setStamp?.(preset.id);
-      onStatus(incoming
+      onStatus((incoming
         ? `Preset "${preset.name}" applied.`
-        : `Preset "${preset.name}" applied — it carries no system prompt, so this one is unchanged.`);
+        : `Preset "${preset.name}" applied — it carries no system prompt, so this one is unchanged.`)
+        + depthDisclosure(preset.params?.reasoning_effort, thinking()));
     }
     // Force: the Apply button lives in the drawer, so the focus guard would
     // otherwise skip the repaint that shows the applied values.

@@ -1,5 +1,5 @@
 # src/heylook_llm/config.py
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 # Default API port. 8000 is the OpenAI-compatible-server convention
 # (uvicorn/FastAPI/vLLM), chosen for familiarity over uniqueness -- it CAN
@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 # with GET /props. One source of truth for server.py argparse,
 # service_manager install defaults, and the OpenAPI servers entry.
 DEFAULT_PORT = 8000
-from typing import Any, ClassVar, List, Literal, Optional, Union, Dict
+from typing import Annotated, Any, ClassVar, List, Literal, Optional, Union, Dict
 
 class ImageUrl(BaseModel):
     url: str
@@ -54,12 +54,13 @@ class ChatMessage(BaseModel):
     tool_call_id: Optional[str] = None
     tool_calls: Optional[List[Dict]] = None
 
-# Thinking-depth vocabulary, declared ONCE. The union of the families that
-# read it: Qwen3.8 takes xhigh|medium|low, harmony takes low|medium|high. It
-# WILL grow (vendors keep inventing spellings), and three separate Literals
-# would let the request schema and the model-config schema drift apart -- a
-# value requests accept and PATCH 422s on.
-ReasoningEffort = Literal["low", "medium", "high", "xhigh"]
+# Thinking depth on the wire: a bounded word, not a list of levels (plan W2,
+# owner rule: no hardcoded levels). What a model accepts is its template's
+# own list (thinking_controls.detect), checked in the sampler cascade. The
+# bound only keeps the value a word; declared ONCE so the request and the
+# model-config schemas cannot drift apart.
+ThinkingDepth = Annotated[str, StringConstraints(min_length=1, max_length=32,
+                                                 pattern=r"^[A-Za-z0-9_-]+$")]
 
 
 class ChatRequest(BaseModel):
@@ -81,23 +82,15 @@ class ChatRequest(BaseModel):
 
     # Thinking mode control (Qwen3 models)
     enable_thinking: Optional[bool] = Field(default=None, description="Enable thinking mode for Qwen3 models")
-    # Depth of thinking, when thinking is on. A chat-template variable like
-    # enable_thinking, not a sampler knob -- the template turns it into a
-    # system-prompt instruction (Qwen3.8) or a harmony channel setting.
-    #
-    # The ACCEPTED SET IS PER MODEL and this Literal is their union: Qwen3.8
-    # takes xhigh/medium/low and RAISES on anything else, the harmony family
-    # takes low/medium/high. Constrained rather than free-form so a typo is a
-    # 422 here; an unsupported-but-spelled-correctly value still reaches the
-    # template, and llama-server surfaces a raised jinja exception as a 500.
-    # Absent = don't pass the kwarg at all, so the template's own default
-    # applies (xhigh on Qwen3.8).
-    reasoning_effort: Optional[ReasoningEffort] = Field(
+    # Depth of thinking: a chat-template variable like enable_thinking, not a
+    # sampler knob. The value is the model's own spelling
+    # (thinking_controls.detect, plan W2) and is sent under the template's
+    # own variable name; the cascade refuses one the model does not offer.
+    reasoning_effort: Optional[ThinkingDepth] = Field(
         default=None,
-        description="Thinking depth when thinking is on. Valid values are "
-                    "MODEL-SPECIFIC (Qwen3.8: xhigh|medium|low; harmony "
-                    "models: low|medium|high). Absent = the template's own "
-                    "default.",
+        description="Thinking depth, in the model's own template spelling "
+                    "(engine.thinking.depth.values). Absent = the template's "
+                    "own default.",
     )
 
     # A hard cap on thinking tokens (plan W7). Enforced by the ENGINE, not by
@@ -491,17 +484,15 @@ class MLXModelConfig(BaseModel):
         json_schema_extra={"effect": EFFECT_PER_REQUEST})
     # Model-level default for the request field of the same name. Per-request
     # because it is a template variable resolved at prompt-build time.
-    reasoning_effort: Optional[ReasoningEffort] = Field(
+    reasoning_effort: Optional[ThinkingDepth] = Field(
         default=None,
         description=(
-            "Per-model thinking DEPTH default. A CHAT-TEMPLATE VARIABLE, not "
-            "a sampler knob, and sent whenever set rather than gated on "
-            "enable_thinking -- gpt-oss/harmony reads it unconditionally and "
-            "has no enable_thinking at all. The accepted set is PER MODEL "
-            "(Qwen3.8 takes xhigh|medium|low and raises otherwise; harmony "
-            "takes low|medium|high), so the type here is their union and a "
-            "wrong-for-this-model value reaches the template. Unset = send "
-            "nothing, leaving the template's own default."),
+            "Per-model thinking DEPTH default, in this model's own template "
+            "spelling (engine.thinking.depth.values). A chat-template "
+            "variable, not a sampler knob, sent under the template's own "
+            "variable name whenever set -- gpt-oss/harmony reads depth with "
+            "no enable_thinking at all. A value the template does not offer "
+            "is not sent (logged). Unset = the template's own default."),
         json_schema_extra={"effect": EFFECT_PER_REQUEST})
     # NOTE: no supports_thinking here (removed v1.46.0) -- MLX thinking
     # capability is DERIVED (template probe / enable_thinking / the explicit
@@ -1130,13 +1121,12 @@ class GGUFModelConfig(BaseModel):
     supports_thinking: Optional[bool] = Field(
         default=None,
         description=(
-            "Whether this model's template does thinking. DESCRIPTIVE: it "
-            "changes what the server advertises, not what the process does. "
-            "Import fills it from the GGUF's embedded template; unset = no "
-            "template to judge, e.g. an MTP/drafter head. gguf carries this "
-            "flag where MLX does not because the template lives inside GGUF "
-            "metadata, with nothing cheap to probe -- on MLX the same fact is "
-            "derived from the template file."),
+            "Whether this model does thinking, used ONLY when no template can "
+            "be read. Since v2.0.95 the thinking capability comes from the "
+            "IN-FORCE template (engine.thinking.switch), which an override or "
+            "a sidecar can change after discovery filled this from the "
+            "embedded one. DESCRIPTIVE: it changes what is advertised, not "
+            "what the process does."),
         json_schema_extra={"effect": EFFECT_DESCRIPTIVE})
     modalities: Optional[List[str]] = Field(
         default=None,
@@ -1186,18 +1176,16 @@ class GGUFModelConfig(BaseModel):
             "reply."),
         json_schema_extra={"effect": EFFECT_PER_REQUEST})
     # Model-level default thinking DEPTH, mirroring the MLX config's field of
-    # the same name. Reaches llama-server as a chat_template_kwargs entry, so
-    # the accepted set is whatever THIS model's embedded template accepts --
-    # see ChatRequest.reasoning_effort for why the Literal is a union.
-    reasoning_effort: Optional[ReasoningEffort] = Field(
+    # the same name.
+    reasoning_effort: Optional[ThinkingDepth] = Field(
         default=None,
         description=(
             "Per-model thinking DEPTH default, mirroring the MLX field of the "
-            "same name. Reaches llama-server as a chat_template_kwargs entry, "
-            "so the accepted set is whatever THIS model's embedded template "
-            "accepts -- and a value it rejects becomes a raised jinja "
-            "exception, which llama-server returns as a 500. Unset = send "
-            "nothing, leaving the template's own default."),
+            "same name: this model's own template spelling "
+            "(engine.thinking.depth.values), sent as a chat_template_kwargs "
+            "entry under the template's own variable name. A value the "
+            "template does not offer is not sent (logged), so it can never "
+            "become llama-server's 500. Unset = the template's own default."),
         json_schema_extra={"effect": EFFECT_PER_REQUEST})
 
     # llama-server's default logical batch, the ceiling n_ubatch is clamped to

@@ -51,6 +51,7 @@ from typing import Dict, Generator, Optional
 from .. import observability, ram_fit
 from ..config import ChatRequest, GGUFModelConfig
 from ..samplers import GLOBAL_SAMPLER_FLOOR, resolve_effective_sampling
+from ..thinking_controls import depth_variable, detect as detect_thinking
 from .common.generation_gate import GenerationCancelled, get_process_gate
 # ONE filename for both engines, imported rather than re-spelled -- a second
 # copy of a literal filename is a second place for the editor to write
@@ -1307,6 +1308,23 @@ class LlamaServerProvider(BaseProvider):
                 Path(str(self.config.get("model_path") or "")))
         return self._vendor_sampling
 
+    @property
+    def thinking_controls(self) -> Optional[dict]:
+        """The thinking controls of the template this process spawned with
+        (plan W2), or None before a spawn or when it has no template."""
+        return detect_thinking(getattr(self, "loaded_chat_template", None))
+
+    @property
+    def thinking_capable(self) -> bool:
+        """The served ``thinking`` capability, from the template in force:
+        it reads the thinking switch. ``supports_thinking`` (read from the
+        EMBEDDED template at discovery) answers only when no template is
+        known -- the same rule capabilities.gguf_thinking_capable reports."""
+        controls = self.thinking_controls
+        if controls is not None:
+            return controls.get("switch") is not None
+        return bool(self.config.get("supports_thinking"))
+
     def _build_payload(self, request: ChatRequest) -> dict:
         # The shared cascade (samplers.resolve_effective_sampling) -- ONE
         # implementation with MLX, not a mirror. The vendor layer comes from
@@ -1317,7 +1335,8 @@ class LlamaServerProvider(BaseProvider):
         # below by _PAYLOAD_KEY_MAP.
         merged = resolve_effective_sampling(
             request, self.config, vendor=self._vendor_defaults(),
-            thinking_capable=self.thinking_capable)
+            thinking_capable=self.thinking_capable,
+            thinking=self.thinking_controls)
 
         payload = {
             "model": self.model_id,
@@ -1351,7 +1370,8 @@ class LlamaServerProvider(BaseProvider):
         # and bought nothing.
         reasoning_effort = merged.get("reasoning_effort")
         if reasoning_effort:
-            template_kwargs["reasoning_effort"] = str(reasoning_effort)
+            # Named by the in-force template's own depth variable (plan W2).
+            template_kwargs[depth_variable(self.thinking_controls)] = str(reasoning_effort)
         if template_kwargs:
             payload["chat_template_kwargs"] = template_kwargs
         return payload

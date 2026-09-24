@@ -21,6 +21,7 @@ from .base import BaseProvider, CacheReport, GenerationChunk, GenerationFailed, 
 # (the llama-server provider applies the same floor).
 from ..capabilities import model_context_length
 from ..samplers import GLOBAL_SAMPLER_FLOOR, load_vendor_sampling, resolve_effective_sampling
+from ..thinking_controls import detect as detect_thinking
 from .common.samplers import build as build_sampler
 from .common.vlm_inputs import (
     carry_message_extras, continue_from_generation_prompt, thinking_for_template)
@@ -116,6 +117,18 @@ def _resolve_enable_thinking(effective_request: dict) -> bool:
     return bool(effective_request.get("enable_thinking"))
 
 
+def _depth_kwargs(effective_request: dict, template_info) -> dict | None:
+    """``{variable: value}`` for the requested depth, named by the in-force
+    template's own depth variable (plan W2: Muse's reasoning_strength,
+    MiniMax's thinking_mode, ...). None when no depth is set."""
+    from ..thinking_controls import depth_variable, detect
+
+    value = effective_request.get("reasoning_effort")
+    if not value:
+        return None
+    return {depth_variable(detect(getattr(template_info, "chat_template", None))): value}
+
+
 def _thinking_budget_criteria(request: ChatRequest, effective_request: dict,
                               template_info, tokenizer):
     """mlx-vlm's ThinkingBudgetCriteria for this request, or None (plan W7).
@@ -202,7 +215,7 @@ def _append_thinking_resume(prompt: str, thinking: str, template_info) -> str:
     return prompt + opener + thinking.lstrip()
 
 
-def _apply_chat_template(tokenizer, messages, *, enable_thinking, reasoning_effort,
+def _apply_chat_template(tokenizer, messages, *, enable_thinking, depth,
                          continuing: bool, model_id=None):
     """Render ``messages`` through the tokenizer's chat template -- the ONE
     place that builds the kwargs and maps the failures, for the text path and
@@ -216,9 +229,10 @@ def _apply_chat_template(tokenizer, messages, *, enable_thinking, reasoning_effo
     with no template in it, handed to the model as if nothing had happened.
 
     ``enable_thinking`` None = omit the key (the template's own default);
-    a bool is always sent. Both engines' callers pass a bool in practice, and
-    that matters on the mlx-lm side: ``TokenizerWrapper.apply_chat_template``
-    injects ``enable_thinking=True`` when the kwarg is ABSENT.
+    a bool is always sent.
+
+    ``depth`` is ``{variable: value}`` for the template's own depth variable
+    (``_depth_kwargs``; plan W2), or None to send nothing.
 
     ``continuing`` leaves the final message's turn OPEN so generation finishes
     it. transformers refuses ``continue_final_message`` together with
@@ -232,14 +246,14 @@ def _apply_chat_template(tokenizer, messages, *, enable_thinking, reasoning_effo
 
     # Deliberately NOT in base_kwargs: the TypeError retry below re-passes
     # base_kwargs verbatim and drops only what is spelled out here, so a
-    # wrapper with a narrow signature must be able to lose reasoning_effort the
-    # same way it loses enable_thinking. In base_kwargs it would survive the
-    # retry and fail it again. It is sent WHENEVER SET, never gated on
+    # wrapper with a narrow signature must be able to lose the depth variable
+    # the same way it loses enable_thinking. In base_kwargs it would survive
+    # the retry and fail it again. It is sent WHENEVER SET, never gated on
     # thinking: gpt-oss/harmony reads it unconditionally and has no
     # enable_thinking at all.
     template_kwargs: dict = {} if enable_thinking is None else {"enable_thinking": enable_thinking}
-    if reasoning_effort:
-        template_kwargs["reasoning_effort"] = reasoning_effort
+    if depth:
+        template_kwargs.update(depth)
 
     try:
         try:
@@ -277,7 +291,7 @@ def _apply_chat_template(tokenizer, messages, *, enable_thinking, reasoning_effo
 
 
 def vlm_apply_chat_template(processor, config, messages, num_images=None, enable_thinking=None,
-                            reasoning_effort=None,
+                            depth=None,
                             continue_final_message=False, model_id=None):
     """
     Apply chat template using mlx-vlm's prompt_utils.
@@ -345,7 +359,7 @@ def vlm_apply_chat_template(processor, config, messages, num_images=None, enable
     # shapes.)
     return _apply_chat_template(
         tokenizer, formatted_messages, enable_thinking=enable_thinking,
-        reasoning_effort=reasoning_effort, continuing=continue_final_message,
+        depth=depth, continuing=continue_final_message,
         model_id=model_id)
 
 
@@ -481,19 +495,19 @@ class UnifiedTextStrategy:
         enable_thinking = _resolve_enable_thinking(effective_request)
         if resume_thinking is not None:
             enable_thinking = True
-        reasoning_effort = effective_request.get("reasoning_effort")
+        depth = _depth_kwargs(effective_request, self.template_info)
 
         def render(msgs, cont):
             if self.is_vlm:
                 return vlm_apply_chat_template(
                     processor, model.config, msgs, num_images=0,
                     enable_thinking=enable_thinking,
-                    reasoning_effort=reasoning_effort,
+                    depth=depth,
                     continue_final_message=cont, model_id=self.model_id,
                 )
             return _apply_chat_template(
                 tokenizer, msgs, enable_thinking=enable_thinking,
-                reasoning_effort=reasoning_effort, continuing=cont,
+                depth=depth, continuing=cont,
                 model_id=self.model_id)
 
         prompt = render(messages, continuing)
@@ -613,7 +627,7 @@ class VLMVisionStrategy:
             request.messages[:-1] if resume is not None else request.messages,
             processor, model.config,
             enable_thinking=True if resume is not None else _resolve_enable_thinking(effective_request),
-            reasoning_effort=effective_request.get("reasoning_effort"),
+            depth=_depth_kwargs(effective_request, self.template_info),
             continue_final_message=request.is_continuation() and resume is None,
         )
         if resume is not None:
@@ -708,14 +722,14 @@ class VLMVisionStrategy:
         )
 
     def _prepare_vlm_inputs_parallel(self, messages: List, processor, config,
-                                     enable_thinking=None, reasoning_effort=None,
+                                     enable_thinking=None, depth=None,
                                      continue_final_message: bool = False) -> Tuple[List[Image.Image], str, bool, List[str]]:
         """Prepare VLM inputs with parallel image loading. Delegates to standalone function."""
         from .common.vlm_inputs import prepare_vlm_inputs_parallel
         return prepare_vlm_inputs_parallel(
             messages, processor, config, self._batch_vision_processor,
             vlm_apply_chat_template, enable_thinking=enable_thinking,
-            reasoning_effort=reasoning_effort, template_info=self.template_info,
+            depth=depth, template_info=self.template_info,
             continue_final_message=continue_final_message,
         )
 
@@ -789,7 +803,7 @@ class DiffusionStrategy:
             request.messages, processor, model.config, self._batch_vision_processor,
             vlm_apply_chat_template,
             enable_thinking=_resolve_enable_thinking(effective_request),
-            reasoning_effort=effective_request.get("reasoning_effort"),
+            depth=_depth_kwargs(effective_request, self.template_info),
             template_info=self.template_info,
         )
 
@@ -1286,7 +1300,9 @@ class MLXProvider(BaseProvider):
 
         merged_config = resolve_effective_sampling(
             request, self.config, vendor=self._vendor_sampling,
-            thinking_capable=self.thinking_capable)
+            thinking_capable=self.thinking_capable,
+            thinking=detect_thinking(getattr(getattr(self, "_template_info", None),
+                                             "chat_template", None)))
 
         # Cache + speculative-decoding fields tagged with
         # json_schema_extra={"is_runtime_default": True} on MLXModelConfig.

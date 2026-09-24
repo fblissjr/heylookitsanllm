@@ -271,7 +271,6 @@ class TestTemplateProbeCaching:
         import heylook_llm.providers.common.template_info as ti
 
         caps._template_supports_thinking.cache_clear()
-        caps._template_supports_reasoning_effort.cache_clear()
         real = ti.read_template_info
         calls = {"n": 0}
 
@@ -283,12 +282,6 @@ class TestTemplateProbeCaching:
             for _ in range(times):
                 probe(str(tmp_path))
         return calls["n"]
-
-    def test_reasoning_effort_probe_is_cached(self, tmp_path):
-        from heylook_llm.capabilities import template_supports_reasoning_effort
-
-        (tmp_path / "chat_template.jinja").write_text("{{ reasoning_effort }}")
-        assert self._probe_read_count(template_supports_reasoning_effort, tmp_path) == 1
 
     def test_thinking_probe_is_cached(self, tmp_path):
         from heylook_llm.capabilities import template_supports_thinking

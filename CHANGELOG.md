@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.95]
+
+### Changed (plan W2: thinking controls from the template)
+
+- **No list of thinking levels exists any more** (owner rule). The in-force
+  chat template is rendered to find its controls (`thinking_controls.detect`):
+  the thinking switch, and the depth variable with its values in the
+  template's own spellings, aliases, default, how it treats an unknown value
+  (`raises` / `ignored` / `verbatim` / `fallback`) and whether depth enters
+  the prompt before the first user turn. Reported as `engine.thinking` on
+  every model row (the W13 slot, until now null).
+- **`reasoning_effort` is now a bounded word, not the Literal
+  `low|medium|high|xhigh`**, on the request, the Messages wire and both model
+  configs. It is sent under the template's OWN variable name, which makes
+  Muse's `reasoning_strength` and MiniMax's `thinking_mode` reachable for the
+  first time, and DeepSeek's `max`.
+- **A depth the model does not offer is a 400 before any stream**, naming the
+  model's values (Qwen3.8's `high` was a llama-server 500; DeepSeek ignored
+  `low` silently). The shared sampler cascade checks it too; a stored
+  models.toml default it does not offer is dropped with a warning. The
+  conversation generate route and v3's `samplerParams` drop an unoffered
+  stored value instead, so a preset saved on one model runs another at that
+  model's default.
+- The `reasoning_effort` capability means a detected depth; gguf `thinking`
+  means a detected switch in the IN-FORCE template (an override or sidecar
+  can differ from the embedded template `supports_thinking` was read from,
+  which now answers only when no template can be read).
+- v3: the depth control is built from `engine.thinking.depth` (a select, or a
+  text box with suggestions for a template that pastes any word in). A
+  stored value the model does not offer shows as "(not offered by this
+  model)"; a preset applied on such a model says so in its status line; a
+  depth that sits at the top of the prompt notes that changing it
+  mid-conversation re-processes the conversation.
+- Smoke picks a depth each model offers and checks the 400 for one it does
+  not. Eight real templates are copied into `tests/fixtures/chat_templates/`
+  and pinned against the 2026-09-23 audit's by-hand reading.
+
+### Removed
+
+- `config.ReasoningEffort`, `ModelTemplateInfo.supports_reasoning_effort` and
+  the reasoning-effort template probe in `capabilities.py`.
+
 ## [2.0.94]
 
 ### Added (plan W3, first piece)

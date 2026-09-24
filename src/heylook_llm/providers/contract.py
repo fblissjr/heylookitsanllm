@@ -110,7 +110,12 @@ class EngineDescription(BaseModel):
         description="Cache profile (plan W5): how this model reuses a prompt "
                     "across requests, each fact with its provenance.")
     thinking: Optional[Dict[str, Any]] = Field(
-        default=None, description="Thinking controls (plan W2). Null until reported.")
+        default=None,
+        description="Thinking controls the in-force template offers (plan W2, "
+                    "thinking_controls.detect): {switch, depth: {variable, "
+                    "values, aliases, default, unknown, changes_prefix}}. "
+                    "Values are the template's own spellings. Null when there "
+                    "is no template to judge.")
     image: Optional[Dict[str, Any]] = Field(
         default=None, description="Image geometry (plan W4). Null until reported.")
     steering: Optional[Dict[str, Any]] = Field(
@@ -290,6 +295,35 @@ def _provenance_inputs(model_id: str, router: Any) -> tuple[bool, dict]:
     # Unknown (no router, or a stand-in without the attribute): read the
     # entry's keys against the schema defaults, as an entry-backed row.
     return True, derived
+
+
+_THINKING_CACHE: Dict[tuple, tuple] = {}
+
+
+def thinking_controls(model_config: Any) -> Optional[dict]:
+    """The model's thinking controls, for callers that need only those (the
+    capability report, the routes' pre-stream check). The same detection the
+    describers put on ``engine.thinking``, cached behind the describer's
+    stat-only stamp so a request never re-reads a template that has not
+    changed."""
+    from heylook_llm.capabilities import config_dict
+    from heylook_llm import chat_template_files
+    from heylook_llm.thinking_controls import detect
+
+    describer = _describers().get(model_config.provider)
+    if describer is None:
+        return None
+    cfg = config_dict(model_config.config)
+    key = (model_config.provider, model_config.id)
+    current = stamp(describer.static_inputs(model_config.id, cfg, True, {}))
+    with _STATIC_LOCK:
+        hit = _THINKING_CACHE.get(key)
+    if hit is not None and hit[0] == current:
+        return hit[1]
+    value = detect(chat_template_files.view(model_config.id, model_config.provider, cfg).template)
+    with _STATIC_LOCK:
+        _THINKING_CACHE[key] = (current, value)
+    return value
 
 
 def describe(model_config: Any, router: Any = None) -> EngineDescription:

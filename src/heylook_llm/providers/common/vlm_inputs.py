@@ -144,7 +144,7 @@ def prepare_vlm_inputs_parallel(
     batch_vision_processor,
     vlm_apply_chat_template_fn,
     enable_thinking=None,
-    reasoning_effort=None,
+    depth=None,
     template_info=None,
     continue_final_message: bool = False,
 ) -> Tuple[List[Image.Image], str, bool, List[str]]:
@@ -242,7 +242,7 @@ def prepare_vlm_inputs_parallel(
     formatted_prompt = vlm_apply_chat_template_fn(
         processor, config, safe_messages, num_images=len(images),
         enable_thinking=enable_thinking,
-        reasoning_effort=reasoning_effort,
+        depth=depth,
         continue_final_message=continue_final_message,
     )
     if continue_final_message:
@@ -252,7 +252,7 @@ def prepare_vlm_inputs_parallel(
             formatted_prompt, safe_messages,
             lambda msgs: vlm_apply_chat_template_fn(
                 processor, config, msgs, num_images=len(images),
-                enable_thinking=enable_thinking, reasoning_effort=reasoning_effort,
+                enable_thinking=enable_thinking, depth=depth,
                 continue_final_message=False))
 
     return images, formatted_prompt, has_images, image_urls

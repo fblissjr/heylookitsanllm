@@ -54,6 +54,8 @@ from starlette.background import BackgroundTask
 
 from heylook_llm import db
 from heylook_llm.capabilities import effective_capabilities
+from heylook_llm.providers.contract import thinking_controls
+from heylook_llm.thinking_controls import check_depth
 from heylook_llm.config import ChatMessage, ChatRequest
 from heylook_llm.db import get_db as _get_db
 from heylook_llm.messages_api import StreamingEventTranslator
@@ -341,7 +343,8 @@ def _wire_content(blocks: list[dict], caps: list[str], dropped: dict,
 
 def _build_chat_request(conv: dict, rows: list[dict], caps: list[str],
                         model_id: str, overrides: dict, *, continuing: bool,
-                        dropped: dict, media: dict[str, tuple[str, bytes]]) -> ChatRequest:
+                        dropped: dict, media: dict[str, tuple[str, bytes]],
+                        thinking: dict | None = None) -> ChatRequest:
     """The store IS the request: system prompt + sampler bag + rows."""
     messages: list[ChatMessage] = []
     if conv.get("system_prompt"):
@@ -365,6 +368,13 @@ def _build_chat_request(conv: dict, rows: list[dict], caps: list[str],
     for key, cap in _CAP_GATED.items():
         if cap not in caps:
             kwargs.pop(key, None)
+    # The VALUE twin of the gate above, and of v3's samplerParams (plan W2):
+    # a stored depth this model's template does not offer (a preset saved on
+    # another model) is left off, so the model runs at its own default. The
+    # document keeps the value; switching back restores it.
+    if kwargs.get("reasoning_effort") is not None and check_depth(
+            kwargs["reasoning_effort"], thinking):
+        kwargs.pop("reasoning_effort")
 
     return ChatRequest(
         model=model_id,
@@ -544,7 +554,8 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
         try:
             chat_request = _build_chat_request(
                 conv, prompt_rows, caps, model_id, body.overrides,
-                continuing=continue_row is not None, dropped=dropped, media=media)
+                continuing=continue_row is not None, dropped=dropped, media=media,
+                thinking=thinking_controls(model_config))
         except ValueError as e:  # referenced blob missing = store corruption
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -732,7 +743,8 @@ async def preview_prompt(conv_id: str, request: Request, body: PromptPreviewRequ
     try:
         chat_request = _build_chat_request(
             conv, prompt_rows, caps, model_id, body.overrides,
-            continuing=continue_row is not None, dropped=dropped, media=media)
+            continuing=continue_row is not None, dropped=dropped, media=media,
+            thinking=thinking_controls(model_config))
     except ValueError as e:
         raise HTTPException(status_code=500, detail=str(e))
 

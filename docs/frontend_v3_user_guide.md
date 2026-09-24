@@ -374,9 +374,16 @@ way the default falls for the selected model. The thinking button beside the
 composer shows the *effective* state and flips it explicitly. The Advanced
 group these live in is open by default.
 
-**Thinking depth** lists the union of what different model families accept, so
-a value one model takes another will reject. The control says so, and `auto`
-always works — it leaves the model's own default alone.
+**Thinking depth** lists the selected model's own choices, read from its chat
+template, in the template's own words. `auto` leaves the model's own default
+alone and names it. A template that takes any word (gpt-oss) gets a text box
+with its known values as suggestions. A value saved on another model (in a
+preset, say) stays saved but shows as "not offered by this model" and is not
+sent, so the model runs at its default; switching back restores it. Where the
+template puts depth at the top of the prompt, the control notes that changing
+it mid-conversation re-processes the whole conversation. Depth levels are
+instructions the model may overrun; the thinking budget below is what bounds
+length.
 
 **Thinking budget** is a hard cap on thinking tokens. Past it the engine
 forces the thinking block shut and the model goes on to answer. Depth levels
