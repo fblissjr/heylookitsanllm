@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.117]
+
+Documentation only.
+
+### Removed
+
+- The generic loop prompts and template in
+  `docs/prompts/optimizer_and_improvement_loops/` (`AGENTS.md`,
+  `generalized_improvement_loop.md`, `generalized_optimizer_loop.md`). The
+  improvement-loops plugin owns them, and these copies had already fallen
+  behind the installed 0.4.3. The two heylook prompts stay until
+  `docs/loops.md` holds everything in them.
+
+### Changed
+
+- `docs/loops.md`: improvement-loops 0.4.3 blocks tidying on a run folder it
+  did not write, so the profile no longer describes such a record as
+  invisible to the script.
+
 ## [2.0.116]
 
 ### Added

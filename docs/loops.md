@@ -103,7 +103,7 @@ Until then, the reuse scenarios under "Real path" are the working set. -->
 - Scoreboard rows carry heylook's conditions inside the script's fields: the template in force (hash and ladder rung), model id and file identity, quant, sampling and seed, cache state, mlx-vlm SHA, mlx version, llama.cpp build (`heylook-build.json`), chip and RAM, macOS version, power and thermal state.
 - `harness/` holds the scenario runner, the chart script and the scenarios as data. A scenario with scoreboard rows is frozen: add a new one instead of changing it. Retiring one is the owner's call. Once a scenario has tracked real use over several runs, propose moving it into `scripts/`.
 - `answers.md` is the owner's: read it every run when it exists, never edit it.
-- Records from before the script (a `runs/<id>/run.md`) are invisible to it. If one still says `running`, list it under "Needs from me" rather than tidying around it.
+- A run folder the script did not write (no `record.json`, such as a record from before the plugin) blocks tidying and shows in `status` (improvement-loops 0.4.3 and later). Clearing one is the owner's call; list it under "Needs from me".
 - A durable lesson goes where AGENTS.md says that kind of knowledge lives. A failure that will be fixed goes only in the run record.
 
 ## Lenses here

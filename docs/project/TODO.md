@@ -99,17 +99,17 @@ part of AGENTS.md.
 - [ ] **Fill Measurement with `/design-scoreboard`** (user-invoked): primary
   scenarios, guardrails and counter-checks for the reuse and
   time-to-first-token goal; then `/claim-audit` on `docs/loops.md`.
-- [ ] **Delete the duplicate prompts** with `/dangling-refs`: the generic
-  loop prompts and template in `docs/prompts/optimizer_and_improvement_loops/`
-  are byte-identical to the plugin's (the template differs by one comment);
-  the two heylook prompts go once everything in them lives in `docs/loops.md`.
+- [ ] **Delete the two heylook loop prompts** in
+  `docs/prompts/optimizer_and_improvement_loops/` once everything in them
+  lives in `docs/loops.md` (after `/design-scoreboard`). The generic prompts
+  and template went in v2.0.116: the plugin owns them, and the copies here had
+  already fallen behind it.
 - [ ] **Promote the loop's scenario runner** from
   `internal/claude/improve/harness/` into `scripts/` once it has tracked real
   use over several runs; `scripts/perf_ab.py` is the provider-level half.
-- [ ] **Plugin fix for old run records**: `loop_state.py` skips a run folder
-  without `record.json`, so a pre-plugin record still marked running can be
-  tidied over. Handoff: `internal/claude/handoff_loop_state_legacy_records_2026-09-24.md`
-  (for the fb-claude-skills session).
+- [ ] **Clear the pre-plugin run record** `internal/claude/improve/runs/2026-09-24/`
+  once that run is finished: since improvement-loops 0.4.3 a run folder
+  without `record.json` blocks tidying, so it stays in the way until cleared.
 
 ## e2e: audit for clicks or seeds before an async list lands (2026-09-23)
 
