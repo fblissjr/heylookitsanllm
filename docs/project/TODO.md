@@ -85,7 +85,7 @@ they ship. Read the plan before touching `model_registry.py`,
   (`observability_level`, `observability_retention_days`,
   `mlx_cache_limit_gb`) folded in (owner decision 2026-09-23). Rename the
   references in `.worktreeinclude` and `docs/loops.md` in the same change.
-- [ ] **Retire the `enabled` field and `watch_hf_cache`** (owner: presence in
+- [x] **Retire the `enabled` field and `watch_hf_cache`** (v2.0.118, v2.0.119; the periodic rescan and `/discovered` went with them) (owner: presence in
   a scan folder is enabled).
 - [ ] **Qwen3.8-Flash-Next's `MTP/` drafter**: a split-out head (no
   `token_embd.weight`) that the llama.cpp build cannot load. Its
