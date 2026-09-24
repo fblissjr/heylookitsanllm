@@ -1312,7 +1312,10 @@ found, each silent:
   (`install_capture_policy`: mlx-vlm's rule with its own count, plus the end
   of the system prompt), and `APC_CHECKPOINT_ENTRIES` is the store size alone,
   bounded first by the byte budget. `test_our_capture_rule_is_upstreams_with_its_own_count`
-  pins the copy to mlx-vlm's rule. Retention also broke an instrument's
+  pins the copy to mlx-vlm's rule. The system-prompt snapshot is stored first
+  and later turns restore from newer ones, so without `refresh_snapshots` it
+  aged out of the LRU after a few turns of one chat (found by the run's
+  review, confirmed live the same day). Retention also broke an instrument's
   premise: `chain_probe.py` made its "fresh" run fresh by sending one
   unrelated request, which no longer evicts anything, so it clears the cache
   instead and fails if a fresh run reports reuse.

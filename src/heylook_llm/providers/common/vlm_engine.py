@@ -115,6 +115,32 @@ def shared_prefix_len(prompt: list[int], prefixes: Iterable[list[int]]) -> list[
     return out
 
 
+def refresh_snapshots(apc_manager, prompt: list[int], boundaries: Iterable[int],
+                      extra_hash: int) -> None:
+    """Mark the snapshots at ``boundaries`` of this prompt as just used.
+
+    A request restores from the latest snapshot that matches, so a
+    conversation's later turns restore from the previous turn's end and never
+    touch the snapshot at the end of its system prompt. That one was stored
+    first, so it is the store's oldest entry and ages out after a few turns,
+    and the next new conversation with the same system prompt misses. Moving
+    it to the recent end whenever a prompt still contains it keeps it for as
+    long as the system prompt is in use. The key is mlx-vlm's own
+    (``APCManager.store_exact_cache``: the prefix's tokens and the salt,
+    pinned in TestVlmEngineSurface). A snapshot that is not there is left
+    alone."""
+    store = getattr(apc_manager, "_exact_cache", None)
+    if store is None:
+        return
+    from mlx_vlm.apc import _sequence_hash
+
+    with apc_manager.lock:
+        for n in boundaries:
+            key = _sequence_hash(tuple(prompt[:n]), extra_hash, apc_manager.block_size)
+            if key in store:
+                store.move_to_end(key)
+
+
 def install_capture_policy(bg, boundaries: Iterable[int]) -> None:
     """Replace this generator's checkpoint capture rule with heylook's
     (``capture_lengths``). The coordinator is built per generator
@@ -314,8 +340,10 @@ def generate(
         bg_kwargs["prefill_step_size"] = prefill_step_size
     bg = BatchGenerator(model.language_model, processor, **bg_kwargs)
     detok = None
+    salt, boundaries = None, []
     try:
-        install_capture_policy(bg, shared_prefix_len(prompt_list, shared_prefixes))
+        boundaries = shared_prefix_len(prompt_list, shared_prefixes)
+        install_capture_policy(bg, boundaries)
         cold = apc_is_empty(apc_manager)
         has_media = raw_inputs.get("pixel_values") is not None
         if bg.apc is not None:
@@ -325,7 +353,7 @@ def generate(
             mask=raw_inputs.get("attention_mask"), **data, **(embed_extras or {}))
         gen_kwargs = {**data, **{k: v for k, v in embed.to_dict().items() if v is not None}}
         if apc_manager is not None:
-            gen_kwargs["_apc_semantic_hash"] = semantic_hash(raw_inputs, model, processor)
+            salt = gen_kwargs["_apc_semantic_hash"] = semantic_hash(raw_inputs, model, processor)
         (uid,) = bg.insert([prompt_list], max_tokens=max_tokens, prompt_kwargs=[gen_kwargs],
                            logits_processors=[generated_only(processors) or []],
                            thinking_budget_criteria=[thinking_budget])
@@ -410,6 +438,8 @@ def generate(
             if finish is not None:
                 return
     finally:
+        if salt is not None and boundaries:
+            refresh_snapshots(apc_manager, prompt_list, boundaries, salt)
         release_prefill(bg)
         try:
             bg.close()

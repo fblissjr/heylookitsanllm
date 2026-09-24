@@ -317,6 +317,12 @@ class TestVlmEngineSurface:
         assert mgr.disk is None
         # vlm_engine's "was the cache empty" check reads these two stores
         assert isinstance(mgr._exact_cache, dict) and isinstance(mgr.hash_table, dict)
+        # refresh_snapshots re-derives a snapshot's key the way the store does
+        from collections import OrderedDict
+        from mlx_vlm import apc as _apc
+        assert isinstance(mgr._exact_cache, OrderedDict) and hasattr(mgr.lock, "acquire")
+        assert "key = _sequence_hash(token_tuple, extra_hash, self.block_size)" in \
+            inspect.getsource(_apc.APCManager.store_exact_cache)
         assert mgr.checkpoint_interval_tokens == APC_CHECKPOINT_INTERVAL_TOKENS
         assert mgr._exact_cache_max == APC_CHECKPOINT_ENTRIES
 

@@ -191,3 +191,26 @@ def test_cold_means_both_stores_are_empty():
     assert apc_is_empty(SimpleNamespace(_exact_cache={}, hash_table={1: 0})) is False
     assert apc_is_empty(SimpleNamespace()) is False    # unknown stores never read as cold
     assert apc_is_empty(None) is False
+
+
+@pytest.mark.unit
+def test_a_shared_snapshot_is_refreshed_while_its_prefix_is_in_use():
+    # The system-prompt snapshot is stored first and never restored from once
+    # a conversation has later snapshots, so without a refresh it is the
+    # store's oldest entry and ages out. The key is mlx-vlm's own.
+    import threading
+    from collections import OrderedDict
+
+    from mlx_vlm.apc import _sequence_hash
+
+    from heylook_llm.providers.common.vlm_engine import refresh_snapshots
+
+    prompt = list(range(500))
+    shared = _sequence_hash(tuple(prompt[:120]), 7, 16)
+    mgr = SimpleNamespace(block_size=16, lock=threading.RLock(),
+                          _exact_cache=OrderedDict([(shared, "sys"), ("later", "turn")]))
+    refresh_snapshots(mgr, prompt, [120], 7)
+    assert list(mgr._exact_cache) == ["later", shared]
+    refresh_snapshots(mgr, prompt, [120], 8)            # another salt: not this snapshot
+    refresh_snapshots(mgr, prompt, [64], 7)             # not stored: left alone
+    assert list(mgr._exact_cache) == ["later", shared]
