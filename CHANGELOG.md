@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.101]
+
+### Added (plan W4, backend)
+
+- **`POST /v1/models/{id}/image-plan`** with `{sizes: [[w, h], ...]}`: the
+  tokens an image of each size adds to the prompt, and the size the engine
+  resizes it to where the engine says. Derived from the engine itself, not
+  from a copy of its resize rules: the loaded MLX model's processor through
+  heylook's own `prepare_inputs`, or the running llama-server's
+  `/v1/chat/completions/input_tokens` (no vision encode). Resident models
+  only (409 otherwise): planning never loads a model. Live on a qwen3_5 MLX
+  model and unsloth Qwen3.8-27B (gguf), the two engines agree on
+  small and medium images and part ways on a large one (llama.cpp caps image
+  tokens; the MLX processor does not).
+
 ## [2.0.100]
 
 ### Fixed

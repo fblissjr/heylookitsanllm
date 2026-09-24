@@ -135,3 +135,18 @@ class TestBusyIsBackpressureNotBreakage:
         resp = client.post("/v1/models/test-mlx-model/load")
         assert resp.status_code == 500
 
+
+
+class TestImagePlan:
+    """Plan W4: image cost is read off a RESIDENT engine; planning never loads."""
+
+    def test_an_unloaded_model_is_a_409_and_stays_unloaded(self, client):
+        r = client.post("/v1/models/test-mlx-model/image-plan", json={"sizes": [[448, 448]]})
+        assert r.status_code == 409 and "never loads" in r.text
+        rows = {m["id"]: m for m in client.get("/v1/admin/models").json()["models"]}
+        assert rows["test-mlx-model"]["loaded"] is False
+
+    def test_a_model_served_as_text_is_a_400(self, client):
+        assert client.post("/v1/models/test-mlx-model/load").status_code == 200
+        r = client.post("/v1/models/test-mlx-model/image-plan", json={"sizes": [[448, 448]]})
+        assert r.status_code == 400 and "served as text" in r.text

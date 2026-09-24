@@ -829,6 +829,16 @@ text box with suggestions for a verbatim template); a stored value the model doe
 offer shows as a disabled "(not offered by this model)" option, and `changes_prefix`
 adds the note that changing it mid-conversation re-processes the conversation.
 
+**Image plan** (v2.0.101, plan W4) `POST /v1/models/{id}/image-plan` `{sizes:[[w,h],...]}`
+(1-16 sizes) → `{model_id, engine, images:[{size, tokens, target}], source}`: what an image
+of each size adds to the prompt, and the size the engine resizes it to where it says
+(`target` is null on llama.cpp). Derived from the engine itself: the loaded MLX model's own
+processor, or the running llama-server's own token counter (no vision encode). **409 for a
+model that is not loaded** (planning never loads one), 400 for a model served without images.
+The same image can cost very different amounts on the two engines (llama.cpp caps image
+tokens where the MLX processor does not), which is why the answer is per model, not per
+family.
+
 **Models list** `GET /v1/models` → `{data:[{id,provider?,capabilities?,modalities?,thinking_default?,sampler_defaults?,engine?}]}` (enabled models only; `engine` is the contract described under Admin models). `modalities` (v1.34.43) is the model's declared capability set (`["text","vision","audio","video"]`); `capabilities` stays gated to what the server actually serves (image input) -- description != served. Since v1.79.43 the MLX `vision` capability is DERIVED FROM THE LOADER ROUTER (`effective_loader == "mlx-vlm"`), the same answer `MLXProvider`'s image guard reads, so the advertised capability and the 400 cannot disagree. Before that it read the checkpoint's DECLARATION, and a hand-made text-only variant whose directory still carried vision blocks advertised `vision` and was then refused -- a client gating on `capabilities` exactly as this spec instructs got the refusal anyway. (The `loader` field that could force a dual-capable VLM to text was retired in v2.0.88.) NB `modalities` is UNCHANGED by this: the checkpoint still declares what it declares, which is why chat's history-media drop disclosure reads capabilities and not modalities. `thinking` (v1.34.60) is auto-detected from whether the model's chat template references `enable_thinking` (Qwen3 `<think>` blocks, gemma-4 thought channels) -- no `models.toml` flag needed; this is what shows/hides the drawer checkbox and composer icon.
 **Metrics** `GET /v1/system/metrics?force_refresh?` → `{system:{ram_used_gb,ram_available_gb,ram_total_gb,
 cpu_percent}, models:{[id]:{memory_mb,context_used,context_capacity,context_percent,requests_active,

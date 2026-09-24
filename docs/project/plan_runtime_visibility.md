@@ -268,7 +268,19 @@ Extends the existing template panel (`GET/PUT/DELETE
 - **Owner op:** move the five in-place-edited MLX gemma templates into
   overrides, so a re-download cannot revert them.
 
-### W4. Image geometry on the API
+### W4. Image geometry on the API (backend shipped v2.0.101; frontend open)
+
+As built, and changed from the text below: no replica of any family's resize
+rules and no `image_geometry` block. `POST /v1/models/{id}/image-plan` asks
+the engine itself (the loaded MLX processor through heylook's own
+`prepare_inputs`; llama-server's `/v1/chat/completions/input_tokens`), so the
+answer cannot drift from the engine and needs no `verified` flag. Resident
+models only, like the prompt preview. llama.cpp does not report its resized
+size, so `target` is null there. Building it found the MLX image-markup bug
+(v2.0.100): the two engines disagreed by 2 tokens per image on the same
+template, and now agree. Open: the frontend (show the cost of a staged image;
+resize to the planned size at send), which needs the owner's call on whether
+send-time resize is worth a round trip per image.
 
 - **`vision.image_geometry` per model**, on `/v1/models` and the admin row:
 

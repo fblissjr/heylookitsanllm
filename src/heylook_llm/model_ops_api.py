@@ -35,7 +35,10 @@ pre-flight. Bare ``/load`` never touches the gate.
 import logging
 import time
 
+from typing import List
+
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from heylook_llm.auth import require_api_key
 from heylook_llm.busy_response import model_busy_response
@@ -49,6 +52,42 @@ model_ops_router = APIRouter(
     tags=["Models"],
     dependencies=[Depends(require_api_key)],
 )
+
+
+class ImagePlanRequest(BaseModel):
+    sizes: List[List[int]] = Field(
+        description="Image sizes as [width, height] pixel pairs, the size each image "
+                    "will be SENT at (after any client-side resize).")
+
+
+@model_ops_router.post(
+    "/{model_id:path}/image-plan",
+    summary="Plan Image Cost",
+    description=(
+        "What an image of each size costs this model (plan W4): `tokens` it adds "
+        "to the prompt and, where the engine says, the `target` size it is "
+        "resized to. Derived from the engine itself: the loaded MLX model's own "
+        "processor, or the running llama-server's own token counter (no vision "
+        "encode). **Resident models only (409 otherwise)**: planning never loads "
+        "a model, like the prompt preview. 400 for a model served without images."
+    ),
+)
+def image_plan(model_id: str, request: Request, body: ImagePlanRequest):
+    # Sync on purpose (threadpool): the MLX half waits on a pinned MLX
+    # thread and the gguf half on llama-server; neither belongs on the loop.
+    from heylook_llm import image_plan as planner
+    from heylook_llm.providers.base import InvalidGenerationRequest
+
+    router = request.app.state.router_instance
+    provider = router.get_loaded_models().get(model_id)
+    if provider is None:
+        raise HTTPException(status_code=409, detail=(
+            f"{model_id} is not loaded -- load it to plan image sizes; planning "
+            "never loads a model"))
+    try:
+        return {"model_id": model_id, **planner.plan(provider, body.sizes)}
+    except InvalidGenerationRequest as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @model_ops_router.post(
