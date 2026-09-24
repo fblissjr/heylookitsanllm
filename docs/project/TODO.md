@@ -21,9 +21,13 @@ Record: `internal/claude/improve/runs/2026-09-24/` (report.html has the evidence
   mlx-vlm's `vision_cache`/`_image_key` kwargs (as mlx-vlm's server does)
   fixes it: commit 9573911 on ref `improve/2026-09-24-vision-cache`. It was
   reverted because the image-adding turn on Qwen3.5-0.8B breached the loop's
-  speed tolerance; the 27B showed no cost. Re-apply with
-  `git cherry-pick -e 9573911`, correcting its evidence line, then run
-  `scripts/vlm_parity_probe.py`.
+  speed tolerance; the 27B showed no cost. Do NOT cherry-pick it as is: it
+  deletes heylook's `encode_image()` branch, and lfm2_vl, mimo_v2,
+  minimax_m3_vl, molmo, molmo2 and sam3 have `encode_image()` but do not read
+  `vision_cache`, so they would lose feature caching. Re-apply as: the
+  kwargs where the model reads them, the old branch elsewhere, and a content
+  key for http/file image URLs (the URL key serves stale features when the
+  file changes). Then `scripts/vlm_parity_probe.py` and an image warm==cold.
 - [ ] **Move the mlx-vlm pin** past upstream #2328 (a KV-retention fix heylook
   hits through `remove()`), and past Blaizzy/mlx-vlm#2356 once it merges
   (restored qwen3_5 decode). Usual suite, chain probe and smoke.
