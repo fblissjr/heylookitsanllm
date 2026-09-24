@@ -186,13 +186,13 @@ def build_performance(
     ``time.perf_counter()`` difference, so an IDLE gate yields a tiny NONZERO
     float -- live runs on an idle server reported 0.0044, 0.0037 and 0.0024 ms,
     never 0.0. The measurement that change claimed to rescue does not exist.
-    What DOES emit exactly 0.0 is the unmeasured set, and only it: the gguf
-    provider never assigns the field at all (it bypasses this gate and queues
-    inside llama-server at ``-np 1``, so a request that really waited seconds
-    still reads 0.0), and an MLX run that yields no chunk loses the tag
-    entirely because it rides the first one. So the old spelling was correct:
-    absent means unmeasured, and publishing the zero published a non-answer as
-    an answer -- on the gguf arm, every single time.
+    What DOES emit exactly 0.0 is the unmeasured set, and only it: a run
+    that yields no chunk loses the tag entirely because it rides the first
+    one. (Until 2026-09-24 the gguf provider never assigned the field either,
+    though it has taken this same gate since v1.79.60, so a gguf request that
+    really waited seconds read 0.0 and its generation span kept the wait.) So
+    the old spelling was correct: absent means unmeasured, and publishing the
+    zero would publish a non-answer as an answer.
     It also kept the two wires agreeing: ``api.py`` gates the same quantity on
     ``> 0`` for the OpenAI wire and was never changed.
 

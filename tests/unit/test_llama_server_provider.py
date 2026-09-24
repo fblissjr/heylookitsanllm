@@ -1182,6 +1182,27 @@ class TestGenerationGate:
         list(gen)
         assert p._gen_gate.busy is False, "released on exhaustion"
 
+    def test_the_model_counts_as_busy_while_llama_server_is_still_prefilling(self, monkeypatch):
+        # llama-server answers urlopen only once it has a first result, so the
+        # prefill happens INSIDE urlopen; a router asking "is this model
+        # generating?" in that window must hear yes, or loading another model
+        # evicts (SIGTERMs) this one mid-request.
+        p = self._gated(monkeypatch)
+        seen = {}
+
+        def prefilling(*a, **k):
+            seen["active"] = p.active_generations
+            return _stream_bytes(*CANNED)
+
+        monkeypatch.setattr(llama_mod.urllib.request, "urlopen", prefilling)
+        chunks = list(p.create_chat_completion(req()))
+        assert seen["active"] == 1
+        assert p.active_generations == 0, "released when the stream ends"
+        # the gate wait rides the first chunk, as on MLX (build_performance
+        # nets it out of the generation span); an idle gate measures a tiny
+        # positive wait, never the unmeasured zero
+        assert chunks[0].queue_wait_ms > 0
+
     def test_gate_is_released_when_the_forward_fails(self, monkeypatch):
         p = self._gated(monkeypatch)
 
