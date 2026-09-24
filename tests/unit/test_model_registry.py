@@ -424,7 +424,7 @@ class TestScanConfigAccessors:
         for a bug: a comment survives only while its ANCHOR is unchanged, so
         annotating the folder list means losing the note the next time you
         edit the folder list. Provenance for a value you edit belongs in
-        CLAUDE.md, not beside the value."""
+        the repo's rule files, not beside the value."""
         svc, cfg = self._service(
             tmp_path, '\n# why this folder\n[scan]\nfolders = ["a"]\n')
         svc.set_scan_config(folders=["a", "b"])

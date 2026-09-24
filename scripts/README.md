@@ -5,7 +5,7 @@ Last updated: 2026-09-06
 Standalone developer/ops scripts. All are run with `uv run` (PEP 723 headers
 provision their own deps where noted, so they don't add anything to the project
 environment). Flat by design -- a handful of files don't need subdirectories, and several
-are referenced by path from `CLAUDE.md`, `docs/`, and `tests/`, so moving them
+are referenced by path from `AGENTS.md`, `.claude/rules/`, `docs/`, and `tests/`, so moving them
 would just create churn.
 
 | Script | What it does | Run |

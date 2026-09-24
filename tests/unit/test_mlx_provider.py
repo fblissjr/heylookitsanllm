@@ -505,7 +505,7 @@ class TestCollectionDoesNotBlock:
 
         Dropping the `waiting` read narrowed the guard to actives alone, which
         let the QUIET destructor path fall through to `gc.collect()` +
-        `mx.clear_cache()`. That is the hazard CLAUDE.md states as "never gate
+        `mx.clear_cache()`. That is the hazard .claude/rules/mlx.md states as "never gate
         teardown on actives alone" and `test_unload_waiter_safety.py` exists
         for: the active counter decrements BEFORE `gate.release()` admits the
         next waiter, so a woken waiter can be starting a decode exactly then --

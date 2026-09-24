@@ -68,7 +68,7 @@ GIT_URL = "https://github.com/ggml-org/llama.cpp"
 #                     llama-server flag (upstream gates `--fit-print` to this
 #                     tool's example), which is why it looks absent from the
 #                     server's --help. Read heylook's docs before trusting a
-#                     file-size estimate over it; see CLAUDE.md.
+#                     file-size estimate over it; see .claude/rules/gguf.md.
 TARGETS = ["llama-server", "llama-bench", "llama-fit-params"]
 HOME_SUBDIR = (".heylook", "llama.cpp")
 

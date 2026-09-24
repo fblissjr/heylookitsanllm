@@ -1726,7 +1726,7 @@ class MLXProvider(BaseProvider):
             # 0`: the active counter is decremented BEFORE `gate.release()`
             # admits the next waiter, so a woken waiter can be starting a
             # decode exactly here (tests/unit/test_unload_waiter_safety.py,
-            # and CLAUDE.md's "never gate teardown on actives alone"). The
+            # and .claude/rules/mlx.md's "never gate teardown on actives alone"). The
             # deliberate path answers that by WAITING; a destructor cannot
             # wait, so it declines to make the calls instead.
             #

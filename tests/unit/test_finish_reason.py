@@ -37,7 +37,7 @@ def _run_non_stream(chunks):
 
 
 class TestChunkTelemetryCarriesFinishReason:
-    """The scrape lives in absorb() -- one place, per CLAUDE.md, so the four
+    """The scrape lives in absorb() -- one place, per .claude/rules/mlx.md, so the four
     consume loops cannot drift apart."""
 
     def test_absorbs_finish_reason(self):

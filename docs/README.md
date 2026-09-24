@@ -1,6 +1,6 @@
 # Documentation index
 
-Last updated: 2026-09-23
+Last updated: 2026-09-24
 
 **Start with the wiki: [wiki/README.md](./wiki/README.md).** It explains how the
 system works end to end -- the backend, the frontend, the two providers, how
@@ -11,7 +11,8 @@ system (roadmap, status, plans).
 
 Git-tracked docs for heylookitsanllm. Working notes, daily logs, strategy notes,
 and research live local-only in `internal/` (gitignored) and are not part of this
-tree. The project's nav hub for agents is the root [CLAUDE.md](../CLAUDE.md).
+tree. The agent operating guide is the root [AGENTS.md](../AGENTS.md) (the root
+CLAUDE.md imports it), with per-area rules in `.claude/rules/` that it indexes.
 
 ## Architecture reference
 These two overlap in subject and differ in kind. Read the wiki to learn how a
@@ -27,7 +28,7 @@ plus `/openapi.json`.
   history, provider mechanisms, MLX ecosystem posture, crash postmortems).
   Narrower and decision-shaped. Start at its [README](./architecture/README.md).
 - [architecture/sharp_edges.md](./architecture/sharp_edges.md) -- the rationale and
-  incident history behind each rule in the root CLAUDE.md, by subsystem.
+  incident history behind each rule in AGENTS.md and `.claude/rules/`, by subsystem.
 
 ## Test audits
 Dated evidence records, not living documents: what was measured, on what commit,
@@ -52,6 +53,11 @@ on, and both of these found checks that could not.
   decisions block, and the 2026-07-28 re-plan re-cut Phases 1-5 into Waves 1-5)
 - [project/CURRENT.md](./project/CURRENT.md) -- graded done/left status
 - [project/TODO.md](./project/TODO.md) -- backlog
+- [project/plan_engine_coverage.md](./project/plan_engine_coverage.md) -- why
+  provider is not engine, and the origin of the three smoke arms (mlx-text,
+  mlx-vision, gguf); all phases shipped
+- [project/plan_chat_orchestration.md](./project/plan_chat_orchestration.md) --
+  the design behind the server-owned chat generate route (the Phase 3b chat half)
 - [project/plan_runtime_visibility.md](./project/plan_runtime_visibility.md) --
   APPROVED 2026-09-23: make every effective setting and every cache/spec
   outcome visible, and make MLX and gguf behave the same. Covers thinking

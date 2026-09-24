@@ -155,7 +155,7 @@ def _mlx_serves_vision(model_config, serves_vision: bool | None = None) -> bool:
     lost ``vision`` before ``resolve_serves_vision`` is reached, and its
     ``"vision" not in modalities -> text`` branch settles it. Fail-open is
     real only for an entry that spells its ``modalities`` out explicitly, the
-    shape CLAUDE.md calls the rare one.
+    rare shape.
 
     That is the right behaviour -- an unreadable checkpoint is not evidence of
     a vision tower, and advertising one we cannot confirm is the over-report

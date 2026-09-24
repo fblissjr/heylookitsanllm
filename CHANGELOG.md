@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.96]
+
+Documentation only.
+
+### Changed
+
+- **`AGENTS.md` cut from 57,614 to 8,000 bytes** (`wc -c`, before and after
+  this commit). It is what every session loads (the root `CLAUDE.md` is the
+  one-line `@AGENTS.md` import). It now holds where to look first, commands,
+  what "done" means, test discipline and which check covers which change, the
+  repo-wide rules, and the sandbox traps.
+- **Per-area rules moved into path-scoped files in `.claude/rules/`**, which
+  Claude Code loads only when a matching file is read. `AGENTS.md` indexes
+  them so other agents can find them too, and states that they count as part
+  of it (the loop prompts cite "AGENTS.md's rules"). Where each old section
+  went:
+  - Providers, Thinking, the vendor sampling layer, presets and the sampler
+    registry guard, the operator template override, ladder subsets:
+    `engine-contract.md`.
+  - gguf templates; context, memory, errors; speculative decoding; binary and
+    build: `gguf.md`.
+  - MLX / library gotchas: `mlx.md`.
+  - Model registry and models.toml: `registry-config.md`.
+  - API layout and the inference wire, DuckDB store, observability, the
+    new-endpoint recipe: `api-and-store.md`.
+  - Frontend: `frontend.md`.
+  - Test harness mechanics (mocks, teardown crashes, smoke, eval, e2e):
+    `tests.md`. The discipline and the release standard stay in `AGENTS.md`.
+  - Engine pins and the root venv: `dependencies.md`.
+  - rich markup, separate venvs, optloop-lib, the pending OpenAI-route ports:
+    `scripts-and-apps.md`.
+- **Deleted rather than moved**: dated history already in this changelog
+  (the frontend's mount moves, the j-space removal, the embeddings routes,
+  `heylookllm import`, hookify); rules duplicated by the user-level global
+  instructions (commit and push policy, no numbers in prose); lines the repo
+  already answers (the router list, the removing-a-feature checklist,
+  gitignored runtime data, `prepare_vlm_inputs_parallel`'s return shape); and
+  one stale rule: "SSE telemetry goes in the usage chunk's `timing`" described
+  the removed OpenAI wire.
+- **Corrected on the way**: the engine contract's thinking slot is filled
+  (v2.0.95), so the rule no longer lists it among the null slots.
+- `.gitignore` and the local pre-commit hook's `ALLOWED_PATHS` track the nine
+  rule files by name. `docs/README.md`, `docs/architecture/README.md`,
+  `sharp_edges.md`'s header, `CURRENT.md`, the wiki's backend page and the
+  code comments that cited a section of the old file now point at its new
+  home. `docs/README.md` also gains the two plans it did not list
+  (`plan_engine_coverage.md`, `plan_chat_orchestration.md`).
+
 ## [2.0.95]
 
 ### Changed (plan W2: thinking controls from the template)

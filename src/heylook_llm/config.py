@@ -737,7 +737,7 @@ class GGUFModelConfig(BaseModel):
     )
     # llama-server --spec-type (e.g. "draft-mtp"). NB coupled to LoRA: a loaded
     # adapter erases spec decode's win, because the draft context never
-    # receives the adapter (see CLAUDE.md's gguf gotchas). Leave it ON anyway.
+    # receives the adapter (see .claude/rules/gguf.md). Leave it ON anyway.
     spec_type: Optional[str] = Field(
         default=None,
         description=(

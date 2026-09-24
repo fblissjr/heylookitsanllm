@@ -1,0 +1,42 @@
+---
+paths:
+  - "src/heylook_llm/providers/{mlx_provider,mlx_describe}.py"
+  - "src/heylook_llm/providers/common/**"
+  - "src/heylook_llm/{reasoning_parser,thinking_parser,streaming_utils,perf_collector,memory}.py"
+  - "src/heylook_llm/optimizations/**"
+  - "scripts/{chain_probe,vlm_parity_probe,perf_ab}.py"
+---
+
+# MLX engine
+
+- Every MLX model loads with `mlx_vlm.load` and every text and vision request runs through `providers/common/vlm_engine.generate`: one request per mlx-vlm `BatchGenerator`, with mlx-vlm's prefix cache (APC) held per loaded model. heylook keeps its own sampler and generated-only processors, stop set (resolved once at load, checked in the engine's loop, never added per request to the shared tokenizer), streaming detokenizer, timing and `CacheReport`. Prefill progress and cancel ride the prompt batch's private fields and `remove()`, pinned by `TestVlmEngineSurface`. The APC salt is the request's media only (never the embeddings), the disk tier stays off, the checkpoint interval and entries are `vlm_engine` constants, and a generator is closed on the thread that made it.
+- `resolve_serves_vision` (`providers/common/loader_routing.py`, derived from `modalities` and whether mlx-vlm registers the `model_type`, not the raw `vision` bool) decides the served `vision` capability (the image guard reads the same resolver, so `/v1/models` cannot advertise images a 400 refuses) and which template path renders (`is_vlm`). It picks no library. The two admin read routes that build a model response are plain `def`, not `async def`, because they read `config.json`.
+- Media placement is per message, and MLX puts media on user turns only. Pass block-form content with bare `{"type":"image"}` markers and let mlx-vlm build the per-model shape; never hand-build it. `_non_user_image_roles` refuses assistant-turn media, naming gguf. Owner decision: no mlx-vlm fork for this; do not reopen it without a new reason.
+- Penalties count generated tokens only on MLX (owner decision), enforced in one place: `vlm_engine.generate` wraps every logits processor in `generation_core.generated_only`. A processor called bare penalises whatever it is handed. gguf penalises over prompt tokens too, so `presence_penalty` values do not transfer between engines.
+- A logits processor receives logits shaped `(1, vocab)`. Index the vocab axis (`logits.shape[-1]`, 1-D scratch vectors that broadcast), never `zeros_like(logits).at[tokens]`, which is an unchecked Metal scatter that poisons the process. Test with the shape the engine sends, not 1-D logits.
+- A preview that cannot show media must say so. `PromptPreviewResponse.unrendered_media` (sent, not shown) and `dropped_media` (not sent) are different fields and both are painted. Providers answer `render_prompt_represents_media` themselves; the route does not switch on provider name.
+- Vision feature cache (`providers/common/vision_feature_cache.py`): the LRU key is the request's whole image-URL list in order, so adding one image re-encodes every image; the pixel-hash fallback is never reached from that caller. A per-image key is W10 of [plan_runtime_visibility.md](../../docs/project/plan_runtime_visibility.md).
+- Cross-request reuse is APC. `scripts/chain_probe.py` (fresh == restored at temperature 0, per model class) is the instrument for any cache change; `scripts/vlm_parity_probe.py` (heylook's live path against mlx-vlm's own loop, greedy) is the instrument for the vision path, and a near-tie there reads as drift. Known gaps (owner decisions): a turn that adds a new image re-prefills (APC keys a request's images as one hash), and plain KV vision models (qwen3_vl) do not reuse image turns with the disk tier off.
+
+## Threads, streams, memory
+
+- Any new code path running MLX forwards off the event loop must run on `streaming_utils._executor_pool` (a pinned, reused thread) inside `with mx.stream(mlx_vlm.generate.common.generation_stream)` (a thread-local stream), and acquire the process-global gen gate plus `router.pin_model()`. Starlette's `run_in_threadpool` has no thread-local MLX stream, and a dying MLX thread aborts the process. Verify on a real worker thread.
+- The FIFO generation gate is a process-global singleton shared by all providers (`_get_generation_gate`); `generation_queue_stats()` is gate-wide, so any "is this model busy" logic on it is conservative across models. `unload()` waits for actives and gate waiters (30s cap); the active counter decrements before `gate.release()`, so never gate teardown on actives alone.
+- `mx.load` is lazy and mmap-backed: `mx.eval()` the arrays at load time if they will first be used on a different thread. Never `mx.save_safetensors` back over the same path without evaluating the loaded arrays first. The security hook false-positives on `mx.eval` (MLX's graph materializer, not Python's eval): prefer `mx.async_eval` or acknowledge it.
+- `mx.set_wired_limit(...)` is set at startup; mlx-vlm's `BatchGenerator` holds its own `wired_limit` for stream sync. `vlm_engine` resets peak memory per request (the vision strategy resets before encoding images and tells the engine not to), so `mx.get_peak_memory()` is per request.
+- A model's `.layers` can be a fresh-slice `@property` (pipeline-parallel Qwen3.5/deepseek/glm4_moe). To hook or mutate blocks, use the underlying list on the inner decoder (`inner.layers`/`.h`), not `model.layers`.
+- Recorded tok/s is `vlm_engine`'s generated tokens over decode time, prompt tps the uncached prompt over prefill time; TTFT and tok/s exclude queue-wait (its own `queue_wait_ms` field); trends are success-only. Per-chunk scraping goes through `perf_collector.ChunkTelemetry.absorb()`; add new chunk fields there, not at call sites.
+- Route MemoryManager calls through `memory.safe_mm_call(...)`; use `sampler_summary_from_request` (memory.py) for "what was this configured with".
+
+## Tokenizers, detokenizer, templates, parsers
+
+- Stop tokens: a model's full eos set can be split across tokenizer_config.json's `added_tokens_decoder` and tokenizer.json's `added_tokens`; read both. The provider resolves the full set once at load (`extend_eos_from_generation_config`, `resolve_stop_tokens`).
+- The engine streams through mlx-lm's detokenizer, vendored as `providers/common/lm_detokenizer.py` (upstream classes unchanged; the header lists heylook's edits), because mlx-vlm's BPE detokenizer holds space-free text until the end. `MLXProvider.streaming_detokenizer` hands it out, primed at load by `generation_core.detokenizer_source` with `model_path` (the class comes from tokenizer.json's decoder). `continuation_detokenizer` seeds only a class with a settable `text` (`_seedable`). Samplers and penalty processors are mlx-vlm's `sample_utils`. Nothing imports mlx-lm.
+- Chat-template resolution lives in `providers/common/template_info.py`: per-model `chat_template_source`; auto order = operator override > `chat_template.jinja` > embedded `tokenizer_config.json` > `chat_template.json`. An explicit source force-installs at load; auto only fills a missing one. HF's legacy list-form `chat_template` is not parsed. An MTP/spec-decode head registered as a model has no chat template, and its load warning is expected.
+- Reasoning parsers (`reasoning_parser.py`): routing parsers never strip anything themselves; declared-specials stripping is one wrapper, `StripSpecials`, composed by `select_reasoning_parser` only when the model declares specials. Its holdback is sized by the strip set and is prefix-set based. `TestParserInvariants` pins two properties: output is invariant to chunking, and text with no structural tokens survives intact. Design record: [docs/parser_strip_unification.md](../../docs/parser_strip_unification.md).
+
+## Upstream
+
+- mlx-vlm is the one MLX engine ([ecosystem_strategy.md](../../docs/architecture/ecosystem_strategy.md)). Check its open-PR backlog before writing any workaround, and verify a library is actually broken before working around it.
+
+Why and history: [sharp_edges.md](../../docs/architecture/sharp_edges.md) "MLX engine".

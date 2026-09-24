@@ -475,7 +475,7 @@ class ModelImporter:
         # a drafter path with no models.toml entry anywhere, so it runs spec
         # decode with llama.cpp's own spec_draft_* defaults and nothing on
         # this side says so. The "default OFF for a new model" rule in
-        # CLAUDE.md is about not writing spec_type by hand; it is NOT a
+        # .claude/rules/gguf.md is about not writing spec_type by hand; it is NOT a
         # description of what a paired drafter does at spawn. To actually
         # keep it off, the drafter must not be paired.
         #

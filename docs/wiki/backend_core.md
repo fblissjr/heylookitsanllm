@@ -137,7 +137,7 @@ The reload check set and the admin options API (`/v1/admin/model-options`) deriv
   - **every** comment inside a `[[models]]` entry carries only if that whole model renders byte-identically through `tomli_w` (normalized, so the old file's hand-formatting pins nothing) -- change one field and that entry's comments all go;
   - a block at the end of a model's section sits visually above the *next* model's header, so it additionally requires that following model to be unchanged and still immediately next.
 - **Fails safe, never blocks**: on any parse failure, missing anchor, or merged text that no longer parses to exactly the fresh render's values, the comment-less render is written instead. Doubt degrades to a plain write, never to a refusal.
-- **The consequence worth holding**: a comment on the value you are *patching* is deliberately dropped. Provenance for a value you are changing belongs in `CLAUDE.md` or `internal/`, not next to the value.
+- **The consequence worth holding**: a comment on the value you are *patching* is deliberately dropped. Provenance for a value you are changing belongs in the agent rules (`.claude/rules/registry-config.md`), `sharp_edges.md` or `internal/`, not next to the value.
 
 ---
 

@@ -78,7 +78,7 @@ SOURCE_FILES = {
 # stamp identical and `/v1/models` publishing a stale answer until restart --
 # the same bug the stamp was introduced to fix, one file over.
 #
-# This is CLAUDE.md's named defect ("adding a rung to a ladder invalidates every
+# This is .claude/rules/engine-contract.md's named defect ("adding a rung to a ladder invalidates every
 # hand-written subset of it") in its other form: a subset of what a function
 # READS rather than of an ordered list. Adding a read above means adding it
 # HERE, and consumers derive.

@@ -10,7 +10,7 @@
 # instead of silently at runtime (wrong kwarg name swallowed by **kwargs, a renamed
 # dataclass field defaulting via getattr(), etc.).
 #
-# Scope discipline (see CLAUDE.md "MLX / library gotchas" + the plan's Direction
+# Scope discipline (see .claude/rules/mlx.md + the plan's Direction
 # section on mlx-vlm bus-factor risk): import/inspect-level only. No model
 # downloads, no network, no Metal-requiring calls (no thread-local GPU streams, no
 # real vision-tower forward passes). Plain mx.array construction from Python lists
@@ -187,7 +187,7 @@ class TestApplyChatTemplate:
 
     def test_return_messages_shape_matches_our_flattening_logic(self):
         # Real call with a production-relevant model_type (qwen3_vl is one of
-        # this server's actual vision models -- see CLAUDE.md / log_2026-07-06.md).
+        # this server's actual vision models -- see .claude/rules/mlx.md / log_2026-07-06.md).
         # No processor is touched on the return_messages=True path (verified via
         # source read below), so passing None for it is safe.
         assert "qwen3_vl" in MODEL_CONFIG, (

@@ -28,7 +28,7 @@
 #     (an already-running heylookllm on any port may be the owner's daily
 #     server).
 #   - Default model for behavior checks: the fast MoE gemma-4-26B-A4B variant
-#     (~90 tok/s, the discriminating model per CLAUDE.md); ids in models.toml
+#     (~90 tok/s, the discriminating model per AGENTS.md); ids in models.toml
 #     carry quant suffixes, so list exact ids first.
 #   - Always `stop` a server you started; keep it up across a series of checks
 #     (model load is the expensive part), then stop once at the end.
@@ -223,7 +223,7 @@ PY
     # llama-server subprocess still resident. Worse, the old `rm -rf "$STATE"`
     # ran OUTSIDE the if, so that miss deleted the pidfile and every later stop
     # missed for the same reason. Self-perpetuating, and exactly the orphan
-    # class CLAUDE.md documents for the e2e harness.
+    # class .claude/rules/tests.md documents for the e2e harness.
     TARGETS=""
     add_target() {
       case " $TARGETS " in *" $1 "*) ;; *) TARGETS="$TARGETS $1" ;; esac

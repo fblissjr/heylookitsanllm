@@ -1,13 +1,13 @@
-# Sharp edges: the why behind CLAUDE.md
+# Sharp edges: the why behind the agent rules
 
 This file holds the rationale and incident history behind the rules in the root
-[CLAUDE.md](../../CLAUDE.md). CLAUDE.md states each rule in a sentence or two
-and links here; this file says why the rule exists, which release introduced
-it, and what broke before it did. It is dated history, not a living status
+[AGENTS.md](../../AGENTS.md) and the per-area rule files it indexes in
+`.claude/rules/`. Those state each rule in a sentence or two and link here;
+this file says why the rule exists, which release introduced it, and what broke before it did. It is dated history, not a living status
 document: facts here were true on the date or version they name, and the code
 is the authority when they disagree. Current status and plans live in
 [docs/project/](../project/); how the system works end to end is the
-[wiki](../wiki/README.md). When you add a rule to CLAUDE.md that has a story
+[wiki](../wiki/README.md). When you add a rule to one of them that has a story
 behind it, put the story here under the matching subsystem heading and link
 to it, so the headings stay stable as anchors.
 
@@ -644,7 +644,7 @@ byte-identical (normalized through `tomli_w`, so old hand-formatting does not
 pin anything); a block sitting above a `[[models]]` header additionally needs
 that following model unchanged and still next. Consequence: a comment on the
 value you are patching is deliberately dropped, so provenance for a value you
-are changing belongs in CLAUDE.md, this file, or `internal/`, not next to the
+are changing belongs in the agent rules, this file, or `internal/`, not next to the
 value.
 
 Mechanism invariants: `tomli_w` stays authoritative for values, layout and

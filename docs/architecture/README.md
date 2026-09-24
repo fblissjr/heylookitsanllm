@@ -13,7 +13,7 @@ frontend map is [../frontend_v3.md](../frontend_v3.md).
 | [mlx_provider.md](./mlx_provider.md) | MLXProvider deep-dive (text + vision); the pre-filled-cache VLM path |
 | [ecosystem_strategy.md](./ecosystem_strategy.md) | MLX ecosystem posture -- **READ before perf / provider work** |
 | [conversation_store.md](./conversation_store.md) | What each chat operation writes to DuckDB; the media-blob lifecycle |
-| [sharp_edges.md](./sharp_edges.md) | The why and incident history behind the rules in the root CLAUDE.md, grouped by subsystem (dated history, not status) |
+| [sharp_edges.md](./sharp_edges.md) | The why and incident history behind the rules in AGENTS.md and `.claude/rules/`, grouped by subsystem (dated history, not status) |
 
 ## Proposed designs
 
