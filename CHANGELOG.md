@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **gguf Save & Continue with an edited thought and a partial reply stored the thought with a trailing newline.** With content prefilled, the thought is closed in the prompt, and llama-server's reasoning echo carries the template's framing newline before `</think>` (Qwen3.8: the thought plus `"\n"`). The echo strip removed exactly the thought, so the newline came through as new thinking and was appended. `_stream_chunks` now drops whitespace-only reasoning right after the echo when both channels were prefilled; an open thought (no content) still keeps a leading newline, since a resumed thought can start with one. Traced hop by hop (page, store, wire, rendered prompt, llama-server's echo, the provider's output): the page, the store and what heylook sends were all correct; the newline first appears in llama-server's echo. Record in `internal/claude/gguf_continue/`.
 
-Verification: unit + contract green; the live probe on JonathanColetti_Qwen3.8-27B-Uncensored-GGUF yields no thinking after the fix; `E2E_ARMS=gguf bun run e2e:chat` 51/51 (the cadence check skips by design on gguf), including the check that failed.
+Verification: unit + contract green; the live probe on Qwen3.8-27B-GGUF yields no thinking after the fix; `E2E_ARMS=gguf bun run e2e:chat` 51/51 (the cadence check skips by design on gguf), including the check that failed.
 
 ## [2.0.130]
 
@@ -42,7 +42,7 @@ Verification: unit + contract green; the live probe on JonathanColetti_Qwen3.8-2
 
 ### Verified (not a code change)
 
-- gguf smoke 37/37 on `JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`, with spec
+- gguf smoke 37/37 on `Qwen3.8-27B-GGUF`, with spec
   decode in force through its built-in MTP head; `e2e:render` 99/99; chat
   52/52 and pages 32/32 on the default MLX gemma. The gguf chat arm is 50/51:
   Save & Continue on an edited thought keeps a trailing newline on gguf
@@ -904,7 +904,7 @@ Documentation only.
 
 - Unit and contract suites green.
 - `tests/smoke` 82/82 on all three arms: mlx-text (Qwen3-0.6B-8bit),
-  mlx-vision (Qwen3.5-0.8B) and gguf (`JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`).
+  mlx-vision (Qwen3.5-0.8B) and gguf (`Qwen3.8-27B-GGUF`).
   Uncovered on the arms picked: audio, and thinking depth.
 - `bun run e2e:chat` 52/52 twice on gemma-4-26B-A4B after the seeding fix;
   `e2e:pages` 32/32 in the run before it.
