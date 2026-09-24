@@ -307,6 +307,16 @@ class TestVlmEngineSurface:
                       "_cached_tokens_per_row", "def _release_apc_meta_blocks", "self._apc_meta"):
             assert field in src, field
 
+    def test_the_memory_pressure_signals_still_exist(self):
+        """vlm_engine.apc_memory_pressure reads these to say a miss was APC
+        holding back for memory rather than an ordinary miss."""
+        from heylook_llm.providers.common.vlm_engine import make_apc_manager
+
+        mgr = make_apc_manager()
+        assert "memory_evictions" in mgr.stats_snapshot()
+        assert isinstance(mgr._memory_headroom(), int)
+        assert isinstance(mgr.memory_reserve_bytes, int)
+
     def test_apc_takes_our_overrides_and_no_disk(self):
         from heylook_llm.providers.common.vlm_engine import (
             APC_CHECKPOINT_ENTRIES, APC_CHECKPOINT_INTERVAL_TOKENS, make_apc_manager)

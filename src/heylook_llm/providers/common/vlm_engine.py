@@ -75,12 +75,53 @@ def semantic_hash(raw_inputs: dict, model, processor) -> int:
         model=model.language_model, processor=processor)
 
 
+# memory_evictions APC had reported as of each manager's last request, so a
+# request can tell evictions since then from ones already accounted for.
+_MEMORY_EVICTIONS_SEEN: dict = {}
+
+
+def apc_memory_pressure(apc_manager) -> Optional[str]:
+    """Why this model's prefix cache is holding back for memory, or None.
+
+    APC sizes itself to live headroom -- the smaller of the Metal working set
+    minus active memory, and free RAM plus MLX's allocator cache -- and when
+    that is below its reserve it evicts everything and stores nothing
+    (mlx_vlm/apc.py ``_make_room``; deliberate upstream, it never risks an
+    OOM). So a big model elsewhere on the machine (a resident llama-server,
+    another server) silences it, and the miss that follows looks like any
+    other. Two signals, both read here: memory evictions since this manager's
+    last request (public ``stats_snapshot``), and headroom below the reserve
+    now (private, pinned by TestVlmEngineSurface), which is the case where the
+    cache was already empty and so evicts nothing. Never raises."""
+    try:
+        count = int(apc_manager.stats_snapshot().get("memory_evictions") or 0)
+        seen = _MEMORY_EVICTIONS_SEEN.get(id(apc_manager), 0)
+        if seen > count:  # a new manager reusing a dead one's id
+            seen = 0
+        _MEMORY_EVICTIONS_SEEN[id(apc_manager)] = count
+        headroom = int(apc_manager._memory_headroom())
+        reserve = int(apc_manager.memory_reserve_bytes)
+    except Exception:  # noqa: BLE001 - a report detail, never a failure
+        return None
+    if count > seen:
+        return (f"the prefix cache evicted {count - seen} entries for lack of memory "
+                f"headroom since this model's last request")
+    if headroom < reserve:
+        return (f"the prefix cache stores nothing: memory headroom {headroom / 2**30:.1f} GiB "
+                f"is below its {reserve / 2**30:.1f} GiB reserve (something else holds the memory)")
+    return None
+
+
 def cache_report(prompt_tokens: int, cached_tokens: Optional[int], *,
-                 cold: bool = False, has_media: bool = False) -> Optional[CacheReport]:
+                 cold: bool = False, has_media: bool = False,
+                 memory: Optional[str] = None) -> Optional[CacheReport]:
     """The request's CacheReport from APC's cached count (whole-prompt
     normalized like every engine). None when APC reported nothing.
 
-    A miss says why when the engine can know: ``cold`` (the model's prefix
+    A miss says why when the engine can know: ``memory`` (APC is holding
+    back for lack of memory headroom, :func:`apc_memory_pressure`; it wins,
+    because it is also why the cache is cold or has lost the matching
+    prefix), ``cold`` (the model's prefix
     cache held nothing when the request started), or ``new_image_set`` (the
     request carries images and no stored prefix has its image set -- APC
     keys a request's images as ONE hash, so a turn that adds an image starts
@@ -90,6 +131,9 @@ def cache_report(prompt_tokens: int, cached_tokens: Optional[int], *,
     cached = max(0, min(int(cached_tokens), prompt_tokens))
     if cached:
         return CacheReport(prompt_tokens=prompt_tokens, cached_tokens=cached, outcome="reused")
+    if memory:
+        return CacheReport(prompt_tokens=prompt_tokens, cached_tokens=0, outcome="miss",
+                           cause="memory", reason=memory)
     if cold:
         return CacheReport(prompt_tokens=prompt_tokens, cached_tokens=0, outcome="miss",
                            cause="cold", reason="this model's prefix cache was empty")
@@ -257,7 +301,10 @@ def generate(
             for pr in prompt_responses:
                 if pr.uid == uid:
                     cached = int(getattr(pr, "cached_tokens", 0) or 0)
-                    cache_rep = cache_report(n, cached, cold=cold, has_media=has_media)
+                    memory = (apc_memory_pressure(apc_manager)
+                              if apc_manager is not None else None)
+                    cache_rep = cache_report(n, cached, cold=cold, has_media=has_media,
+                                             memory=memory)
                     prefill_done_at = time.perf_counter()
             if prefill_done_at is None and report_progress is not None:
                 progress = prefill_progress(getattr(bg, "_prompt_batch", None), n)

@@ -294,9 +294,11 @@ Phase 3b; chat uses its conversation-scoped sibling below; the OpenAI-compatible
   `perf_collector.usage_counts`. `performance.cache` =
   `{prompt_tokens, cached_tokens, processed_tokens, outcome:"reused"|"miss"|
   "ineligible", cause, reason}`. `cause` (v2.0.80) is the machine-readable why,
-  null when none is known: `cold | new_image_set` on an MLX miss (v2.0.87, the mlx-vlm
-  engine: the prefix cache was empty, or no stored prefix has this request's image set --
-  its images are keyed as one hash; MLX no longer reports `ineligible`), or
+  null when none is known: `memory | cold | new_image_set` on an MLX miss (v2.0.87, the mlx-vlm
+  engine: `memory` (v2.0.116) = the prefix cache is holding back for lack of memory headroom,
+  because something else holds the memory; the prefix cache was empty, or no stored prefix
+  has this request's image set -- its images are keyed as one hash; MLX no longer reports
+  `ineligible`), or
   `cold | no_common_prefix | probable_template_diverged |
   probable_budget_skipped | probable_evicted` (gguf, from heylook's cache witness;
   `probable_*` is inferred, not engine-reported); `reason` says it as a sentence; `performance.speculative` = `{drafted, accepted,

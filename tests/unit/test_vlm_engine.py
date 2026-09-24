@@ -25,6 +25,8 @@ def test_cache_report_is_whole_prompt_normalized(cached, outcome, kept):
 
 @pytest.mark.unit
 def test_a_miss_says_why_when_the_engine_can_know():
+    assert cache_report(100, 0, cold=True, has_media=True, memory="no room").cause == "memory"
+    assert cache_report(100, 40, memory="no room").outcome == "reused"   # a hit is a hit
     assert cache_report(100, 0, cold=True, has_media=True).cause == "cold"
     assert cache_report(100, 0, has_media=True).cause == "new_image_set"
     plain = cache_report(100, 0)
@@ -148,3 +150,22 @@ def test_a_cancel_during_prefill_gives_back_its_prefix_blocks(monkeypatch):
 
     chunks, bg = _run(monkeypatch, [], abort_event=Abort())
     assert chunks == [] and bg.released == 1
+
+
+def test_memory_pressure_reads_evictions_since_last_request_and_low_headroom():
+    """APC holds back when something else holds the memory; the report must
+    say so, or a measurement beside a big gguf model reads as ordinary misses."""
+    from types import SimpleNamespace
+
+    from heylook_llm.providers.common.vlm_engine import apc_memory_pressure
+
+    stats = {"memory_evictions": 0}
+    mgr = SimpleNamespace(stats_snapshot=lambda: dict(stats), memory_reserve_bytes=2 << 30,
+                          _memory_headroom=lambda: 40 << 30)
+    assert apc_memory_pressure(mgr) is None                  # room, nothing evicted
+    stats["memory_evictions"] = 3
+    assert "evicted 3 entries" in apc_memory_pressure(mgr)
+    assert apc_memory_pressure(mgr) is None                  # already accounted for
+    mgr._memory_headroom = lambda: 1 << 30
+    assert "stores nothing" in apc_memory_pressure(mgr)      # empty and no room: evicts nothing
+    assert apc_memory_pressure(SimpleNamespace()) is None    # never raises

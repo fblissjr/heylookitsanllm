@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.116]
+
+### Added
+
+- **An MLX cache miss caused by low memory says so** (cause `memory`). mlx-vlm's prefix cache (APC) sizes itself to live headroom: the smaller of the Metal working set minus active memory, and free RAM plus MLX's allocator cache. When that headroom drops below its reserve, APC evicts everything and stores nothing. That is deliberate upstream, since it never risks running out of memory. But a big model elsewhere on the machine (a resident llama-server, another server) silences it, and those misses used to read as `cold` or an ordinary miss.
+  - `vlm_engine.apc_memory_pressure` reads two signals: memory evictions since the model's last request (public `stats_snapshot`), and headroom below the reserve now (private, pinned in `TestVlmEngineSurface`).
+  - Found by the improvement-loop session, when mlx-vlm tests running beside a DeepSeek load stored no checkpoints.
+
 ## [2.0.115]
 
 ### Changed
