@@ -57,7 +57,7 @@ APC_CHECKPOINT_CAPTURES = 3
 # its system prompt. The store's byte budget (APCManager.memory_max_bytes)
 # also bounds it; that it binds before this count on long contexts is
 # reasoned from snapshot sizes, not measured. Measured 2026-09-24 (sweep in
-# internal/claude/improve/runs/2026-09-24): mlx-vlm re-counts every retained
+# internal/claude/improve/archive/runs-2026-09-24): mlx-vlm re-counts every retained
 # snapshot's bytes several times per request, so each entry costs every
 # request a little CPU; this keeps a few conversations' snapshots.
 APC_CHECKPOINT_ENTRIES = 16

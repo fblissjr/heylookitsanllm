@@ -39,7 +39,7 @@ two sessions on main (`mrblue`: the registry and spec decode; `mragents`:
 agent docs and the loop profile) while `mropt`, the improvement loop, worked
 on its own branch.
 - **The improvement loop's branch merged as v2.0.121** (`improve/2026-09-24`,
-  record in `internal/claude/improve/runs/2026-09-24/`): the MLX prefix cache
+  record in `internal/claude/improve/archive/runs-2026-09-24/`): the MLX prefix cache
   keeps more than the last request on checkpoint models (a system-prompt
   snapshot, its own capture rule, `APC_CHECKPOINT_ENTRIES` as store size
   alone), MLX images arrive in the order sent, an unreadable image is a 400,

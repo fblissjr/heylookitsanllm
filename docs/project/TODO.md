@@ -13,7 +13,7 @@ backlog pass*
 
 ## From the 2026-09-24 improvement loop (merged as v2.0.121)
 
-Record: `internal/claude/improve/runs/2026-09-24/` (report.html has the evidence).
+Record: `internal/claude/improve/archive/runs-2026-09-24/` (report.html has the evidence).
 
 - [ ] **qwen3_5 vision features (owner decision).** heylook's vision feature
   cache runs only for models with `encode_image()`; qwen3_5 has none, so every
@@ -141,9 +141,8 @@ part of AGENTS.md.
 - [ ] **Promote the loop's scenario runner** from
   `internal/claude/improve/harness/` into `scripts/` once it has tracked real
   use over several runs; `scripts/perf_ab.py` is the provider-level half.
-- [ ] **Clear the pre-plugin run record** `internal/claude/improve/runs/2026-09-24/`
-  (the run finished and merged as v2.0.121; clear it once its open items above are settled): since improvement-loops 0.4.3 a run folder
-  without `record.json` blocks tidying, so it stays in the way until cleared.
+- [x] **Pre-plugin run record archived** (2026-09-24, owner and mropt): moved to
+  `internal/claude/improve/archive/runs-2026-09-24/`, so it no longer blocks tidying.
 
 ## e2e: audit for clicks or seeds before an async list lands (2026-09-23)
 
