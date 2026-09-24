@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.105]
+
+### Changed
+
+- **`image_plan.py` has a rule section** (`.claude/rules/engine-contract.md`, "Image cost"): the file is in the rule's paths, and the section covers engine-derived cost, resident-only, and why planning takes neither the generation gate nor a pin.
+- **The image-plan call and the chat page's image cap are pinned together.** The page sends two sizes per staged image in one call, so `image_plan.MAX_SIZES` must cover twice chat.js `MAX_ATTACH_IMAGES`. Past that, every badge would read "cost unavailable". `TestImagePlan` now checks the two constants against each other.
+
 ## [2.0.104]
 
 ### Changed

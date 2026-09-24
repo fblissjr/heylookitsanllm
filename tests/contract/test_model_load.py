@@ -150,3 +150,17 @@ class TestImagePlan:
         assert client.post("/v1/models/test-mlx-model/load").status_code == 200
         r = client.post("/v1/models/test-mlx-model/image-plan", json={"sizes": [[448, 448]]})
         assert r.status_code == 400 and "served as text" in r.text
+
+    def test_the_chat_page_fits_its_worst_case_in_one_call(self):
+        # chat.js prices every staged image at two sizes (staged and source)
+        # in one call; past MAX_SIZES the call is a 400 and every badge reads
+        # "cost unavailable". The two caps live in two languages, so pin them.
+        import re
+        from pathlib import Path
+
+        from heylook_llm.image_plan import MAX_SIZES
+
+        chat = Path(__file__).parents[2] / "frontend/js/pages/chat.js"
+        m = re.search(r"const MAX_ATTACH_IMAGES = (\d+);", chat.read_text())
+        assert m, "MAX_ATTACH_IMAGES moved; point this check at it"
+        assert 2 * int(m.group(1)) <= MAX_SIZES
