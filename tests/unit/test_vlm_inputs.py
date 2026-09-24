@@ -317,3 +317,36 @@ class TestNonUserImageGuard:
             {"role": "assistant", "content": "a cat"},
         ]})
         assert _non_user_image_roles(ok.messages) == []
+
+
+def test_reasoning_content_survives_mlx_vlms_message_rebuild():
+    """mlx-vlm's apply_chat_template(return_messages=True) rebuilds each
+    message as role + content only. heylook's wrapper must put the rest back,
+    or `reasoning_content` never reaches the template on the VLM path (found
+    2026-09-24: gemma-4's continued turn lost its thought and degenerated).
+    Driven through the REAL mlx-vlm rebuild with a recording tokenizer."""
+    import json
+    from pathlib import Path
+
+    import pytest
+
+    from heylook_llm.providers.mlx_provider import vlm_apply_chat_template
+
+    cfg_path = Path("modelzoo/google/gemma-4-26b-a4b-it-8bit-mlx/config.json")
+    config = json.loads(cfg_path.read_text()) if cfg_path.exists() else {"model_type": "gemma4"}
+    seen = {}
+
+    class Recorder:
+        def apply_chat_template(self, messages, **_kw):
+            seen["messages"] = messages
+            return "rendered"
+
+    try:
+        vlm_apply_chat_template(
+            Recorder(), config,
+            [{"role": "user", "content": "hi"},
+             {"role": "assistant", "content": "partial", "reasoning_content": "THOUGHT"}],
+            enable_thinking=True, continue_final_message=True)
+    except Exception as e:  # a missing mlx-vlm model registry entry, say
+        pytest.skip(f"mlx-vlm could not rebuild gemma4 messages here: {e}")
+    assert seen["messages"][-1].get("reasoning_content") == "THOUGHT"

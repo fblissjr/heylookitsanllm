@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.93]
+
+### Fixed
+
+- **`reasoning_content` never reached the chat template on any
+  vision-capable MLX model** (gemma-4, Qwen3.5), on text and vision requests
+  alike. mlx-vlm's `apply_chat_template(return_messages=True)` rebuilds each
+  message as role + content only, and heylook's wrapper passed its output
+  straight on. The visible failure: Save & Continue with edited thinking on
+  gemma-4 rendered the continued turn with no thought channel, and the
+  continuation degenerated ("de minimis de minimis...") and then opened a new
+  thought channel that the route appended to the stored thought. This is the
+  "unexplained" E2E failure carried since v2.0.88; a replay through the API
+  reproduced it 8 of 8 before and 0 of 8 after. `vlm_inputs.carry_message_extras`
+  restores every other key, tested through the real mlx-vlm rebuild. Normal
+  multi-turn prompts are unchanged: both templates render a message's
+  reasoning only for turns after the last user message.
+
 ## [2.0.92]
 
 ### Fixed

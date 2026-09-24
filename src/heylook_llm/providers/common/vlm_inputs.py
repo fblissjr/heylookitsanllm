@@ -88,6 +88,27 @@ def content_for_template(text: str, num_images: int):
     return [{"type": "image"}] * num_images + [{"type": "text", "text": text}]
 
 
+def carry_message_extras(source: list, rebuilt: list) -> list:
+    """``rebuilt`` (mlx-vlm's per-model message shapes) with every key of
+    the matching ``source`` message it lacks put back.
+
+    ``mlx_vlm.prompt_utils.apply_chat_template(return_messages=True)`` keeps
+    only role and content, so ``reasoning_content`` (and anything else a
+    template reads off a message) never reached the template on the VLM
+    path. Same count and order in, same out; if mlx-vlm ever changes the
+    count, the messages are returned untouched rather than mismatched.
+    """
+    if len(source) != len(rebuilt):
+        return rebuilt
+    for src, dst in zip(source, rebuilt):
+        if not isinstance(src, dict) or not isinstance(dst, dict):
+            continue
+        for key, value in src.items():
+            if key not in dst:
+                dst[key] = value
+    return rebuilt
+
+
 def continue_from_generation_prompt(prompt, messages, render_generation_prompt):
     """A content continuation, rebuilt on the prompt the reply was generated
     under when the template's history render lost part of it.

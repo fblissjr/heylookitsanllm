@@ -22,7 +22,8 @@ from .base import BaseProvider, CacheReport, GenerationChunk, GenerationFailed, 
 from ..capabilities import model_context_length
 from ..samplers import GLOBAL_SAMPLER_FLOOR, load_vendor_sampling, resolve_effective_sampling
 from .common.samplers import build as build_sampler
-from .common.vlm_inputs import continue_from_generation_prompt, thinking_for_template
+from .common.vlm_inputs import (
+    carry_message_extras, continue_from_generation_prompt, thinking_for_template)
 from .common.generation_core import continuation_detokenizer, detokenizer_source
 from .common import vlm_engine
 from .common.batch_vision import BatchVisionProcessor
@@ -305,6 +306,13 @@ def vlm_apply_chat_template(processor, config, messages, num_images=None, enable
     formatted_messages = mlx_vlm_apply_chat_template(
         processor, config, messages, num_images=num_images, return_messages=True
     )
+    # mlx-vlm rebuilds every message as role + content only, so any other key
+    # the template reads -- `reasoning_content` above all -- was dropped on
+    # this path, silently: gemma-4's continued turn lost its thought and the
+    # model was asked to extend a reply with no thought channel, which
+    # degenerates. Carry the rest of each message across (one output message
+    # per input, same order).
+    formatted_messages = carry_message_extras(messages, formatted_messages)
 
     # Step 2: flatten any list content to strings so all tokenizer
     # Jinja templates can handle them
