@@ -179,7 +179,6 @@ one side left at f16.
    - Qwen3-VL image turns do not reuse;
    - gemma-4 vision is unverified on the v2.0.55 prefill path (owner:
      "another time").
-7. `internal/bin/latest.py` still writes an mlx-lm rev (owner's local tool).
 
 ## What landed 2026-09-23 (v2.0.65 - v2.0.77)
 
