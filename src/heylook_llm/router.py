@@ -74,15 +74,12 @@ class ModelRouter:
         self.loading_locks: Dict[str, threading.Lock] = {}  # Per-model loading locks
         self.loading_locks_lock = threading.Lock()  # Protect loading_locks dict
 
-        # Model pinning: prevents eviction during a long-running job
-        self._pinned: set[str] = set()
-
         # Capacity reservations for in-flight loads. The capacity check and
         # the multi-hundred-ms load can't share one lock hold, so without a
         # reservation two concurrent different-model loads both pass the
         # check and hold two full models in memory (check-then-act TOCTOU,
-        # OOM-class on boxes sized for max_loaded_models). A side-set (like
-        # _pinned) rather than a sentinel inside self.providers, so
+        # OOM-class on boxes sized for max_loaded_models). A side-set rather
+        # than a sentinel inside self.providers, so
         # self.providers always means "real, loaded providers" and reader
         # APIs need no filtering discipline.
         # model_id -> PROVIDER KIND ('mlx' / 'gguf'). A set until v2.0.49:
@@ -426,14 +423,6 @@ class ModelRouter:
         if not foreign:
             return False
 
-        pinned = [m for m in foreign if m in self._pinned]
-        if pinned:
-            raise RuntimeError(
-                f"Cannot load a '{kind}' model while {pinned} "
-                f"{'is' if len(pinned) == 1 else 'are'} pinned: heylook keeps at most one "
-                f"engine family resident, and a pinned model cannot be evicted. "
-                f"Unpin it first."
-            )
         busy = [m for m in foreign if self._is_generating(m)]
         if busy:
             from heylook_llm.providers.common.generation_gate import ModelBusyError
@@ -459,15 +448,13 @@ class ModelRouter:
         return True
 
     def _evict_lru_model(self):
-        """Evict least recently used non-pinned, non-generating model.
+        """Evict the least recently used model that is not generating.
 
         Must be called with cache_lock held.
         """
         evict_id = None
         blocked_by_generation = []
         for model_id in self.providers:
-            if model_id in self._pinned:
-                continue
             if self._is_generating(model_id):
                 blocked_by_generation.append(model_id)
                 continue
@@ -486,10 +473,7 @@ class ModelRouter:
                     f"{'is' if len(blocked_by_generation) == 1 else 'are'} "
                     f"generating. Stop the generation or wait for it to finish."
                 )
-            raise RuntimeError(
-                f"All {len(self.providers)} loaded models are pinned. "
-                f"Cannot evict to make room. Pinned: {self._pinned}"
-            )
+            raise RuntimeError("Cannot evict to make room: no model is loaded.")
 
         lru_provider = self.providers.pop(evict_id)
         self._last_used_ts.pop(evict_id, None)
@@ -616,13 +600,13 @@ class ModelRouter:
                             # want in order to wait for one we are about to
                             # evict anyway. Just wait for it to publish.
                             inflight = foreign_inflight
-                        elif any(mid not in self._pinned for mid in self.providers):
+                        elif self.providers:
                             self._evict_lru_model()
                             continue
                         elif not self._loading:
                             raise RuntimeError(
-                                f"All {len(self.providers)} loaded models are pinned. "
-                                f"Cannot evict to make room. Pinned: {self._pinned}"
+                                f"Cannot make room for '{model_id}': nothing is loaded "
+                                f"or loading, and max_loaded_models is {self.max_loaded_models}."
                             )
                         else:
                             inflight = sorted(self._loading)
@@ -852,14 +836,9 @@ class ModelRouter:
         """Explicitly unload a specific model from cache.
 
         Returns True if the model was loaded and is now unloaded, False if it wasn't loaded.
-        Raises RuntimeError if model is pinned and force=False.
+        Raises RuntimeError if the model is generating and force=False.
         """
         with self.cache_lock:
-            if model_id in self._pinned and not force:
-                raise RuntimeError(
-                    f"Model '{model_id}' is pinned (a long-running job is using it). "
-                    f"Use force=True to override."
-                )
             if self._is_generating(model_id) and not force:
                 raise RuntimeError(
                     f"Model '{model_id}' is generating. "
@@ -889,8 +868,7 @@ class ModelRouter:
     def unload_all(self) -> List[str]:
         """Unload every loaded provider. For server shutdown.
 
-        Ignores pinning (the process is going away regardless) and never
-        raises: this runs on the way out, and one provider that throws must
+        Never raises: this runs on the way out, and one provider that throws must
         not strand the ones behind it. Matters most for the gguf provider,
         where "loaded" IS a running llama-server subprocess in its own
         process group -- anything left here is a multi-GB orphan that
@@ -901,7 +879,6 @@ class ModelRouter:
         with self.cache_lock:
             items = list(self.providers.items())
             self.providers.clear()
-            self._pinned.clear()
             self._last_used_ts.clear()
 
         unloaded = []
@@ -948,10 +925,10 @@ class ModelRouter:
         return int(getattr(self.app_config, "idle_unload_seconds", 0))
 
     def unload_idle_models(self, now_ts: Optional[float] = None) -> List[str]:
-        """Unload non-pinned models whose idle window has elapsed.
+        """Unload models whose idle window has elapsed.
 
         Driven by ``MemoryManager.tick()`` on the 60s resource-snapshot loop.
-        Pinned models are exempt. Models with an effective threshold of ``0``
+        Models with an effective threshold of ``0``
         (explicit per-model disable, or global disable with no per-model
         override) are never touched.
 
@@ -964,8 +941,6 @@ class ModelRouter:
         with self.cache_lock:
             candidates = []
             for model_id in list(self.providers.keys()):
-                if model_id in self._pinned:
-                    continue
                 # An idle timer that fires mid-generation is the same teardown
                 # hazard as an evict. NOT unreachable, and the stamp is why:
                 # last_used is written at REQUEST time (get_provider), so a
@@ -1010,7 +985,7 @@ class ModelRouter:
         and the pop: ``unload_idle_models`` computes candidates, RELEASES the
         lock, then calls this. Anything that becomes true in that window has
         to be caught here or not at all, so every condition the scan skips on
-        is re-tested -- `_is_generating` and `_pinned` included. Both were
+        is re-tested -- `_is_generating` included. It was
         missing, and the queue-stats test does not cover either: it returns
         None for the gguf provider (llama-server queues its own requests), so
         `if stats and ...` is False and a gguf generation started inside the
@@ -1023,9 +998,7 @@ class ModelRouter:
                 return False
             stats = provider.generation_queue_stats()
             busy = None
-            if model_id in self._pinned:
-                busy = "pinned since the scan"
-            elif self._is_generating(model_id):
+            if self._is_generating(model_id):
                 busy = "generating"
             elif stats and (stats.get("active", 0) > 0 or stats.get("waiting", 0) > 0):
                 busy = (f"generation queue busy (active={stats.get('active', 0)}, "
@@ -1050,26 +1023,6 @@ class ModelRouter:
         safe_mm_call(self.memory_manager, "register_model_unload", model_id, reason="idle_timeout")
         self._teardown_provider(provider)
         return True
-
-    def pin_model(self, model_id: str) -> None:
-        """Pin a model to prevent LRU eviction during a long-running job. No caller
-        today: server-side batch inference went in v2.0.57 and RLM in v2.0.123.
-
-        The model must already be loaded. Pinned models are skipped during
-        eviction in _evict_lru_model(), so a running job won't lose its model
-        when another request triggers a load.
-        """
-        with self.cache_lock:
-            if model_id not in self.providers:
-                raise ValueError(f"Cannot pin model '{model_id}': not currently loaded")
-            self._pinned.add(model_id)
-            logging.info(f"Pinned model: {model_id} (pinned: {self._pinned})")
-
-    def unpin_model(self, model_id: str) -> None:
-        """Remove pin from a model, allowing normal LRU eviction again."""
-        with self.cache_lock:
-            self._pinned.discard(model_id)
-            logging.info(f"Unpinned model: {model_id} (pinned: {self._pinned})")
 
     def is_loading(self, model_id: str) -> bool:
         """Whether a load of this model is in flight (capacity reserved but

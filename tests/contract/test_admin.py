@@ -154,15 +154,16 @@ class TestAdminReload:
         resp = client.post("/v1/admin/models/nope/reload?warm=true")
         assert resp.status_code == 400
 
-    def test_reload_pinned_model_409s_with_the_reason(self, client, mock_router, monkeypatch):
-        # A pinned model (a long-running job) is a CONFLICT the caller
-        # can act on -- previously the RuntimeError escaped as an opaque 500.
-        def _pinned(model_id, force=False):
-            raise RuntimeError(f"Model '{model_id}' is pinned (a long-running job is using it).")
-        monkeypatch.setattr(mock_router, "unload_model", _pinned)
+    def test_reload_of_a_generating_model_409s_with_the_reason(self, client, mock_router, monkeypatch):
+        # A model that is generating is a CONFLICT the caller can act on --
+        # previously the router's RuntimeError escaped as an opaque 500.
+        def _generating(model_id, force=False):
+            raise RuntimeError(f"Model '{model_id}' is generating. "
+                               f"Stop the generation, or use force=True to override.")
+        monkeypatch.setattr(mock_router, "unload_model", _generating)
         resp = client.post("/v1/admin/models/test-mlx-model/reload")
         assert resp.status_code == 409
-        assert "pinned" in resp.json()["detail"]
+        assert "generating" in resp.json()["detail"]
 
     def test_reload_refuses_while_a_load_is_in_flight(self, client, mock_router, monkeypatch):
         # unload_model cannot see an in-flight load (the provider isn't
@@ -174,11 +175,12 @@ class TestAdminReload:
         assert resp.status_code == 409
         assert "in flight" in resp.json()["detail"]
 
-    def test_unload_pinned_model_409s_too(self, client, mock_router, monkeypatch):
+    def test_unload_of_a_generating_model_409s_too(self, client, mock_router, monkeypatch):
         # Ride-along: /unload shared the raw-500 mechanism.
-        def _pinned(model_id, force=False):
-            raise RuntimeError(f"Model '{model_id}' is pinned (a long-running job is using it).")
-        monkeypatch.setattr(mock_router, "unload_model", _pinned)
+        def _generating(model_id, force=False):
+            raise RuntimeError(f"Model '{model_id}' is generating. "
+                               f"Stop the generation, or use force=True to override.")
+        monkeypatch.setattr(mock_router, "unload_model", _generating)
         resp = client.post("/v1/admin/models/test-mlx-model/unload")
         assert resp.status_code == 409
-        assert "pinned" in resp.json()["detail"]
+        assert "generating" in resp.json()["detail"]

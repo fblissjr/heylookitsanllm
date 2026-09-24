@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.126]
+
+### Removed
+
+- **Model pinning** (owner decision): `ModelRouter.pin_model` / `unpin_model`
+  and the pinned set, with the guards that read it (LRU eviction, the
+  engine-family switch, `unload_model`, idle unload and its re-check). RLM
+  was its last caller (removed in v2.0.123). What protects a model in use is
+  unchanged: eviction, unload and idle unload still refuse or skip a model
+  that is generating or has gate waiters. The admin refusal comments, the
+  idle-unload config text, and `.claude/rules/mlx.md` (new MLX paths took
+  the gate "plus `router.pin_model()`") follow. Tests: the pinning cases go;
+  `test_router_pinning.py` becomes `test_router_unload.py` with its two
+  unload cases, and the admin 409 tests use a generating refusal.
+
 ## [2.0.125]
 
 ### Added

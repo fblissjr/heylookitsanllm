@@ -113,17 +113,6 @@ class TestIdleUnload(unittest.TestCase):
 
         self.assertIn("model-fast", router.providers)
 
-    def test_pinned_model_exempt(self):
-        router = self._router()
-        fast = router.get_provider("model-fast")
-        router.pin_model("model-fast")
-        router._last_used_ts["model-fast"] = 1_000.0
-
-        router.unload_idle_models(now_ts=10_000.0)
-
-        self.assertIn("model-fast", router.providers)
-        fast.unload.assert_not_called()
-
     def test_per_model_override_wins_over_global(self):
         """model-fast has override=60s, global is 1800s. At 120s idle it should
         unload; model-global (no override) shouldn't."""

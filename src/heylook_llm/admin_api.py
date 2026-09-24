@@ -420,9 +420,8 @@ async def reload_model(
         # returning False (not loaded) is not an error here.
         await asyncio.to_thread(router.unload_model, model_id)
     except RuntimeError as e:
-        # TWO causes, both conflicts the caller can act on rather than server
-        # faults: pinned (a long-running job in progress), and
-        # GENERATING. The second is newer and changes what this endpoint does:
+        # A conflict the caller can act on rather than a server fault: the
+        # model is GENERATING. This changes what this endpoint does:
         # a reload issued during any generation now refuses rather than waiting
         # the model out -- including a detached run the requester never started
         # and cannot see, since a run outlives the response that began it. The
@@ -443,7 +442,7 @@ async def unload_model(model_id: str, request: Request):
     # Same two mechanisms as /reload (ride-along fixes, same review): the
     # unload drain must not run ON the event loop (it waits on gate waiters
     # whose SSE delivery the loop drives), and a refusal is a 409 the caller
-    # can act on, not a raw 500. Refusals: pinned, or generating.
+    # can act on, not a raw 500. The refusal: generating.
     try:
         unloaded = await asyncio.to_thread(router.unload_model, model_id)
     except RuntimeError as e:
@@ -651,10 +650,9 @@ async def remove_model_config(model_id: str, request: Request):
     service = _get_service(request)
     router = request.app.state.router_instance
 
-    # Unload if currently loaded -- off the event loop, and a refusal (pinned,
-    # or generating) is a 409 BEFORE the config row is deleted: removing a
-    # model a long-running job is using, or one mid-generation, would be
-    # the worse half of the failure.
+    # Unload if currently loaded -- off the event loop, and a refusal (the
+    # model is generating) is a 409 BEFORE the config row is deleted: removing
+    # a model mid-generation would be the worse half of the failure.
     try:
         await asyncio.to_thread(router.unload_model, model_id)
     except RuntimeError as e:

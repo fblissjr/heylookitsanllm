@@ -106,7 +106,7 @@ class TestModelRouter(unittest.TestCase):
         self.assertEqual(len(router.providers), 1)
 
     def test_lru_eviction(self):
-        """Third load evicts the oldest non-pinned provider and calls unload()."""
+        """Third load evicts the oldest provider and calls unload()."""
         router = ModelRouter(
             config_path=self.config_path, log_level=logging.DEBUG, initial_model_id=None
         )
@@ -444,17 +444,6 @@ class TestOneEngineFamilyResident(unittest.TestCase):
         r.get_provider('m-mlx-a')
         r.get_provider('m-mlx-b')
         assert set(r.providers) == {'m-mlx-a', 'm-mlx-b'}
-
-    def test_a_pinned_foreign_model_refuses_the_load_rather_than_mixing(self):
-        """Pinning cannot be a back door into the state the rule forbids. The
-        honest answer is a refusal naming the pin, not a silent mix."""
-        r = self._router()
-        r.get_provider('m-mlx-a')
-        r.pin_model('m-mlx-a')
-
-        with pytest.raises(RuntimeError, match="pinned"):
-            r.get_provider('m-gguf')
-        assert set(r.providers) == {'m-mlx-a'}, "the pinned model was evicted anyway"
 
     def test_a_generating_foreign_model_is_backpressure_not_a_kill(self):
         """Evicting mid-generation would destroy a running request. MODEL_BUSY

@@ -500,7 +500,7 @@ class MLXModelConfig(BaseModel):
     # the template lives inside GGUF metadata, nothing cheap to probe.
     # Idle-unload override (C2). ``None`` = use ``AppConfig.idle_unload_seconds``
     # global default. ``0`` = never idle-unload this model. Positive = per-model
-    # threshold in seconds. Pinned models are exempt regardless of this value.
+    # threshold in seconds. A model that is generating is never idle-unloaded.
     # applies_live, NOT load_time_only: the router re-reads this on each idle
     # sweep, so a change takes effect on a loaded model with no reload. The UI
     # should let it be edited freely -- the opposite of max_queue_depth above,
@@ -1410,11 +1410,11 @@ class AppConfig(BaseModel):
 
     # Idle unload (C2). Global default applied when a model has no per-model
     # ``unload_after_idle_seconds`` override. ``0`` disables idle unload
-    # entirely (for models without their own override). Pinned models are
-    # always exempt.
+    # entirely (for models without their own override). A model that is
+    # generating is never idle-unloaded.
     idle_unload_seconds: int = Field(
         default=1800, ge=0,
-        description="Seconds of inactivity before a non-pinned model is unloaded. "
+        description="Seconds of inactivity before a loaded model is unloaded. "
                     "0 disables idle unload globally.",
     )
 

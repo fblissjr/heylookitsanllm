@@ -263,16 +263,6 @@ class TestIdleUnloadRespectsQueue(_RouterTestBase):
         self.assertIn("model-a", router.providers)
         provider.unload.assert_not_called()
 
-    def test_a_model_pinned_inside_the_window_is_not_unloaded(self):
-        # Same window, the other condition the scan skips on. Pinning is how a
-        # batch job holds a model; losing it mid-job is the thing pin prevents.
-        router, provider = self._idle_router_with()
-        provider.generation_queue_stats = lambda: None
-        router._pinned.add("model-a")
-        self.assertFalse(router._unload_idle("model-a"))
-        self.assertIn("model-a", router.providers)
-        provider.unload.assert_not_called()
-
     def test_generating_counts_as_use_so_the_next_tick_does_not_unload(self):
         """Skipping without re-stamping only DEFERRED the unload by a tick.
 

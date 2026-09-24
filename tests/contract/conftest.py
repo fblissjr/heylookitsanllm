@@ -175,12 +175,6 @@ class MockRouter:
     def warm_model_facts(self):
         pass
 
-    def pin_model(self, model_id):
-        pass
-
-    def unpin_model(self, model_id):
-        pass
-
     def reload_config(self):
         pass
 

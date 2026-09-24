@@ -49,11 +49,7 @@ Record: `internal/claude/improve/archive/runs-2026-09-24/` (report.html has the 
   after #2356 lands (filing sends it off this machine: owner's go).
 - [x] **Hook: refuse `git add -A`/`-u`/`.`** and `git commit -a`
   (`scripts/hooks/git_add_guard.py`, v2.0.125, owner-approved).
-- [ ] **Delete model pinning** (owner yes, 2026-09-24): RLM was its only
-  caller. Router `pin_model`/`unpin_model`, the pinned-eviction, unload and
-  family-switch guards, the "pinned" refusals in admin_api, the config text
-  that says "non-pinned", `tests/unit/test_router_pinning.py`, and the
-  `.claude/rules/mlx.md` line telling new MLX paths to pin.
+- [x] **Model pinning deleted** (v2.0.126, owner yes): RLM was its only caller.
 
 ## Runtime visibility + one behaviour across engines (2026-09-23) — APPROVED
 

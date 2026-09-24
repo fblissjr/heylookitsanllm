@@ -137,17 +137,6 @@ class TestReservationWaitBounded(unittest.TestCase):
         self.assertLess(elapsed, 5.0, "timeout did not bound the wait")
         self.assertIn("ghost-model", str(ctx.exception))
 
-    def test_all_pinned_still_raises_immediately(self):
-        router = self._router()
-        router.get_provider("model-a")
-        router.pin_model("model-a")
-
-        start = time.monotonic()
-        with self.assertRaises(RuntimeError) as ctx:
-            router.get_provider("model-b")
-        self.assertLess(time.monotonic() - start, 1.0)
-        self.assertIn("pinned", str(ctx.exception))
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -37,7 +37,7 @@ paths:
 ## Image cost (plan W4)
 
 - `image_plan.plan` behind `POST /v1/models/{id}/image-plan` reads an image's cost off the resident engine itself: MLX runs the loaded processor through `vlm_prepare_inputs` on a synthetic image per size (on a pinned executor, in `generation_stream`); gguf asks the running llama-server's `/v1/chat/completions/input_tokens`, which runs no vision encode. Never a hand copy of a family's resize arithmetic: the replica-and-rule-name design was dropped because the engine's own answer cannot drift from the engine.
-- Resident only, 409 otherwise, like the prompt preview: planning never loads a model. It takes no generation gate (pricing must not queue behind a long run) and no `pin_model` (pins are a set, not a count, so unpinning would drop a long-running job's pin); an eviction mid-plan costs one failed badge, which the page shows as "cost unavailable".
+- Resident only, 409 otherwise, like the prompt preview: planning never loads a model. It takes no generation gate (pricing must not queue behind a long run); an eviction mid-plan costs one failed badge, which the page shows as "cost unavailable".
 - `target` is null on gguf (llama.cpp does not say what size it resized to), so the page offers no Fit there. The chat page sends two sizes per staged image in one call; `MAX_SIZES` and chat.js `MAX_ATTACH_IMAGES` are pinned together by `TestImagePlan` in `tests/contract/test_model_load.py`.
 - The cost is disclosed, never a gate. Fit resizes to the `target` the engine reports for the image at its source size.
 

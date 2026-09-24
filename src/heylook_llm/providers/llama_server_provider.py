@@ -1144,7 +1144,7 @@ class LlamaServerProvider(BaseProvider):
         # idle unload. heylook's unload ends the process, so keeping the
         # weights resident for the life of the process is exactly "as long as
         # heylook keeps the model loaded", and never goes stale when
-        # idle_unload_seconds changes live or the model is pinned. An inherited
+        # idle_unload_seconds changes live. An inherited
         # value wins: someone may be setting it deliberately.
         keep_alive, keep_alive_reason, inherited = self.keep_alive_choice(child_env)
         if inherited:
