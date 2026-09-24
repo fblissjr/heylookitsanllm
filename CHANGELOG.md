@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.124]
+
+### Changed
+
+- **mlx-vlm pin moved to upstream main, `ac737ef3ad1bb576eb8d641965a325282d7e047e`**
+  (v0.7.3, was `b1a85530931b119fe0a6b2f6843e303023269f1d`, v0.7.1; owner:
+  "make it equal to the current latest commit"). The 28 upstream commits in
+  between include #2328 (generation batch arrays released without waiting for
+  cyclic GC) and #2357 (Qwen3.5 batched left padding). `coderef/mlx-vlm` was
+  fast-forwarded to the same commit, so the tree read upstream in and the pin
+  agree. Only mlx-vlm moved in uv.lock.
+- Verified on the new pin: unit + contract green; `scripts/vlm_parity_probe.py`
+  ok on Qwen3.5-0.8B (the image case a near-tie at upstream margin 0.0);
+  `scripts/chain_probe.py` on Qwen3.5-0.8B matches and reuses on every hop
+  (`internal/claude/chain_probe/`). Smoke not run on the new pin.
+
 ## [2.0.123]
 
 ### Security
