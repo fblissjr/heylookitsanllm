@@ -27,13 +27,14 @@ Record: `internal/claude/improve/runs/2026-09-24/` (report.html has the evidence
 - [ ] **Move the mlx-vlm pin** past upstream #2328 (a KV-retention fix heylook
   hits through `remove()`), and past Blaizzy/mlx-vlm#2356 once it merges
   (restored qwen3_5 decode). Usual suite, chain probe and smoke.
-- [ ] **Security findings (owner decision).** CORS `*` with no Host check
-  (`api.py`), so any web page can drive the unauthenticated API; admin PATCH
-  accepts `server_binary`, `extra_args` and `chat_template_path` over HTTP
-  (argv injection, and reading any file through the chat-template route);
-  RLM takes `sandbox: false` as a request field; `HEYLOOK_API_KEY` does not
+- [x] **Security: CORS, admin argv, RLM** (v2.0.123, owner call): the CORS
+  wildcard is gone, admin writes refuse `config.FILE_ONLY_FIELDS` (422), and
+  RLM (with its `sandbox: false` request field) is removed.
+- [ ] **Security, lower priority (owner decision).** `HEYLOOK_API_KEY` does not
   gate the conversation, notebook, preset or generate routers; MLX image
-  sources may be http URLs or local paths. Details in the run's report.
+  sources may be http URLs (a server-side fetch) or local paths; no Host
+  check, so DNS rebinding can still reach the API from a browser. Details in
+  the run's report.
 - [ ] **Upstream PR to separate APC captures from store size** and let a
   caller name boundaries; it would delete heylook's local capture rule
   (`vlm_engine.install_capture_policy`). Drafted in the run's ledger.
@@ -388,11 +389,10 @@ wrapper in `utils.js`. Backend suite green; `bun run e2e:render` green.
     `:795`. Sequential mode (`batch_processor.py:254`) is worse still: its own
     `except Exception` stringifies the busy message into `group.error` and
     returns **200**.
-  FIXED for all but rlm (owner call), and not by a longer census: `api.py`
+  FIXED for all (rlm by its removal in v2.0.123), and not by a longer census: `api.py`
   registers an app-level `exception_handler(ModelBusyError)`, so a route that
   does nothing answers 503 for free and the only way to get it wrong is to
-  actively swallow. rlm keeps its bare 503 / in-band `rlm_error`, with both
-  sites commented so silence is not read as coverage.
+  actively swallow.
   THE DURABLE FIX IS NOT A LONGER CENSUS. Anchor on the TRIGGER, not the
   helper: "every `get_provider` call reachable from a route answers MODEL_BUSY
   through `busy_response`" has an enumerable population, so a test can hold it
@@ -525,7 +525,7 @@ Verified by token parity against `mlx_vlm.generate.ar.generate_step`
 
 The two batch items below CLOSED in v1.79.66 by deletion: the OpenAI route,
 its batch sibling and `batch_processor.py`'s processing modes are gone. Only
-the rlm item remains open; the batch text is kept as record. (v2.0.57 then
+the rlm item closed by deletion in v2.0.123; the text is kept as record. (v2.0.57 then
 removed the batch INTERNALS too -- `mlx_batch_text.py`, `schema/batch.py`,
 `create_batch_chat_completion` -- so RLM's `llm_query_batched` is a plain
 sequential loop and there is no server-side batch inference of any kind.)
@@ -547,9 +547,8 @@ sequential loop and there is no server-side batch inference of any kind.)
   is function-local and there is no streaming path. Correct reporting bought
   with silent work loss, and no test covers it -- the contract case sends one
   message, i.e. the zero-completed-groups case where the tradeoff is free.
-- [ ] **rlm answers a bare 503 / an in-band `rlm_error`** (P3): right status,
-  wrong shape non-streaming (no `Retry-After`, no envelope); no status at all
-  streaming. Both sites are commented in `rlm.py`.
+- [x] **rlm answers a bare 503 / an in-band `rlm_error`** (P3): CLOSED by
+  deletion, RLM removed in v2.0.123.
 - **THE FIX FOR ALL THREE IS PROBABLY NOT A HANDLER.** `batch_processor` never
   calls `pin_model`; `rlm.py:919/964` and `jspace_api.py:116` (removed v1.79.75) both pinned with
   try/finally for exactly this multi-round-over-one-model shape, and batch is

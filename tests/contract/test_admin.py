@@ -92,6 +92,22 @@ class TestAdminEngineRow:
             mock_service.update_config("test-mlx-model", {"config": {"context_length": None}})
             mock_service.update_calls.clear()
 
+    def test_file_only_fields_are_refused_over_http_and_nothing_is_written(self, client, mock_service):
+        """A program path, raw argv or a template path over HTTP would let any
+        caller of the admin API run a command or read a file; they are set in
+        the model's own file only. Each is refused, alongside an allowed key,
+        before any writer runs."""
+        from heylook_llm.config import FILE_ONLY_FIELDS
+
+        assert FILE_ONLY_FIELDS >= {"server_binary", "extra_args", "chat_template_path"}
+        mock_service.update_calls.clear()
+        for field in sorted(FILE_ONLY_FIELDS):
+            resp = client.patch("/v1/admin/models/test-mlx-model",
+                                json={"config": {field: "x", "max_tokens": 64}})
+            assert resp.status_code == 422, (field, resp.text)
+            assert field in resp.text
+        assert mock_service.update_calls == []
+
 
 class TestAdminModelStatus:
     """Tests for GET /v1/admin/models/{model_id}/status."""
@@ -139,10 +155,10 @@ class TestAdminReload:
         assert resp.status_code == 400
 
     def test_reload_pinned_model_409s_with_the_reason(self, client, mock_router, monkeypatch):
-        # A pinned model (RLM job / j-space analysis) is a CONFLICT the caller
+        # A pinned model (a long-running job) is a CONFLICT the caller
         # can act on -- previously the RuntimeError escaped as an opaque 500.
         def _pinned(model_id, force=False):
-            raise RuntimeError(f"Model '{model_id}' is pinned (an RLM run is using it).")
+            raise RuntimeError(f"Model '{model_id}' is pinned (a long-running job is using it).")
         monkeypatch.setattr(mock_router, "unload_model", _pinned)
         resp = client.post("/v1/admin/models/test-mlx-model/reload")
         assert resp.status_code == 409
@@ -161,7 +177,7 @@ class TestAdminReload:
     def test_unload_pinned_model_409s_too(self, client, mock_router, monkeypatch):
         # Ride-along: /unload shared the raw-500 mechanism.
         def _pinned(model_id, force=False):
-            raise RuntimeError(f"Model '{model_id}' is pinned (an RLM run is using it).")
+            raise RuntimeError(f"Model '{model_id}' is pinned (a long-running job is using it).")
         monkeypatch.setattr(mock_router, "unload_model", _pinned)
         resp = client.post("/v1/admin/models/test-mlx-model/unload")
         assert resp.status_code == 409

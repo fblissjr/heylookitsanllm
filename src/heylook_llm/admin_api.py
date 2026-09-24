@@ -421,7 +421,7 @@ async def reload_model(
         await asyncio.to_thread(router.unload_model, model_id)
     except RuntimeError as e:
         # TWO causes, both conflicts the caller can act on rather than server
-        # faults: pinned (RLM job / j-space analysis in progress), and
+        # faults: pinned (a long-running job in progress), and
         # GENERATING. The second is newer and changes what this endpoint does:
         # a reload issued during any generation now refuses rather than waiting
         # the model out -- including a detached run the requester never started
@@ -653,7 +653,7 @@ async def remove_model_config(model_id: str, request: Request):
 
     # Unload if currently loaded -- off the event loop, and a refusal (pinned,
     # or generating) is a 409 BEFORE the config row is deleted: removing a
-    # model an RLM job is actively running, or one mid-generation, would be
+    # model a long-running job is using, or one mid-generation, would be
     # the worse half of the failure.
     try:
         await asyncio.to_thread(router.unload_model, model_id)
@@ -846,7 +846,7 @@ def _field_options(cls) -> list[dict]:
         # descriptions never reach it. The classes' own
         # `model_json_schema()` does carry both, which is exactly the trap:
         # checking the model and concluding the WIRE has it.
-        for key in ("description", "arg", "ui", "shape", "reason"):
+        for key in ("description", "arg", "ui", "shape", "reason", "file_only"):
             if key in prop:
                 entry[key] = prop[key]
         out.append(entry)

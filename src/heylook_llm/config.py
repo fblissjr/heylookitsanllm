@@ -681,7 +681,8 @@ class GGUFModelConfig(BaseModel):
             "`chat_template_source`, a different mechanism under a different "
             "name on purpose."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
-                           "arg": "--chat-template-file"},
+                           "arg": "--chat-template-file",
+                           "ui": "hidden", "file_only": True},
     )
     # Sidecar discovery (v1.79.43, owner ask). When `chat_template_path` is
     # unset and the model file's OWN directory contains `chat_template.jinja`,
@@ -1072,7 +1073,8 @@ class GGUFModelConfig(BaseModel):
             "stale binary quietly shadowing a fresh one is the failure this "
             "warning exists to prevent. Unset = the build written by "
             "scripts/build_llama.py, which is the one source."),
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "hidden"})
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "hidden",
+                           "file_only": True})
     host: str = Field(
         default="127.0.0.1",
         description=(
@@ -1093,20 +1095,20 @@ class GGUFModelConfig(BaseModel):
             "How long to wait for the subprocess to report ready before the "
             "load fails. Raise it for a very large model on cold storage."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "hidden"})
-    # Raw passthrough flags. requires_reload because they are spawn argv --
-    # and note this is remote argv injection into a subprocess for anyone with
-    # admin PATCH access, so a UI should not make it a casual free-text field
-    # (ui:"advanced" keeps it behind v3's collapsed disclosure).
+    # Raw passthrough flags. requires_reload because they are spawn argv. It
+    # is argv injection into a subprocess, so it is file_only (v2.0.123):
+    # set in the model's model.heylook.toml, refused over HTTP.
     extra_args: List[str] = Field(
         default_factory=list,
         description=(
             "Raw flags appended to the llama-server command line, for options "
-            "heylook has no field for. This is argv injection into a "
-            "subprocess for anyone with admin PATCH access, so it is not a "
-            "casual free-text field. The three llama.cpp flags that write to "
+            "heylook has no field for. Set it in the model's "
+            "model.heylook.toml; it is refused over HTTP, because raw argv "
+            "into a subprocess is a way to run a command. The three llama.cpp flags that write to "
             "disk on their own are REFUSED here -- one of them writes PROMPT "
             "TEXT, at observability_level=off, with nothing announcing it."),
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "advanced"},
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "hidden",
+                           "file_only": True},
     )
     # model-level default cap
     max_tokens: Optional[int] = Field(
@@ -1246,6 +1248,17 @@ PROVIDER_CONFIG_CLASSES: Dict[str, type] = {
     "mlx": MLXModelConfig,
     "gguf": GGUFModelConfig,
 }
+
+# Fields settable only by editing the model's file, never over HTTP (v2.0.123):
+# a program path, raw argv and a template path together let anything that can
+# reach the admin API run a command or read a file. Derived from each field's
+# `file_only` flag, so a new such field is refused without touching this line.
+FILE_ONLY_FIELDS: frozenset[str] = frozenset(
+    name
+    for cls in PROVIDER_CONFIG_CLASSES.values()
+    for name, f in cls.model_fields.items()
+    if isinstance(f.json_schema_extra, dict) and f.json_schema_extra.get("file_only")
+)
 
 
 def _validate_effect_declarations() -> None:
@@ -1507,6 +1520,15 @@ class ModelUpdateRequest(BaseModel):
     tags: Optional[List[str]] = None
     capabilities: Optional[List[str]] = None
     config: Optional[Dict] = Field(default=None, description="Provider-specific config updates")
+
+    @model_validator(mode="after")
+    def _refuse_file_only_fields(self):
+        refused = sorted(FILE_ONLY_FIELDS & set(self.config or {}))
+        if refused:
+            raise ValueError(
+                f"{', '.join(refused)} can only be set by editing the model's "
+                "model.heylook.toml, not over HTTP")
+        return self
 
 
 class ModelValidateRequest(BaseModel):

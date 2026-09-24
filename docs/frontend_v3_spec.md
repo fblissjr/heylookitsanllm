@@ -767,6 +767,10 @@ IS how a default is spelled on disk; this is the same null-means-cascade philoso
 guardrail #3). `reload_required_fields` is the server's provider-aware answer — the
 frontend renders it rather than re-deriving reloadiness client-side. `warning` carries a
 post-save config-reload failure. A value TOML can't store returns 400, not 500.
+**422 for a `file_only` field** (v2.0.123): `server_binary`, `extra_args` and
+`chat_template_path` (the set is `config.FILE_ONLY_FIELDS`, flagged `file_only:true` in
+`/v1/admin/model-options`, which also marks them `ui:"hidden"`) are set in the model's
+`model.heylook.toml` only; a PATCH naming one is refused whole and nothing is written.
 CAUTION for harnesses: the PATCH rewrites heylook.toml through `tomli_w`, which drops
 every comment in the file — E2E checks must intercept it, never let it land (the E2E
 server isolates only the DB, not heylook.toml).

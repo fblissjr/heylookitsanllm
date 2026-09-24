@@ -11,11 +11,9 @@ so the remainder after subtracting the compliant ones IS the answer to "who
 should have called this and did not". ``tests/unit/
 test_model_busy_reaches_the_handler.py`` asks it for the sites it can see.
 
-KNOWN NON-COMPLIANT, so this docstring cannot be read as a guarantee either:
-``rlm`` answers a bare 503 non-streaming and an in-band ``rlm_error``
-streaming, out of scope by owner decision, recorded in ``docs/project/TODO.md``
-(the batch processor's broad handler, the other known case, left with the
-OpenAI chat route in v1.79.66). The
+KNOWN NON-COMPLIANT: none left. ``rlm`` answered a bare 503 and went in
+v2.0.123; the batch processor's broad handler left with the OpenAI chat route
+in v1.79.66. The
 first draft of this paragraph asserted the rule as fact -- which would have
 made it the very thing it replaced, a census read as a construction guarantee,
 one release after that failure mode was named here.

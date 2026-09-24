@@ -136,8 +136,8 @@ class GenerationFailed(RuntimeError):
     RAISED by provider generators (mid-iteration) instead of yielding error
     text as chunks -- so every consumer, including ones written later, fails
     loudly by default rather than silently concatenating error text into
-    results (the bug that had RLM reasoning over "Error: MLX generation
-    failed..." as if the model said it). API routes translate: HTTP 500
+    results (the bug that had the since-removed RLM reasoning over "Error: MLX
+    generation failed..." as if the model said it). API routes translate: HTTP 500
     non-streaming, an SSE error payload when headers are already out.
     """
 
@@ -353,7 +353,7 @@ class BaseProvider(ABC):
         instead of letting the queue grow without bound. Default is a no-op
         (no admission limit). Providers that serialize generation (e.g. MLX)
         override this to raise ``ModelBusyError`` when their queue is full.
-        Internal orchestration (RLM) intentionally skips this and queues.
+        An internal caller that must not be refused can skip this and queue.
         """
 
     def generation_queue_stats(self) -> Optional[Dict]:

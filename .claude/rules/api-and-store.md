@@ -1,7 +1,7 @@
 ---
 paths:
   - "src/heylook_llm/*_api.py"
-  - "src/heylook_llm/{api,db,request_registry,observability,diagnostic_logger,settings,rlm,openapi_doc,frontend_static,busy_response,model_service,server}.py"
+  - "src/heylook_llm/{api,db,request_registry,observability,diagnostic_logger,settings,openapi_doc,frontend_static,busy_response,model_service,server}.py"
   - "src/heylook_llm/schema/**"
 ---
 
@@ -9,7 +9,7 @@ paths:
 
 ## App and routers
 
-- `api.py` is app assembly only (lifespan, the MODEL_BUSY handler, CORS, router mounting). Every route lives in a `*_api.py` router, except `rlm.py`, which carries its own. The OpenAPI narrative is `openapi_doc.py`; the static frontend is `frontend_static.py`. A route added to `api.py` itself is in the wrong place.
+- `api.py` is app assembly only (lifespan, the MODEL_BUSY handler, router mounting). Every route lives in a `*_api.py` router. There is no CORS middleware (v2.0.123): the UI is same-origin and the other clients are not browsers; do not add a wildcard back. Admin writes refuse the provider-config fields flagged `file_only` (`config.FILE_ONLY_FIELDS`: a program path, raw argv, a template path); those are set in the model's `model.heylook.toml` only. The OpenAPI narrative is `openapi_doc.py`; the static frontend is `frontend_static.py`. A route added to `api.py` itself is in the wrong place.
 - New endpoint or changed response model: a module with `APIRouter(tags=["Name"])`, the tag added to `openapi_tags`, and `app.include_router()` in `api.py`. The live schema is `/openapi.json`; there is no committed OpenAPI artifact. Update [docs/frontend_v3_spec.md](../../docs/frontend_v3_spec.md) §4 in the same commit.
 - A Pydantic model with custom headers: `Response(content=model.model_dump_json(), media_type="application/json", headers=...)` (`JSONResponse` double-serializes).
 - Pydantic `Field` defaults use keyword form (`Field(default=None, ...)`); `test_field_keyword_defaults.py` enforces it.

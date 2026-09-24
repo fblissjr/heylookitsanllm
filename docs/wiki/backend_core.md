@@ -8,7 +8,7 @@ The backend of `heylookitsanllm` is built with **FastAPI** and **Starlette**, pa
 
 The entry point [`api.py`](../../src/heylook_llm/api.py) is intended as the **application assembly hub**: business logic, route handlers and data structures live in modular route modules, and a new route belongs in one of them rather than here.
 
-**The codebase has one live exception**, worth knowing before you trust the rule: `api.py` declares `POST /v1/data/clear` inline on the app -- a destructive route that deletes all conversations, messages and notebooks. It is the only inline route in the file. `api.py`'s module docstring names this exception, along with `rlm.py`'s own router and the asset routes `frontend_static.py` registers, so the docstring and the file agree.
+**The codebase has one live exception**, worth knowing before you trust the rule: `api.py` declares `POST /v1/data/clear` inline on the app -- a destructive route that deletes all conversations, messages and notebooks. It is the only inline route in the file. `api.py`'s module docstring names this exception, along with the asset routes `frontend_static.py` registers, so the docstring and the file agree.
 
 ```
 Route modules in src/heylook_llm/:
@@ -31,11 +31,10 @@ Route modules in src/heylook_llm/:
 │                                # /v1/performance/profile/{time_range}, /v1/cache/clear
 ├── requests_api.py              # Execution cancellation: DELETE /v1/requests/{id}
 ├── telemetry_api.py             # Frontend ingestion: /v1/telemetry/events
-├── rlm.py                       # Recursive inference (POST /v1/rlm/completions)
 ├── frontend_static.py           # Static assets: /, /index.html, /icon.svg, /js/*, /css/*
 └── openapi_doc.py               # Custom OpenAPI schema & documentation narrative
 
-Not every route comes from a *_api.py router: `rlm.py` carries its own, `frontend_static.py`
+Not every route comes from a *_api.py router: `frontend_static.py`
 registers the asset routes, and `api.py` declares one inline route (see above).
 ```
 

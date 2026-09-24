@@ -681,8 +681,9 @@ against `test_import_reimport.py`.
 ### App assembly and routers
 
 `api.py` has been app assembly only since v1.79.67 (lifespan, the MODEL_BUSY
-handler, CORS, router mounting). Every route is a `*_api.py` router except
-one (`rlm.py` carries its own), the OpenAPI narrative is `openapi_doc.py`, and
+handler, router mounting; CORS until v2.0.123). Every route is a `*_api.py`
+router (`rlm.py` carried its own until RLM was removed in v2.0.123), the
+OpenAPI narrative is `openapi_doc.py`, and
 the static frontend is `frontend_static.py` (extracted v1.79.77). Root is gone
 (v1.79.76: the frontend serves `/`). The shared inference-route guards lived
 in `request_guards.py` until v2.0.30 removed it with the named-sampler

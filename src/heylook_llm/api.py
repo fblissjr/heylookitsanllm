@@ -1,8 +1,8 @@
 # src/heylook_llm/api.py
 """App assembly (v1.79.67): the FastAPI app, its lifespan, the MODEL_BUSY
-handler, CORS, router mounting and the static frontend mount.
-Every route lives in a ``*_api.py`` router except ``/v1/data/clear`` below,
-``rlm.py``'s own router, and the asset routes ``frontend_static.py`` registers;
+handler, router mounting and the static frontend mount.
+Every route lives in a ``*_api.py`` router except ``/v1/data/clear`` below
+and the asset routes ``frontend_static.py`` registers;
 the OpenAPI narrative is
 ``openapi_doc.py``. (``request_guards.py`` held the guards the inference routes
 shared until v2.0.30 removed it with the named-sampler system; what remains of
@@ -16,7 +16,6 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from heylook_llm import __version__
@@ -151,10 +150,6 @@ app = FastAPI(
             "description": "Cancel an in-flight generation by the X-Request-ID the client sent -- the only way to stop a NON-streaming run, which writes nothing until it finishes and so never notices an abandoned client"
         },
         {
-            "name": "RLM",
-            "description": "Recursive Language Model inference -- iterative code-driven exploration of long contexts"
-        },
-        {
             "name": "Admin",
             "description": "Model management endpoints for CRUD, scanning, importing, and monitoring models"
         },
@@ -213,15 +208,10 @@ async def _model_config_readonly_handler(request: Request, exc: ModelConfigReadO
     return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for development
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["X-Request-ID"],
-)
+# No CORS middleware (v2.0.123): the UI is served from this origin and the
+# other clients are not browsers, so a cross-origin grant only let any web page
+# the owner opened drive this unauthenticated API. Without it, a browser
+# refuses a cross-origin JSON request at the preflight.
 
 # Import and include Messages API router
 from heylook_llm.messages_api import messages_router
@@ -237,10 +227,6 @@ app.include_router(model_ops_router)
 # DELETE /v1/conversations/{id}/generate cannot name a plain /v1/messages call)
 from heylook_llm.requests_api import requests_router
 app.include_router(requests_router)
-
-# Import and include RLM router
-from heylook_llm.rlm import rlm_router
-app.include_router(rlm_router)
 
 # Import and include Admin API routers (order matters: fixed paths before catch-all)
 from heylook_llm.admin_api import scan_import_router, admin_router, admin_ops_router

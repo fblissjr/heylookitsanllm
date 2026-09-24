@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.123]
+
+### Security
+
+- **No CORS middleware.** The UI is served from the same origin and the other clients are not browsers, so the `*` grant only let any web page the owner opened drive the unauthenticated API. A browser now refuses a cross-origin JSON request at the preflight. Same-origin use and non-browser clients (scripts, the LAN image pipeline) are unaffected. One thing this cannot rule out: a browser tool of the owner's own served from another origin (another port or host) will now be refused; nothing in the repo does that (the only cross-origin apps are archived).
+- **Admin writes refuse `server_binary`, `extra_args` and `chat_template_path`** with a 422, and nothing is written. Together they let anything that reached the admin API run a command (a program path, raw argv) or read a file (a template path read back through the chat-template route). They are set in the model's `model.heylook.toml` only. The set is derived from a `file_only` flag on each field (`config.FILE_ONLY_FIELDS`); `/v1/admin/model-options` carries the flag and marks the three `ui:"hidden"`.
+
+### Removed
+
+- **RLM** (`POST /v1/rlm/completions`, `rlm.py`, its sandboxed REPL, its tests and `docs/rlm_guide.md` / `rlm_advanced.md`; owner call: no longer needed in this repo). It also took the `sandbox: false` request field that ran model-written code in-process. Model pinning stays as router infrastructure with no caller today.
+
+Verification: unit + contract green; `bun run e2e:pages` 32/32 (the config editor opens and saves). e2e:chat and e2e:render not run: the change touches neither.
+
 ## [2.0.122]
 
 ### Changed

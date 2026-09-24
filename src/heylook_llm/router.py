@@ -74,7 +74,7 @@ class ModelRouter:
         self.loading_locks: Dict[str, threading.Lock] = {}  # Per-model loading locks
         self.loading_locks_lock = threading.Lock()  # Protect loading_locks dict
 
-        # Model pinning: prevents eviction during a long-running RLM run
+        # Model pinning: prevents eviction during a long-running job
         self._pinned: set[str] = set()
 
         # Capacity reservations for in-flight loads. The capacity check and
@@ -857,7 +857,7 @@ class ModelRouter:
         with self.cache_lock:
             if model_id in self._pinned and not force:
                 raise RuntimeError(
-                    f"Model '{model_id}' is pinned (an RLM run is using it). "
+                    f"Model '{model_id}' is pinned (a long-running job is using it). "
                     f"Use force=True to override."
                 )
             if self._is_generating(model_id) and not force:
@@ -1052,9 +1052,8 @@ class ModelRouter:
         return True
 
     def pin_model(self, model_id: str) -> None:
-        """Pin a model to prevent LRU eviction during a long-running job (RLM
-        is the one caller; server-side batch inference, the other, went in
-        v2.0.57).
+        """Pin a model to prevent LRU eviction during a long-running job. No caller
+        today: server-side batch inference went in v2.0.57 and RLM in v2.0.123.
 
         The model must already be loaded. Pinned models are skipped during
         eviction in _evict_lru_model(), so a running job won't lose its model

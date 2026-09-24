@@ -1412,7 +1412,7 @@ class MLXProvider(BaseProvider):
 
             ``abort_event`` is the per-request cooperative cancel signal. The HTTP
             routes create one per request and share it with the streaming layer
-            (which sets it on client disconnect); internal callers (RLM)
+            (which sets it on client disconnect); an internal caller may
             omit it and a fresh one is created. It is NOT a provider-level shared
             object -- that would let one client's disconnect abort another's
             in-flight generation.

@@ -4,13 +4,13 @@
 A single GPU with one loaded model (max_loaded_models=1) and a shared KV cache
 means only one generation can run at a time. This gate serializes generations
 **in arrival order** -- there is no preemption. Concurrent requests (the
-batch-labeler client, RLM sub-queries, multiple frontends) queue and each complete,
+batch-labeler client, multiple frontends) queue and each complete,
 instead of the newest aborting the in-flight one.
 
 Backpressure: ``check_capacity()`` lets an HTTP entry point reject early with
 ``ModelBusyError`` (-> 503) when too many requests are already queued, instead
-of letting the queue grow without bound. Internal orchestration (RLM)
-skips the capacity check and simply queues.
+of letting the queue grow without bound. An internal caller may skip the
+capacity check and simply queue.
 
 ``acquire()`` / ``release()`` are a matched pair but need not run on the same
 thread -- the streaming layer acquires on the thread that first drives the
@@ -23,7 +23,7 @@ import threading
 __all__ = ["GenerationGate", "ModelBusyError", "GenerationCancelled", "get_process_gate"]
 
 # ONE gate for the process -- one GPU. Every provider that generates shares
-# it, so MLX chat, RLM sub-queries and a llama-server subprocess never run
+# it, so MLX chat and a llama-server subprocess never run
 # concurrently and every one of them answers the same busy contract. It used
 # to live in mlx_provider.py, which is how the gguf path came to have no gate
 # at all: a request forwarded to a busy llama-server sat in that server's own
@@ -149,7 +149,7 @@ class GenerationGate:
         :class:`GenerationCancelled` is raised. This lets a request whose client
         has already disconnected leave the queue instead of waiting its turn to
         do (now-pointless) work. Without *cancel_check* the wait is unbounded
-        (internal callers: RLM).
+        (for an internal caller with no client to lose).
         """
         with self._cv:
             ticket = self._ticket_seq

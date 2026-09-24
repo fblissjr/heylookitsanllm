@@ -88,7 +88,6 @@ on, and both of these found checks that could not.
   (which wire to pick, capability discovery, media block spellings, SSE, errors, and the
   deliberate differences from Anthropic's Messages spec). A scoped view of
   `frontend_v3_spec.md` §4, which stays authoritative for the contract
-- [rlm_guide.md](./rlm_guide.md) / [rlm_advanced.md](./rlm_advanced.md) -- recursive inference (RLM)
 - [optimization_log.md](./optimization_log.md) -- cross-session performance findings
 - [optloop_guide.md](./optloop_guide.md) -- optloop-lib benchmark harness
 - [mlx_optimization_plan.md](./mlx_optimization_plan.md) -- MLX engine optimization plan (historical)

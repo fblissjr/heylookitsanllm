@@ -131,10 +131,9 @@ def admin_app(tmp_path, monkeypatch):
 
 def _case(app, name):
     """(method, url, request kwargs) for one mutating admin route."""
-    blob = app.state.scan_blob
     return {
         "patch": ("PATCH", "/v1/admin/models/found",
-                  {"json": {"config": {"chat_template_path": blob}}}),
+                  {"json": {"config": {"max_tokens": 256}}}),
         "delete": ("DELETE", "/v1/admin/models/written-off", {}),
         "reload": ("POST", "/v1/admin/reload", {}),
     }[name]

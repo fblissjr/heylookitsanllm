@@ -777,7 +777,7 @@ class TestRoutesGetTheirParserFromOneFactory:
 
     def test_no_route_module_calls_the_selector_directly(self):
         src = _REPO_ROOT / "src" / "heylook_llm"
-        routes = sorted(src.glob("*_api.py")) + [src / "rlm.py"]
+        routes = sorted(src.glob("*_api.py"))
         assert routes, "no route modules found -- the glob is wrong, not the code"
         offenders = [p.name for p in routes if "select_reasoning_parser" in self._calls(p)]
         assert offenders == []

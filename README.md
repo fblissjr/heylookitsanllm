@@ -42,9 +42,6 @@ it holds to: [VISION.md](VISION.md).
 - **Vision and audio input**: images on both APIs and in the chat UI; audio
   clips (WAV/MP3/FLAC) on GGUF models -- MLX models reject audio with a
   clear 400
-- **RLM**: recursive inference -- the model explores long contexts by writing
-  Python against a sandboxed REPL ([guide](docs/rlm_guide.md),
-  [advanced](docs/rlm_advanced.md))
 - **Model management**: watch folders, configure, load/unload from the web UI
   or API
 - **Local-only logging**: opt-in JSONL metrics/events under `logs/`
@@ -135,8 +132,7 @@ After hand-editing `heylook.toml` on a running server:
 
 Interactive docs at `http://localhost:8000/docs`; live schema at
 `/openapi.json`. Key endpoints: `/v1/messages` (inference),
-`/v1/conversations/{id}/generate` (server-owned chat), `/v1/models`,
-`/v1/rlm/completions`.
+`/v1/conversations/{id}/generate` (server-owned chat), `/v1/models`.
 
 A first call, streaming off:
 
