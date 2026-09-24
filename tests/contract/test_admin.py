@@ -22,12 +22,11 @@ class TestAdminListModels:
         assert data["total"] == len(TEST_MODEL_IDS)
 
     def test_model_entries_have_full_config(self, client):
-        """Admin model entries include config dict and enabled status."""
+        """Admin model entries include the config dict."""
         resp = client.get("/v1/admin/models")
         for model in resp.json()["models"]:
             assert "id" in model
             assert "provider" in model
-            assert "enabled" in model
             assert "config" in model
             assert isinstance(model["config"], dict)
 

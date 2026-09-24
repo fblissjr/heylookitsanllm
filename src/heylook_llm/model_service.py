@@ -412,7 +412,7 @@ class ModelService:
                     raise ValueError(f"Invalid model path: {path_result.error}")
 
             # Apply top-level updates
-            for key in ("description", "tags", "enabled", "capabilities"):
+            for key in ("description", "tags", "capabilities"):
                 if key in updates:
                     model[key] = updates[key]
 
@@ -463,41 +463,20 @@ class ModelService:
         straight back. To stop serving it, take it out of the scan folder
         (owner decision 2026-09-23: presence in a scan folder IS enabled).
 
-        Raises when the entry is a DISABLED override for a file discovery
-        still finds. Deleting that entry does not remove the model -- it
-        deletes the only record of the "off" decision, and the next scan
-        serves it again ENABLED. A delete that silently un-disables is worse
-        than the no-op this method already refuses.
         """
         with self._lock:
             data = self._read_toml()
             models = data.get("models", [])
-            target = next((m for m in models if m.get("id") == model_id), None)
-            if target is not None and not target.get("enabled", True):
-                probe = {k: v for k, v in data.items() if k != "models"}
-                probe["models"] = [m for m in models if m.get("id") != model_id]
-                from heylook_llm.model_registry import discover, merge_discovered
-                after = merge_discovered(probe, discover(probe))
-                if any(m.get("id") == model_id for m in after.get("models", [])):
-                    raise ValueError(
-                        f"'{model_id}' is a disabled override for a file that "
-                        f"discovery still finds; removing this entry would "
-                        f"re-enable it. Take it out of the scan folders, or "
-                        f"leave the entry in place to keep it off."
-                    )
             original_len = len(models)
             models = [m for m in models if m.get("id") != model_id]
 
             if len(models) == original_len:
                 return False
 
-            # Update default_model if we removed it -- prefer enabled models
+            # Update default_model if we removed it
             if data.get("default_model") == model_id:
-                enabled_models = [m for m in models if m.get("enabled", True)]
                 data["default_model"] = (
-                    enabled_models[0]["id"]
-                    if enabled_models
-                    else ("none" if not models else models[0]["id"])
+                    "none" if not models else models[0]["id"]
                 )
 
             data["models"] = models

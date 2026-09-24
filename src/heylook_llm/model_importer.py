@@ -543,7 +543,7 @@ class ModelImporter:
             logging.info(f"[import] {model_id}: speculative decoding on -- {spec_why}")
 
         return self._apply_sidecar(
-            {"id": model_id, "provider": "gguf", "enabled": True, "config": config}, path)
+            {"id": model_id, "provider": "gguf", "config": config}, path)
 
     def _has_vision_files(self, path: Path) -> bool:
         """Delegates to the shared detector (modality_detect.py, 6a)."""
@@ -578,4 +578,4 @@ class ModelImporter:
         config: dict[str, Any] = {"model_path": str(path)}
 
         return self._apply_sidecar(
-            {"id": model_id, "provider": "mlx", "enabled": True, "config": config}, path)
+            {"id": model_id, "provider": "mlx", "config": config}, path)

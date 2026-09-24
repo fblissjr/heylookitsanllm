@@ -564,7 +564,7 @@ Response bodies are typed in `/openapi.json` (`Preset`, `PresetList`, `PresetDel
   Presets survive `POST /v1/data/clear` AND store schema recreates (they're config, not data).
 
 **Admin models** (`X-Heylook-Admin-Token`): `GET /v1/admin/models` →
-`{models:[{id,provider,description?,tags,enabled,capabilities,config,loaded,source,
+`{models:[{id,provider,description?,tags,capabilities,config,loaded,source,
 stale_reload_fields,engine,thinking_default,sampler_defaults}], total}`.
 `source` (v1.70.0) is `"config"` (a models.toml `[[models]]` entry) or `"discovered"`
 (found under `[scan].folders`, served with no entry). NOT derivable from `config`: a
@@ -767,10 +767,9 @@ server isolates only the DB, not models.toml).
 `HEYLOOK_READONLY_MODEL_CONFIG` set (dev_server.sh, the E2E harness) refuses every
 model-config write -- config PATCH/POST/DELETE, `/scan-config`, the chat-template
 PUT/DELETE -- with 409 and a `detail` naming why. It still serves the same config.
-`DELETE /v1/admin/models/{id}` → `{status,model_id,warning?}`; **409** when the entry is a
-DISABLED override for a file discovery still finds — deleting it would delete the only
-record of the "off" decision and the next scan would serve the model again, enabled. The
-detail text is the explanation; render it (v1.69.1 — it was an uncaught 500 before).
+`DELETE /v1/admin/models/{id}` → `{status,model_id,warning?}`: removes a models.toml
+entry; a model under a scan folder is served again from discovery. There is no enabled
+flag (retired v2.0.119: presence in a scan folder is served), so no disabled-override 409.
 Every mutating admin route runs in the server's threadpool, not on the event loop: each
 one re-runs the `[scan]` discovery walk (twice, counting the reload), so an `async`
 handler would freeze in-flight SSE streams for its duration. Expect these calls to take

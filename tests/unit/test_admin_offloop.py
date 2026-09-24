@@ -86,8 +86,7 @@ def admin_app(tmp_path, monkeypatch):
     store.mkdir()
     blob = store / "found.gguf"
     blob.write_text("x")
-    # OUTSIDE the scan folder: deleting this entry is the case that runs
-    # discovery for the disabled-override guard and then succeeds.
+    # OUTSIDE the scan folder: a models.toml entry the delete route removes.
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     off = elsewhere / "off.gguf"
@@ -99,7 +98,6 @@ def admin_app(tmp_path, monkeypatch):
         "models": [{
             "id": "written-off",
             "provider": "gguf",
-            "enabled": False,
             "config": {"model_path": str(off)},
         }],
         "scan": {"folders": [str(store)]},
@@ -114,7 +112,7 @@ def admin_app(tmp_path, monkeypatch):
         time.sleep(SCAN_BLOCK_S)
         if str(path) != str(store):
             return []
-        return [{"id": "found", "provider": "gguf", "enabled": True,
+        return [{"id": "found", "provider": "gguf",
                  "config": {"model_path": str(blob)}}]
 
     monkeypatch.setattr(mi.ModelImporter, "scan_directory", slow_scan)
@@ -216,30 +214,3 @@ class TestMutatingAdminRoutesStayOffTheEventLoop:
             f"{ticks} ticks through -- the heartbeat is not measuring "
             f"event-loop availability"
         )
-
-
-@pytest.mark.unit
-class TestDeleteRefusalIsAConflict:
-    """The disabled-override guard's message has to REACH the caller.
-
-    ModelService.remove_config raises ValueError to refuse deleting a disabled
-    entry that discovery still finds (deleting it would silently re-enable the
-    model). Uncaught, that is a 500 whose body is "Internal Server Error" --
-    the explanation, which is the entire value of the guard, never arrives.
-    """
-
-    @pytest.mark.asyncio
-    async def test_deleting_a_disabled_override_returns_409(self, admin_app):
-        # A disabled entry for a file discovery still finds.
-        service = admin_app.state.model_service
-        data = service._read_toml()
-        data["models"].append({"id": "found", "provider": "gguf", "enabled": False,
-                               "config": {"model_path": admin_app.state.scan_blob}})
-        service._write_toml(data)
-
-        transport = ASGITransport(app=admin_app)
-        async with AsyncClient(transport=transport, base_url="http://t") as client:
-            response = await client.delete("/v1/admin/models/found")
-
-        assert response.status_code == 409, response.text
-        assert "re-enable" in response.json()["detail"]

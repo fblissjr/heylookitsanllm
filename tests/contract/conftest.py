@@ -138,7 +138,7 @@ class MockRouter:
         self.max_loaded_models = 2
 
     def list_available_models(self):
-        return [m.id for m in self.app_config.get_enabled_models()]
+        return [m.id for m in self.app_config.models]
 
     def get_provider(self, model_id):
         # Imported lazily: router pulls in the MLX stack, which is only mocked

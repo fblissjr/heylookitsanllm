@@ -1333,7 +1333,6 @@ class ModelConfig(BaseModel):
     config: Union[MLXModelConfig, GGUFModelConfig]
     description: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
-    enabled: bool = True
     # Model capabilities for discovery (e.g., ["chat", "thinking", "vision"])
     capabilities: List[str] = Field(default_factory=list)
 
@@ -1421,10 +1420,7 @@ class AppConfig(BaseModel):
     )
 
     def get_model_config(self, model_id: str) -> Optional[ModelConfig]:
-        return next((m for m in self.models if m.id == model_id and m.enabled), None)
-
-    def get_enabled_models(self) -> List[ModelConfig]:
-        return [m for m in self.models if m.enabled]
+        return next((m for m in self.models if m.id == model_id), None)
 
 
 # =============================================================================
@@ -1523,7 +1519,6 @@ class ModelUpdateRequest(BaseModel):
 
     description: Optional[str] = None
     tags: Optional[List[str]] = None
-    enabled: Optional[bool] = None
     capabilities: Optional[List[str]] = None
     config: Optional[Dict] = Field(default=None, description="Provider-specific config updates")
 
@@ -1535,7 +1530,6 @@ class ModelValidateRequest(BaseModel):
     config: Dict
     description: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
-    enabled: bool = True
 
 
 class AdminValidationResult(BaseModel):
@@ -1560,7 +1554,6 @@ class AdminModelResponse(BaseModel):
     provider: str
     description: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
-    enabled: bool = True
     capabilities: List[str] = Field(default_factory=list)
     config: Dict = Field(default_factory=dict)
     loaded: bool = False

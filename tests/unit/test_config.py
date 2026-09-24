@@ -142,38 +142,13 @@ class TestModelConfig:
         )
         assert "thinking" in mc.capabilities
 
-    def test_enabled_default_true(self):
-        mc = ModelConfig(
-            id="test",
-            provider="mlx",
-            config={"model_path": "/fake"},
-        )
-        assert mc.enabled is True
-
 
 @pytest.mark.unit
 class TestAppConfig:
     def test_get_model_config(self):
-        cfg = AppConfig(
-            models=[
-                ModelConfig(id="m1", provider="mlx", config={"model_path": "/a"}, enabled=True),
-                ModelConfig(id="m2", provider="mlx", config={"model_path": "/b"}, enabled=False),
-            ]
-        )
+        cfg = AppConfig(models=[ModelConfig(id="m1", provider="mlx", config={"model_path": "/a"})])
         assert cfg.get_model_config("m1") is not None
-        assert cfg.get_model_config("m2") is None  # disabled
         assert cfg.get_model_config("m3") is None  # missing
-
-    def test_get_enabled_models(self):
-        cfg = AppConfig(
-            models=[
-                ModelConfig(id="m1", provider="mlx", config={"model_path": "/a"}, enabled=True),
-                ModelConfig(id="m2", provider="mlx", config={"model_path": "/b"}, enabled=False),
-            ]
-        )
-        enabled = cfg.get_enabled_models()
-        assert len(enabled) == 1
-        assert enabled[0].id == "m1"
 
     def test_max_loaded_models_default(self):
         cfg = AppConfig(models=[])

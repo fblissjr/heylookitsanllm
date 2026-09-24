@@ -213,24 +213,6 @@ class TestAnEditWritesTheModelsOwnFile:
         with pytest.raises(ValueError, match="config fields only"):
             svc.update_config("found", {"enabled": False})
 
-    def test_deleting_a_disabled_override_is_refused(
-            self, tmp_path, store, monkeypatch):
-        """Otherwise the delete silently RE-ENABLES the model."""
-        blob = store / "found.gguf"
-        blob.write_text("x")
-        svc, cfg = self._service(tmp_path, store)
-        self._stub_scan(monkeypatch, [entry("found", blob)])
-        cfg.write_text(cfg.read_text() + f"""
-[[models]]
-id = "found"
-provider = "gguf"
-enabled = false
-[models.config]
-model_path = "{blob}"
-""")
-        with pytest.raises(ValueError, match="re-enable"):
-            svc.remove_config("found")
-
 
 @pytest.mark.unit
 class TestAdminSurfaceSeesDiscovered:
