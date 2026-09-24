@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.103]
+
+### Added (plan W4, frontend)
+
+- **Each staged image shows its cost** on the thumbnail, in tokens for the
+  selected model (image-plan, priced at staging, after a model switch and
+  after each residency refresh; a "?" that says why until the model is
+  loaded).
+- **"Fit"** resizes the ORIGINAL image, once, client-side, to exactly the
+  size the model's processor would use, so the engine does no resampling of
+  its own. It may go past the upload cap (detail over cost, with the new
+  cost shown). Absent for llama.cpp models, which report no target.
+  - On gemma-4, whose image budget is fixed, Fit shrinks a big photo to what
+    the model sees at no token cost.
+- Pricing repaints only the badge and Fit on existing thumbnails. A full
+  re-render replaced a remove button under the user's finger, which the E2E
+  paste check caught.
+
+### Fixed
+
+- **v2.0.100 changed how text-only messages render on MLX vision models.**
+  mlx-vlm turns every message into a list, and gemma-4's template renders a
+  space after each list item, so a system prompt became `Be brief. <turn|>`.
+  That emptied gemma-4 replies in three E2E chat checks. Messages without an
+  image now render as their plain string (identical to the tokenizer
+  template's own rendering on gemma-4, Qwen3.5 and Qwen3-VL); image messages
+  still render exactly as mlx-vlm does. E2E chat 52/52.
+
 ## [2.0.102]
 
 Documentation only.

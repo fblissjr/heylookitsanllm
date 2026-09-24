@@ -139,6 +139,10 @@ const ROUTES = {
   adminChatTemplate:    ['GET', (id) => `/v1/admin/models/${encodeURIComponent(id)}/chat-template`],
   adminSetChatTemplate: ['PUT', (id) => `/v1/admin/models/${encodeURIComponent(id)}/chat-template`, true],
   adminDelChatTemplate: ['DELETE', (id) => `/v1/admin/models/${encodeURIComponent(id)}/chat-template`],
+  // What an image of each size costs a RESIDENT model, and the size its
+  // engine resizes it to where the engine says (plan W4). 409 when the model
+  // is not loaded: planning never loads one.
+  imagePlan: ['POST', (id) => `/v1/models/${encodeURIComponent(id)}/image-plan`, true],
 };
 
 function makeCall(method, buildPath, hasBody) {

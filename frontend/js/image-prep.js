@@ -75,7 +75,9 @@ function toBlob(canvas, type, quality) {
 
 // Prepare one image file for staging.
 //
-// Returns { blob, mediaType, width, height, resized }. `blob` may BE the
+// Returns { blob, mediaType, width, height, sourceWidth, sourceHeight,
+// resized }: `width`/`height` are what is staged, `source*` the original's
+// (for "fit to model", which resizes from the original). `blob` may BE the
 // original file -- an image already within the cap is passed through untouched
 // rather than re-encoded, because a lossy round-trip that saves nothing is
 // strictly worse than doing nothing.
@@ -89,10 +91,10 @@ export async function prepareImage(file) {
     bitmap = await decode(file);
     const w = bitmapWidth(bitmap);
     const h = bitmapHeight(bitmap);
-    if (!w || !h) return { blob: file, mediaType: file.type, width: 0, height: 0, resized: false };
+    if (!w || !h) return { blob: file, mediaType: file.type, width: 0, height: 0, sourceWidth: 0, sourceHeight: 0, resized: false };
     const longest = Math.max(w, h);
     if (longest <= MAX_EDGE_PX) {
-      return { blob: file, mediaType: file.type, width: w, height: h, resized: false };
+      return { blob: file, mediaType: file.type, width: w, height: h, sourceWidth: w, sourceHeight: h, resized: false };
     }
     const scale = MAX_EDGE_PX / longest;
     const outW = Math.max(1, Math.round(w * scale));
@@ -101,7 +103,7 @@ export async function prepareImage(file) {
       ? new OffscreenCanvas(outW, outH)
       : Object.assign(document.createElement('canvas'), { width: outW, height: outH });
     const cx = canvas.getContext('2d');
-    if (!cx) return { blob: file, mediaType: file.type, width: w, height: h, resized: false };
+    if (!cx) return { blob: file, mediaType: file.type, width: w, height: h, sourceWidth: w, sourceHeight: h, resized: false };
     cx.imageSmoothingQuality = 'high';
     cx.drawImage(bitmap, 0, 0, outW, outH);
     const type = keepsPng(file.type) ? 'image/png' : 'image/jpeg';
@@ -109,11 +111,38 @@ export async function prepareImage(file) {
     // A "downscale" that produced MORE bytes than it started with is a loss on
     // both counts. Keep whichever is smaller.
     if (!blob || blob.size >= file.size) {
-      return { blob: file, mediaType: file.type, width: w, height: h, resized: false };
+      return { blob: file, mediaType: file.type, width: w, height: h, sourceWidth: w, sourceHeight: h, resized: false };
     }
-    return { blob, mediaType: type, width: outW, height: outH, resized: true };
+    return { blob, mediaType: type, width: outW, height: outH, sourceWidth: w, sourceHeight: h, resized: true };
   } catch {
-    return { blob: file, mediaType: file.type, width: 0, height: 0, resized: false };
+    return { blob: file, mediaType: file.type, width: 0, height: 0, sourceWidth: 0, sourceHeight: 0, resized: false };
+  } finally {
+    bitmap?.close?.();
+  }
+}
+
+// Resize an ORIGINAL to exactly w x h in one resample: "fit to model"
+// (plan W4), where w x h is the size the model's own processor would resize
+// it to, so the engine then does no resampling of its own. Unlike
+// prepareImage this may grow the image past MAX_EDGE_PX: it is an explicit
+// choice of detail over cost, and the cost is shown beside it. Returns null
+// when the image cannot be decoded or encoded here.
+export async function resizeImageTo(file, w, h) {
+  let bitmap = null;
+  try {
+    bitmap = await decode(file);
+    const canvas = typeof OffscreenCanvas === 'function'
+      ? new OffscreenCanvas(w, h)
+      : Object.assign(document.createElement('canvas'), { width: w, height: h });
+    const cx = canvas.getContext('2d');
+    if (!cx) return null;
+    cx.imageSmoothingQuality = 'high';
+    cx.drawImage(bitmap, 0, 0, w, h);
+    const type = keepsPng(file.type) ? 'image/png' : 'image/jpeg';
+    const blob = await toBlob(canvas, type, JPEG_QUALITY);
+    return blob ? { blob, mediaType: type, width: w, height: h } : null;
+  } catch {
+    return null;
   } finally {
     bitmap?.close?.();
   }

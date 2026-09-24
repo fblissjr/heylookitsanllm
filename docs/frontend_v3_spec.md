@@ -837,7 +837,10 @@ processor, or the running llama-server's own token counter (no vision encode). *
 model that is not loaded** (planning never loads one), 400 for a model served without images.
 The same image can cost very different amounts on the two engines (llama.cpp caps image
 tokens where the MLX processor does not), which is why the answer is per model, not per
-family.
+family. v3 chat calls it at staging, after a model switch and after each
+residency refresh, for each staged image's size and its original's size: the
+thumbnail shows the staged cost, and "Fit" resizes the original to the
+planned `target` (a model that reports none gets no Fit).
 
 **Models list** `GET /v1/models` → `{data:[{id,provider?,capabilities?,modalities?,thinking_default?,sampler_defaults?,engine?}]}` (enabled models only; `engine` is the contract described under Admin models). `modalities` (v1.34.43) is the model's declared capability set (`["text","vision","audio","video"]`); `capabilities` stays gated to what the server actually serves (image input) -- description != served. Since v1.79.43 the MLX `vision` capability is DERIVED FROM THE LOADER ROUTER (`effective_loader == "mlx-vlm"`), the same answer `MLXProvider`'s image guard reads, so the advertised capability and the 400 cannot disagree. Before that it read the checkpoint's DECLARATION, and a hand-made text-only variant whose directory still carried vision blocks advertised `vision` and was then refused -- a client gating on `capabilities` exactly as this spec instructs got the refusal anyway. (The `loader` field that could force a dual-capable VLM to text was retired in v2.0.88.) NB `modalities` is UNCHANGED by this: the checkpoint still declares what it declares, which is why chat's history-media drop disclosure reads capabilities and not modalities. `thinking` (v1.34.60) is auto-detected from whether the model's chat template references `enable_thinking` (Qwen3 `<think>` blocks, gemma-4 thought channels) -- no `models.toml` flag needed; this is what shows/hides the drawer checkbox and composer icon.
 **Metrics** `GET /v1/system/metrics?force_refresh?` → `{system:{ram_used_gb,ram_available_gb,ram_total_gb,

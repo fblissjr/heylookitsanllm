@@ -337,6 +337,13 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
       return { ...row };
     }
     if (url.endsWith('/v1/presets')) return { presets: remote.presets };
+    // Plan W4's image-plan, with a Qwen-like rule (32px grid, 2 marker
+    // tokens) so a size off the grid has a "fit" to offer.
+    if (url.includes('/image-plan')) {
+      const g = (v) => Math.max(32, Math.round(v / 32) * 32);
+      return { engine: 'mlx-vlm', images: (body.sizes ?? []).map(([w, h]) => ({
+        size: [w, h], target: [g(w), g(h)], tokens: (g(w) / 32) * (g(h) / 32) + 2 })) };
+    }
     if (url.endsWith('/v1/admin/models')) {
       const models = [{ id: 'test-model', loaded: true, provider: 'mlx' }];
       if (secondModel) {
@@ -2200,6 +2207,34 @@ async function main() {
       const ratio = block.source.data.length / sourceBytes;
       assert(ratio > 1.3 && ratio < 1.4,
         `a within-cap image was re-encoded (base64 is ${ratio.toFixed(2)}x the source, expected ~1.33x)`);
+    });
+
+    await suite.check('a staged image shows its cost, and Fit sends it at the model\'s own size', async () => {
+      // Plan W4. 800x610 is off the stub's 32px grid, so the model's size is
+      // 800x608: the badge prices the staged size and Fit resizes to that.
+      await dropRealImage(vis.page, { w: 800, h: 610, name: 'offgrid.jpg' });
+      await waitFor(async () => (await thumbCount(vis.page)) === 1,
+        { timeout: 20000, message: 'the image never staged' });
+      await waitFor(async () => vis.page.evaluate(
+        () => Boolean(document.querySelector('.chat__attach .attach-thumb__fit'))),
+        { timeout: 5000, message: 'no Fit offered for an off-grid image' });
+      const badge = await vis.page.evaluate(
+        () => document.querySelector('.chat__attach .attach-thumb__cost')?.textContent);
+      assert(badge === `${25 * 19 + 2}t`, `the cost badge reads ${JSON.stringify(badge)}`);
+      await vis.page.click('.chat__attach .attach-thumb__fit');
+      await waitFor(async () => vis.page.evaluate(
+        () => !document.querySelector('.chat__attach .attach-thumb__fit')),
+        { timeout: 5000, message: 'Fit stayed offered after fitting' });
+      const post = await sendAndCapturePost(vis, 'fitted');
+      const block = JSON.parse(post.postData).content.find((b) => b.type === 'image');
+      const dims = await vis.page.evaluate((b64, type) => new Promise((resolve) => {
+        const i = new Image();
+        i.onload = () => resolve({ w: i.naturalWidth, h: i.naturalHeight });
+        i.onerror = () => resolve(null);
+        i.src = `data:${type};base64,${b64}`;
+      }), block.source.data, block.source.media_type);
+      assert(dims && dims.w === 800 && dims.h === 608,
+        `the fitted image went out at ${dims ? `${dims.w}x${dims.h}` : 'an unreadable size'}, not 800x608`);
     });
 
     await vis.page.close();

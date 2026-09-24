@@ -342,6 +342,20 @@ def vlm_apply_chat_template(processor, config, messages, num_images=None, enable
     # template wraps an image in -- and its mRoPE finds images by
     # vision_start, so image tokens got text positions -- and gemma-4 gained
     # a stray space after <|image|>. mlx-vlm's own rendering has neither.
+    # A message with no image goes back to its plain string: mlx-vlm turns
+    # every message into list form, and a list of one text item renders with
+    # template artifacts (gemma-4 puts a space after each item, so a system
+    # prompt became "Be brief. <turn|>") that the plain text never had.
+    def _is_media(item) -> bool:
+        return isinstance(item, dict) and item.get("type") in ("image", "image_url", "input_image")
+
+    for msg in formatted_messages:
+        content = msg.get("content")
+        if isinstance(content, list) and not any(_is_media(i) for i in content):
+            msg["content"] = "".join(
+                (i.get("text") or i.get("content") or "") if isinstance(i, dict) else str(i)
+                for i in content)
+
     if any(isinstance(m.get("content"), list) for m in formatted_messages):
         try:
             return render(formatted_messages)

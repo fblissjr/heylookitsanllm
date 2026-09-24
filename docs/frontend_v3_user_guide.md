@@ -364,8 +364,22 @@ images need a vision model, audio is gguf-only. Dropping or pasting a file onto
 a model without the capability refuses immediately and stages nothing, rather
 than accepting it and failing later.
 
-Oversized images are downscaled before they go on the wire; that client-side
-size is the one lever on how much an image costs the model.
+Oversized images are downscaled before they go on the wire (longest edge
+`MAX_EDGE_PX` in `js/image-prep.js`).
+
+Each staged image shows what it costs the selected model, in tokens, on the
+thumbnail. The number comes from the model itself, so it only appears once the
+model is loaded; before that the badge is a "?" that says so. Models differ a
+lot here: Qwen-family models spend more tokens on a bigger image, gemma-4
+spends the same number whatever the size.
+
+**Fit** appears when the model would resize the image to a different size. It
+resizes your original, once, to exactly that size and aspect ratio, so the
+model does no further resampling, and the badge updates. On a Qwen model that
+is a choice of detail over cost: it can go above the upload cap, and the badge
+shows the new cost. On gemma-4 it usually just shrinks the upload for free. It
+does not appear for llama.cpp models, which do not report the size they
+resize to.
 
 **Thinking** is a three-way choice, not a checkbox: *Model default (on)* or
 *(off)*, *On*, *Off*. Since v1.79.62 a model that can think thinks by default

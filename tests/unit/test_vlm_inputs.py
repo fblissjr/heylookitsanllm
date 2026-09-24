@@ -390,6 +390,12 @@ def test_the_models_own_template_draws_the_image_markup():
     out = vlm_apply_chat_template(Proc(qwen), Cfg(), [{"role": "user", "content": "x"}],
                                   num_images=1, enable_thinking=False)
     assert "<|vision_start|><|image_pad|><|vision_end|>x" in out
+    # ...and a message with no image renders as its plain text: mlx-vlm's list
+    # form of it picked up template artifacts (a trailing space on gemma-4's
+    # system turn, which changed its replies).
+    text_only = [{"role": "system", "content": "Be brief."}, {"role": "user", "content": "x"}]
+    out = vlm_apply_chat_template(Proc(qwen), Cfg(), text_only, num_images=0, enable_thinking=False)
+    assert out == Tok(qwen).apply_chat_template(text_only, add_generation_prompt=True, enable_thinking=False)
 
     string_only = ("{% for m in messages %}{{ '<' + m['role'] + '>' + m['content'] }}{% endfor %}"
                    "{% if add_generation_prompt %}<assistant>{% endif %}")

@@ -29,7 +29,7 @@ import { api } from '../api.js';
 import { streamGenerate, stopGenerate } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
 import { MarkdownStream, appendPlainText } from '../markdown-stream.js';
-import { prepareImage, blobToBase64, MAX_EDGE_PX } from '../image-prep.js';
+import { prepareImage, resizeImageTo, blobToBase64, MAX_EDGE_PX } from '../image-prep.js';
 import { samplerParams, snapshotSettings, unrepresentableNote, bindDocumentParams, hydrateDocParams, getSetting, setSetting, onSettingsChange, documentScopeNote, PARAM_META } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 import { createPresetBar, paintPresetChip } from '../preset-bar.js';
@@ -577,6 +577,8 @@ async function refreshLoadedIds(ctx) {
   fillModelSelect(ctx);
   refreshLoadBtn(ctx);
   refreshThinkBtn(ctx);
+  // A load or an eviction changes whether staged images can be priced.
+  priceStagedImages(ctx);
   // Provider just became known, and an editor opened before it landed is
   // missing its Save & Continue button. Re-render so the row catches up here
   // rather than at whatever unrelated render happens next. Only rows whose
@@ -802,6 +804,8 @@ function commitModelSwitch(ctx, to) {
   refreshThinkBtn(ctx);
   refreshAttachBtn(ctx);
   refreshLoadBtn(ctx);
+  // What a staged image costs is a fact about THIS model.
+  priceStagedImages(ctx);
   // Per-message drop disclosures depend on the current model's caps.
   renderMessages(ctx);
 }
@@ -2522,9 +2526,13 @@ const ATTACH_KINDS = {
     key: 'image',
     mime: 'image/', cap: 'vision', stateKey: 'pendingImages', max: MAX_ATTACH_IMAGES,
     label: 'image',
+    // `original` is kept (a File or Blob reference, not a decoded copy) so
+    // "fit to model" resamples once, from the source, never from the capped
+    // copy (plan W4).
     prepare: async (f) => {
-      const { blob, mediaType, resized } = await prepareImage(f);
-      return { blob, previewUrl: URL.createObjectURL(blob), mediaType, resized, sourceBytes: f.size };
+      const { blob, mediaType, resized, width, height, sourceWidth, sourceHeight } = await prepareImage(f);
+      return { blob, previewUrl: URL.createObjectURL(blob), mediaType, resized, sourceBytes: f.size,
+               original: f, width, height, sourceWidth, sourceHeight };
     },
   },
   audio: {
@@ -2732,6 +2740,7 @@ async function addPendingFiles(ctx, files, kind, target = composerTarget(ctx)) {
   const staged = usable.slice(0, room);
   pending.push(...staged);
   target.render();
+  if (kind.key === 'image' && pending === ctx.state.pendingImages) priceStagedImages(ctx);
   // Disclosure, not a prompt: the resolution cap is a cost the user pays
   // silently otherwise, and a confirm on every photo would only train
   // click-through. Says it once per staging batch, and only when it happened.
@@ -2744,6 +2753,73 @@ async function addPendingFiles(ctx, files, kind, target = composerTarget(ctx)) {
   if (usable.length > room) {
     showStatus(ctx, `${kind.max} ${kind.label} max -- ${usable.length - room} not attached.`);
   }
+}
+
+// What each staged image costs the selected model, and the size its engine
+// would resize the ORIGINAL to (plan W4): one image-plan call over the staged
+// sizes and the source sizes. Disclosure, never a gate. Resident models only
+// (the server never loads a model to plan), so a cold model says so instead
+// of guessing. A result that lands after the images, the model or the page
+// moved on is dropped.
+async function priceStagedImages(ctx) {
+  const s = ctx.state;
+  const imgs = s.pendingImages;
+  const id = s.modelSelect.value;
+  if (!imgs?.length || !id) return;
+  const sized = imgs.filter((i) => i.width > 0 && i.height > 0 && i.sourceWidth > 0);
+  for (const img of imgs) {
+    if (!sized.includes(img)) img.plan = { note: 'size unknown' };
+  }
+  if (!s.loadedIds.has(id)) {
+    for (const img of sized) img.plan = { note: `load ${id} to see what this image costs` };
+    paintStagedPlans(ctx);
+    return;
+  }
+  let res;
+  try {
+    res = await api.imagePlan(id, {
+      sizes: sized.flatMap((i) => [[i.width, i.height], [i.sourceWidth, i.sourceHeight]]),
+    }, { signal: ctx.signal });
+  } catch (e) {
+    if (!ctx.alive) return;
+    for (const img of sized) img.plan = { note: `cost unavailable: ${e.message}` };
+    paintStagedPlans(ctx);
+    return;
+  }
+  if (!ctx.alive || s.pendingImages !== imgs || s.modelSelect.value !== id) return;
+  sized.forEach((img, k) => {
+    const staged = res.images[2 * k];
+    const source = res.images[2 * k + 1];
+    const t = source?.target;
+    const fits = !t || (t[0] === img.width && t[1] === img.height);
+    img.plan = {
+      model: id, tokens: staged?.tokens,
+      fit: fits ? null : { w: t[0], h: t[1], tokens: source.tokens },
+      // llama.cpp does not report the size it resizes to (target null).
+      fitUnknown: !t,
+    };
+  });
+  paintStagedPlans(ctx);
+}
+
+// Resize one staged image, from its ORIGINAL, to exactly the size the
+// model's processor would use, then re-price. An explicit choice of detail
+// over cost: it may exceed the upload cap, and the badge shows the new cost.
+async function fitStagedImage(ctx, img) {
+  const fit = img.plan?.fit;
+  if (!fit || !img.original) return;
+  const out = await resizeImageTo(img.original, fit.w, fit.h);
+  if (!ctx.alive) return;
+  if (!out) {
+    showStatus(ctx, 'Could not resize that image here -- it is still attached as it was.', true);
+    return;
+  }
+  if (img.previewUrl) URL.revokeObjectURL(img.previewUrl);
+  Object.assign(img, { blob: out.blob, mediaType: out.mediaType, width: out.width,
+                       height: out.height, previewUrl: URL.createObjectURL(out.blob), resized: true });
+  showStatus(ctx, `Image resized to ${fit.w}×${fit.h}, the size ${img.plan.model} uses.`);
+  renderAttachStrip(ctx);
+  await priceStagedImages(ctx);
 }
 
 function clearPendingAttachments(ctx) {
@@ -2764,7 +2840,48 @@ function clearPendingAttachments(ctx) {
 // and miss the other. `media` is {image: [], audio: []} whose entries are
 // either FRESHLY STAGED (a blob plus an object URL) or KEPT -- a stored
 // content block the editor is round-tripping verbatim.
-function renderMediaStrip(host, media, onChange) {
+// Cost badge and "Fit" (plan W4), on entries the composer priced. The badge
+// is text, not a hover, so it reads the same on a phone.
+function thumbCost(img) {
+  const plan = img.plan;
+  if (!plan) return null;
+  if (plan.note) {
+    return createEl('span', { class: 'attach-thumb__cost muted', title: plan.note }, ['?']);
+  }
+  const title = `Adds about ${plan.tokens} tokens to the prompt on ${plan.model}`
+    + (plan.fitUnknown ? '. This engine does not report the size it resizes images to, so there is nothing to fit.' : '');
+  return createEl('span', { class: 'attach-thumb__cost', title }, [`${plan.tokens}t`]);
+}
+
+function thumbFit(img, onFit) {
+  const fit = img.plan?.fit;
+  if (!fit || !onFit) return null;
+  const label = `Fit to ${img.plan.model}: resize to ${fit.w}×${fit.h}, about ${fit.tokens} tokens`;
+  const b = createEl('button', { class: 'attach-thumb__fit', type: 'button', title: label,
+                                 'aria-label': label }, ['Fit']);
+  b.addEventListener('click', () => onFit(img));
+  return b;
+}
+
+// Repaint ONLY the badge and Fit on the composer's existing thumbs. Pricing
+// lands asynchronously after staging, and rebuilding the strip then replaced
+// a remove button under the user's finger (and dropped keyboard focus).
+function paintStagedPlans(ctx) {
+  const s = ctx.state;
+  const thumbs = [...s.attachStrip.querySelectorAll(':scope > .attach-thumb:not(.attach-thumb--audio)')];
+  if (thumbs.length !== s.pendingImages.length) {
+    renderAttachStrip(ctx);
+    return;
+  }
+  s.pendingImages.forEach((img, i) => {
+    const el = thumbs[i];
+    el.querySelectorAll('.attach-thumb__cost, .attach-thumb__fit').forEach((n) => n.remove());
+    const parts = [thumbCost(img), thumbFit(img, (target) => fitStagedImage(ctx, target))].filter(Boolean);
+    el.append(...parts);
+  });
+}
+
+function renderMediaStrip(host, media, onChange, onFit = null) {
   // A kept entry renders from the store's own url source; only a staged blob
   // has an object URL, which is also why only a staged one gets revoked.
   const src = (entry) => (entry.kept ? blockSourceUrl(entry.kept) : entry.previewUrl);
@@ -2784,6 +2901,8 @@ function renderMediaStrip(host, media, onChange) {
   const imageThumbs = media.image.map((img, i) => createEl('div', { class: 'attach-thumb' }, [
     createEl('img', { src: src(img), alt: '', decoding: 'async' }),
     removeBtn(`Remove image ${i + 1}`, () => drop(media.image, i)),
+    thumbCost(img),
+    thumbFit(img, onFit),
   ]));
   const audioChips = media.audio.map((clip, i) => createEl('div', { class: 'attach-thumb attach-thumb--audio' }, [
     createEl('span', { class: 'attach-thumb__audio-name', title: clip.name || 'audio' },
@@ -2796,7 +2915,7 @@ function renderMediaStrip(host, media, onChange) {
 function renderAttachStrip(ctx) {
   const s = ctx.state;
   renderMediaStrip(s.attachStrip, { image: s.pendingImages, audio: s.pendingAudio },
-    () => renderAttachStrip(ctx));
+    () => renderAttachStrip(ctx), (img) => fitStagedImage(ctx, img));
 }
 
 // Stored shape is Messages-style content blocks (what the server persists);

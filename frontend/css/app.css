@@ -892,6 +892,32 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   line-height: 1;
   cursor: pointer;
 }
+/* Plan W4: what the image costs the model, and "Fit" to the model's own
+   size. Text on the thumb, so it reads the same without hover. */
+.attach-thumb__cost,
+.attach-thumb__fit {
+  position: absolute;
+  bottom: 2px;
+  font-size: 0.7rem;
+  line-height: 1.2;
+  padding: 0 0.25rem;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
+  color: var(--ink);
+}
+.attach-thumb__cost { left: 2px; }
+/* A tap target past the glyph (DESIGN.md §7), kept off the remove zone. */
+.attach-thumb__fit::after {
+  content: "";
+  position: absolute;
+  inset: -8px -6px -6px -6px;
+}
+.attach-thumb__fit {
+  right: 2px;
+  border: 1px solid var(--line-strong);
+  cursor: pointer;
+  min-height: 1.2rem;
+}
 /* 44px hit area without growing the 24px glyph (WCAG 2.5.8 / HIG floor);
    remove zones of adjacent thumbs stay disjoint (centers ~62px apart). */
 .attach-thumb__remove::after {

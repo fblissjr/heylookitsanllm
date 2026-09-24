@@ -268,7 +268,13 @@ Extends the existing template panel (`GET/PUT/DELETE
 - **Owner op:** move the five in-place-edited MLX gemma templates into
   overrides, so a re-download cannot revert them.
 
-### W4. Image geometry on the API (backend shipped v2.0.101; frontend open)
+### W4. Image geometry on the API (shipped v2.0.101 + v2.0.103)
+
+Frontend (owner, 2026-09-24): the cost badge on by default, plus "Fit",
+which resizes the original to the engine's own target once, client-side. The
+send-time automatic resize was dropped: a no-op for Qwen under the upload cap,
+no target on llama.cpp, and a round trip on the send path.
+
 
 As built, and changed from the text below: no replica of any family's resize
 rules and no `image_geometry` block. `POST /v1/models/{id}/image-plan` asks

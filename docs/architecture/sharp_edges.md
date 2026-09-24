@@ -1146,6 +1146,13 @@ structured content and only a template that refuses it is flattened, and the
 probe compares heylook's prompt with mlx-vlm's own rendering of the same
 request.
 
+A message with no image is NOT rendered in list form. mlx-vlm turns every
+message into a list, and a list of one text item picked up template artifacts
+the plain string never had: gemma-4 renders a space after each item, so a
+system prompt became `Be brief. <turn|>`. That alone emptied gemma-4 replies
+in three E2E chat checks (v2.0.103). Text-only messages go back to their plain
+string; only messages carrying media stay structured.
+
 ### Vision prefill
 
 (v2.0.55) The vision path prefills all but the last prompt token and hands
