@@ -2,6 +2,8 @@
 
 Last updated: 2026-07-06
 
+> **Since v2.0.86 heylook's server runs every MLX model on mlx-vlm's engine and no longer depends on mlx-lm** (plan W10, outcome A2). The mlx-lm half of optloop-lib stays for the owner's own experiments (owner decision 2026-09-23), but a win there no longer reaches heylook's server; only mlx-vlm results can.
+
 Optloop-lib is the repo's only inference-optimization benchmark harness. A Claude Code agent (or a human, manually) edits local forks of mlx-lm and mlx-vlm, benchmarks each change against a deterministic baseline, and keeps only verified improvements. It targets `apps/optloop-lib/repos/` -- editable-install fork clones of mlx-lm and mlx-vlm -- never `src/heylook_llm/`.
 
 ## Why "lib-only"

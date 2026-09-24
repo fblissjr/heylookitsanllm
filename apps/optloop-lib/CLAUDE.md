@@ -1,5 +1,7 @@
 # CLAUDE.md -- optloop-lib
 
+> Since v2.0.86 heylook's server runs every MLX model on mlx-vlm's engine and no longer depends on mlx-lm (plan W10, A2). The mlx-lm fork experiments stay for the owner's own use (owner decision 2026-09-23), but their results no longer reach the server; only mlx-vlm results can.
+
 Last updated: 2026-07-06
 
 Library-level inference benchmark harness for mlx-lm / mlx-vlm fork
