@@ -155,13 +155,15 @@ def test_a_checkpoint_request_also_snapshots_where_other_conversations_share_it(
     from heylook_llm.providers.common import vlm_engine
 
     mgr = SimpleNamespace(checkpoint_interval_tokens=64, block_size=16, exact_cache_min_tokens=16)
+    # upstream's own final length (guard tokens, media), not len - 1: the
+    # policy must ask the coordinator for it
     coord = SimpleNamespace(enabled=True, is_checkpoint=True, manager=mgr,
-                            checkpoint_len=lambda ids, media: len(ids) - 1)
+                            checkpoint_len=lambda ids, media: len(ids) - 7)
     vlm_engine.install_capture_policy(SimpleNamespace(apc=coord), [700])
     got = coord.checkpoint_lengths(list(range(1000)), set())
     # the prompt end, the near-end grid (APC_CHECKPOINT_CAPTURES in all),
     # and the shared boundary far before them
-    assert got == [700, 896, 960, 999]
+    assert got == [700, 896, 960, 993]
     assert len(got) - 1 == vlm_engine.APC_CHECKPOINT_CAPTURES
 
     block = SimpleNamespace(enabled=True, is_checkpoint=False, manager=mgr)
@@ -178,3 +180,14 @@ def test_the_system_prefix_is_where_two_renders_part():
     got = system_prefix_tokens("be brief", render, list)
     assert "".join(got) == "<s>be brief</s><u>"
     assert system_prefix_tokens("x", lambda m: m[1]["content"], list) is None
+
+
+@pytest.mark.unit
+def test_cold_means_both_stores_are_empty():
+    from heylook_llm.providers.common.vlm_engine import apc_is_empty
+
+    assert apc_is_empty(SimpleNamespace(_exact_cache={}, hash_table={})) is True
+    assert apc_is_empty(SimpleNamespace(_exact_cache={1: 0}, hash_table={})) is False
+    assert apc_is_empty(SimpleNamespace(_exact_cache={}, hash_table={1: 0})) is False
+    assert apc_is_empty(SimpleNamespace()) is False    # unknown stores never read as cold
+    assert apc_is_empty(None) is False

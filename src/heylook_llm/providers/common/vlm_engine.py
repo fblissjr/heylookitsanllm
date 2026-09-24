@@ -142,6 +142,18 @@ def install_capture_policy(bg, boundaries: Iterable[int]) -> None:
     coord.checkpoint_lengths = lengths
 
 
+def apc_is_empty(apc_manager) -> bool:
+    """Did the model's prefix cache hold nothing (the ``cold`` miss cause)?
+    No snapshot and no hashed block, asked of the two stores directly:
+    ``stats_snapshot()`` re-counts every retained array's bytes, a cost every
+    request paid for one bool. A store that is missing reads as not empty,
+    so a renamed attribute never mislabels a miss as cold (the names are
+    pinned in TestVlmEngineSurface)."""
+    if apc_manager is None:
+        return False
+    return not (getattr(apc_manager, "_exact_cache", True) or getattr(apc_manager, "hash_table", True))
+
+
 def semantic_hash(raw_inputs: dict, model, processor) -> int:
     """The APC salt, exactly as mlx-vlm's server computes it: the request's
     image, audio and video payloads plus the model/processor identity --
@@ -304,11 +316,7 @@ def generate(
     detok = None
     try:
         install_capture_policy(bg, shared_prefix_len(prompt_list, shared_prefixes))
-        # "Held nothing": no snapshot and no hashed block. Asked of the two
-        # stores directly -- stats_snapshot() re-counts every retained
-        # array's bytes, a cost every request paid for one bool.
-        cold = apc_manager is not None and not (
-            getattr(apc_manager, "_exact_cache", True) or getattr(apc_manager, "hash_table", True))
+        cold = apc_is_empty(apc_manager)
         has_media = raw_inputs.get("pixel_values") is not None
         if bg.apc is not None:
             bg.apc.prepare_prefill(n, prefill_step_size=bg.prefill_step_size)
