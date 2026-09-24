@@ -14,8 +14,10 @@ Hops: extends (multi-turn), then one edit (diverges mid-history -> trim).
 Only a CHAIN discriminates: single-hop restores have passed on models whose
 chained restores were broken. Greedy is right here and nowhere else: this is
 a text EQUALITY check, not a throughput measurement. A restored run that
-reports anything but `reused` is listed as NOT EXERCISED -- a hop that never
-restored proves nothing about the restore -- and only a mismatch exits 1.
+that does not report `reused` proves nothing about the restore: every extend
+hop is required to restore, an edit may re-prefill (it can diverge before the
+earliest kept checkpoint), and the restored hops are printed. Exits 1 on a
+mismatch or a required restore that did not happen.
 
   uv run python scripts/chain_probe.py --server http://127.0.0.1:8991 --model ID
 
@@ -88,13 +90,20 @@ for h in hops:
     print(f"{h['hop']:9} match={h['match']} restored={rc.get('outcome')} cause={rc.get('cause')} "
           f"cached={rc.get('cached_tokens')}/{rc.get('prompt_tokens')}")
 print("wrote", path)
-# A hop that never restored proves nothing about the restore; say so, but
-# only a MISMATCH is a failure (a checkpoint model legitimately re-prefills
-# an edit that diverges before its earliest kept checkpoint).
-unexercised = [h["hop"] for h in hops if (h["restored_cache"] or {}).get("outcome") != "reused"]
-if unexercised:
-    print("NOT EXERCISED (no restore happened):", ", ".join(unexercised))
+# Per-hop expectation. Every extend hop (the multi-turn follow-up, and the
+# exact repeat that opens the chain) MUST restore: if reuse breaks entirely,
+# every hop re-prefills, restored == fresh trivially, and only this catches
+# it. An edit MAY re-prefill: a checkpoint model keeps a bounded set of
+# checkpoints near the end of the previous prompt, so an edit that diverges
+# before the earliest one legitimately starts over.
+restored = [h["hop"] for h in hops if (h["restored_cache"] or {}).get("outcome") == "reused"]
+print("restored:", ", ".join(restored) or "none")
+missed = [h["hop"] for h in hops
+          if h["hop"].startswith("extend") and h["hop"] not in restored]
 mismatch = [h["hop"] for h in hops if not h["match"]]
+if missed:
+    print("REQUIRED RESTORE MISSED:", ", ".join(missed))
 if mismatch:
     print("MISMATCH:", ", ".join(mismatch))
+if missed or mismatch:
     raise SystemExit(1)
