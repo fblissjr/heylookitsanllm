@@ -14,8 +14,8 @@ engine switches. Each engine answers in two halves:
   call to the process, no lock.
 
 Every value carries its provenance, so a consumer never infers it from which
-half produced it. Slots a later workstream fills (cache, thinking, image,
-steering) are explicit nulls until then.
+half produced it. A slot a later workstream fills is an explicit null until
+that workstream reports it (see each field's description).
 
 Nothing here carries an absolute path: ``/v1/models`` is read by LAN clients.
 """

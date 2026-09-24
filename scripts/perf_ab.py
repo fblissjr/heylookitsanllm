@@ -354,8 +354,9 @@ def _git(*args, cwd=REPO) -> str:
                           check=True).stdout.strip()
 
 
-def _arm_source(spec: str, scratch: Path) -> tuple[str, str, bool, dict]:
-    """(src dir, commit, dirty, overrides) for `rev[:json]`."""
+def _arm_source(spec: str, scratch: Path, created: list[Path]) -> tuple[str, str, bool, dict]:
+    """(src dir, commit, dirty, overrides) for `rev[:json]`. A worktree this
+    call adds is appended to `created`, so the run can remove it at the end."""
     rev, _, extra = spec.partition(":")
     overrides = json.loads(extra) if extra else {}
     if rev in (".", ""):
@@ -365,6 +366,7 @@ def _arm_source(spec: str, scratch: Path) -> tuple[str, str, bool, dict]:
     tree = scratch / f"tree-{sha[:12]}"
     if not tree.exists():
         _git("worktree", "add", "--detach", str(tree), sha)
+        created.append(tree)
     return str(tree / "src"), sha, False, overrides
 
 
@@ -442,10 +444,22 @@ def prime_page_cache(model_path: str) -> dict:
 def run(args) -> None:
     scratch = Path(os.environ.get("TMPDIR", "/tmp")) / "perf_ab"
     scratch.mkdir(parents=True, exist_ok=True)
+    created: list[Path] = []
+    try:
+        _run(args, scratch, created)
+    finally:
+        # Registered worktrees outlive the temp dir otherwise, one per rev ever
+        # measured. SystemExit from a failed arm lands here too.
+        for tree in created:
+            subprocess.run(["git", "worktree", "remove", "--force", str(tree)],
+                           cwd=REPO, capture_output=True)
+
+
+def _run(args, scratch: Path, created: list[Path]) -> None:
     arms = {}
     for spec in args.arm:
         name, _, source = spec.partition("=")
-        src, sha, dirty, overrides = _arm_source(source, scratch)
+        src, sha, dirty, overrides = _arm_source(source, scratch, created)
         arms[name] = {"spec": source, "src": src, "commit": sha, "dirty": dirty,
                       "overrides": overrides, "runs": []}
     stamp = time.strftime("%Y%m%d-%H%M%S")

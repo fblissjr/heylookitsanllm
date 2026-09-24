@@ -2,9 +2,9 @@
 
 Last updated: 2026-07-23
 
-Browser end-to-end tests for the `/v3` frontend. Drives a **real** running server
+Browser end-to-end tests for the frontend (served at `/`). Drives a **real** running server
 with a real model through **system Chrome** (puppeteer-core). `claude-in-chrome`
-refuses `localhost`, so puppeteer is the only path to exercise `/v3` against the
+refuses `localhost`, so puppeteer is the only path to exercise the frontend against the
 backend.
 
 ## Safety
@@ -39,11 +39,11 @@ Exit code is non-zero if any check fails.
 
 **Every entry point above must run UNSANDBOXED, `e2e:render` included.** Its
 "no server, no model" independence does not extend to the sandbox: it still
-binds a local port to serve `/v3`, and a sandboxed run dies at startup with
+binds a local port to serve the frontend, and a sandboxed run dies at startup with
 `Error: listen EPERM: operation not permitted 0.0.0.0` — before any check
 runs, so it reads as a harness crash rather than a permissions problem.
 
-`e2e:render` is a **separate entry point on purpose.** It drives the real `/v3`
+`e2e:render` is a **separate entry point on purpose.** It drives the real
 chat page against a *stubbed* `/v1`, so it needs no server, no model, no Metal
 and no DB — none of the prerequisites above apply to it, and folding it into
 `bun run e2e` would make that suite's real requirements look optional. It is
@@ -120,7 +120,7 @@ composer focus is worth building.
 | `E2E_CHROME`          | `/Applications/Google Chrome.app/…`  | Chrome binary path |
 | `E2E_HEADFUL`         | (unset)                              | set to any value to watch the browser (debugging) |
 | `E2E_BASE_URL`        | (unset)                              | drive an ALREADY-RUNNING server instead of spawning one. **Shares its DB.** Requires `E2E_ALLOW_SHARED_DB=1`. |
-| `IOS_SIM_BASE`        | `http://127.0.0.1:8000`              | `e2e:ios` only: the running server to load `/v3` from (read + type only, never sends) |
+| `IOS_SIM_BASE`        | `http://127.0.0.1:8000`              | `e2e:ios` only: the running server to load the frontend from (read + type only, never sends) |
 | `IOS_SIM_DEVICE`      | `iPhone 15 Pro`                      | `e2e:ios` only: simulator device name; newest iOS runtime with that name wins. `IOS_SIM_UDID` bypasses the lookup |
 | `IOS_SIM_PORT`        | `4445`                               | `e2e:ios` only: safaridriver port |
 | `IOS_SIM_SHOTS`       | `<os tmpdir>/heylook-ios-sim`        | `e2e:ios` only: where before/after keyboard screenshots go (paths are printed) |

@@ -182,32 +182,6 @@ class ModelService:
         if self.config_path.suffix != ".toml":
             self.config_path = self.config_path.with_suffix(".toml")
         self._lock = threading.Lock()
-        self._allowed_roots = self._compute_allowed_roots()
-
-    def _compute_allowed_roots(self) -> list[Path]:
-        """Compute allowed root paths for model files."""
-        roots = []
-        # HF cache paths
-        for p in get_hf_cache_paths():
-            expanded = Path(p).expanduser()
-            if expanded.exists():
-                roots.append(expanded.resolve())
-        # Paths already in config
-        try:
-            data = self._read_toml()
-            for model in data.get("models", []):
-                config = model.get("config", {})
-                model_path = config.get("model_path", "")
-                if model_path:
-                    p = Path(model_path)
-                    if p.exists():
-                        # Add parent directory as allowed root
-                        parent = p.parent.resolve()
-                        if parent not in roots:
-                            roots.append(parent)
-        except Exception:
-            pass
-        return roots
 
     # --- TOML I/O ---
 
@@ -837,7 +811,10 @@ class ModelService:
         )
 
     def validate_path(self, path: str) -> PathValidation:
-        """Validate a model path against allowed roots."""
+        """Validate that a model path resolves and exists.
+
+        No allowed-roots check: models live wherever the operator keeps them
+        (watch folders, the HF cache, anywhere an explicit entry points)."""
         try:
             p = Path(path).expanduser().resolve()
         except Exception as e:
@@ -848,16 +825,6 @@ class ModelService:
                 valid=False, resolved_path=str(p), error="Path does not exist"
             )
 
-        # Check it's under an allowed root
-        for root in self._allowed_roots:
-            try:
-                p.relative_to(root)
-                return PathValidation(valid=True, resolved_path=str(p))
-            except ValueError:
-                continue
-
-        # If no allowed roots matched, still allow but warn
-        # (the user might have models in a custom location)
         return PathValidation(valid=True, resolved_path=str(p))
 
     # --- Helpers ---

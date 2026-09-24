@@ -1,7 +1,8 @@
 # AGENTS.md
 
 <!-- Repo-specific operating guide, loaded every session. Global conventions live in
-the user-level CLAUDE.md and still apply; don't duplicate them here. Rules that matter
+the user-level CLAUDE.md and still apply; don't duplicate them here, except the
+two in Repo rules that other agents (Codex) need and cannot read there. Rules that matter
 only while editing one area live in .claude/rules/ (table below) and load when a
 matching file is read. The why and the incident history behind every rule is
 docs/architecture/sharp_edges.md. -->
@@ -78,6 +79,8 @@ Each file below holds the mechanisms that bite in its area. Claude Code loads it
 - Parallel sessions are normal: assume another session has uncommitted work. Stage files by name (never `git add -A`/`-u`), run `git status` before committing, and leave files you did not touch unstaged. After any scripted string-replace, check the edit landed.
 - Where knowledge goes: mechanisms in this file and `.claude/rules/`; status (what is done, counts, "until X lands") in `docs/project/`; rationale and incident history in `sharp_edges.md`; how a subsystem works in `docs/wiki/`, which carries no figures. `internal/` is unversioned: copy a long-lived doc there to an `archive/` subdir before rewriting it destructively.
 - `.claude/` is local by default. Tracking a new file there takes two edits: the `.gitignore` negation block and `ALLOWED_PATHS` in the local pre-commit hook.
+- Commits are fine without asking; never push unless told.
+- No performance numbers in tracked docs: state the relationship and point to the local data and its conditions. Spot observations are not performance testing.
 - GPG signing needs the 1Password agent; on socket errors use `git -c commit.gpgsign=false commit`.
 
 ## Sandbox traps

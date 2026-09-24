@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.106]
+
+### Removed
+
+- `ModelService`'s allowed-roots list (`_compute_allowed_roots` and the loop in
+  `validate_path`). The check accepted any existing path whether or not a root
+  matched, so it could not reject anything; `validate_path` still refuses a
+  path that does not resolve or exist.
+
+### Changed
+
+- `scripts/perf_ab.py` removes the git worktrees a run created when the run
+  ends, including after a failed arm. They used to stay registered, one per
+  rev ever measured; the two left over were removed.
+- AGENTS.md "Repo rules" carries two rules the user-level instructions also
+  hold, because Codex cannot read those: commit freely but never push unless
+  told, and no performance numbers in tracked docs.
+- `docs/loops.md` follows improvement-loops 0.4.1: loop-state writes go
+  through the plugin's `loop_state.py` with `--state internal/claude/improve`,
+  whose layout and rules apply; the profile keeps only what heylook adds. The
+  path-privacy warning is gone (fixed in path-privacy 0.18.3).
+- New `.worktreeinclude` names `models.toml`, so a loop's branch worktree
+  gets its own copy (0.4.1 enters worktrees with `EnterWorktree`).
+- The eval runner's `--tasks` help lists the categories from the task list
+  (it had left out `audio`).
+- Stale text: `tests/e2e/README.md` no longer says `/v3` (the frontend is at
+  `/`); `providers/contract.py` no longer lists `thinking` among the null
+  slots; `test_request_schema_parity.py` points at where its sibling incident
+  is recorded instead of at CLAUDE.md.
+
 ## [2.0.105]
 
 ### Changed

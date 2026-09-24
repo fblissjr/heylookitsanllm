@@ -1,0 +1,4 @@
+# Untracked files Claude Code copies into a new worktree (gitignore syntax).
+# models.toml is copied, never linked: admin writes such as reload?ctx_size
+# persist to it, and a loop run must not write the owner's file.
+models.toml

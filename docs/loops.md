@@ -78,14 +78,13 @@ Until then, the reuse scenarios under "Real path" are the working set. -->
   - `scripts/chain_probe.py` for any cache change and `scripts/vlm_parity_probe.py` for the vision path, both greedy and both correctness checks.
   - The loop state's `harness/` (scenario runner, conditions collector, chart script).
   - Code size: lines on each side of the engine line (engine-neutral core, MLX, gguf, frontend), duplication, dead code.
-- **Worktrees.** Run both arms from worktrees: `base` at the base commit, never edited, and your branch. Never run an arm from the main checkout. Each worktree needs its own `uv sync`, its own copy of `models.toml` (a copy, not a symlink: admin writes such as `reload?ctx_size` persist to it; copy once so both arms see the same config), and `bun install` in `tests/e2e/`. Print `heylook_llm.__file__` and confirm it is that worktree's `src/` before trusting a run: the package is installed editable, so both arms can silently run the same code. A worktree branched before a change to AGENTS.md runs on the old rules.
+- **Worktrees.** Run both arms from worktrees: `base` at the base commit, never edited, and your branch. Never run an arm from the main checkout. Each worktree needs its own `uv sync` and `bun install` in `tests/e2e/`, and its own copy of `models.toml`: the branch worktree gets one through `.worktreeinclude`, and `base` (made with `git worktree add`) needs it copied by hand. Always a copy, never a symlink: admin writes such as `reload?ctx_size` persist to it. Copy once so both arms see the same config. Print `heylook_llm.__file__` and confirm it is that worktree's `src/` before trusting a run: the package is installed editable, so both arms can silently run the same code. A worktree branched before a change to AGENTS.md runs on the old rules.
 - **Comparing.** Alternate the arms, one server at a time, at least 5 runs each; a difference inside the spread counts as zero. Before and after each pair, record what other heylookllm and llama-server processes use (CPU, GPU from `ioreg -r -c IOAccelerator`, memory from `scripts/ram_report.py`) and the llama.cpp build (`heylook-build.json`); discard a pair where either changed. The owner's daily server shares the machine. A difference against an earlier run's rows is a lead until confirmed by alternating the two commits.
 - **Hazards.**
   - Cold means cold in every cache on the path; check in the code what each reset empties on each engine before relying on it. A fresh nonce at the start of the prompt makes the text prefix cold on both engines; `POST /v1/cache/clear` empties only MLX's prefix cache; the vision feature cache is keyed by image URL, so a cold image turn needs a new image or a restart. A warm scenario builds its warm state inside the iteration.
   - Template identity: name the template each arm ran against before comparing anything that varies by prompt format. A file beside the weights changes it with no config change.
   - Temperature 0 is for correctness only. Throughput uses vendor sampling with fixed seeds, matched prompt and generation lengths, and repeats for anything that depends on thinking length. Spec-decode checks follow `.claude/rules/gguf.md`.
   - `bun run e2e:ios` defaults `IOS_SIM_BASE` to the owner's daily server; set it to yours.
-  - The path-privacy hook blocks a `git` or `gh` command whose text contains an absolute home path. Use repo-relative paths.
   - Counts are proxies: never move one in a way that makes heylook worse to use or harder to read, and don't special-case scenario prompts, models or sizes.
 
 ## Reporting
@@ -100,13 +99,11 @@ Until then, the reuse scenarios under "Real path" are the working set. -->
 
 `internal/claude/improve/` in the main checkout (gitignored, so not in your worktree). `/improve` and `/optimize` share it, and several runs may use it at once.
 
-- Each run has an id, `<date>-<time>-<loop>`, used for its branch and its folder, `runs/<id>/`, which holds the run record, charts, screenshots and the report. The record starts `status: running` and ends `done`, or `stopped` with the reason.
-- `scoreboard.jsonl` is append-only: one row per measurement with its conditions: run id, heylook commit, scenario, arm, model id and file identity, quant, template in force (hash and ladder rung), sampling and seed, cache state, mlx-vlm SHA, mlx version, llama.cpp build, chip and RAM, macOS version, power, thermal state, machine load, sample count, median and spread.
-- `ledger.md`: one entry per idea with its lens, expected value (gain times confidence, divided by effort), status (open, kept, rejected, died), evidence and run id. Drafted upstream contributions and proposed changes to the owner's files go here. During a run, only append.
-- `bookmarks.json`: per lens, the commit it last reviewed; for mlx-vlm, mlx and llama.cpp, the last release or commit checked. A bookmark moves only when the read succeeded.
-- `harness/`: the scenario runner, the chart script and the scenarios as data. A scenario with scoreboard rows is frozen: add a new one instead of changing it. Retiring one is the owner's call. Once a scenario has tracked real use over several runs, propose moving it into `scripts/`.
+- Every write goes through the plugin's `loop_state.py` with `--state internal/claude/improve` (a relative path resolves against the main checkout). Its layout and rules apply: run records, scoreboard rows, the ledger, bookmarks, tidying and the session-log append.
+- Scoreboard rows carry heylook's conditions inside the script's fields: the template in force (hash and ladder rung), model id and file identity, quant, sampling and seed, cache state, mlx-vlm SHA, mlx version, llama.cpp build (`heylook-build.json`), chip and RAM, macOS version, power and thermal state.
+- `harness/` holds the scenario runner, the chart script and the scenarios as data. A scenario with scoreboard rows is frozen: add a new one instead of changing it. Retiring one is the owner's call. Once a scenario has tracked real use over several runs, propose moving it into `scripts/`.
 - `answers.md` is the owner's: read it every run when it exists, never edit it.
-- Tidying the ledger (merging duplicates, closing finished items, dropping moot ideas) is allowed only when no other run record says `running`, and only after copying the ledger into `archive/`. A record that looks abandoned goes under "Needs from me" instead.
+- Records from before the script (a `runs/<id>/run.md`) are invisible to it. If one still says `running`, list it under "Needs from me" rather than tidying around it.
 - A durable lesson goes where AGENTS.md says that kind of knowledge lives. A failure that will be fixed goes only in the run record.
 
 ## Lenses here

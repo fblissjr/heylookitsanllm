@@ -28,7 +28,7 @@ from judges import Verdict, color_mention, combine_verdicts, exact_word_count, m
 @dataclass
 class EvalTask:
     name: str
-    category: str  # "vision" | "thinking" | "stop" | "text" -- matches --tasks filter
+    category: str  # the --tasks filter; run.py lists the categories in use
     required_capabilities: tuple[str, ...]  # subset of a model's /v1/models capabilities; () = runs for every model
     description: str
     build_request: Callable[[], dict]

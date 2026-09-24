@@ -8,9 +8,10 @@ getting it wrong is silent: a knob added to ChatRequest that the wire does not
 carry is unreachable by every client, and a wire field ChatRequest does not
 carry never reaches the provider, with no error either way.
 
-That has already happened in this repo in the sibling form CLAUDE.md records
-(`_SAMPLER_KEYS` drifting from `REQUEST_SAMPLER_FIELDS` and dropping
-`reasoning_effort` from the only surface that generates server-side). These
+That has already happened in this repo in a sibling form, recorded beside
+`_SAMPLER_KEYS` in `conversation_generate_api.py`: that copy drifted from
+`REQUEST_SAMPLER_FIELDS` and dropped `reasoning_effort` from the only surface
+that generates server-side. These
 tests are the guard for the schema-level version of it. They do NOT demand the
 two models be identical -- they demand every asymmetry be DECLARED, so adding
 a knob to one forces a decision about the other rather than a silence.

@@ -239,7 +239,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Opt-in LLM behavior-eval harness (never spawns a server).")
     parser.add_argument("--server", default=DEFAULT_SERVER, help=f"already-running heylookllm base URL (default: {DEFAULT_SERVER})")
     parser.add_argument("--models", help="comma-separated model ids (as returned by /v1/models)")
-    parser.add_argument("--tasks", help="comma-separated category filter: vision,thinking,stop,text")
+    parser.add_argument("--tasks", help="comma-separated category filter: " + ",".join(sorted({t.category for t in TASKS})))
     parser.add_argument("--out", default=str(DEFAULT_OUT), help=f"JSONL results path (default: {DEFAULT_OUT})")
     parser.add_argument("--list-tasks", action="store_true", help="print the task bank and exit (no network calls)")
     args = parser.parse_args()
