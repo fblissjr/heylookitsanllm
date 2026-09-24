@@ -88,6 +88,28 @@ def content_for_template(text: str, num_images: int):
     return [{"type": "image"}] * num_images + [{"type": "text", "text": text}]
 
 
+def system_prefix_tokens(system_text: str, render, tokenize) -> list[int] | None:
+    """The tokens every conversation that opens with this system message
+    starts with, as the template in force renders them.
+
+    The template is rendered twice, the system message followed by two
+    different one-word user turns, and cut where the two token lists part.
+    That is the system turn plus whatever the template puts before a user's
+    words, found without knowing any family's role markers. The prefix cache
+    snapshots there, so a new conversation with the same system prompt
+    restores it (``vlm_engine.install_capture_policy``). None when the two
+    renders share nothing."""
+    renders = [render([{"role": "system", "content": system_text},
+                       {"role": "user", "content": word}]) for word in ("a", "b")]
+    a, b = (tokenize(r) for r in renders)
+    n = 0
+    for x, y in zip(a, b):
+        if x != y:
+            break
+        n += 1
+    return list(a[:n]) or None
+
+
 def carry_message_extras(source: list, rebuilt: list) -> list:
     """``rebuilt`` (mlx-vlm's per-model message shapes) with every key of
     the matching ``source`` message it lacks put back.

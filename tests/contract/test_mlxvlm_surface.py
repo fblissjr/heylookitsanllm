@@ -313,8 +313,37 @@ class TestVlmEngineSurface:
 
         mgr = make_apc_manager()
         assert mgr.disk is None
+        # vlm_engine's "was the cache empty" check reads these two stores
+        assert isinstance(mgr._exact_cache, dict) and isinstance(mgr.hash_table, dict)
         assert mgr.checkpoint_interval_tokens == APC_CHECKPOINT_INTERVAL_TOKENS
         assert mgr._exact_cache_max == APC_CHECKPOINT_ENTRIES
+
+    def test_our_capture_rule_is_upstreams_with_its_own_count(self):
+        # install_capture_policy replaces the coordinator's checkpoint_lengths
+        # per generator. Without boundaries, and with the capture count set
+        # to the store size, it must reproduce mlx-vlm's own rule exactly --
+        # so an upstream change to that rule fails here instead of drifting.
+        import importlib
+        from types import SimpleNamespace
+
+        from mlx_vlm.apc_coordinator import APCCoordinator
+        from heylook_llm.providers.common.vlm_engine import capture_lengths
+
+        for final, entries, interval in [(1000, 3, 64), (130, 3, 64), (5000, 5, 100), (40, 3, 64)]:
+            mgr = SimpleNamespace(checkpoint_interval_tokens=interval, _exact_cache_max=entries,
+                                  disk=None, block_size=16, exact_cache_min_tokens=16)
+            stub = SimpleNamespace(manager=mgr, checkpoint_len=lambda ids, media, f=final: f)
+            upstream = APCCoordinator.checkpoint_lengths(stub, list(range(final + 1)), set())
+            ours = capture_lengths(final, interval=interval, block_size=16, captures=entries,
+                                   min_tokens=16)
+            assert ours == upstream, (final, entries, interval)
+        # ... and the generator builds its coordinator per instance and asks
+        # it (not a module function) for the lengths, so the override binds.
+        src = inspect.getsource(importlib.import_module("mlx_vlm.generate.ar"))
+        assert "self.apc = (" in src and "APCCoordinator(apc_manager, model)" in src
+        assert "coordinator.checkpoint_lengths(ids_list" in src
+        for attr in ("enabled", "is_checkpoint", "checkpoint_len"):
+            assert hasattr(APCCoordinator, attr), attr
 
     def test_the_salt_helpers_take_what_we_pass(self):
         from mlx_vlm import apc as _apc

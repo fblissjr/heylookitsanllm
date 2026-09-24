@@ -7,8 +7,10 @@ model class the change touches -- unit tests on fakes stayed green through
 every live cache failure in this repo, and the eval bank never hits a restore.
 
 For each hop, the same request runs twice at temperature 0:
-  fresh    -- after an unrelated request, so nothing of this chain is fresh
-             in the model's cache to restore from the last hop
+  fresh    -- after POST /v1/cache/clear, so nothing of this chain is in the
+             model's cache (the store keeps many conversations, so an
+             unrelated request no longer evicts it); a fresh run that
+             reports reuse fails the probe
   restored -- right after the previous hop, so its prefix is cached
 The texts must match.
 Hops: extends (multi-turn), then one edit (diverges mid-history).
@@ -52,7 +54,11 @@ def ask(messages):
     return text, (b.get("performance") or {}).get("cache")
 
 def evict():
-    ask([{"role": "user", "content": "Unrelated: name a prime number."}])
+    r = urllib.request.Request(a.server + "/v1/cache/clear", method="POST",
+                               data=json.dumps({"model": a.model}).encode(),
+                               headers={"Content-Type": "application/json"})
+    if json.loads(urllib.request.urlopen(r, timeout=60).read()).get("deleted_count") != 1:
+        raise SystemExit(f"could not clear {a.model}'s prefix cache; a fresh run would not be fresh")
 
 questions = ["Name one planet.", "How far is it from the sun, roughly?",
              "What is its largest moon?", "Is that moon larger than ours?"]
@@ -62,7 +68,8 @@ for i, q in enumerate(questions):
     evict()
     fresh, fcache = ask(msgs)
     if prev is not None:
-        ask(prev)                       # prime the slot with the previous hop
+        evict()                         # or the restore is of this same prompt
+        ask(prev)                       # prime the cache with the previous hop
     restored, rcache = ask(msgs)
     hops.append({"hop": f"extend-{i}", "match": fresh == restored,
                  "fresh_cache": fcache, "restored_cache": rcache,
@@ -74,6 +81,7 @@ for i, q in enumerate(questions):
 edited = convo[:2] + [{"role": "user", "content": "Name its closest neighbour planet."}]
 evict()
 fresh, fcache = ask(edited)
+evict()
 ask(prev)
 restored, rcache = ask(edited)
 hops.append({"hop": "edit", "match": fresh == restored, "fresh_cache": fcache,
@@ -102,9 +110,12 @@ print("restored:", ", ".join(restored) or "none")
 missed = [h["hop"] for h in hops
           if h["hop"].startswith("extend") and h["hop"] not in restored]
 mismatch = [h["hop"] for h in hops if not h["match"]]
+not_fresh = [h["hop"] for h in hops if (h["fresh_cache"] or {}).get("outcome") == "reused"]
+if not_fresh:
+    print("FRESH RUN REUSED A PREFIX:", ", ".join(not_fresh))
 if missed:
     print("REQUIRED RESTORE MISSED:", ", ".join(missed))
 if mismatch:
     print("MISMATCH:", ", ".join(mismatch))
-if missed or mismatch:
+if missed or mismatch or not_fresh:
     raise SystemExit(1)

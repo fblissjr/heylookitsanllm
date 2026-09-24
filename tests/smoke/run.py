@@ -642,6 +642,10 @@ _CACHE_SYSTEM = " ".join([
     "When a question is ambiguous you say which reading you took and why.",
     "You prefer the simplest repair that restores the movement to service.",
 ] * 12)
+# A user turn longer than a checkpoint model's snapshot spacing
+# (vlm_engine.APC_CHECKPOINT_INTERVAL_TOKENS) times its captures.
+_CACHE_QUESTION = " ".join(["Consider the escapement, the mainspring, the balance "
+                            "wheel and the gear train in turn."] * 16)
 
 
 def cache_reuse_checks(server, r, arm, model_id, caps):
@@ -684,8 +688,16 @@ def cache_reuse_checks(server, r, arm, model_id, caps):
                 f"(cause: {cache.get('cause')}; {cache.get('reason')})")
 
     # -- a repeated system prompt is reused -----------------------------------
-    st_a, a = ask([{"role": "user", "content": "Which part keeps time?"}], _CACHE_SYSTEM)
-    st_b, b = ask([{"role": "user", "content": "Which part stores the energy?"}], _CACHE_SYSTEM)
+    # The user turns are long on purpose: a checkpoint model snapshots near
+    # the END of each prompt, so with a short question those snapshots fall
+    # inside the system prompt and this passed while a real first message
+    # (longer than the snapshot spacing) restored nothing. Only a snapshot at
+    # the system prompt's own end (vlm_engine.install_capture_policy) or a
+    # block cache satisfies it now.
+    st_a, a = ask([{"role": "user", "content": "Which part keeps time? " + _CACHE_QUESTION}],
+                  _CACHE_SYSTEM)
+    st_b, b = ask([{"role": "user", "content": "Which part stores the energy? "
+                    + _CACHE_QUESTION[::-1]}], _CACHE_SYSTEM)
     if st_a != 200 or st_b != 200:
         r.fail(f"{arm}: a repeated system prompt is reused", f"probes answered {st_a}, {st_b}")
     else:
@@ -701,6 +713,19 @@ def cache_reuse_checks(server, r, arm, model_id, caps):
         r.fail(f"{arm}: a text follow-up reuses the conversation", f"turns answered {st_1}, {st_2}")
     else:
         judge(f"{arm}: a text follow-up reuses the conversation", t1, t2)
+
+    # -- a conversation reuses its history after another one ran ------------
+    # A, then an unrelated B, then A's next turn: switching chats must not
+    # cost A its history (the MLX store once kept one request's snapshots).
+    other = [{"role": "user", "content": "Unrelated: " + _CACHE_QUESTION[::-1]}]
+    st_x, _ = ask(other)
+    st_3, t3 = ask(turn2 + [{"role": "assistant", "content": reply(t2) or "To see."},
+                            {"role": "user", "content": "Is it expensive?"}], _CACHE_SYSTEM)
+    name = f"{arm}: a conversation reuses its history after another one ran"
+    if st_2 != 200 or st_x != 200 or st_3 != 200:
+        r.fail(name, f"turns answered {st_2}, {st_x}, {st_3}")
+    else:
+        judge(name, t2, t3)
 
     # -- an image conversation reuses its history --------------------------
     if "vision" not in caps:

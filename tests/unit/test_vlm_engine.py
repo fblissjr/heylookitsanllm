@@ -148,3 +148,33 @@ def test_a_cancel_during_prefill_gives_back_its_prefix_blocks(monkeypatch):
 
     chunks, bg = _run(monkeypatch, [], abort_event=Abort())
     assert chunks == [] and bg.released == 1
+
+
+@pytest.mark.unit
+def test_a_checkpoint_request_also_snapshots_where_other_conversations_share_it():
+    from heylook_llm.providers.common import vlm_engine
+
+    mgr = SimpleNamespace(checkpoint_interval_tokens=64, block_size=16, exact_cache_min_tokens=16)
+    coord = SimpleNamespace(enabled=True, is_checkpoint=True, manager=mgr,
+                            checkpoint_len=lambda ids, media: len(ids) - 1)
+    vlm_engine.install_capture_policy(SimpleNamespace(apc=coord), [700])
+    got = coord.checkpoint_lengths(list(range(1000)), set())
+    # the prompt end, the near-end grid (APC_CHECKPOINT_CAPTURES in all),
+    # and the shared boundary far before them
+    assert got == [700, 896, 960, 999]
+    assert len(got) - 1 == vlm_engine.APC_CHECKPOINT_CAPTURES
+
+    block = SimpleNamespace(enabled=True, is_checkpoint=False, manager=mgr)
+    vlm_engine.install_capture_policy(SimpleNamespace(apc=block), [700])
+    assert not hasattr(block, "checkpoint_lengths")   # block caches share by hash already
+
+
+@pytest.mark.unit
+def test_the_system_prefix_is_where_two_renders_part():
+    from heylook_llm.providers.common.vlm_inputs import system_prefix_tokens
+
+    def render(msgs):   # a template whose user header follows the system turn
+        return f"<s>{msgs[0]['content']}</s><u>{msgs[1]['content']}</u><a>"
+    got = system_prefix_tokens("be brief", render, list)
+    assert "".join(got) == "<s>be brief</s><u>"
+    assert system_prefix_tokens("x", lambda m: m[1]["content"], list) is None

@@ -45,9 +45,20 @@ from ..base import CacheReport, GenerationChunk, InvalidGenerationRequest
 
 # The spike's settings (2026-09-23, measured): at mlx-vlm's defaults a
 # checkpoint model keeps only its prompt end and one 2048-aligned boundary,
-# so a follow-up that diverges at the previous reply finds nothing.
+# so a follow-up that diverges at the previous reply finds nothing. CAPTURES
+# is how many of those near-end states one request snapshots (the prompt end
+# plus the aligned boundaries before it).
 APC_CHECKPOINT_INTERVAL_TOKENS = 64
-APC_CHECKPOINT_ENTRIES = 3
+APC_CHECKPOINT_CAPTURES = 3
+# How many snapshots the store keeps across requests. mlx-vlm spends one
+# number on both (its checkpoint_entries), so at 3 every request evicted the
+# last conversation's states and a new chat never found its system prompt.
+# The store's byte budget (APCManager.memory_max_bytes) evicts snapshots
+# before this count does on any long context. Measured 2026-09-24 (sweep in
+# internal/claude/improve/runs/2026-09-24): mlx-vlm re-counts every retained
+# snapshot's bytes several times per request, so each entry costs every
+# request a little CPU; this keeps a few conversations' snapshots.
+APC_CHECKPOINT_ENTRIES = 16
 
 
 def make_apc_manager():
@@ -58,6 +69,75 @@ def make_apc_manager():
         "checkpoint_interval_tokens": APC_CHECKPOINT_INTERVAL_TOKENS,
         "checkpoint_entries": APC_CHECKPOINT_ENTRIES,
     })
+
+
+def capture_lengths(final: int, *, interval: int, block_size: int, captures: int,
+                    min_tokens: int, boundaries: Iterable[int] = (),
+                    adjust=lambda n: n) -> list[int]:
+    """The prompt lengths one request snapshots on a checkpoint model.
+
+    mlx-vlm's own rule (``APCCoordinator.checkpoint_lengths``) with its
+    capture count taken from ``captures`` instead of the store size: the
+    prompt end (``final``) and the ``captures - 1`` interval-aligned lengths
+    before it, which a follow-up restores when it diverges inside the
+    previous reply. Plus ``boundaries``: prefix lengths other requests will
+    share (the end of the system prompt), so a new conversation restores
+    them. ``adjust`` moves a length to where the rest of the prompt is text
+    only (mlx-vlm's media rule); lengths outside ``[min_tokens, final)`` are
+    dropped. Pure: no MLX."""
+    lengths = {final}
+    candidates = list(boundaries)
+    if interval > 0 and captures > 1:
+        interval = ((interval + block_size - 1) // block_size) * block_size
+        last = ((final - 1) // interval) * interval
+        first = max(interval, last - (captures - 2) * interval)
+        candidates.extend(range(first, last + 1, interval))
+    for n in candidates:
+        n = adjust(n)
+        if min_tokens <= n < final:
+            lengths.add(n)
+    return sorted(lengths)
+
+
+def shared_prefix_len(prompt: list[int], prefixes: Iterable[list[int]]) -> list[int]:
+    """How far each of ``prefixes`` agrees with ``prompt``, token for token
+    (the caller's renders can tokenize differently at their cut)."""
+    out = []
+    for prefix in prefixes:
+        n = 0
+        for a, b in zip(prefix, prompt):
+            if a != b:
+                break
+            n += 1
+        out.append(n)
+    return out
+
+
+def install_capture_policy(bg, boundaries: Iterable[int]) -> None:
+    """Replace this generator's checkpoint capture rule with heylook's
+    (``capture_lengths``). The coordinator is built per generator
+    (``BatchGenerator.apc``), so this binds one request only. Plain KV models
+    (block mode) have no checkpoints and are left alone."""
+    coord = getattr(bg, "apc", None)
+    if coord is None or not coord.enabled or not coord.is_checkpoint:
+        return
+    from mlx_vlm.apc import adjust_prefix_to_text_suffix_boundary
+
+    bounds = tuple(boundaries)
+
+    def lengths(token_ids, media_token_ids):
+        final = coord.checkpoint_len(token_ids, media_token_ids)
+        if final <= 0:
+            return []
+        mgr = coord.manager
+        return capture_lengths(
+            final, interval=mgr.checkpoint_interval_tokens, block_size=mgr.block_size,
+            captures=APC_CHECKPOINT_CAPTURES, min_tokens=mgr.exact_cache_min_tokens,
+            boundaries=bounds,
+            adjust=lambda n: adjust_prefix_to_text_suffix_boundary(
+                token_ids, n, media_token_ids, max_prefix_tokens=final))
+
+    coord.checkpoint_lengths = lengths
 
 
 def semantic_hash(raw_inputs: dict, model, processor) -> int:
@@ -168,6 +248,7 @@ def generate(
     model_id: Optional[str] = None,
     reset_peak: bool = True,
     thinking_budget=None,
+    shared_prefixes: Iterable[list[int]] = (),
 ) -> Generator[GenerationChunk, None, None]:
     """One request, start to finish, yielding GenerationChunks.
 
@@ -182,6 +263,10 @@ def generate(
     ``thinking_budget``: mlx-vlm's ``ThinkingBudgetCriteria`` for this
     request (plan W7), or None. The engine forces the thinking block shut
     once it is passed; the forced tokens stream like any other.
+    ``shared_prefixes``: token lists other requests will start with (the
+    system prompt as the template renders it); on a checkpoint model the
+    engine snapshots where each agrees with this prompt, so the next
+    conversation restores it (``install_capture_policy``).
     ``embed_extras`` reach ``get_input_embeddings`` only, never the
     generator's prompt kwargs (heylook's ``cached_image_features``; mlx-vlm's
     server strips its own vision-cache kwargs the same way).
@@ -216,12 +301,12 @@ def generate(
     bg = BatchGenerator(model.language_model, processor, **bg_kwargs)
     detok = None
     try:
-        cold = False
-        if apc_manager is not None:
-            try:
-                cold = not apc_manager.stats_snapshot().get("resident_bytes")
-            except Exception:  # noqa: BLE001 - a report detail, never a failure
-                cold = False
+        install_capture_policy(bg, shared_prefix_len(prompt_list, shared_prefixes))
+        # "Held nothing": no snapshot and no hashed block. Asked of the two
+        # stores directly -- stats_snapshot() re-counts every retained
+        # array's bytes, a cost every request paid for one bool.
+        cold = apc_manager is not None and not (
+            getattr(apc_manager, "_exact_cache", True) or getattr(apc_manager, "hash_table", True))
         has_media = raw_inputs.get("pixel_values") is not None
         if bg.apc is not None:
             bg.apc.prepare_prefill(n, prefill_step_size=bg.prefill_step_size)
