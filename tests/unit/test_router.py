@@ -365,8 +365,7 @@ class TestConfiguredPathAudit:
         """
         text = self._audit({"models": [
             {"id": "twin-a", "config": {"model_path": "/synthetic/gone/shared"}},
-            {"id": "twin-b", "config": {"model_path": "/synthetic/gone/shared",
-                                        "loader": "mlx-lm"}},
+            {"id": "twin-b", "config": {"model_path": "/synthetic/gone/shared"}},
         ]}, caplog)
         assert "another entry also claims this model_path" in text
 

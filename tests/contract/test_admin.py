@@ -32,20 +32,15 @@ class TestAdminListModels:
             assert isinstance(model["config"], dict)
 
 
-class TestAdminEffectiveLoader:
-    """`effective_loader` on the admin row: which MLX library decodes.
-
-    Provider `mlx` is TWO upstream repos (mlx-lm text, mlx-vlm vision) with
-    separate release trains, so "provider" does not name an engine. The live
-    smoke harness picks one model per ENGINE and has to do it from this
-    endpoint.
-    """
+class TestAdminEngineRow:
+    """`engine` on the admin row, answered for unloaded models: the live
+    harnesses pick their arms from this endpoint without loading anything."""
 
     def test_answered_for_an_unloaded_model(self, client):
         """The whole point: it is derived from the config, not read off a
         loaded provider.
 
-        `MLXProvider.effective_loader` exists only on a resident process, so a
+        A resident provider's own answer exists only on a resident process, so a
         field sourced from there would be null for every model the harness has
         not already loaded -- which is exactly the set it needs to choose from.
         Nothing in this fixture is loaded, and the answer is still there.

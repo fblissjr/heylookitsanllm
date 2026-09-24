@@ -160,7 +160,6 @@ class BaseProvider(ABC):
     # Neutral capability defaults. MLX overrides these per-instance after
     # load; other providers keep the defaults unless they have the concept.
     is_vlm: bool = False
-    effective_loader: Optional[str] = None
     # The model's context window in tokens, from the ONE resolver the admin
     # row and /v1/models also read (capabilities.model_context_length), so
     # the number a client is shown is the number the provider enforces.

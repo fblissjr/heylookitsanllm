@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-from heylook_llm.providers.common.loader_routing import effective_loader_for_config
+from heylook_llm.providers.common.loader_routing import serves_vision_for_config
 from heylook_llm.providers.contract import EngineDescription, describe
 from heylook_llm.samplers import sampler_defaults, thinking_default
 
@@ -149,7 +149,7 @@ def template_supports_reasoning_effort(model_path: str) -> bool:
     return _template_supports_reasoning_effort(model_path, _template_stamp(model_path))
 
 
-def _mlx_serves_vision(model_config, effective_loader: str | None = None) -> bool:
+def _mlx_serves_vision(model_config, serves_vision: bool | None = None) -> bool:
     """Whether the MLX provider will actually ACCEPT an image for this model.
 
     NOT the same question as "the checkpoint declares vision", and reporting
@@ -162,19 +162,17 @@ def _mlx_serves_vision(model_config, effective_loader: str | None = None) -> boo
     refusal anyway.
 
     ``MLXProvider``'s guard reads ``is_vlm``, which IS
-    ``effective_loader == "mlx-vlm"``, so deriving the capability from the
+    ``resolve_serves_vision``'s answer, so deriving the capability from the
     same resolver makes the two agree BY CONSTRUCTION rather than by two
-    rules kept in step by hand. It also picks up the case nobody had
-    reported: an explicit ``loader = "mlx-lm"`` on a genuinely dual-capable
-    VLM refuses images too, and used to advertise them.
+    rules kept in step by hand.
 
     The router's fail-open rule applies at ITS layer only, and the earlier
     claim here that "an unreadable config.json keeps the capability" was false
     for the common case. ``MLXModelConfig._resolve_modalities`` derives
     modalities AT VALIDATION and falls back to ``["text"]`` when the directory
     cannot be read, so a THIN entry -- which is most of them -- has already
-    lost ``vision`` before ``resolve_effective_loader`` is reached, and its
-    ``"vision" not in modalities -> mlx-lm`` branch settles it. Fail-open is
+    lost ``vision`` before ``resolve_serves_vision`` is reached, and its
+    ``"vision" not in modalities -> text`` branch settles it. Fail-open is
     real only for an entry that spells its ``modalities`` out explicitly, the
     shape CLAUDE.md calls the rare one.
 
@@ -183,13 +181,13 @@ def _mlx_serves_vision(model_config, effective_loader: str | None = None) -> boo
     this function exists to stop -- but it is not what "fails open" describes,
     so it is written down as what it is.
     """
-    if effective_loader is not None:
-        return effective_loader == "mlx-vlm"
+    if serves_vision is not None:
+        return serves_vision
     resolved = config_dict(model_config.config)
-    return effective_loader_for_config(model_config.provider, resolved) == "mlx-vlm"
+    return bool(serves_vision_for_config(model_config.provider, resolved))
 
 
-def infer_model_capabilities(model_config, effective_loader: str | None = None) -> list[str]:
+def infer_model_capabilities(model_config, serves_vision: bool | None = None) -> list[str]:
     """Infer model capabilities from config when not explicitly set."""
     capabilities = []
     provider = model_config.provider
@@ -199,9 +197,9 @@ def infer_model_capabilities(model_config, effective_loader: str | None = None) 
     if provider == "mlx":
         capabilities.append("chat")
 
-        # Vision is what the LOADER ROUTER says, not what the checkpoint
+        # Vision is what the served-vision resolver says, not what the checkpoint
         # declares -- the provider's own image guard reads the same answer.
-        if _mlx_serves_vision(model_config, effective_loader):
+        if _mlx_serves_vision(model_config, serves_vision):
             capabilities.append("vision")
 
         # Thinking capability is DERIVED: the enable_thinking default-on
@@ -252,7 +250,7 @@ def infer_model_capabilities(model_config, effective_loader: str | None = None) 
     return capabilities
 
 
-def effective_capabilities(model_config, effective_loader: str | None = None) -> list[str]:
+def effective_capabilities(model_config, serves_vision: bool | None = None) -> list[str]:
     """The capabilities to REPORT for a model.
 
     An explicit ``ModelConfig.capabilities`` list is an override and
@@ -261,7 +259,7 @@ def effective_capabilities(model_config, effective_loader: str | None = None) ->
     """
     if model_config.capabilities:
         return model_config.capabilities
-    return infer_model_capabilities(model_config, effective_loader)
+    return infer_model_capabilities(model_config, serves_vision)
 
 
 def model_context_length(provider: str, model_path: str | None,
@@ -349,7 +347,7 @@ def derived_model_facts(model_config, router=None) -> ModelFacts:
     is built for EVERY row here because three consumers read it (loader
     routing, the thinking cascade, the context resolver); the per-row cost
     that moved the admin read routes off the event loop is unchanged -- the
-    router work behind ``effective_loader_for_config`` still returns on its
+    router work behind ``serves_vision_for_config`` still returns on its
     first line for anything but mlx.
 
     ``router`` supplies what the engine contract needs beyond the config:
@@ -361,8 +359,8 @@ def derived_model_facts(model_config, router=None) -> ModelFacts:
     # ONE resolution, three consumers. `effective_capabilities` derives the
     # vision capability from this same value (v1.79.43), so letting it
     # resolve its own would rebuild the dump and re-run the router per row.
-    effective_loader = effective_loader_for_config(model_config.provider, resolved)
-    capabilities = effective_capabilities(model_config, effective_loader)
+    serves_vision = serves_vision_for_config(model_config.provider, resolved)
+    capabilities = effective_capabilities(model_config, serves_vision)
     # What thinking resolves to with nothing said: the SAME cascade the
     # providers run (an empty request through resolve_effective_sampling),
     # so the row reports the value generation will use and not a re-derived

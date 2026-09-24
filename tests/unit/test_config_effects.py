@@ -297,43 +297,18 @@ def test_validator_derived_fields_do_not_report_as_stored():
 
 
 # ---------------------------------------------------------------------------
-# `engines` + `description`: the same self-maintaining guard, for the question
-# `effect` does not answer. `effect` says WHEN a change lands; these say WHERE
-# it lands and WHY you would make it.
+# `description`: the same self-maintaining guard, for the question `effect`
+# does not answer. `effect` says WHEN a change lands; this says WHY you would
+# make it.
 #
-# The motivating drift is the same shape as the three above, and it happened
-# to a reader rather than to the code: every provider-config field shipped
-# with no description at all, so the only way to learn what a knob did was to
-# read the provider source. A consumer reading the option list recommended
-# `max_kv_size` and `cache_type` for a model where both are swallowed whole by
-# `create_kv_cache`'s make_cache early return -- a recommendation that would
-# have validated, reloaded clean, and changed nothing.
+# The motivating drift happened to a reader rather than to the code: every
+# provider-config field shipped with no description at all, so the only way
+# to learn what a knob did was to read the provider source.
 # ---------------------------------------------------------------------------
 from heylook_llm.config import (  # noqa: E402
-    ENGINES,
     PROVIDER_CONFIG_CLASSES as _PCC,
     _validate_documentation_declarations,
-    field_engines,
-    invalid_engines,
 )
-
-
-@pytest.mark.parametrize("provider", PROVIDERS)
-def test_every_field_declares_its_engines(provider):
-    """A field that does not say where it applies cannot be used correctly."""
-    undeclared = sorted(
-        name for name, f in _PCC[provider].model_fields.items()
-        if field_engines(f) is None
-    )
-    assert not undeclared, (
-        f"{provider} fields with no `engines`: {undeclared}. The class a field "
-        f"is declared on is NOT the answer -- provider 'mlx' is two engines."
-    )
-
-
-@pytest.mark.parametrize("provider", PROVIDERS)
-def test_declared_engines_are_valid(provider):
-    assert invalid_engines(_PCC[provider]) == {}
 
 
 @pytest.mark.parametrize("provider", PROVIDERS)
@@ -344,36 +319,6 @@ def test_every_field_has_a_description(provider):
         if not (f.description or "").strip()
     )
     assert not undocumented, f"{provider} fields with no description: {undocumented}"
-
-
-def test_an_empty_engines_list_is_refused_not_treated_as_all():
-    """"Applies nowhere" is never what an author means -- it is a typo or a
-    field that should have been deleted. Reading it as "applies everywhere"
-    would be the silent, safe-looking degradation this metadata exists to
-    stop."""
-    from pydantic import BaseModel, Field
-
-    class Bogus(BaseModel):
-        x: int = Field(
-            default=1, description="d",
-            json_schema_extra={"effect": EFFECT_PER_REQUEST, "engines": []})
-
-    assert "x" in invalid_engines(Bogus)
-
-
-def test_the_provider_name_is_not_an_engine_name():
-    """'mlx' is a PROVIDER and the likeliest wrong value to write here. It
-    must not validate: the vocabulary is the engine contract's runtime, and
-    a provider name there is a category error that happens to look right."""
-    from pydantic import BaseModel, Field
-
-    class Bogus(BaseModel):
-        x: int = Field(
-            default=1, description="d",
-            json_schema_extra={"effect": EFFECT_PER_REQUEST, "engines": ["mlx"]})
-
-    assert "x" in invalid_engines(Bogus)
-    assert "mlx" not in ENGINES
 
 
 def test_bad_documentation_fails_at_import_not_just_under_test():
@@ -387,10 +332,7 @@ def test_bad_documentation_fails_at_import_not_just_under_test():
     original = dict(cfg.PROVIDER_CONFIG_CLASSES)
 
     class Undocumented(BaseModel):
-        x: int = Field(
-            default=1,
-            json_schema_extra={"effect": EFFECT_PER_REQUEST,
-                               "engines": [cfg.ENGINE_GGUF]})
+        x: int = Field(default=1, json_schema_extra={"effect": EFFECT_PER_REQUEST})
 
     cfg.PROVIDER_CONFIG_CLASSES["_probe"] = Undocumented
     try:
@@ -401,24 +343,12 @@ def test_bad_documentation_fails_at_import_not_just_under_test():
         cfg.PROVIDER_CONFIG_CLASSES.update(original)
 
 
-def test_engine_vocabulary_matches_the_live_harness_taxonomy():
-    """The live harnesses' arms each run on one engine, spelled the way this
-    vocabulary spells it. Two spellings of one taxonomy is the drift this
-    repo keeps paying for, so they are pinned to each other rather than to a
-    comment claiming they agree."""
-    from helpers.engines import ARM_ENGINE, ARMS
-
-    assert set(ARM_ENGINE) == set(ARMS)
-    assert set(ARM_ENGINE.values()) == set(ENGINES)
-
-
 @pytest.mark.parametrize("provider", PROVIDERS)
-def test_model_options_publishes_both_facts(provider):
-    """The route is the only surface these reach, so the pass-through is the
-    load-bearing half -- declaring the metadata and not serving it would leave
-    every consumer exactly as badly off as before."""
+def test_model_options_publishes_descriptions(provider):
+    """The route is the only surface this reaches, so the pass-through is the
+    load-bearing half -- declaring it and not serving it would leave every
+    consumer exactly as badly off as before."""
     from heylook_llm.admin_api import _field_options
 
     for entry in _field_options(_PCC[provider]):
         assert entry.get("description"), f"{provider}.{entry['name']} lost its description"
-        assert entry.get("engines"), f"{provider}.{entry['name']} lost its engines"

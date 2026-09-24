@@ -77,7 +77,7 @@ Providers yield [`GenerationChunk`](../../src/heylook_llm/providers/base.py) dat
 ### 2.1. One Engine: mlx-vlm
 Every MLX model, text-only included, loads with `mlx_vlm.utils.load` and generates on mlx-vlm's own engine (the runtime visibility plan's W10, outcome A2). mlx-vlm has native ports of the text-only families served here, and on them its greedy output matches mlx-lm's token for token (the W10 spike; record in `internal/claude/w10/`). `engine.runtime` therefore reads `mlx-vlm` for every MLX model (and `llama.cpp` for gguf), answered for unloaded models too.
 
-[`loader_routing.py`](../../src/heylook_llm/providers/common/loader_routing.py) still resolves `effective_loader`, and `is_vlm` still derives from it, but it no longer picks a library (the `loader` field that could force one was retired in stage 3; the checkpoint's declared `modalities` and whether mlx-vlm registers its `model_type` are the inputs). It decides whether a model is served as vision-capable (the reported `vision` capability and the provider's image guard read the same resolver, so `/v1/models` cannot advertise images a 400 then refuses) and which template path renders the prompt.
+[`loader_routing.py`](../../src/heylook_llm/providers/common/loader_routing.py) resolves one bool, `resolve_serves_vision`, which `is_vlm` is; it picks no library (the `loader` field that could force one was retired in stage 3; the checkpoint's declared `modalities` and whether mlx-vlm registers its `model_type` are the inputs). It decides whether a model is served as vision-capable (the reported `vision` capability and the provider's image guard read the same resolver, so `/v1/models` cannot advertise images a 400 then refuses) and which template path renders the prompt.
 
 Because it reads each model directory's `config.json`, the two admin read routes that build a model response are plain `def` (threadpool), not `async def`.
 
@@ -135,24 +135,25 @@ GET /v1/admin/model-options
   providers.<provider>.fields[]
     name          the config key
     effect        WHEN a change lands (per_request, requires_reload, ...)
-    engines       WHERE it lands: mlx-vlm | gguf
     description   what it does and why you would reach for it
     arg, ui, shape, reason, type, default, bounds, enum
 ```
 
-**Read `engines`, not the provider key.** Until plan W10 stage 3 provider
-`mlx` was two upstream repos (mlx-lm for text, mlx-vlm for vision), which is
-why the tag exists; now every MLX model runs on mlx-vlm, so the vocabulary is
-the one [`engine.runtime`](#21-library-routing-via-effective_loader) reports
-(`mlx-vlm`, and `gguf` for llama.cpp). One consequence the provider key still
-cannot express:
+**The provider key is the engine.** Each provider runs one engine since plan
+W10 (every MLX model on mlx-vlm), so a field reaches the engine of the config
+class that declares it. Until v2.0.89 an `engines` tag restated that per
+field; it was removed once it could only ever repeat the class. One exception,
+named in the field's own description:
 
-- a field declared on ONE provider may govern every engine (`max_queue_depth`
-  configures the process-global generation gate that gguf generations queue in
-  too, and the gguf provider looks for the same key on its own config, where
-  no such field exists, and so always contributes the default).
+- `max_queue_depth` is declared on the MLX config but configures the
+  process-global generation gate that gguf generations queue in too (the gguf
+  provider looks for the same key on its own config, where no such field
+  exists, and so always contributes the default).
 
-**`engines` is per-engine and cannot express a per-ARCHITECTURE exception.** When a field is inert on some architectures of the engine it names, its own `description` has to say so. (The MLX KV-cache knobs were the case, silently inert wherever a model defined its own `make_cache`; they were retired with the mlx-vlm engine in plan W10 stage 3.)
+When a field is inert on some architectures of its engine, its own
+`description` has to say so. (The MLX KV-cache knobs were the case, silently
+inert wherever a model defined its own `make_cache`; they were retired with
+the mlx-vlm engine in plan W10 stage 3.)
 
 Fields that exist on one engine and have no counterpart on the other are the
 common case, and the descriptions name the counterpart where one exists. The
@@ -169,7 +170,7 @@ pair worth knowing before reasoning about either:
 Importing the gguf intuition into MLX is the specific mistake this section
 exists to stop.
 
-**Adding a field.** Declare `effect`, `engines` and `description` on it.
+**Adding a field.** Declare `effect` and `description` on it.
 `config.py` refuses to import otherwise, and
 `tests/unit/test_config_effects.py` covers the same ground for the suite. Do
 not add the facts to this page instead: a hand-maintained second copy of what

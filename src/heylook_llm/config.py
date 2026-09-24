@@ -226,65 +226,6 @@ def _extra(field) -> dict:
     return extra if isinstance(extra, dict) else {}
 
 
-# ``engines`` alongside ``effect``: WHICH ENGINE a field actually reaches.
-#
-# The vocabulary is the engine contract's `engine.runtime` (mlx-vlm, and
-# gguf for llama.cpp). Until plan W10 stage 3 provider "mlx" was TWO engines
-# (mlx-lm for text, mlx-vlm for vision), which is why the tag exists; now
-# every MLX model runs on mlx-vlm, so it follows the provider except on a
-# field both config classes share. A reader asking "does this do anything
-# for my model" needs the engine, and until this tag existed the only answer
-# was to read the provider source.
-#
-# Same rule as ``effect``: declared AT the field, derived everywhere else
-# (``/v1/admin/model-options`` passes it through, docs link to that rather
-# than restating it), and ``tests/unit/test_config_effects.py`` fails if a
-# field omits it -- so a new field cannot be added without saying where it
-# applies. A hand-maintained table of the same facts is this repo's named
-# defect class; do not write one.
-#
-# WHAT THE TAG CANNOT SAY. It is per-ENGINE, and a field can be inert on
-# the engine it names (the MLX KV cache knobs were, from v2.0.86 until plan
-# W10 stage 3 retired them). When you add a field, ask both questions.
-ENGINE_MLX_VLM = "mlx-vlm"
-ENGINE_GGUF = "gguf"
-
-# Order is display order. Every arm in tests/helpers/engines.ARM_ENGINE maps
-# to one of these -- pinned by a test rather than by this comment.
-ENGINES: tuple = (ENGINE_MLX_VLM, ENGINE_GGUF)
-
-# Every MLXModelConfig field reaches the one MLX engine.
-ENGINES_MLX: list = [ENGINE_MLX_VLM]
-
-
-def field_engines(field) -> Optional[list]:
-    """Declared engines for one FieldInfo, or None if it declares none."""
-    value = _extra(field).get("engines")
-    return list(value) if value is not None else None
-
-
-def invalid_engines(cls: type) -> Dict[str, str]:
-    """{field name -> why its ``engines`` tag is bad}. Empty when clean.
-
-    Catches the two failure shapes a typo takes: a name outside the
-    vocabulary (``"mlx"``, the PROVIDER, is the likely slip) and an empty
-    list, which reads as "applies nowhere" and is never what an author
-    means -- a field that applies nowhere should be deleted instead.
-    """
-    out: Dict[str, str] = {}
-    for name, f in cls.model_fields.items():
-        engines = field_engines(f)
-        if engines is None:
-            continue
-        if not engines:
-            out[name] = "empty engines list (a field applying nowhere should be removed)"
-            continue
-        unknown = [e for e in engines if e not in ENGINES]
-        if unknown:
-            out[name] = f"unknown engine(s): {', '.join(map(str, unknown))}"
-    return out
-
-
 def field_effect(field) -> Optional[str]:
     """Declared effect class for one FieldInfo, or None if it declares none."""
     value = _extra(field).get("effect")
@@ -362,7 +303,7 @@ class MLXModelConfig(BaseModel):
             "and tokenizer. Identity: changing it makes the entry a different "
             "model rather than the same one reconfigured, which is why it is "
             "not editable in place."),
-        json_schema_extra={"effect": EFFECT_IDENTITY, "engines": ENGINES_MLX})
+        json_schema_extra={"effect": EFFECT_IDENTITY})
     # DESCRIPTION vs ROUTING split (Phase 6 refinement 2026-07-11). ``vision``
     # historically did both jobs; it is now a derived mirror of
     # ``"vision" in modalities`` (kept for back-compat with readers of
@@ -379,13 +320,12 @@ class MLXModelConfig(BaseModel):
             "config[\"vision\"]. Do not edit it: config re-derives it whenever "
             "modalities is set or detectable, so an edit silently reverts at "
             "the next load. Edit `modalities` instead."),
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "hidden",
-                           "engines": ENGINES_MLX})
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "hidden"})
     # None = "not provided" -> derived from ``vision`` in _resolve_modalities.
     # Detected at import from the config's own blocks (vision_config/audio_config
     # + *_token_id); see model_importer.detect_modalities.
     # requires_reload here, DESCRIPTIVE on the gguf config: for MLX this feeds
-    # effective_loader, which is decided at load (is_vlm: the template path
+    # resolve_serves_vision, which is decided at load (is_vlm: the template path
     # and the served vision capability). Provider-aware classification is the
     # point.
     modalities: Optional[List[str]] = Field(
@@ -393,11 +333,9 @@ class MLXModelConfig(BaseModel):
         description=(
             "Author-declared capability set (e.g. [\"text\", \"vision\"]). Unset "
             "= detected at load from the model dir's own config.json. On MLX "
-            "this is not merely descriptive as it is on gguf: it feeds "
-            "`effective_loader`, decided at load, which picks the vision or "
-            "text template path and whether the model is served with vision."),
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
-                           "engines": ENGINES_MLX})
+            "this is not merely descriptive as it is on gguf: it decides, at "
+            "load, the vision or text template path and whether the model is served with vision."),
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
     # The model's context window, when config.json does not tell the truth.
     # None = read the file (capabilities.model_context_length: top-level
     # max_position_embeddings, then the nested text block). A YaRN-scaled
@@ -419,8 +357,7 @@ class MLXModelConfig(BaseModel):
             "reduce load time, time-to-first-token or memory. Its only "
             "consumers are the over-length refusal and the admin row. The "
             "gguf counterpart, `ctx_size`, is genuinely an allocation."),
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
-                           "engines": ENGINES_MLX})
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
     # Sampler defaults: the loaded model serves any of these per request.
     # Each sits ABOVE the vendor layer (this model's own
     # generation_config.json) and BELOW a request field, so leaving one unset
@@ -432,15 +369,13 @@ class MLXModelConfig(BaseModel):
             "Per-model default sampling temperature. Unset = the model's own "
             "generation_config.json value, else the global floor. A request "
             "field still wins over this."),
-        json_schema_extra={"effect": EFFECT_PER_REQUEST,
-                           "engines": ENGINES_MLX})
+        json_schema_extra={"effect": EFFECT_PER_REQUEST})
     top_p: Optional[float] = Field(
         default=None,
         description=(
             "Per-model default nucleus-sampling cutoff. Unset = the model's "
             "own generation_config.json value, else the global floor."),
-        json_schema_extra={"effect": EFFECT_PER_REQUEST,
-                           "engines": ENGINES_MLX})
+        json_schema_extra={"effect": EFFECT_PER_REQUEST})
     top_k: Optional[int] = Field(
         default=None,
         description=(
@@ -449,8 +384,7 @@ class MLXModelConfig(BaseModel):
             "overrule a publisher you disagree with -- gemma-4 asks for 64 "
             "and Qwen3.6 for 20, and those are the values that reach the "
             "sampler when this is unset."),
-        json_schema_extra={"effect": EFFECT_PER_REQUEST,
-                           "engines": ENGINES_MLX})
+        json_schema_extra={"effect": EFFECT_PER_REQUEST})
     min_p: Optional[float] = Field(
         default=None,
         description=(
@@ -458,15 +392,13 @@ class MLXModelConfig(BaseModel):
             "generation_config.json has no such field -- so unset means the "
             "global floor, and a publisher's DOCUMENTED min_p reaches nothing "
             "automatically. Set it by hand if you want theirs."),
-        json_schema_extra={"effect": EFFECT_PER_REQUEST,
-                           "engines": ENGINES_MLX})
+        json_schema_extra={"effect": EFFECT_PER_REQUEST})
     max_tokens: Optional[int] = Field(
         default=None,
         description=(
             "Per-model default cap on generated tokens. Unset = the global "
             "floor's stop. A request field still wins over this."),
-        json_schema_extra={"effect": EFFECT_PER_REQUEST,
-                           "engines": ENGINES_MLX})
+        json_schema_extra={"effect": EFFECT_PER_REQUEST})
     repetition_penalty: Optional[float] = Field(
         default=None,
         description=(
@@ -475,8 +407,7 @@ class MLXModelConfig(BaseModel):
             "layer key, so unset means off rather than the publisher's value. "
             "Counts only tokens THIS reply has generated, never the prompt "
             "(v2.0.60) -- see presence_penalty."),
-        json_schema_extra={"effect": EFFECT_PER_REQUEST,
-                           "engines": ENGINES_MLX})
+        json_schema_extra={"effect": EFFECT_PER_REQUEST})
     presence_penalty: Optional[float] = Field(
         default=None,
         description=(
@@ -489,8 +420,7 @@ class MLXModelConfig(BaseModel):
             "turns and their end-of-turn tokens -- a prompt-cache hit only the "
             "uncached suffix, an image request only the reply. gguf differs by "
             "engine design: llama.cpp also counts the tail of the prompt."),
-        json_schema_extra={"effect": EFFECT_PER_REQUEST,
-                           "engines": ENGINES_MLX})
+        json_schema_extra={"effect": EFFECT_PER_REQUEST})
     # In-flight + queued requests admitted before 503 backpressure. Consumed
     # by the generation gate (process-wide; the first provider created wins).
     # Process-wide once the gate exists (first provider created wins), so it
@@ -508,7 +438,6 @@ class MLXModelConfig(BaseModel):
             "always contributes the default. First provider created wins, "
             "which is why no reload of this model can change it."),
         json_schema_extra={"effect": EFFECT_LOAD_TIME_ONLY,
-                           "engines": list(ENGINES),
                            "reason": "process-wide: the first provider created "
                                      "wins, so reloading this model cannot "
                                      "change it"})
@@ -532,8 +461,7 @@ class MLXModelConfig(BaseModel):
             "(gemma-4: its vision blocks attend bidirectionally). gguf's nearest "
             "equivalents are `n_ubatch`/`n_batch`, which are spawn flags."),
         json_schema_extra={"is_runtime_default": True,
-                           "effect": EFFECT_PER_REQUEST,
-                           "engines": ENGINES_MLX},
+                           "effect": EFFECT_PER_REQUEST},
     )
     # Model-level thinking DEFAULT (Qwen3 <think> blocks, gemma-4 thought
     # channels). None = unset (v1.79.62): the cascade then falls back to the
@@ -548,8 +476,7 @@ class MLXModelConfig(BaseModel):
             "off otherwise); a bool pins it either way. A request field still "
             "wins. Reaches the model as a chat-template variable, not a "
             "sampler setting."),
-        json_schema_extra={"effect": EFFECT_PER_REQUEST,
-                           "engines": ENGINES_MLX})
+        json_schema_extra={"effect": EFFECT_PER_REQUEST})
     # Model-level default for the request field of the same name. Per-request
     # because it is a template variable resolved at prompt-build time.
     reasoning_effort: Optional[ReasoningEffort] = Field(
@@ -563,8 +490,7 @@ class MLXModelConfig(BaseModel):
             "takes low|medium|high), so the type here is their union and a "
             "wrong-for-this-model value reaches the template. Unset = send "
             "nothing, leaving the template's own default."),
-        json_schema_extra={"effect": EFFECT_PER_REQUEST,
-                           "engines": ENGINES_MLX})
+        json_schema_extra={"effect": EFFECT_PER_REQUEST})
     # NOTE: no supports_thinking here (removed v1.46.0) -- MLX thinking
     # capability is DERIVED (template probe / enable_thinking / the explicit
     # ModelConfig.capabilities override). GGUFModelConfig keeps its flag:
@@ -584,8 +510,7 @@ class MLXModelConfig(BaseModel):
             "models are exempt regardless. applies_live, not load_time_only: "
             "the router re-reads it each idle sweep, so a change takes effect "
             "on an already-loaded model with no reload."),
-        json_schema_extra={"effect": EFFECT_APPLIES_LIVE,
-                           "engines": ENGINES_MLX})
+        json_schema_extra={"effect": EFFECT_APPLIES_LIVE})
     # Chat-template source policy (C4.5):
     # - "auto": trust HF AutoTokenizer.from_pretrained (jinja wins if present);
     #   if the tokenizer ends up template-less, the provider installs whatever
@@ -612,8 +537,7 @@ class MLXModelConfig(BaseModel):
             "purpose. For an operator-owned edit prefer the "
             "`/v1/admin/models/{id}/chat-template` route, which writes one "
             "file and no config at all."),
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
-                           "engines": ENGINES_MLX})
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
 
     @model_validator(mode="after")
     def _resolve_modalities(self):
@@ -716,7 +640,7 @@ class GGUFModelConfig(BaseModel):
         description=(
             "Path to the .gguf weights file. Identity: changing it makes the "
             "entry a different model rather than the same one reconfigured."),
-        json_schema_extra={"effect": EFFECT_IDENTITY, "engines": [ENGINE_GGUF]})
+        json_schema_extra={"effect": EFFECT_IDENTITY})
     # multimodal projector sidecar
     mmproj_path: Optional[str] = Field(
         default=None,
@@ -727,8 +651,7 @@ class GGUFModelConfig(BaseModel):
             "only however its weights are described. Discovery pairs one "
             "automatically; an explicit entry must carry it by hand, which is "
             "how a vision model has lost it before."),
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "--mmproj",
-                           "engines": [ENGINE_GGUF]},
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "--mmproj"},
     )
     # Override the GGUF-embedded chat template with a jinja file on disk.
     # requires_reload, not per_request: llama-server takes the template at
@@ -755,7 +678,7 @@ class GGUFModelConfig(BaseModel):
             "`chat_template_source`, a different mechanism under a different "
             "name on purpose."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
-                           "arg": "--chat-template-file", "engines": [ENGINE_GGUF]},
+                           "arg": "--chat-template-file"},
     )
     # Sidecar discovery (v1.79.43, owner ask). When `chat_template_path` is
     # unset and the model file's OWN directory contains `chat_template.jinja`,
@@ -790,7 +713,7 @@ class GGUFModelConfig(BaseModel):
             "dir. It does not govern the operator override "
             "(chat_template.heylook.jinja), which is a separate file and a "
             "separate decision."),
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "engines": [ENGINE_GGUF]})
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
     # sidecar drafter (e.g. gemma mtp-*.gguf). `-md`, not the `--model-draft`
     # alias: `arg` must be the spelling the provider ACTUALLY emits, so a UI or
     # a derived emitter reproduces the real command line rather than an
@@ -807,8 +730,7 @@ class GGUFModelConfig(BaseModel):
             "models.toml entry at all. To keep it OFF, the drafter must not "
             "be paired. Unproven as a win here in general -- check your own "
             "model at your own context."),
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-md",
-                           "engines": [ENGINE_GGUF]},
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-md"},
     )
     # llama-server --spec-type (e.g. "draft-mtp"). NB coupled to LoRA: a loaded
     # adapter erases spec decode's win, because the draft context never
@@ -824,7 +746,7 @@ class GGUFModelConfig(BaseModel):
             "a drafter. Coupled to LoRA: an adapter reaches the target "
             "context only, so the drafter proposes the base distribution."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
-                           "arg": "--spec-type", "engines": [ENGINE_GGUF]},
+                           "arg": "--spec-type"},
     )
     spec_draft_n_max: Optional[int] = Field(
         default=None, ge=1, le=16,
@@ -835,7 +757,7 @@ class GGUFModelConfig(BaseModel):
             "finds a different and wrong optimum. Per-model: no defensible "
             "global value exists."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
-                           "arg": "--spec-draft-n-max", "engines": [ENGINE_GGUF]},
+                           "arg": "--spec-draft-n-max"},
     )
     ctx_size: Optional[int] = Field(
         default=None, ge=512,
@@ -849,8 +771,7 @@ class GGUFModelConfig(BaseModel):
             "lazily, so there is nothing there to size. The admin row reports "
             "`context_length` (the GGUF header ceiling) beside "
             "`context_running` (what the process actually got)."),
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "--ctx-size",
-                           "engines": [ENGINE_GGUF]},
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "--ctx-size"},
     )
     # --spec-draft-p-min: minimum probability for a drafted token to be kept.
     # NOT a minor tuning knob -- it INTERACTS with spec_draft_n_max and the
@@ -902,7 +823,7 @@ class GGUFModelConfig(BaseModel):
             "Strictly per-model -- the same value that helps both gemmas "
             "costs Qwen3.6-27B at every setting tried."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
-                           "arg": "--spec-draft-p-min", "engines": [ENGINE_GGUF]},
+                           "arg": "--spec-draft-p-min"},
     )
     # Third member of the spec tuning family (--spec-draft-n-min): the floor
     # on how many draft tokens a speculation round keeps. Same caveat as its
@@ -914,7 +835,7 @@ class GGUFModelConfig(BaseModel):
             "without a drafter, and the same caveat as its two siblings: the "
             "levers interact, tune together, per-model."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
-                           "arg": "--spec-draft-n-min", "engines": [ENGINE_GGUF]},
+                           "arg": "--spec-draft-n-min"},
     )
     # Expert offload. On UNIFIED memory this does not shrink total RAM -- it
     # moves those bytes out of the Metal working set, and that math onto CPU
@@ -934,7 +855,7 @@ class GGUFModelConfig(BaseModel):
             "is usually the better trade and a smaller change. A value past "
             "the model's layer count is a SILENT no-op. MoE models only."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ncmoe",
-                           "ui": "advanced", "engines": [ENGINE_GGUF]},
+                           "ui": "advanced"},
     )
     # All expert tensors to CPU. Equivalent to n_cpu_moe >= n_layer, kept
     # separate because it needs no layer count to express. A BARE flag.
@@ -945,7 +866,7 @@ class GGUFModelConfig(BaseModel):
             "or above the layer count, kept separate because it needs no "
             "layer count to express. Same trade as `n_cpu_moe`. MoE only."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-cmoe",
-                           "shape": "flag", "ui": "advanced", "engines": [ENGINE_GGUF]},
+                           "shape": "flag", "ui": "advanced"},
     )
     # Raw tensor-buffer overrides: the unrestricted form of the two above. A
     # pattern that matches nothing is a silent no-op, so prefer n_cpu_moe.
@@ -957,7 +878,7 @@ class GGUFModelConfig(BaseModel):
             "is a silent no-op, so a typo here costs you the placement you "
             "thought you had with no error anywhere."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ot",
-                           "ui": "advanced", "engines": [ENGINE_GGUF]},
+                           "ui": "advanced"},
     )
     # Draft-side expert offload (-ncmoed/-cmoed): the drafter's half of the
     # residency budget. Exists for the target-offloaded + drafter-resident
@@ -970,7 +891,7 @@ class GGUFModelConfig(BaseModel):
             "target-offloaded, drafter-resident split. Inert without a "
             "drafter, and without an MoE drafter."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ncmoed",
-                           "ui": "advanced", "engines": [ENGINE_GGUF]},
+                           "ui": "advanced"},
     )
     cpu_moe_draft: Optional[bool] = Field(
         default=None,
@@ -978,7 +899,7 @@ class GGUFModelConfig(BaseModel):
             "`cpu_moe` for the DRAFTER: all of its expert tensors to the CPU. "
             "Inert without an MoE drafter."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-cmoed",
-                           "shape": "flag", "ui": "advanced", "engines": [ENGINE_GGUF]},
+                           "shape": "flag", "ui": "advanced"},
     )
     # KV cache quantization (-ctk/-ctv). For a headroom problem this is
     # usually the better first lever than expert offload: it shrinks the KV
@@ -998,7 +919,7 @@ class GGUFModelConfig(BaseModel):
             "to the CPU. MLX has no counterpart (its KV fields were retired "
             "with the mlx-vlm engine)."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ctk",
-                           "ui": "advanced", "engines": [ENGINE_GGUF]},
+                           "ui": "advanced"},
     )
     cache_type_v: Optional[Literal[
         "f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"
@@ -1010,7 +931,7 @@ class GGUFModelConfig(BaseModel):
             "have a headroom problem. A quantized V-cache needs flash "
             "attention, whose default is auto in current builds."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ctv",
-                           "ui": "advanced", "engines": [ENGINE_GGUF]},
+                           "ui": "advanced"},
     )
     # -ngl; 999 = everything on GPU
     n_gpu_layers: int = Field(
@@ -1019,8 +940,7 @@ class GGUFModelConfig(BaseModel):
             "How many layers to offload to the GPU; 999 means all of them, "
             "which is what you want on Apple Silicon. Lower it only to keep "
             "weight bytes out of the Metal working set deliberately."),
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ngl",
-                           "engines": [ENGINE_GGUF]},
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ngl"},
     )
     # -ub: the PHYSICAL prompt-processing batch -- how many prompt tokens one
     # Metal dispatch chews through. llama-server's own default is 512, sized
@@ -1052,7 +972,7 @@ class GGUFModelConfig(BaseModel):
             "model into a decode-time Metal OOM that llama's own pre-flight "
             "never saw."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ub",
-                           "ui": "advanced", "engines": [ENGINE_GGUF]},
+                           "ui": "advanced"},
     )
     # -b: the LOGICAL batch, the most tokens one llama_decode call takes.
     # llama-server's default (2048) already equals the auto micro-batch and
@@ -1069,7 +989,7 @@ class GGUFModelConfig(BaseModel):
             "it -- the validator turns that clamp into a load-time refusal "
             "instead of a setting that reads as applied and is not."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-b",
-                           "ui": "advanced", "engines": [ENGINE_GGUF]},
+                           "ui": "advanced"},
     )
     # Draft-model GPU offload (-ngld). Its own knob because the pair can exceed
     # the GPU budget when the target alone does not: on a 192 GiB M2 Ultra the
@@ -1083,8 +1003,7 @@ class GGUFModelConfig(BaseModel):
             "exceed the GPU budget when the target alone does not. 0 keeps "
             "the drafter off the GPU entirely; unset inherits llama-server's "
             "default. Inert without a drafter."),
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ngld",
-                           "engines": [ENGINE_GGUF]},
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ngld"},
     )
     # llama-server's OWN idle sleep (--sleep-idle-seconds): frees the model and
     # KV cache but KEEPS THE PROCESS, and reloads on the next task. Strictly
@@ -1103,7 +1022,7 @@ class GGUFModelConfig(BaseModel):
             "for a genuinely cold model. Unset = disabled. No MLX equivalent: "
             "there is no subprocess to keep."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
-                           "arg": "--sleep-idle-seconds", "engines": [ENGINE_GGUF]},
+                           "arg": "--sleep-idle-seconds"},
     )
     # -cram: prompt-cache budget in MiB. llama-server defaults to only 8192;
     # -1 = unlimited, 0 = disable the cache entirely.
@@ -1115,8 +1034,7 @@ class GGUFModelConfig(BaseModel):
             "want it kept; -1 = unlimited, 0 = disable the cache. This is the "
             "gguf lever with no MLX counterpart you can set -- MLX's prompt "
             "cache is a single slot sized by the model, not a budget."),
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-cram",
-                           "engines": [ENGINE_GGUF]},
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-cram"},
     )
     # -lm: how weights are brought in. `mlock` pins them against paging, which
     # is the lever for a model near the memory ceiling; llama.cpp's Metal
@@ -1128,8 +1046,7 @@ class GGUFModelConfig(BaseModel):
             "the lever for a model near the memory ceiling; llama.cpp's Metal "
             "residency set is separate and already on. Unset = llama-server's "
             "own default."),
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-lm",
-                           "engines": [ENGINE_GGUF]},
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-lm"},
     )
     # The four below are ui:"hidden": settable (requires_reload is their real
     # effect class -- a fresh spawn reads them), but no editor should offer
@@ -1148,15 +1065,13 @@ class GGUFModelConfig(BaseModel):
             "stale binary quietly shadowing a fresh one is the failure this "
             "warning exists to prevent. Unset = the build written by "
             "scripts/build_llama.py, which is the one source."),
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "hidden",
-                           "engines": [ENGINE_GGUF]})
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "hidden"})
     host: str = Field(
         default="127.0.0.1",
         description=(
             "Interface the llama-server subprocess binds. Plumbing -- leave "
             "it on loopback; this subprocess is heylook's, not a service."),
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "hidden",
-                           "engines": [ENGINE_GGUF]})
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "hidden"})
     # 0 = pick a free port at load
     port: int = Field(
         default=0,
@@ -1164,15 +1079,13 @@ class GGUFModelConfig(BaseModel):
             "Port for the llama-server subprocess. 0 means pick a free one, "
             "which is the correct behaviour -- pinning it only creates a "
             "collision you have to debug."),
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "hidden",
-                           "engines": [ENGINE_GGUF]})
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "hidden"})
     startup_timeout_s: float = Field(
         default=300.0,
         description=(
             "How long to wait for the subprocess to report ready before the "
             "load fails. Raise it for a very large model on cold storage."),
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "hidden",
-                           "engines": [ENGINE_GGUF]})
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "hidden"})
     # Raw passthrough flags. requires_reload because they are spawn argv --
     # and note this is remote argv injection into a subprocess for anyone with
     # admin PATCH access, so a UI should not make it a casual free-text field
@@ -1186,8 +1099,7 @@ class GGUFModelConfig(BaseModel):
             "casual free-text field. The three llama.cpp flags that write to "
             "disk on their own are REFUSED here -- one of them writes PROMPT "
             "TEXT, at observability_level=off, with nothing announcing it."),
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "advanced",
-                           "engines": [ENGINE_GGUF]},
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "advanced"},
     )
     # model-level default cap
     max_tokens: Optional[int] = Field(
@@ -1197,7 +1109,7 @@ class GGUFModelConfig(BaseModel):
             "floor's stop, which matters more here than on MLX: "
             "llama-server's own n_predict default is UNLIMITED, so something "
             "must always cap it."),
-        json_schema_extra={"effect": EFFECT_PER_REQUEST, "engines": [ENGINE_GGUF]})
+        json_schema_extra={"effect": EFFECT_PER_REQUEST})
     # Capability DESCRIPTION. Import fills this from the GGUF's own embedded
     # chat template (gguf_metadata.supports_thinking, same enable_thinking
     # rule the MLX path uses); it stays overridable by hand, and the explicit
@@ -1213,7 +1125,7 @@ class GGUFModelConfig(BaseModel):
             "flag where MLX does not because the template lives inside GGUF "
             "metadata, with nothing cheap to probe -- on MLX the same fact is "
             "derived from the template file."),
-        json_schema_extra={"effect": EFFECT_DESCRIPTIVE, "engines": [ENGINE_GGUF]})
+        json_schema_extra={"effect": EFFECT_DESCRIPTIVE})
     modalities: Optional[List[str]] = Field(
         default=None,
         description=(
@@ -1221,7 +1133,7 @@ class GGUFModelConfig(BaseModel):
             "here, unlike its MLX namesake: gguf is one engine, so this "
             "changes what is advertised and routes nothing. What actually "
             "gives a gguf model vision is `mmproj_path`."),
-        json_schema_extra={"effect": EFFECT_DESCRIPTIVE, "engines": [ENGINE_GGUF]})
+        json_schema_extra={"effect": EFFECT_DESCRIPTIVE})
     # Model-level thinking DEFAULT (the MLX config's counterpart), distinct
     # from `supports_thinking` above, which only describes CAPABILITY.
     # Required since unset started meaning OFF everywhere (v1.50.0): before
@@ -1240,7 +1152,7 @@ class GGUFModelConfig(BaseModel):
             "v1.50.0 -- before that a gguf model inherited its template's own "
             "default, and with extra=\"forbid\" there was then no way to ask "
             "for that back."),
-        json_schema_extra={"effect": EFFECT_PER_REQUEST, "engines": [ENGINE_GGUF]})
+        json_schema_extra={"effect": EFFECT_PER_REQUEST})
     # Per-model repetition control, the MLX config's counterpart. Added in
     # v2.0.32 with the removal of the automatic thinking overlay: that overlay
     # applied presence_penalty 1.5 to every thinking model on both engines,
@@ -1260,7 +1172,7 @@ class GGUFModelConfig(BaseModel):
             "the prompt (its server feeds prompt tokens to the sampler), so "
             "the same value is not equivalent to MLX, which counts only the "
             "reply."),
-        json_schema_extra={"effect": EFFECT_PER_REQUEST, "engines": [ENGINE_GGUF]})
+        json_schema_extra={"effect": EFFECT_PER_REQUEST})
     # Model-level default thinking DEPTH, mirroring the MLX config's field of
     # the same name. Reaches llama-server as a chat_template_kwargs entry, so
     # the accepted set is whatever THIS model's embedded template accepts --
@@ -1274,7 +1186,7 @@ class GGUFModelConfig(BaseModel):
             "accepts -- and a value it rejects becomes a raised jinja "
             "exception, which llama-server returns as a 500. Unset = send "
             "nothing, leaving the template's own default."),
-        json_schema_extra={"effect": EFFECT_PER_REQUEST, "engines": [ENGINE_GGUF]})
+        json_schema_extra={"effect": EFFECT_PER_REQUEST})
 
     # llama-server's default logical batch, the ceiling n_ubatch is clamped to
     # when n_batch is not set. Named so the validator's message can say it.
@@ -1373,7 +1285,7 @@ _validate_effect_declarations()
 def _validate_documentation_declarations() -> None:
     """Fail at IMPORT if a provider-config field is undocumented.
 
-    Two facts, one rule, and the same fail-fast argument as
+    The same fail-fast argument as
     ``_validate_effect_declarations`` above: developer-authored static data,
     a bad value is a code bug that cannot be provoked by user input, and the
     degradation is silent in the safe-looking direction.
@@ -1385,27 +1297,16 @@ def _validate_documentation_declarations() -> None:
     consumer came to recommend two cache knobs that are inert on the model
     they were recommended for. (NOT ``/openapi.json``: no route binds these
     classes as a typed body, so they never appear in the served spec --
-    their ``model_json_schema()`` carries both facts, which is the trap, not
+    their ``model_json_schema()`` carries it, which is the trap, not
     the carrying path.)
 
-    ``engines`` -- which of mlx-vlm / gguf the field actually reaches. The
-    class a field is declared on does not always answer this: at least one
-    field (``max_queue_depth``) governs every engine from a single provider's
-    config.
-
-    Both are declared AT the field and derived everywhere else. Writing
-    either fact into a doc table instead is this repo's named defect class.
+    Declared AT the field and derived everywhere else. Writing it into a doc
+    table instead is this repo's named defect class. (Which engine a field
+    reaches is its config class: one engine per provider since plan W10.)
     """
     problems: List[str] = []
     for provider, cls in PROVIDER_CONFIG_CLASSES.items():
-        for name, bad in invalid_engines(cls).items():
-            problems.append(f"  {provider}.{name}: {bad}")
         for name, field in cls.model_fields.items():
-            if field_engines(field) is None:
-                problems.append(
-                    f"  {provider}.{name}: no `engines` declared -- name which "
-                    f"of {list(ENGINES)} this field actually reaches"
-                )
             if not (field.description or "").strip():
                 problems.append(
                     f"  {provider}.{name}: no `description` -- "

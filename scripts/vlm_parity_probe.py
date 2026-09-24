@@ -129,7 +129,7 @@ def _run(args) -> dict:
     provider.load_model()
     assert provider.model is not None
     if not provider.is_vlm:
-        sys.exit(f"{args.model} routes to {provider.effective_loader}; nothing to compare")
+        sys.exit(f"{args.model} is served as text; nothing to compare")
 
     captured: list[dict] = []
     real_prepare = mp.vlm_prepare_inputs

@@ -1208,13 +1208,14 @@ route switching on a provider name.
 
 ### Loader routing
 
-Load-library selection is `MLXProvider.effective_loader`
-(`providers/common/loader_routing.py`), derived from the config's
-`modalities` + `loader` fields, not the raw `vision` bool, which is now a
-derived mirror of `"vision" in modalities`. `is_vlm = (effective_loader ==
-"mlx-vlm")`. `loader="auto"` routes vision to mlx-vlm iff mlx-vlm registers the
-`model_type`, else mlx-lm (it degrades only on positive non-support; an
-explicit `loader` forces the engine). Modality description
+Until plan W10 this picked a library: `MLXProvider.effective_loader`
+(`providers/common/loader_routing.py`) resolved `"mlx-vlm"` or `"mlx-lm"`
+from the config's `modalities` + `loader` fields. Every MLX model now loads
+with mlx-vlm, the `loader` field is retired, and since v2.0.89 the answer is
+one bool, `resolve_serves_vision` (`is_vlm`): vision iff the model declares
+it and mlx-vlm registers the `model_type` (it degrades only on positive
+non-support). The raw `vision` bool is a derived mirror of `"vision" in
+modalities`. Modality description
 (`model_importer.detect_modalities`: config `*_config` blocks +
 `image_token_id` / `image_token_index` / `audio_token_id`...) is deliberately
 separate from this library-aware routing.
@@ -1226,11 +1227,12 @@ then refused. One resolver for both surfaces is what makes them agree by
 construction. `modalities` still carries the declaration; description and
 served capability are different fields on purpose.
 
-It is on the wire as `engine.runtime` (v2.0.73; `effective_loader` on the
-admin row from v1.79.31), derived via `effective_loader_for_config` so it
-answers for unloaded models. The provider attribute is null unless the model is resident,
-which is the opposite of what a live harness picking engine arms needs. For
-gguf it reads `llama.cpp`, so one field names the engine on every row.
+The library is on the wire as `engine.runtime` (v2.0.73; `effective_loader`
+on the admin row from v1.79.31), and served vision as the `vision`
+capability, derived via `serves_vision_for_config` so both answer for
+unloaded models, which is what a live harness picking its arms needs. For
+gguf the runtime reads `llama.cpp`, so one field names the engine on every
+row.
 Because it reads each model dir's `config.json`, the two admin read routes
 that build a model response are plain `def` (threadpool), not `async def`.
 

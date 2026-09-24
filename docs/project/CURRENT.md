@@ -72,11 +72,8 @@ tokenizer backend, and Qwen3-0.6B's was empty.
    which gpt-oss cannot honour (harmony always writes analysis first). Owner
    call: raise the budgets, or mark the tasks ineligible for harmony models.
 5. **Owner questions from stage 3 (not blocking):**
-   - config's `engines` tag now carries almost nothing (every field follows
-     its config class except `max_queue_depth`); remove it, or keep it for a
-     future engine?
-   - `effective_loader` still returns the string `"mlx-lm"` internally to
-     mean "text path" (it no longer reaches the wire); rename to a bool?
+   - (settled 2026-09-24, v2.0.89: the `engines` tag is removed and
+     `effective_loader` is the bool `resolve_serves_vision`.)
    - the vendored detokenizer could later give way to a small incremental
      decoder on transformers' `decode` (the "option 2" discussed 2026-09-23).
    - `internal/bin/latest.py` still writes an mlx-lm rev; it needs the mlx-lm

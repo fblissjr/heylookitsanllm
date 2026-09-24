@@ -121,10 +121,10 @@ Every field of the **provider config classes** -- the ones in `PROVIDER_CONFIG_C
 The classes themselves, and which field declares which, are in [`config.py`](../../src/heylook_llm/config.py) -- read them there. A roster copied into prose is the drift this repo already names: a hand-copied constant list is a defect with a delay.
 
 What is worth carrying here is the shape and the two traps:
-- **Classification is provider-aware, deliberately.** The same field name can hold a different class on different providers -- `modalities` is merely descriptive for GGUF but forces a reload on MLX, because there it feeds `effective_loader` and so decides which engine holds the weights.
+- **Classification is provider-aware, deliberately.** The same field name can hold a different class on different providers -- `modalities` is merely descriptive for GGUF but forces a reload on MLX, because there it decides at load whether the model is served with vision (the template path and the image guard).
 - **A model's `id` carries no effect metadata at all.** It is a bare annotation on `ModelConfig`, not a field of any provider config class; `model_path` is the one that declares identity.
 
-Two sibling annotations ride the same derivation and are required on every field for the same reason: **`engines`** (which of `mlx-vlm`/`gguf` the field actually reaches -- the provider key is not always that answer, since a field on one provider's config can govern both) and **`description`** (what the field does and why you would reach for it, which `/v1/admin/model-options` is the only surface to publish -- these classes are never bound as a typed request body, so they do not appear in `/openapi.json`). See [providers_architecture.md §3.5](./providers_architecture.md#35-which-config-fields-apply-to-which-engine) for what `engines` can and cannot express.
+A sibling annotation rides the same derivation and is required on every field for the same reason: **`description`** (what the field does and why you would reach for it, which `/v1/admin/model-options` is the only surface to publish -- these classes are never bound as a typed request body, so they do not appear in `/openapi.json`). Which engine a field reaches is its config class; see [providers_architecture.md §3.5](./providers_architecture.md#35-which-config-fields-apply-to-which-engine) for the one exception.
 
 The reload check set and the admin options API (`/v1/admin/model-options`) derive from these annotations rather than from a second hand-written list.
 

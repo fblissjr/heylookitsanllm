@@ -1,19 +1,21 @@
-"""Effective-loader resolution: which mlx engine actually loads a model.
+"""Is an MLX model served with vision? One resolver, two readers.
 
-The registry stores a model's DESCRIPTION (``modalities``) and a ROUTING hint
-(``loader``); this turns them into the concrete engine -- ``"mlx-vlm"`` or
-``"mlx-lm"`` -- the provider loads with, and from which ``is_vlm`` derives.
+Every MLX model loads with mlx-vlm (plan W10), so this no longer picks a
+library. It decides whether a model is SERVED WITH VISION: the template path
+it renders on (``MLXProvider.is_vlm``) and the ``vision`` capability
+``/v1/models`` advertises, which the provider's image guard reads through the
+same answer, so the two cannot disagree.
 
-The ``"auto"`` rule is library-aware: a model routes to mlx-vlm only if it
-declares vision AND mlx-vlm actually registers its ``model_type``; otherwise it
-falls to mlx-lm. That degrades a vision model mlx-vlm can't load to the text
-loader instead of crashing at load (the failure mode that motivated the split;
-see plan Phase 6 refinement 2026-07-11). An explicit ``loader`` forces the
-engine (e.g. run a dual-capable VLM as text via ``"mlx-lm"``).
+The rule is library-aware: a model is served with vision only if it declares
+vision AND mlx-vlm actually registers its ``model_type``; otherwise it is
+served as text. That degrades a vision model mlx-vlm can't run as a VLM to
+text instead of crashing at load.
 
-Description lives in the registry; this routing is deliberately separate --
-detection (model_importer.detect_modalities) has no library dependency, this
-does.
+Description lives in the registry; this resolution is deliberately separate --
+modality detection has no library dependency, this does.
+
+Until v2.0.89 the answer was a string, ``"mlx-vlm"`` or ``"mlx-lm"``, from
+when those were two libraries; the second spelling outlived the dependency.
 """
 from __future__ import annotations
 
@@ -80,13 +82,13 @@ def _modalities_of(config: dict) -> list:
     return config.get("modalities") or (["text", "vision"] if config.get("vision") else ["text"])
 
 
-def resolve_effective_loader(
+def resolve_serves_vision(
     config: dict,
     model_type_getter: Callable[[], Optional[str]],
     *,
     vlm_supports: Callable[[str], bool] = mlx_vlm_supports,
-) -> str:
-    """Resolve to ``"mlx-vlm"`` or ``"mlx-lm"``.
+) -> bool:
+    """Whether this MLX model is served with vision.
 
     ``config``: the model's config dict (``modalities``/``vision``).
     Usually a validated ``model_dump()``, but the provider accepts raw dicts too,
@@ -94,67 +96,66 @@ def resolve_effective_loader(
     ``model_type_getter``: lazy -- called only when a vision model must probe
     the mlx-vlm registry.
 
-    Every MLX model runs on mlx-vlm's engine since v2.0.86 (plan W10); the two
-    answers now mean "served with vision" and "served as text", and the
-    ``loader`` field that could force one was retired in stage 3.
+    The ``loader`` field that could force an answer was retired in plan W10
+    stage 3.
     """
     # non-vision -> served as text.
     if "vision" not in _modalities_of(config):
-        return "mlx-lm"
+        return False
     # vision: keep the historical vision->mlx-vlm default UNLESS we can POSITIVELY
     # prove mlx-vlm lacks the model_type. Uncertainty (config.json unreadable ->
     # model_type None) trusts the vision declaration rather than silently
     # degrading a working VLM.
     model_type = model_type_getter()
     if model_type is None:
-        return "mlx-vlm"
+        return True
     if vlm_supports(model_type):
-        return "mlx-vlm"
+        return True
     # Once per model_type per process. This used to run only at LOAD; it now runs
     # per row of every `GET /v1/admin/models`, and an unconditional INFO there
     # would repeat the same sentence forever without ever saying anything new.
     if model_type not in _logged_degradations:
         _logged_degradations.add(model_type)
         logging.info(
-            "loader=auto: model_type %r declares vision but mlx-vlm has no loader for "
-            "it; routing to mlx-lm (text)", model_type)
-    return "mlx-lm"
+            "model_type %r declares vision but mlx-vlm has no vision model for "
+            "it; serving it as text", model_type)
+    return False
 
 
-def effective_loader_for_config(provider: str, config: dict) -> Optional[str]:
-    """The engine a model WOULD load with, resolved WITHOUT loading it.
+def serves_vision_for_config(provider: str, config: dict) -> Optional[bool]:
+    """Whether an MLX model WOULD be served with vision, resolved WITHOUT
+    loading it.
 
-    ``MLXProvider.effective_loader`` is the same answer read off a live provider,
-    and is therefore null for every model that is not resident. This is the
-    unloaded-model form, for callers that have a config and no process: the admin
-    listing, and through it the live smoke harness, whose whole premise is that an
-    arm names an ENGINE rather than a provider Literal.
+    ``MLXProvider.is_vlm`` is the same answer read off a live provider, and
+    exists only for a resident model. This is the unloaded-model form, for
+    callers that have a config and no process: the capability report on
+    ``/v1/models`` and the admin row, and through them the live harnesses,
+    which split MLX into text and vision arms.
 
-    ``None`` for anything but ``"mlx"``: the question is *which mlx library*, and
-    it has no answer for a gguf subprocess. gguf is one engine, already named
-    by ``provider``.
+    ``None`` for anything but ``"mlx"``: a gguf model's vision is its
+    projector, answered from its own config.
 
     Pure over the config plus one mtime-cached read of the model dir's
     ``config.json`` -- no import of the model, no MLX. It agrees with the loaded
-    provider by CONSTRUCTION: both call :func:`resolve_effective_loader` with the
+    provider by CONSTRUCTION: both call :func:`resolve_serves_vision` with the
     same two inputs.
 
     THAT AGREEMENT HAS A PRECONDITION, and it used to go unsaid: the config must
     carry a capability declaration. Validation always supplies one, but
     ``merge_discovered`` returns raw dicts and derivation happens later, so a
     config taken straight from the merge declares nothing -- and the ``auto``
-    rule reads the declaration. Answering from its absence returns the text
-    loader for every model, silently. That is now refused rather than answered;
+    rule reads the declaration. Answering from its absence reports every
+    model as text-only, silently. That is now refused rather than answered;
     see the guard below.
     """
     if provider != "mlx":
         return None
     # REFUSE AN UNRESOLVED DESCRIPTION rather than answer from its absence.
     #
-    # The "auto" rule reads `modalities`, and `MLXModelConfig._resolve_modalities`
+    # The rule reads `modalities`, and `MLXModelConfig._resolve_modalities`
     # always populates it -- so `None` here does not mean "text-only", it means
     # this config never went through validation. Answering anyway returns
-    # "mlx-lm" for EVERY model including vision ones, with no exception and no
+    # False (text) for EVERY model including vision ones, with no exception and no
     # log line: a confident wrong answer indistinguishable from a real one.
     #
     # Two sessions hit exactly that on 2026-09-08 by passing `merge_discovered`
@@ -175,11 +176,11 @@ def effective_loader_for_config(provider: str, config: dict) -> Optional[str]:
     declared = config.get("modalities") is not None or "vision" in config
     if not declared:
         raise ValueError(
-            "effective_loader_for_config was given a config whose `modalities` "
+            "serves_vision_for_config was given a config whose `modalities` "
             "is unresolved, which happens when the config has not been through "
             "MLXModelConfig validation (merge_discovered returns raw dicts). "
             "Answering would report every model as text-only. Validate first -- "
             "AppConfig(**merged) -- and pass that config."
         )
-    return resolve_effective_loader(
+    return resolve_serves_vision(
         config, lambda: read_model_type(config.get("model_path", "") or ""))

@@ -15,7 +15,7 @@ engine, plan W10 stage 3; the declaration is now the only input.)
 The claim these tests pin is not "text-only models report no vision". It is
 that ONE resolver answers for both surfaces, so they cannot drift apart
 again: ``capabilities.py`` and ``MLXProvider.__init__`` both call
-``resolve_effective_loader`` on the same config dict.
+``resolve_serves_vision`` on the same config dict.
 """
 
 import json
@@ -112,10 +112,10 @@ class TestVisionCapabilityFailsOpen:
 
     def test_an_unreadable_model_dir_keeps_an_EXPLICIT_declared_capability(self, tmp_path):
         """Inherited from the router on purpose: only POSITIVE non-support
-        drops the engine to mlx-lm, so a path that cannot be read (an HF repo
+        serves a model as text, so a path that cannot be read (an HF repo
         id, a not-yet-downloaded dir) must not silently strip vision off a
-        working VLM. Degrading on uncertainty is the failure mode the loader
-        router was written to avoid; the capability surface inherits it rather
+        working VLM. Degrading on uncertainty is the failure mode the resolver
+        was written to avoid; the capability surface inherits it rather
         than inventing a second policy.
         """
         from heylook_llm.capabilities import effective_capabilities

@@ -188,7 +188,6 @@ class TestProviderSurface:
     def test_base_defaults(self):
         assert BaseProvider.provider_name == ""
         assert BaseProvider.is_vlm is False
-        assert BaseProvider.effective_loader is None
 
         class P(BaseProvider):
             def load_model(self):

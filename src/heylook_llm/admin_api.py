@@ -211,7 +211,7 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
 #
 # Read routes are models.toml-only or read the router's already-merged snapshot,
 # and never scan (see _served_configs) -- but the two that build an
-# AdminModelResponse (list, get) are `def` all the same: `effective_loader` is
+# AdminModelResponse (list, get) are `def` all the same: served vision is
 # derived per row from the model dir's config.json, so a list response is one
 # mtime-stat per served model. Small, and still disk, still per request, still
 # the event loop if it were `async`.
@@ -887,9 +887,7 @@ def _field_options(cls) -> list[dict]:
             if key in inner:
                 entry[key] = inner[key]
         # Pass-through hints declared on the field: `description` (what it
-        # does and why you would reach for it), `engines` (which of mlx-vlm /
-        # gguf it actually reaches -- the provider key above is not always
-        # that answer, since a field can govern both), `arg` (the flag
+        # does and why you would reach for it), `arg` (the flag
         # actually emitted -- pinned to the argv builder by a test), `ui`,
         # `shape` ("flag" = a bare flag, no value), and `reason` (why a
         # load_time_only field is not editable, which the class cannot imply).
@@ -906,7 +904,7 @@ def _field_options(cls) -> list[dict]:
         # descriptions never reach it. The classes' own
         # `model_json_schema()` does carry both, which is exactly the trap:
         # checking the model and concluding the WIRE has it.
-        for key in ("description", "engines", "arg", "ui", "shape", "reason"):
+        for key in ("description", "arg", "ui", "shape", "reason"):
             if key in prop:
                 entry[key] = prop[key]
         out.append(entry)
@@ -923,16 +921,14 @@ def _field_options(cls) -> list[dict]:
         "and name the cost), load_time_only (cannot be changed, not even by "
         "reloading), descriptive (changes what we advertise, not the process). "
         "Each field also carries `description` -- what it does and why you "
-        "would reach for it -- and `engines`, WHICH ENGINE it actually "
-        "reaches: mlx-vlm, gguf or both. "
-        "READ `engines`, NOT THE PROVIDER KEY: one field governs every engine "
-        "from a single provider\'s config (`max_queue_depth`: the generation "
-        "gate is process-global). `engines` is per-ENGINE and cannot express "
-        "a per-ARCHITECTURE exception, so where a field is inert on some "
-        "architectures of its engine, the field\'s own `description` says so. "
+        "would reach for it. The provider key is the engine a field reaches "
+        "(one engine per provider), with one exception its `description` "
+        "names: `max_queue_depth` governs the process-global generation gate. "
+        "Where a field is inert on some architectures of its engine, the "
+        "field\'s own `description` says so. "
         "Derived from the provider config classes, so a new field appears here "
         "without touching this route, and cannot be added without declaring "
-        "all three."
+        "both its effect and its description."
     ),
 )
 async def get_model_options():

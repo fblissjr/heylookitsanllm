@@ -42,10 +42,6 @@ from dataclasses import dataclass, field
 # The arms a live run can have. Order is display order.
 ARMS = ("mlx-text", "mlx-vision", "gguf")
 
-# The engine (`engine.runtime`, and config's `engines` vocabulary) each arm
-# runs on. Pinned against config.ENGINES by test_config_effects.
-ARM_ENGINE = {"mlx-text": "mlx-vlm", "mlx-vision": "mlx-vlm", "gguf": "gguf"}
-
 
 @dataclass
 class Coverage:

@@ -1,15 +1,17 @@
 # tests/unit/test_loader_routing.py
-"""Effective-loader resolution (Phase 6 refinement 2026-07-11, slice 3).
+"""Served-vision resolution: is an MLX model served with vision?
 
-Turns the registry's DESCRIPTION (modalities) + ROUTING hint (loader) into the
-engine that actually loads: mlx-vlm or mlx-lm. This is the library-aware half
-(vision models that mlx-vlm can't load degrade to mlx-lm instead of crashing),
-kept as a pure function with the mlx-vlm registry check injected so it tests
-without importing mlx.
+The registry's DESCRIPTION (modalities) plus whether mlx-vlm registers the
+model_type. A vision model mlx-vlm can't run as a VLM is served as text rather
+than crashing at load. Pure, with the mlx-vlm registry check injected, so it
+tests without importing mlx.
 """
 import pytest
 
-from heylook_llm.providers.common.loader_routing import resolve_effective_loader
+from heylook_llm.providers.common.loader_routing import (
+    resolve_serves_vision,
+    serves_vision_for_config,
+)
 
 
 def _getter(value, calls):
@@ -20,114 +22,66 @@ def _getter(value, calls):
 
 
 @pytest.mark.unit
-class TestResolveEffectiveLoader:
+class TestResolveServesVision:
 
-    def test_auto_no_vision_is_mlx_lm(self):
+    def test_no_vision_declared_is_text_and_reads_nothing(self):
         calls = []
-        assert resolve_effective_loader(
-            {"loader": "auto", "modalities": ["text", "audio"]},
-            _getter("x", calls), vlm_supports=lambda mt: True) == "mlx-lm"
+        assert resolve_serves_vision(
+            {"modalities": ["text", "audio"]},
+            _getter("x", calls), vlm_supports=lambda mt: True) is False
         assert calls == []                         # no vision -> model_type unread
 
-    def test_auto_vision_supported_is_mlx_vlm(self):
-        assert resolve_effective_loader(
-            {"loader": "auto", "modalities": ["text", "vision"]},
-            _getter("qwen3_5", []), vlm_supports=lambda mt: True) == "mlx-vlm"
+    def test_vision_follows_the_mlx_vlm_registry(self):
+        vision = {"modalities": ["text", "vision"]}
+        assert resolve_serves_vision(
+            vision, _getter("qwen3_5", []), vlm_supports=lambda mt: True) is True
+        # mlx-vlm can't run it as a VLM -> text, not a crash at load.
+        assert resolve_serves_vision(
+            vision, _getter("some_new_vlm", []), vlm_supports=lambda mt: False) is False
 
-    def test_auto_vision_unsupported_degrades_to_mlx_lm(self):
-        # The robustness fix: vision model mlx-vlm can't load -> text loader,
-        # not a crash.
-        assert resolve_effective_loader(
-            {"loader": "auto", "modalities": ["text", "vision"]},
-            _getter("some_new_vlm", []), vlm_supports=lambda mt: False) == "mlx-lm"
-
-    def test_auto_vision_unknown_model_type_trusts_vision(self):
-        # config.json unreadable -> model_type None: keep the historical
-        # vision->mlx-vlm default rather than degrade a possibly-fine VLM.
+    def test_unknown_model_type_trusts_the_declaration(self):
+        # config.json unreadable -> model_type None: keep vision rather than
+        # degrade a possibly-fine VLM.
         calls = []
-        assert resolve_effective_loader(
-            {"loader": "auto", "modalities": ["text", "vision"]},
-            _getter(None, calls), vlm_supports=lambda mt: False) == "mlx-vlm"
-        assert calls == [1]                        # probed, got None, trusted vision
+        assert resolve_serves_vision(
+            {"modalities": ["text", "vision"]},
+            _getter(None, calls), vlm_supports=lambda mt: False) is True
+        assert calls == [1]
 
     def test_legacy_vision_bool_without_modalities(self):
         # The provider accepts raw dicts (no modalities key) -> derive from the
         # legacy vision bool, matching MLXModelConfig._resolve_modalities.
-        assert resolve_effective_loader(
-            {"vision": True}, _getter("gemma4", []),
-            vlm_supports=lambda mt: True) == "mlx-vlm"
-        assert resolve_effective_loader(
-            {"vision": False}, _getter("x", []),
-            vlm_supports=lambda mt: True) == "mlx-lm"
-
-    def test_loader_defaults_to_auto_when_absent(self):
-        assert resolve_effective_loader(
-            {"modalities": ["text", "vision"]}, _getter("gemma4", []),
-            vlm_supports=lambda mt: True) == "mlx-vlm"
-
-
-class TestEffectiveLoaderForConfig:
-    """`effective_loader_for_config` -- the same answer, without a process.
-
-    The routing rule is `resolve_effective_loader`; this is the wrapper the
-    admin listing calls, and the only thing it adds is the provider gate and
-    the model_type read. Both are the parts that can be wrong on the wire.
-    """
-
-    def test_none_for_every_non_mlx_provider(self):
-        # The question is WHICH MLX LIBRARY. gguf is one engine and is already
-        # named by `provider`; an embedding model has no answer at all. Naming
-        # a loader for either would be a claim the field cannot support.
-        from heylook_llm.providers.common.loader_routing import effective_loader_for_config
-
-        cfg = {"loader": "auto", "modalities": ["text", "vision"]}
-        assert effective_loader_for_config("gguf", cfg) is None
-        assert effective_loader_for_config("mlx", cfg) in ("mlx-lm", "mlx-vlm")
-
-    def test_missing_model_path_does_not_raise(self):
-        # Discovered entries, draft/MTP heads, half-written configs: a read
-        # that cannot happen must degrade to the vision declaration, not to a
-        # 500 on the models page.
-        from heylook_llm.providers.common.loader_routing import effective_loader_for_config
-
-        assert effective_loader_for_config(
-            "mlx", {"loader": "auto", "modalities": ["text", "vision"]}) == "mlx-vlm"
-        assert effective_loader_for_config(
-            "mlx", {"loader": "auto", "model_path": None,
-                    "modalities": ["text"]}) == "mlx-lm"
+        assert resolve_serves_vision(
+            {"vision": True}, _getter("gemma4", []), vlm_supports=lambda mt: True) is True
+        assert resolve_serves_vision(
+            {"vision": False}, _getter("x", []), vlm_supports=lambda mt: True) is False
 
 
 @pytest.mark.unit
-class TestUnresolvedDescriptionIsRefused:
-    """A config with no capability declaration gets a refusal, not an answer.
+class TestServesVisionForConfig:
+    """The same answer without a process: the provider gate, the model_type
+    read, and the refusal of an unvalidated config."""
 
-    `auto` routing reads the declaration. `merge_discovered` returns RAW dicts
-    and the declaration is derived at validation, so a config taken straight
-    from the merge declares nothing -- and answering from that absence returns
-    the text loader for every model, vision ones included, with no exception
-    and no log line. Two sessions were caught by exactly that on 2026-09-08.
+    def test_none_for_gguf_even_before_the_guard(self):
+        # gguf's vision is its projector; this resolver has no answer there,
+        # and must not refuse a config on its way to None.
+        assert serves_vision_for_config("gguf", {"modalities": ["text", "vision"]}) is None
+        assert serves_vision_for_config("gguf", {}) is None
 
-    It matters past a wrong count: anything comparing a served set before and
-    after a config edit calls this per model, so an unvalidated snapshot on
-    either side reports engine changes that never happened.
-    """
-
-    def _f(self):
-        from heylook_llm.providers.common.loader_routing import effective_loader_for_config
-        return effective_loader_for_config
+    def test_missing_model_path_does_not_raise(self):
+        # Discovered entries, MTP heads, half-written configs: a read that
+        # cannot happen degrades to the declaration, not to a 500.
+        assert serves_vision_for_config("mlx", {"modalities": ["text", "vision"]}) is True
+        assert serves_vision_for_config(
+            "mlx", {"model_path": None, "modalities": ["text"]}) is False
 
     def test_a_config_declaring_nothing_is_refused(self):
+        """`merge_discovered` returns RAW dicts; the declaration is derived at
+        validation. Answering from its absence would report every model as
+        text-only with no exception and no log line (two sessions were caught
+        by exactly that on 2026-09-08). The legacy `vision` key still counts
+        as a declaration."""
         with pytest.raises(ValueError, match="modalities"):
-            self._f()("mlx", {"loader": "auto", "model_path": "/synthetic/x"})
-
-    def test_the_legacy_vision_bool_counts_as_a_declaration(self):
-        # `_modalities_of` still honours the old `vision` key, so a config
-        # carrying it HAS declared -- and must be answered, not refused.
-        assert self._f()("mlx", {"loader": "auto", "vision": True,
-                                 "model_path": ""}) == "mlx-vlm"
-        assert self._f()("mlx", {"loader": "auto", "vision": False}) == "mlx-lm"
-
-    def test_a_non_mlx_provider_short_circuits_before_the_guard(self):
-        # The question is WHICH MLX LIBRARY; gguf has no answer and must not
-        # be refused on its way to None.
-        assert self._f()("gguf", {"loader": "auto"}) is None
+            serves_vision_for_config("mlx", {"model_path": "/synthetic/x"})
+        assert serves_vision_for_config("mlx", {"vision": True, "model_path": ""}) is True
+        assert serves_vision_for_config("mlx", {"vision": False}) is False

@@ -27,7 +27,7 @@ from .common.generation_core import continuation_detokenizer, detokenizer_source
 from .common import vlm_engine
 from .common.batch_vision import BatchVisionProcessor
 from .common.vision_feature_cache import VisionFeatureCache
-from .common.loader_routing import resolve_effective_loader, read_model_type
+from .common.loader_routing import resolve_serves_vision, read_model_type
 from .common.generation_gate import GenerationGate, GenerationCancelled, get_process_gate
 from .common.template_info import (
     install_chat_template,
@@ -842,13 +842,12 @@ class MLXProvider(BaseProvider):
         self._apc_mode = None
         self._stop_tokens = frozenset()
         self._context_used = 0
-        # Engine routing: modalities (description) + loader (hint) -> the mlx
-        # engine that loads. is_vlm derives from it. "auto" degrades a vision
-        # model mlx-vlm can't load to mlx-lm rather than crashing at load; an
-        # explicit loader forces the engine. See common/loader_routing.py.
-        self.effective_loader = resolve_effective_loader(
+        # Served with vision? Declared modalities + whether mlx-vlm registers
+        # the model_type; the capability report reads the same resolver. A
+        # vision model mlx-vlm can't run as a VLM is served as text rather
+        # than crashing at load. See common/loader_routing.py.
+        self.is_vlm = resolve_serves_vision(
             self.config, lambda: read_model_type(self.config.get("model_path", "")))
-        self.is_vlm = self.effective_loader == "mlx-vlm"
         # Masked-diffusion checkpoint (canvas denoising, not AR). Decided at
         # load time from the loaded model -- see _detect_diffusion.
         self.is_diffusion = False

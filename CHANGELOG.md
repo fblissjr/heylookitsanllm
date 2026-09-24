@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.89]
+
+### Removed
+
+- **The provider-config `engines` tag** and its machinery (`ENGINES`,
+  `field_engines`, `invalid_engines`, the import-time check, their tests,
+  and the harness's `ARM_ENGINE` map, which only a vocabulary test read and
+  which spelled gguf's runtime `gguf` where the server says `llama.cpp`).
+  Since plan W10 each provider runs one engine, so the tag could only
+  repeat the config class. `GET /v1/admin/model-options` no longer carries
+  `engines` per field (nothing in the frontend read it); the one field that
+  reaches past its class, `max_queue_depth`, says so in its description.
+
+### Changed
+
+- **`effective_loader` is now a bool, `resolve_serves_vision`.** It returned
+  `"mlx-vlm"` or `"mlx-lm"` from when those were two libraries; the second
+  spelling outlived the dependency and meant "served as text".
+  `MLXProvider.is_vlm` is the resolver's answer directly,
+  `serves_vision_for_config` is the unloaded form the capability report
+  uses, and `BaseProvider.effective_loader` is gone. Nothing on the wire
+  changes (it left the admin row for `engine.runtime` in v2.0.73).
+
 ## [2.0.88]
 
 ### Fixed
