@@ -36,7 +36,7 @@ def config_dict(config, *, exclude_unset: bool = False) -> dict:
     ``hasattr(x, "model_dump")`` branch drifted in wording before this
     existed, which is the hand-copied second copy this repo derives away
     everywhere else. ``exclude_unset`` is the admin row's STORED-keys view
-    (absent IS how a default is spelled in models.toml); the default is the
+    (absent IS how a default is spelled in heylook.toml); the default is the
     RESOLVED view every derivation reads.
     """
     if hasattr(config, "model_dump"):
@@ -96,7 +96,7 @@ def _template_supports_thinking(model_path: str, _stamp: tuple) -> bool:
     <think> blocks, gemma-4 renders thought channels; transformers forwards
     extra apply_chat_template kwargs as template variables), so the template
     referencing the variable IS the capability signal -- no manual
-    models.toml flag needed. Cached per path: file reads on every
+    heylook.toml flag needed. Cached per path: file reads on every
     /v1/models call would add up, and templates only change with a restart
     in practice.
     """
@@ -345,7 +345,7 @@ def derived_model_facts(model_config, router=None) -> ModelFacts:
     Two row builders used to derive these separately, each with its own
     config-dict spelling, and they had already drifted once: the admin row
     built the resolved dump for mlx entries only, so a gguf entry's
-    models.toml ``enable_thinking`` never reached its
+    heylook.toml ``enable_thinking`` never reached its
     ``thinking_default`` while the same value on ``/v1/models`` did. The dump
     is built for EVERY row here because three consumers read it (loader
     routing, the thinking cascade, the context resolver); the per-row cost
@@ -354,7 +354,7 @@ def derived_model_facts(model_config, router=None) -> ModelFacts:
     first line for anything but mlx.
 
     ``router`` supplies what the engine contract needs beyond the config:
-    which models have a models.toml entry and what discovery derives for
+    which models have a heylook.toml entry and what discovery derives for
     them (so only real overrides read as configured), and the loaded
     providers' observed halves. Both routes pass it.
     """

@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.122]
+
+### Changed
+
+- **The server config file is `heylook.toml`** (owner decision 2026-09-23; was `models.toml`).
+  - It holds scan folders, the default model, the load limit and, new, a `[settings]` table.
+  - Each model's own settings stay in its folder's `model.heylook.toml`.
+  - A leftover `models.toml` with no `heylook.toml` is refused at startup by name, never read. The router constant is `CONFIG_FILENAME`, and the scripts read it.
+  - `.worktreeinclude` and `.gitignore` name the new file.
+- **Operational settings live in `heylook.toml`'s `[settings]` table, not DuckDB.** The settings are `observability_level`, `observability_retention_days` and `mlx_cache_limit_gb`.
+  - `/v1/admin/config` reads the table and writes it through the comment-preserving config writer.
+  - A read-only instance (a dev server, E2E, a loop run) holds its writes in memory for its own lifetime and never writes the shared file. The GET response lists those keys as `memory_only`.
+  - Values stored in the old database table are not carried over: set them again once.
+
+### Removed
+
+- The DuckDB `settings` table and `db.get_setting` / `set_setting` / `delete_setting` / `get_all_settings`.
+- The per-stream logging toggles `request_log_enabled`, `model_event_log_enabled` and `baseline_log_interval_seconds`, and their env overrides `HEYLOOK_REQUEST_LOG_ENABLED`, `HEYLOOK_MODEL_EVENT_LOG_ENABLED` and `HEYLOOK_BASELINE_LOG_INTERVAL_SECONDS`. `observability_level` is the one logging control, and `memory.BASELINE_INTERVAL_SECONDS` is a constant.
+
 ## [2.0.121]
 
 ### Performance

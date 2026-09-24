@@ -100,6 +100,12 @@ def _telemetry_off() -> bool:
         return False
 
 
+# Seconds between memory_baseline.jsonl records (reasoned: one an hour is
+# enough to see drift). A constant since v2.0.122: observability_level is the
+# one logging control, and the per-stream toggles and env overrides retired.
+BASELINE_INTERVAL_SECONDS = 3600
+
+
 def parse_bool_env(value: str | None, default: bool) -> bool:
     if value is None:
         return default
@@ -109,7 +115,7 @@ def parse_bool_env(value: str | None, default: bool) -> bool:
 def _normalize_path_for_log(raw_path: str) -> str:
     """Strip the user's home directory prefix from a model path.
 
-    Model paths in `models.toml` often contain the user's home dir. That's not
+    Model paths in `heylook.toml` often contain the user's home dir. That's not
     prompt content, but it's still user-identifying noise in the observability
     streams. Replace it with ``~`` so log files stay portable and grep-friendly.
     """
@@ -218,23 +224,7 @@ class MemoryManager:
         self.app_config = app_config
         self.log_dir = log_dir
 
-        env_interval = os.environ.get("HEYLOOK_BASELINE_LOG_INTERVAL_SECONDS")
-        if env_interval is not None:
-            try:
-                self.baseline_interval = max(0, int(env_interval))
-            except ValueError:
-                self.baseline_interval = int(getattr(app_config, "baseline_log_interval_seconds", 3600))
-        else:
-            self.baseline_interval = int(getattr(app_config, "baseline_log_interval_seconds", 3600))
-
-        self.request_log_enabled = parse_bool_env(
-            os.environ.get("HEYLOOK_REQUEST_LOG_ENABLED"),
-            bool(getattr(app_config, "request_log_enabled", True)),
-        )
-        self.model_event_log_enabled = parse_bool_env(
-            os.environ.get("HEYLOOK_MODEL_EVENT_LOG_ENABLED"),
-            bool(getattr(app_config, "model_event_log_enabled", True)),
-        )
+        self.baseline_interval = BASELINE_INTERVAL_SECONDS
 
         self._lock = threading.Lock()
         self._last_baseline_ts = 0.0
@@ -271,7 +261,7 @@ class MemoryManager:
         with self._lock:
             self.model_metadata[metadata.model_id] = metadata
 
-        if not self.model_event_log_enabled or _telemetry_off():
+        if _telemetry_off():
             return
 
         record = {
@@ -296,7 +286,7 @@ class MemoryManager:
         with self._lock:
             self.model_metadata.pop(model_id, None)
 
-        if not self.model_event_log_enabled or _telemetry_off():
+        if _telemetry_off():
             return
 
         record = {
@@ -311,7 +301,7 @@ class MemoryManager:
 
     def log_request_event(self, event: dict) -> None:
         """Append one per-request record. Caller enforces the content invariant."""
-        if not self.request_log_enabled or _telemetry_off():
+        if _telemetry_off():
             return
         self._append_jsonl(self.log_dir / REQUEST_FILE, event)
 
@@ -466,8 +456,6 @@ class MemoryManager:
             "ts": time.time(),
             "event": "startup",
             "baseline_interval_seconds": self.baseline_interval,
-            "request_log_enabled": self.request_log_enabled,
-            "model_event_log_enabled": self.model_event_log_enabled,
             "max_loaded_models": int(getattr(self.app_config, "max_loaded_models", 0) or 0),
         }
         if mx is not None:

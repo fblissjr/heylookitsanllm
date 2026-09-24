@@ -1,12 +1,15 @@
 # tests/unit/test_config_api.py
 """HTTP contract for /v1/admin/config (config_api.py).
 
-Runs the router on a minimal FastAPI app with an in-memory store -- no server,
-no model loads. The store is covered in test_settings_store.py and precedence
-in test_settings_resolver.py; these pin the wire shapes and status-code mapping
-(422 unknown key / bad value, 404 unknown reset key).
+Runs the router on a minimal FastAPI app over a temporary heylook.toml -- no
+server, no model loads. Precedence is in test_settings_resolver.py; these pin
+the wire shapes, the status-code mapping (422 unknown key / bad value, 404
+unknown reset key), that a write lands in the file's [settings] table, and
+that a read-only instance holds its writes in memory instead.
 """
 
+import tomllib
+from types import SimpleNamespace
 from unittest.mock import call, patch
 
 import pytest
@@ -14,19 +17,26 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from heylook_llm import db, observability
+from heylook_llm import config_api, observability
 from heylook_llm.config_api import config_router
 
 
+@pytest.fixture
+def config_file(tmp_path):
+    f = tmp_path / "heylook.toml"
+    f.write_text('# the owner\'s note\n[scan]\nfolders = ["/models"]\n')
+    return f
+
+
 @pytest_asyncio.fixture
-async def client():
+async def client(config_file, monkeypatch):
+    monkeypatch.setattr(config_api, "_MEMORY_ONLY", {})
     app = FastAPI()
     app.include_router(config_router)
-    app.state.db = await db.get_connection(path=":memory:")
+    app.state.router_instance = SimpleNamespace(config_path=str(config_file))
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
-    await app.state.db.close()
 
 
 @pytest.mark.unit
@@ -136,3 +146,30 @@ class TestMlxCacheLimit:
         assert res.status_code == 200
         assert res.json()["stored"] == {"mlx_cache_limit_gb": 4.0}
 
+
+
+@pytest.mark.unit
+class TestTheFileHoldsTheSettings:
+    @pytest.mark.asyncio
+    async def test_a_write_lands_in_the_config_files_settings_table(self, client, config_file):
+        await client.put("/v1/admin/config", json={"observability_level": "debug"})
+        data = tomllib.loads(config_file.read_text())
+        assert data["settings"] == {"observability_level": "debug"}
+        assert data["scan"]["folders"] == ["/models"]              # the rest untouched
+        await client.delete("/v1/admin/config/observability_level")
+        assert "settings" not in tomllib.loads(config_file.read_text())
+
+    @pytest.mark.asyncio
+    async def test_a_read_only_instance_holds_its_writes_in_memory(self, client, config_file, monkeypatch):
+        """A dev server or loop run shares the daily server's file, and still
+        needs its own logging level (option (a), 2026-09-24)."""
+        from heylook_llm.model_registry import READONLY_ENV
+        monkeypatch.setenv(READONLY_ENV, "1")
+        before = config_file.read_text()
+        res = await client.put("/v1/admin/config", json={"observability_level": "debug"})
+        assert res.status_code == 200
+        assert res.json()["effective"]["observability_level"] == "debug"
+        assert res.json()["memory_only"] == ["observability_level"]
+        assert config_file.read_text() == before
+        assert observability.current_level() == "debug"
+        await client.put("/v1/admin/config", json={"observability_level": "off"})

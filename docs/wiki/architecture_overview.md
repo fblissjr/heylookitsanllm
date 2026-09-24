@@ -116,18 +116,18 @@ heylookitsanllm/
 │   ├── api.py                   # FastAPI app composition & middleware
 │   ├── router.py                # ModelRouter: load/evict/pin, config merge at load
 │   ├── schema/                  # Messages wire models + converters
-│   ├── config.py                # Pydantic schemas, effect metadata, models.toml parser
+│   ├── config.py                # Pydantic schemas, effect metadata, heylook.toml parser
 │   ├── db.py                    # DuckDB persistence layer (conversations, presets)
 │   ├── model_registry.py        # Resolved-path model discovery & registry merge
 │   ├── model_importer.py        # Model file inspection & sidecar pairing
 │   ├── request_registry.py      # Active request tracking & cancellation
-│   ├── model_service.py         # models.toml read/write, materialization, scan projection
+│   ├── model_service.py         # heylook.toml read/write, materialization, scan projection
 │   ├── ram_fit.py               # Model sizing vs the live Metal working set
 │   ├── gguf_metadata.py         # Zero-dependency GGUF header reader
 │   ├── reasoning_parser.py      # Routing parsers + the StripSpecials wrapper
 │   ├── samplers.py              # The sampler resolution cascade
 │   ├── observability.py         # Single JSONL ingestion path (opt-in, default off)
-│   ├── toml_comments.py         # Comment-preserving models.toml writes
+│   ├── toml_comments.py         # Comment-preserving heylook.toml writes
 │   ├── auth.py                  # Optional admin-token gate ($HEYLOOK_ADMIN_TOKEN)
 │   ├── providers/               # Engine provider implementations
 │   │   ├── base.py              # BaseProvider, GenerationChunk, error classes

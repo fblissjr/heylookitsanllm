@@ -271,7 +271,7 @@ def largest_alloc_gb(config: dict) -> float:
 
 
 def size_config_gb(config: dict) -> tuple[float, list[str]]:
-    """Resident weight GiB for a models.toml ``config`` block, plus notes.
+    """Resident weight GiB for a heylook.toml ``config`` block, plus notes.
 
     Counts the primary (whole shard set, not the named shard) and every
     sidecar that loads into the same process.
@@ -460,7 +460,7 @@ def evaluate_fit(size_gb: float, headroom_gb: float, hard_working_set: bool,
 
 def fit_for_config(config: dict, headroom_gb: float = 8.0,
                    hard_working_set: Optional[bool] = None) -> FitReport:
-    """Size a models.toml ``config`` block and evaluate it.
+    """Size a heylook.toml ``config`` block and evaluate it.
 
     ``hard_working_set``: pass the provider-derived truth when you have it
     (the server does); None falls back to the layout heuristic for the

@@ -51,12 +51,7 @@ def _read_jsonl(path: Path) -> list[dict]:
 
 
 def _make_app_config(**overrides):
-    defaults = dict(
-        baseline_log_interval_seconds=3600,
-        request_log_enabled=True,
-        model_event_log_enabled=True,
-        max_loaded_models=2,
-    )
+    defaults = dict(max_loaded_models=2)
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
 
@@ -87,28 +82,6 @@ def testparse_bool_env_defaults_when_unset():
 )
 def testparse_bool_env_values(value: str, expected: bool):
     assert parse_bool_env(value, not expected) is expected
-
-
-def test_env_interval_overrides_app_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("HEYLOOK_BASELINE_LOG_INTERVAL_SECONDS", "42")
-    manager = MemoryManager(
-        router=_make_router(),
-        app_config=_make_app_config(baseline_log_interval_seconds=3600),
-        log_dir=tmp_path,
-    )
-    assert manager.baseline_interval == 42
-
-
-def test_env_interval_zero_disables_baseline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("HEYLOOK_BASELINE_LOG_INTERVAL_SECONDS", "0")
-    manager = MemoryManager(
-        router=_make_router(),
-        app_config=_make_app_config(),
-        log_dir=tmp_path,
-    )
-    assert manager.baseline_interval == 0
-    assert manager.maybe_log_baseline() is False
-    assert not (tmp_path / "memory_baseline.jsonl").exists()
 
 
 def test_off_level_silences_streams(mm: MemoryManager, tmp_path: Path):
@@ -160,31 +133,6 @@ def test_register_model_unload_emits_event_and_clears_metadata(mm: MemoryManager
     assert events[0]["event"] == "unload"
     assert events[0]["reason"] == "lru_evict"
     assert "to-evict" not in mm.model_metadata
-
-
-def test_model_event_toggle_off_suppresses_writes(tmp_path: Path):
-    manager = MemoryManager(
-        router=_make_router(),
-        app_config=_make_app_config(model_event_log_enabled=False),
-        log_dir=tmp_path,
-    )
-    manager.register_model_load(
-        ModelMetadata("m", "/p", 0, "a", "none", 0, 0),
-        load_duration_ms=0.0,
-    )
-    manager.register_model_unload("m", reason="shutdown")
-    assert not (tmp_path / "model_events.jsonl").exists()
-    assert "m" not in manager.model_metadata
-
-
-def test_request_event_toggle_off_suppresses_writes(tmp_path: Path):
-    manager = MemoryManager(
-        router=_make_router(),
-        app_config=_make_app_config(request_log_enabled=False),
-        log_dir=tmp_path,
-    )
-    manager.log_request_event({"ts": time.time(), "model": "m"})
-    assert not (tmp_path / "request_events.jsonl").exists()
 
 
 def test_request_event_writes(mm: MemoryManager, tmp_path: Path):
@@ -311,7 +259,7 @@ def test_normalize_path_strips_home_prefix():
 def test_maybe_log_baseline_respects_interval(tmp_path: Path):
     manager = MemoryManager(
         router=_make_router(),
-        app_config=_make_app_config(baseline_log_interval_seconds=3600),
+        app_config=_make_app_config(),
         log_dir=tmp_path,
     )
     assert manager.maybe_log_baseline() is True
@@ -338,22 +286,14 @@ def test_mark_request_tracks_inflight(mm: MemoryManager):
 
 
 def test_log_startup_info_writes_when_level_raised(tmp_path: Path):
-    # conftest configures level="minimal" per test; independent of the
-    # per-stream toggles, the startup record still writes.
-    manager = MemoryManager(
-        router=_make_router(),
-        app_config=_make_app_config(
-            request_log_enabled=False,
-            model_event_log_enabled=False,
-            baseline_log_interval_seconds=0,
-        ),
-        log_dir=tmp_path,
-    )
+    # conftest configures level="minimal" per test.
+    from heylook_llm.memory import BASELINE_INTERVAL_SECONDS
+    manager = MemoryManager(router=_make_router(), app_config=_make_app_config(), log_dir=tmp_path)
     manager.log_startup_info()
     events = _read_jsonl(tmp_path / "baseline.jsonl")
     assert len(events) == 1
     assert events[0]["event"] == "startup"
-    assert events[0]["baseline_interval_seconds"] == 0
+    assert events[0]["baseline_interval_seconds"] == BASELINE_INTERVAL_SECONDS
 
 
 def test_log_startup_info_gated_off_leaves_no_footprint(tmp_path: Path):

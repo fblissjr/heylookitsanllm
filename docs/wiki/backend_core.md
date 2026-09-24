@@ -113,7 +113,7 @@ To maintain simplicity and prevent migration drift in a local workstation contex
 
 ## 4. Configuration Engine & TOML Comment Preservation
 
-System and model configurations are defined in [`src/heylook_llm/config.py`](../../src/heylook_llm/config.py) and stored on disk in `models.toml`.
+System and model configurations are defined in [`src/heylook_llm/config.py`](../../src/heylook_llm/config.py) and stored on disk in `heylook.toml`.
 
 ### 4.1. Effect Classes
 Every field of the **provider config classes** -- the ones in `PROVIDER_CONFIG_CLASSES` -- declares an **effect class** in its Pydantic `json_schema_extra`. The enforcing test iterates exactly that mapping, so the covered set is the MLX and GGUF config classes. **`AppConfig` is not covered and declares no effect metadata on any field.**
@@ -129,7 +129,7 @@ A sibling annotation rides the same derivation and is required on every field fo
 The reload check set and the admin options API (`/v1/admin/model-options`) derive from these annotations rather than from a second hand-written list.
 
 ### 4.2. Lossless TOML Comment Preservation
-`models.toml` is frequently hand-edited with developer notes and performance findings. When the backend or UI writes to `models.toml` (e.g. updating a setting via admin API), [`toml_comments.py`](../../src/heylook_llm/toml_comments.py) preserves existing comments:
+`heylook.toml` is frequently hand-edited with developer notes and performance findings. When the backend or UI writes to `heylook.toml` (e.g. updating a setting via admin API), [`toml_comments.py`](../../src/heylook_llm/toml_comments.py) preserves existing comments:
 - **Strict Read-Only tomlkit**: `tomlkit` is used *only* to extract comment AST positions; it is never used for serializing changes (mutating parsed tables in `tomlkit` corrupts array-of-table structures into inline arrays).
 - **Authoritative `tomli_w`**: `tomli_w` writes the clean, normalized TOML values.
 - **Line-Injection Merge**: comments are re-injected as lines into the fresh render, each carried only while its **anchor** is unchanged, so a note can never outlive what it describes. The rule is stricter than "the comment on the changed key is dropped":
@@ -146,14 +146,14 @@ The reload check set and the admin options API (`/v1/admin/model-options`) deriv
 Model availability is governed by [`model_registry.py`](../../src/heylook_llm/model_registry.py).
 
 ### 5.1. The Override-Only Philosophy
-`models.toml` is strictly an override file:
+`heylook.toml` is strictly an override file:
 - Scanning happens at **load time**: startup and every config reload. There is no periodic rescan (retired with the unused discovered-models cache it fed); a new download is served after the next reload. `[scan].scan_interval_seconds = 0` in [`config.py`](../../src/heylook_llm/config.py) switches discovery off, so nothing under the folders is served; its other values schedule nothing.
-- Discovered models not listed in `models.toml` are served with automatically derived parameters. A new download needs no import, no symlink and no edit.
-- The merge **never writes `models.toml`**. A `[[models]]` entry is served exactly as written and always wins; discovery can only ADD.
-- Discovery is **best-effort**: a failing scan is logged and dropped, never fatal. An empty result is the correct answer for "no `[scan]` section", "scanning is off" and "the scan failed" alike -- all three mean `models.toml` stands alone. `scan()` tells the last apart: it returns the entries plus the sources that failed, where a missing or unmounted folder counts as failed (not as "no models here"), and one model the importer rejects is dropped alone and named, rather than failing its whole folder.
-- **A model's own settings** live in `model.heylook.toml` in the model's folder. The scan that finds the model reads it and layers it over the derived config, so derivation keeps reaching every field the file does not set, which is the reason it exists: a models.toml entry replaces the derived config wholesale and freezes it. `unset = ["draft_model_path"]` drops a derived field (TOML has no null); relative `*_path` values are relative to the folder; the folder is the model's identity and its name the id. The engine contract names the file as the source of each value it sets.
+- Discovered models not listed in `heylook.toml` are served with automatically derived parameters. A new download needs no import, no symlink and no edit.
+- The merge **never writes `heylook.toml`**. A `[[models]]` entry is served exactly as written and always wins; discovery can only ADD.
+- Discovery is **best-effort**: a failing scan is logged and dropped, never fatal. An empty result is the correct answer for "no `[scan]` section", "scanning is off" and "the scan failed" alike -- all three mean `heylook.toml` stands alone. `scan()` tells the last apart: it returns the entries plus the sources that failed, where a missing or unmounted folder counts as failed (not as "no models here"), and one model the importer rejects is dropped alone and named, rather than failing its whole folder.
+- **A model's own settings** live in `model.heylook.toml` in the model's folder. The scan that finds the model reads it and layers it over the derived config, so derivation keeps reaching every field the file does not set, which is the reason it exists: a heylook.toml entry replaces the derived config wholesale and freezes it. `unset = ["draft_model_path"]` drops a derived field (TOML has no null); relative `*_path` values are relative to the folder; the folder is the model's identity and its name the id. The engine contract names the file as the source of each value it sets.
 - The router builds its `AppConfig` through `model_registry.served` (merge, then validate on a copy), and nothing else does, so any "what would be served" question asked through it cannot disagree with the server.
-- An admin edit to a discovered model writes its **`model.heylook.toml`**, holding only what was set; null drops a field back to derived, and a file left empty is deleted (reverting is deleting a file). This replaced materialization, which copied the whole derived config into a models.toml entry and so froze every derived value at the moment of the first edit. There is no enable toggle: a model in a scan folder is served, and to stop serving one you move it out.
+- An admin edit to a discovered model writes its **`model.heylook.toml`**, holding only what was set; null drops a field back to derived, and a file left empty is deleted (reverting is deleting a file). This replaced materialization, which copied the whole derived config into a heylook.toml entry and so froze every derived value at the moment of the first edit. There is no enable toggle: a model in a scan folder is served, and to stop serving one you move it out.
 
 ### 5.2. Resolved Path Matching (`path_identity`)
 Models are deduplicated and merged based on **`path_identity(path)`**, which executes `Path(path).expanduser().resolve()`.

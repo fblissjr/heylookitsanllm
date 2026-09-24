@@ -54,7 +54,7 @@ def driven_lifespan(monkeypatch):
     async def _fake_get_connection(*a, **kw):
         return fake_db
 
-    async def _fake_apply_runtime_settings(_db):
+    def _fake_apply_runtime_settings(_app):
         return types.SimpleNamespace(
             observability_level="off", observability_retention_days=7,
         )

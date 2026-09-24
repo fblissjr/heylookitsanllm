@@ -37,6 +37,14 @@ class ModelNotFound(ValueError):
     """
 
 
+# The server config file: scan folders, the default model, the load limit and
+# the operational settings ([settings]). Per-model settings live in each
+# model's own model.heylook.toml. It was models.toml before v2.0.122; a
+# leftover one is refused by name, never read.
+CONFIG_FILENAME = "heylook.toml"
+LEGACY_CONFIG_FILENAME = "models.toml"
+
+
 class ModelRouter:
     """Manages loading, unloading, and routing to different model providers with an LRU cache."""
     def __init__(self, config_path: str, log_level: int, initial_model_id: Optional[str] = None):
@@ -106,7 +114,7 @@ class ModelRouter:
         initial_model_to_load = initial_model_id or None
         enabled_models = self.app_config.models
         if not enabled_models:
-            logging.error("No models found (models.toml and the [scan] folders). Server cannot serve requests.")
+            logging.error("No models found (heylook.toml and the [scan] folders). Server cannot serve requests.")
             return
 
         # Validate the requested initial model
@@ -153,39 +161,34 @@ class ModelRouter:
         The merge and validation are `model_registry.served`, the function
         `served_diff` also calls, so a diff cannot disagree with the server.
 
-        The merge is LOAD-time only: models.toml is never written. See
+        The merge is LOAD-time only: the config file is never written. See
         model_registry for the rule (explicit entries win, matched by resolved
         model_path) and for why discovery can only ever add models, never
         change or remove the ones written down.
         """
         config_file = Path(config_path)
+        if config_file.suffix != ".toml":
+            config_file = config_file.with_suffix(".toml")
+        if not config_file.exists():
+            old = config_file.with_name(LEGACY_CONFIG_FILENAME)
+            if config_file.name == CONFIG_FILENAME and old.exists():
+                raise FileNotFoundError(
+                    f"{config_file} not found, but {old} is there: the server config "
+                    f"file is {CONFIG_FILENAME} since v2.0.122. Rename it.")
+            raise FileNotFoundError(
+                f"Config file not found: {config_file}. Create it with a [scan] "
+                f"section naming the folders your models live in.")
+        with open(config_file, 'rb') as f:
+            return self._with_discovered(tomllib.load(f))
 
-        # If user specified exact file with extension
-        if config_file.suffix == '.toml':
-            if not config_file.exists():
-                raise FileNotFoundError(f"Config file not found: {config_path}")
-            with open(config_file, 'rb') as f:
-                return self._with_discovered(tomllib.load(f))
-
-        # If no extension, add .toml
-        toml_path = config_file.with_suffix('.toml')
-        if toml_path.exists():
-            with open(toml_path, 'rb') as f:
-                return self._with_discovered(tomllib.load(f))
-
-        raise FileNotFoundError(
-            f"Config file not found: {toml_path}. "
-            f"Add a [scan] section or a [[models]] entry to create one."
-        )
-
-    # Set by every config load (_with_discovered): the ids with a models.toml
+    # Set by every config load (_with_discovered): the ids with a heylook.toml
     # entry, and for each the config discovery derives for the same file. The
-    # engine contract reads both so /v1/models never re-reads models.toml or
+    # engine contract reads both so /v1/models never re-reads heylook.toml or
     # re-runs discovery to say which settings are really configured.
     written_ids: frozenset = frozenset()
     derived_configs: dict = {}
     # id -> where its stored values live, for every model that has any: a
-    # models.toml entry, or its own model.heylook.toml.
+    # heylook.toml entry, or its own model.heylook.toml.
     stored_in: dict = {}
 
     def _with_discovered(self, config_data: dict) -> AppConfig:
@@ -202,7 +205,7 @@ class ModelRouter:
             str(e["id"]) for e in config_data.get("models") or [] if e.get("id"))
         self.derived_configs = derived_for_explicit(config_data, discovered)
         app = served(config_data, discovered)
-        stored = {mid: "models.toml entry" for mid in self.written_ids}
+        stored = {mid: "heylook.toml entry" for mid in self.written_ids}
         by_id = {str(e.get("id")): e for e in discovered if e.get("sidecar")}
         for m in app.models:
             e = by_id.get(m.id)
@@ -221,7 +224,7 @@ class ModelRouter:
     def _audit_configured_paths(config_data: dict) -> None:
         """Name every EXPLICIT entry whose configured paths no longer resolve.
 
-        Reorganising a model directory does not touch models.toml, so a
+        Reorganising a model directory does not touch heylook.toml, so a
         hand-written entry keeps pointing at the old layout and nothing says
         so until someone tries to chat with it -- at which point llama-server
         exits 1 with its output discarded (see the provider's spawn pre-flight
@@ -312,7 +315,7 @@ class ModelRouter:
         if not dead:
             return
         logging.warning(
-            "[config] entries in models.toml point at paths that no longer "
+            "[config] entries in heylook.toml point at paths that no longer "
             "exist and will fail to load:\n%s\n"
             "Fix the path, or delete the entry -- a model under [scan].folders "
             "is served with derived defaults and needs no entry at all. This "
@@ -639,7 +642,7 @@ class ModelRouter:
                 )
                 # Which ENGINE FAMILY holds this model's weights, stamped on the
                 # instance rather than looked up later: a reload can change a
-                # model's provider in models.toml while it is resident, and the
+                # model's provider in heylook.toml while it is resident, and the
                 # exclusivity rule must reason about what is IN MEMORY, not what
                 # the config now says. Stamped once here, and it dies with the
                 # object -- no teardown path can leave a stale entry behind.

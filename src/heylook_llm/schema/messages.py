@@ -172,7 +172,7 @@ class MessageCreateRequest(BaseModel):
         # Each of these is a habit with an obvious origin, which is why they
         # are worth naming rather than left to `extra="forbid"`: `max_new_tokens`
         # is transformers' spelling and is what Qwen's own reference runners
-        # use, `enable_thinking` is heylook's INTERNAL name (models.toml, the
+        # use, `enable_thinking` is heylook's INTERNAL name (heylook.toml, the
         # provider configs, chat_template_kwargs), and `system_prompt` is what
         # the preset store calls it. A blanket forbid would also 422 an
         # Anthropic SDK sending fields we simply do not implement, which is a

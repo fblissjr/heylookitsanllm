@@ -41,8 +41,8 @@ The pages above explain; these records are what several of their statements rest
    - The web interface (`frontend/`) is 100% vanilla JavaScript, HTML, and CSS—no npm build step, no bundler, no SPA catch-all router.
    - The frontend acts as an exact mirror of the DuckDB store with strict invalidation rules and incremental, linear-time markdown streaming.
 5. **Override-Only Model Configuration**:
-   - `models.toml` is an override manifest, not an exhaustive inventory.
-   - Local weights placed in scanned folders are automatically discovered, inspected via GGUF header/config analysis, and served with derived defaults without modifying `models.toml`.
+   - `heylook.toml` is an override manifest, not an exhaustive inventory.
+   - Local weights placed in scanned folders are automatically discovered, inspected via GGUF header/config analysis, and served with derived defaults without modifying `heylook.toml`.
    - The trade: an **explicit entry receives none of discovery's derived fields**. Adding one field means hand-writing every other field that model needs.
 6. **No Numbers in This Wiki -- Link to Where They Live**:
    - Measures and tunable values do not belong in prose. A number copied out of the code is a second copy that drifts, which this repo already names as a defect with a delay; a number copied out of a measurement is worse, because it arrives without the conditions that make it mean anything.

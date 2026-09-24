@@ -58,7 +58,7 @@ it holds to: [VISION.md](VISION.md).
   endpoints (`X-Heylook-Admin-Token` header); `HEYLOOK_API_KEY` gates inference
   (`Authorization: Bearer`; loopback exempt unless
   `HEYLOOK_API_KEY_ENFORCE_LOOPBACK=true`).
-- **`models.toml` is override-only.** Anything under a `[scan].folders` watch
+- **`heylook.toml` is override-only.** Anything under a `[scan].folders` watch
   folder is served automatically with defaults derived from the model's own
   files (modalities, chat template, sampling, KV-cache sizing) -- a new
   download needs no edit. A `[[models]]` entry always wins as an explicit
@@ -108,7 +108,7 @@ git clone https://github.com/fblissjr/heylookitsanllm
 cd heylookitsanllm
 uv sync    # one step -- full runtime + dev tooling, no extras to remember
 
-# point it at your models: add a watch folder to models.toml ([scan].folders)
+# point it at your models: add a watch folder to heylook.toml ([scan].folders)
 # or on the Models page; everything under it is served with no entry
 
 heylookllm --log-level INFO             # serves API + UI on :8000
@@ -121,14 +121,14 @@ Run it as a background service with `heylookllm service install`
 
 ### Adding models
 
-Put the model under a watch folder (`[scan].folders` in `models.toml`, the
+Put the model under a watch folder (`[scan].folders` in `heylook.toml`, the
 Models page, or `PUT /v1/admin/models/scan-config`). Everything under one is
 served with no entry, with its settings derived from the model's own files at
 load time. The scan understands MLX/safetensors dirs and GGUF dirs (mmproj
-projectors and `mtp-*` drafter sidecars auto-paired). A `models.toml` entry
+projectors and `mtp-*` drafter sidecars auto-paired). A `heylook.toml` entry
 exists only to override something; see `models.example.toml` for the format.
 
-After hand-editing `models.toml` on a running server:
+After hand-editing `heylook.toml` on a running server:
 `curl -X POST http://localhost:8000/v1/admin/reload`.
 
 ## API

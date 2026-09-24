@@ -293,12 +293,12 @@ def configurable_fields(cls: type) -> frozenset:
 
 class MLXModelConfig(BaseModel):
     # Runtime-default fields (marked with ``is_runtime_default=True``) flow
-    # from models.toml into each request's effective_request dict via
+    # from heylook.toml into each request's effective_request dict via
     # MLXProvider._apply_model_defaults. Adding a new one updates the
     # MLX_RUNTIME_DEFAULT_FIELDS set automatically -- no hardcoded list to
     # keep in sync.
     #
-    # extra="forbid": a typo in models.toml (e.g. `temperatue`) must fail
+    # extra="forbid": a typo in heylook.toml (e.g. `temperatue`) must fail
     # loudly at load time, not silently revert to defaults.
     model_config = ConfigDict(extra="forbid")
 
@@ -595,7 +595,7 @@ class MLXModelConfig(BaseModel):
 # NB this OVERLAPS `effect` without contradicting it, and the two look like
 # they should agree. They answer different questions:
 #   is_runtime_default -> does this flow into effective_request per generation?
-#   effect             -> when does CHANGING it in models.toml take effect?
+#   effect             -> when does CHANGING it in heylook.toml take effect?
 MLX_RUNTIME_DEFAULT_FIELDS: frozenset[str] = frozenset(
     # via _extra(): pydantic allows json_schema_extra to be a CALLABLE, and
     # `.get` on one raises at runtime, not just under a type checker. One
@@ -666,7 +666,7 @@ class GGUFModelConfig(BaseModel):
     # `--chat-template-file`, never the `--chat-template` sibling: that one
     # takes template TEXT, and only "commonly used" builtin names unless
     # --jinja is set. A path keeps the template reviewable/diffable on disk
-    # instead of inlined into models.toml.
+    # instead of inlined into heylook.toml.
     chat_template_path: Optional[str] = Field(
         default=None,
         description=(
@@ -732,7 +732,7 @@ class GGUFModelConfig(BaseModel):
             "decision 2026-09-24): discovery pairs one from beside the "
             "weights, an MTP/ subfolder, or a neighbouring folder whose header "
             "names the same model, so a model can run spec decode with no "
-            "models.toml entry at all. To keep it OFF, store an entry without "
+            "heylook.toml entry at all. To keep it OFF, store an entry without "
             "this field and without `spec_type`."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-md"},
     )
@@ -1202,7 +1202,7 @@ class GGUFModelConfig(BaseModel):
     # somewhere heylook did not choose -- and for --log-prompts-dir that file
     # is PROMPT TEXT, at observability_level="off", with nothing announcing
     # it. Refuse them here rather than at spawn: this catches an import, an
-    # admin PATCH and a hand-edited models.toml, and the author sees the
+    # admin PATCH and a hand-edited heylook.toml, and the author sees the
     # message where the value is.
     DISK_WRITING_FLAGS: ClassVar[tuple] = (
         "--log-file", "--log-prompts-dir", "--slot-save-path")
@@ -1227,7 +1227,7 @@ class GGUFModelConfig(BaseModel):
     def _ubatch_within_batch(self):
         # llama_context takes min(n_batch, n_ubatch) WITHOUT a word, so an
         # n_ubatch above the logical batch is a setting that reads as applied
-        # and is not. Refuse it here, where the models.toml author sees it.
+        # and is not. Refuse it here, where the heylook.toml author sees it.
         ceiling = self.n_batch if self.n_batch is not None else self.LLAMA_DEFAULT_N_BATCH
         if self.n_ubatch is not None and self.n_ubatch > ceiling:
             raise ValueError(
@@ -1355,7 +1355,7 @@ class ScanConfig(BaseModel):
     Since v1.69.0 these folders are the REGISTRY, not just a notification
     feed: ``model_registry`` folds everything found here into the served set
     at router load, so a model under a scan folder is servable with no
-    models.toml entry. Nothing is written -- models.toml stays override-only,
+    heylook.toml entry. Nothing is written -- heylook.toml stays override-only,
     and an entry there always wins (see model_registry for the merge rule).
 
     ``scan_interval_seconds = 0`` switches discovery off: nothing under the
@@ -1403,20 +1403,6 @@ class AppConfig(BaseModel):
         default=1800, ge=0,
         description="Seconds of inactivity before a non-pinned model is unloaded. "
                     "0 disables idle unload globally.",
-    )
-
-    # Observability (S1.2). Env-var overrides live in memory.py:
-    # HEYLOOK_BASELINE_LOG_INTERVAL_SECONDS, HEYLOOK_REQUEST_LOG_ENABLED,
-    # HEYLOOK_MODEL_EVENT_LOG_ENABLED.
-    baseline_log_interval_seconds: int = Field(
-        default=3600, ge=0,
-        description="Seconds between memory_baseline.jsonl entries. 0 disables.",
-    )
-    request_log_enabled: bool = Field(
-        default=True, description="Append per-request event to request_events.jsonl."
-    )
-    model_event_log_enabled: bool = Field(
-        default=True, description="Append model load/unload events to model_events.jsonl."
     )
 
     def get_model_config(self, model_id: str) -> Optional[ModelConfig]:
@@ -1474,8 +1460,8 @@ class ScanConfigRequest(BaseModel):
     """PUT body for ``[scan]``. Every field optional -- absent = leave alone.
 
     Not a settings-table concern: these folders decide what the server
-    SERVES (model_registry), so they live in models.toml beside the models,
-    not in the DuckDB `settings` table that holds operational preferences.
+    SERVES (model_registry), so they live in heylook.toml beside the models,
+    not in the operational [settings] table of the same file.
     """
     model_config = ConfigDict(extra="forbid")
 
@@ -1498,7 +1484,7 @@ class ScanConfigResponse(BaseModel):
     scan_interval_seconds: int = 900
     models_served: int = Field(
         default=0,
-        description="Models the router serves after this change (models.toml "
+        description="Models the router serves after this change (heylook.toml "
                     "entries plus discovered) -- the observable consequence "
                     "of editing the folder list.",
     )
@@ -1563,7 +1549,7 @@ class AdminModelResponse(BaseModel):
     # Always [] for unloaded models.
     source: Literal["config", "discovered"] = Field(
         default="config",
-        description="Where this model comes from. 'config' = a models.toml "
+        description="Where this model comes from. 'config' = a heylook.toml "
                     "[[models]] entry. 'discovered' = found under "
                     "[scan].folders with no entry -- it is served all the "
                     "same, but it has no stored config, and the first edit "

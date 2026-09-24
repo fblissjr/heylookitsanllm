@@ -2,7 +2,7 @@
 
 The override is ONE file, ``chat_template.heylook.jinja``, sitting in the
 model's own folder, discovered at load by the same ladders that already find a
-publisher's sidecar. Deliberately NOT a models.toml value: nothing here writes
+publisher's sidecar. Deliberately NOT a heylook.toml value: nothing here writes
 config, so there is no path to materialize a discovered entry, nothing can
 drift between a stored path and a file, and revert is deleting one file.
 

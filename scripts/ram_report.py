@@ -27,8 +27,8 @@ the model could not be sized at all -- an unknown id, or files that no longer
 read. That is a bad ``--model``, not a memory refusal, and the two must stay
 distinguishable to the caller.
 
-``--model`` resolves through the SERVER's registry merge, not models.toml
-alone: models.toml is override-only, so most served models are never written
+``--model`` resolves through the SERVER's registry merge, not heylook.toml
+alone: heylook.toml is override-only, so most served models are never written
 into it.
 """
 
@@ -45,6 +45,7 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from heylook_llm.model_registry import discover, merge_discovered  # noqa: E402
+from heylook_llm.router import CONFIG_FILENAME  # noqa: E402
 from heylook_llm.ram_fit import (  # noqa: E402
     GB,
     FitReport,
@@ -99,13 +100,13 @@ def top_holders(limit: int = 12) -> list[tuple[str, float, int]]:
 # ---------------------------------------------------------------------------
 
 def load_model_config(model_id: str, models_toml: Path) -> Optional[dict]:
-    """Resolve an id the way the SERVER resolves it, not the way models.toml reads.
+    """Resolve an id the way the SERVER resolves it, not the way heylook.toml reads.
 
-    models.toml is OVERRIDE-ONLY (``model_registry``): every model under
+    heylook.toml is OVERRIDE-ONLY (``model_registry``): every model under
     ``[scan].folders`` is served with derived defaults and is never written
-    down. A models.toml-only lookup is therefore blind to most of what is
+    down. A heylook.toml-only lookup is therefore blind to most of what is
     servable -- which is how sizing a discovered model made the dev_server
-    pre-flight refuse to start with "not in models.toml" for a model the
+    pre-flight refuse to start with "not in heylook.toml" for a model the
     server happily serves.
 
     Same merge, same precedence (explicit entries win, discovery can only
@@ -191,12 +192,12 @@ def render_fit(report: FitReport) -> list[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
-    ap.add_argument("--model", help="served model id to size (a models.toml "
+    ap.add_argument("--model", help="served model id to size (a heylook.toml "
                                     "entry, or one discovered under [scan].folders)")
     ap.add_argument("--path", type=Path, help="model dir or .gguf to size (need not be imported)")
     ap.add_argument("--headroom", type=float, default=8.0,
                     help="GiB to leave for KV cache + compute buffers (default: 8)")
-    ap.add_argument("--models-toml", type=Path, default=Path("models.toml"))
+    ap.add_argument("--config", dest="models_toml", type=Path, default=Path(CONFIG_FILENAME))
     ap.add_argument("--quiet", action="store_true",
                     help="one line + exit status only (for scripts)")
     ap.add_argument("--top", type=int, default=12, help="how many RAM holders to list")

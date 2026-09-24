@@ -144,7 +144,7 @@ response = client.messages.create(
   server-side logs, and it is the handle `DELETE /v1/requests/{{id}}` cancels
   by -- the only way to stop a NON-streaming run, which writes nothing until
   it finishes and so never notices an abandoned client.
-- Models are configured in `models.toml`, but entries are overrides only --
+- Models are configured in `heylook.toml`, but entries are overrides only --
   a new download needs no edit.
         """,
         routes=app.routes,

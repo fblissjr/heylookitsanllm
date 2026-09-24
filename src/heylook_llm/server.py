@@ -96,7 +96,7 @@ def main():
 
     # (`import` retired v2.0.72: every model lives in a [scan].folders watch
     # folder and is served with no entry, so writing [[models]] entries has no
-    # remaining use. Add a folder instead: models.toml, the Models page, or
+    # remaining use. Add a folder instead: heylook.toml, the Models page, or
     # PUT /v1/admin/models/scan-config.)
 
     # Service command - manage background service (macOS/Linux)
@@ -268,9 +268,10 @@ def main():
     log_all_optimization_status()
 
     # Initialize the router and store it in the app's state
-    # Pass "models" without extension - router will try .toml first, then .yaml
+    from heylook_llm.router import CONFIG_FILENAME
+
     router = ModelRouter(
-        config_path="models",
+        config_path=CONFIG_FILENAME,
         log_level=console_level,  # Use console log level for router
         initial_model_id=args.model_id,
     )

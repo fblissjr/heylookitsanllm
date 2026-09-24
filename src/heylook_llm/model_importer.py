@@ -32,7 +32,7 @@ SIDECAR_FILENAME = "model.heylook.toml"
 
 
 class ModelImporter:
-    """Scan directories into models.toml-shaped entries."""
+    """Scan directories into heylook.toml-shaped entries."""
 
     def __init__(self):
         self.models: list[dict] = []
@@ -486,7 +486,7 @@ class ModelImporter:
 
         Taking the directory name in a variant layout yields ``UD-IQ4_XS`` --
         uninformative, and colliding across every model quantised the same way.
-        No id already in a models.toml moves: directory-named repos are not
+        No id already in a heylook.toml moves: directory-named repos are not
         variant dirs.
         """
         if cls._is_variant_dir(path, primary):
@@ -494,7 +494,7 @@ class ModelImporter:
         return path.name
 
     def _create_gguf_entry(self, path: Path) -> Optional[dict]:
-        """Create a models.toml entry for a GGUF model (served by llama-server)."""
+        """Create a heylook.toml entry for a GGUF model (served by llama-server)."""
         primary = self._pick_primary_gguf(path)
         if primary is None:
             return None
@@ -562,7 +562,7 @@ class ModelImporter:
         return "vision" in self.detect_modalities(path, config_data)
 
     def _create_mlx_entry(self, path: Path, config_data: Optional[dict] = None) -> Optional[dict]:
-        """Create a models.toml entry for an MLX model."""
+        """Create a heylook.toml entry for an MLX model."""
         model_id = path.name
         if model_id in self.existing_ids:
             return None

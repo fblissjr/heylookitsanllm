@@ -1145,7 +1145,7 @@ class MLXProvider(BaseProvider):
                     "Model %s has NO chat template (no chat_template.jinja, no "
                     "tokenizer_config chat_template, no chat_template.json). "
                     "Chat requests will fail -- add a template file to the model "
-                    "folder or set chat_template_source in models.toml.",
+                    "folder or set chat_template_source in heylook.toml.",
                     self.model_id,
                 )
 

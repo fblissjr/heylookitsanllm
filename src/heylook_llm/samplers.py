@@ -4,13 +4,13 @@ ONE function does the work -- ``resolve_effective_sampling`` -- and its whole
 job is to answer "the request said nothing, so what?" in a defined order.
 
 The answer is, in order: the model's OWN published settings, then anything
-models.toml says about that model, then whatever the request states outright.
+heylook.toml says about that model, then whatever the request states outright.
 Only where all three are silent does a hardcoded fallback apply, and that
 fallback is two numbers.
 
 The bundled sampler REGISTRY that used to sit here -- five TOMLs under
 ``data/samplers/`` loaded by a ``SamplerRegistry``, reachable as
-``ChatRequest.sampler`` and models.toml ``default_sampler`` -- was removed in
+``ChatRequest.sampler`` and heylook.toml ``default_sampler`` -- was removed in
 v2.0.30. It shipped generic guesses that applied the same values to every
 model, which is the opposite of what the vendor layer does; three of its five
 entries had no consumer at all, and the frontend never touched any of it.
@@ -97,7 +97,7 @@ def resolve_effective_sampling(request: Any, model_config: dict,
           passed by the caller: MLX from generation_config.json
           (``load_vendor_sampling``), gguf from the GGUF header's
           ``general.sampling.*`` (``gguf_metadata.vendor_sampling``, v2.0.22).
-      2.  Model sampler fields from models.toml.
+      2.  Model sampler fields from heylook.toml.
       3.  Request explicit fields -- always win.
 
     The layers are the ones enumerated above and no others. The named-sampler
@@ -109,7 +109,7 @@ def resolve_effective_sampling(request: Any, model_config: dict,
     the drift the enumeration above cannot have.)
 
     Nothing is applied now that the model did not ask for: the values come
-    from the model's own files, its models.toml entry, or the request.
+    from the model's own files, its heylook.toml entry, or the request.
 
     ``thinking`` is the model's detected thinking controls
     (``thinking_controls.detect``; plan W2), passed by the provider that
@@ -117,7 +117,7 @@ def resolve_effective_sampling(request: Any, model_config: dict,
     values here, the one place both providers pass through: a requested value
     the template does not offer raises ``InvalidGenerationRequest`` (a 400
     instead of llama-server's 500, or of a value a template silently
-    ignores); a stored models.toml default it does not offer is dropped with
+    ignores); a stored heylook.toml default it does not offer is dropped with
     a warning, never a failure.
     """
     merged = dict(GLOBAL_SAMPLER_FLOOR)
@@ -125,7 +125,7 @@ def resolve_effective_sampling(request: Any, model_config: dict,
         merged.update(vendor)
 
     # The thinking switch, resolved in ONE order: the request's explicit
-    # value, else the model's models.toml `enable_thinking`, else whether the
+    # value, else the model's heylook.toml `enable_thinking`, else whether the
     # model CAN think. That last fallback is v1.79.62: from v1.50.0 unset
     # meant OFF on both engines, chosen because the two engines disagreed on
     # unset (gguf omitted the kwarg and got the template's own default,
@@ -133,7 +133,7 @@ def resolve_effective_sampling(request: Any, model_config: dict,
     # the UI could send only true-or-absent, so "unset = off" was the only
     # way to have an off switch at all. The UI now sends an explicit false,
     # so that reason is gone -- and a thinking model that silently does not
-    # think unless someone finds the models.toml flag was the standing
+    # think unless someone finds the heylook.toml flag was the standing
     # complaint (2026-09-04). A model that cannot think still resolves to
     # OFF, so the thinking sampler overlay below never fires on one.
     #
@@ -183,7 +183,7 @@ class _NoRequest:
 def thinking_default(model_config: dict, *, thinking_capable: bool) -> bool:
     """What thinking resolves to when a request says NOTHING about it.
 
-    The cascade's own answer for an empty request -- the models.toml
+    The cascade's own answer for an empty request -- the heylook.toml
     `enable_thinking` flag and the capability fallback both count, exactly as
     they do at generation time. Reported on the admin row (`thinking_default`) so a UI can label
     its "model default" choice with the value it actually means instead of

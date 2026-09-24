@@ -82,11 +82,11 @@ async def lifespan(app: FastAPI):
     from heylook_llm.db import get_connection
     app.state.db = await get_connection()
 
-    # Wire the observability spine from the settings layer (DB > default --
-    # operational settings have no env-var override layer, by design)
-    # and disclose what's being written (open-source: user must see it's local).
+    # Wire the observability spine from the settings layer (the config file's
+    # [settings] > default -- no env-var override layer, by design) and
+    # disclose what's being written (open-source: user must see it's local).
     from heylook_llm.config_api import apply_runtime_settings, observability_log_dir
-    _obs = await apply_runtime_settings(app.state.db)
+    _obs = apply_runtime_settings(app)
     logging.info(
         "Observability: level=%s · %s (JSONL) · %dd retention · nothing transmitted "
         "· configure/disable: /v1/admin/config",
@@ -160,7 +160,7 @@ app = FastAPI(
         },
         {
             "name": "Config",
-            "description": "Operational settings (observability level/retention, ...) -- runtime CRUD, resolved DB > default. There is deliberately no env-var override layer: an env var silently beating a value set here would be invisible in the UI that set it"
+            "description": "Operational settings (observability level/retention, ...) -- runtime CRUD, stored in heylook.toml's [settings], resolved file > default. There is deliberately no env-var override layer: an env var silently beating a value set here would be invisible in the UI that set it"
         },
         {
             "name": "Telemetry",
@@ -264,7 +264,7 @@ app.include_router(notebook_router)
 from heylook_llm.preset_api import preset_router
 app.include_router(preset_router)
 
-# Operational settings admin (App-DB settings table; DB > default, no env layer)
+# Operational settings admin (heylook.toml [settings]; file > default, no env layer)
 from heylook_llm.config_api import config_router
 app.include_router(config_router)
 

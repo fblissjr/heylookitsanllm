@@ -269,7 +269,7 @@ class LlamaServerProvider(BaseProvider):
         nothing is configured and no canonical build exists. The one
         precedence rule, shared by the spawn and the engine contract."""
         candidate = cfg.get("server_binary")
-        source = "models.toml server_binary"
+        source = "heylook.toml server_binary"
         if not candidate:
             candidate = os.environ.get("HEYLOOK_LLAMA_SERVER")
             source = "$HEYLOOK_LLAMA_SERVER"
@@ -340,7 +340,7 @@ class LlamaServerProvider(BaseProvider):
             raise RuntimeError(
                 "No llama-server binary configured. Build one with "
                 "`uv run scripts/build_llama.py`, or set server_binary in "
-                "models.toml / the $HEYLOOK_LLAMA_SERVER env var (a Homebrew "
+                "heylook.toml / the $HEYLOOK_LLAMA_SERVER env var (a Homebrew "
                 "or upstream release binary works too)."
             )
         if not path.is_file():
@@ -768,7 +768,7 @@ class LlamaServerProvider(BaseProvider):
         sits in the model dir, and a spawn that quietly ran at 512 would be
         indistinguishable from one that quietly ran at 2048."""
         if self.config.get("n_ubatch") is not None:
-            self._ubatch_reason = "set in models.toml for this model"
+            self._ubatch_reason = "set in heylook.toml for this model"
             return None  # explicit wins; _build_args reads it directly
         headroom = self._working_set_headroom_gb()
         if headroom is None:
@@ -1022,7 +1022,7 @@ class LlamaServerProvider(BaseProvider):
         # paths that do not exist). At observability_level=off, which is the
         # DEFAULT, the subprocess's output is kept nowhere, so llama-server
         # exiting on a file that is not there leaves NO diagnostic anywhere:
-        # a models.toml entry left behind by a directory rename produced
+        # a heylook.toml entry left behind by a directory rename produced
         # `exited with code 1 -- output not captured` and nothing else
         # (2026-09-06). Worse, the missing file HAD already been noticed and
         # thrown away -- _sidecar_chat_template stats the weights and returns
@@ -1037,7 +1037,7 @@ class LlamaServerProvider(BaseProvider):
                     f"[GGUF] {self.model_id}: {field} points at {value}, "
                     f"which is not a readable file. llama-server would exit "
                     f"immediately with its output discarded, so the spawn is "
-                    f"refused here instead. Fix the path in models.toml, or "
+                    f"refused here instead. Fix the path in heylook.toml, or "
                     f"delete the entry -- a model under [scan].folders is "
                     f"served with derived defaults and needs no entry at all."
                 )
@@ -1081,7 +1081,7 @@ class LlamaServerProvider(BaseProvider):
                 Path(str(self.config.get("model_path") or "")))
         # Say which template is in force, every spawn, with its hash (plan
         # W3). A sidecar is discovered from the filesystem, so the answer can
-        # change without models.toml changing -- dropping a chat_template.jinja
+        # change without heylook.toml changing -- dropping a chat_template.jinja
         # next to the weights is enough to alter the prompt format.
         # Unannounced, that is a behaviour change with no artifact naming it;
         # this line is the artifact, and the hash tells two spawns apart by
@@ -1119,7 +1119,7 @@ class LlamaServerProvider(BaseProvider):
         # A flag heylook passes explicitly WINS over its env var (llama.cpp
         # warns and overrides), so the spawn argv is safe -- but a flag we do
         # NOT pass is set silently from the environment, and the running
-        # process then differs from what models.toml and the admin API say it
+        # process then differs from what heylook.toml and the admin API say it
         # is. Those are surfaced, never scrubbed: someone may be setting one
         # deliberately, and quietly editing the child's environment would be
         # its own invisible behaviour change. The ONE exception, and why it is

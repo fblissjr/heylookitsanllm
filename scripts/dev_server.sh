@@ -28,7 +28,7 @@
 #     (an already-running heylookllm on any port may be the owner's daily
 #     server).
 #   - Default model for behavior checks: the fast MoE gemma-4-26B-A4B variant
-#     (~90 tok/s, the discriminating model per AGENTS.md); ids in models.toml
+#     (~90 tok/s, the discriminating model per AGENTS.md); ids from GET /v1/models
 #     carry quant suffixes, so list exact ids first.
 #   - Always `stop` a server you started; keep it up across a series of checks
 #     (model load is the expensive part), then stop once at the end.
@@ -156,8 +156,8 @@ case "$CMD" in
         # A model that could not be SIZED exits 2 with no verdict line; that
         # is a bad --model, not a memory refusal, so say which it was. The id
         # is resolved through the server's own registry merge, so "unknown"
-        # means neither a models.toml entry NOR discovered under
-        # [scan].folders -- models.toml alone was never the right question.
+        # means neither a heylook.toml entry NOR discovered under
+        # [scan].folders -- heylook.toml alone was never the right question.
         "") echo "RAM pre-flight: could not size model '$MODEL' (unknown id, or its files no longer read -- reason above). Not starting." >&2 ;;
         *)  echo "$PREFLIGHT (another server/agent may hold a model). Not starting." >&2 ;;
       esac
@@ -169,7 +169,7 @@ case "$CMD" in
     : > "$LOG"
     cd "$REPO_ROOT"
     # Read-only model config: this server shares the model folders and the
-    # models.toml with the owner's daily server, so it must not write them.
+    # heylook.toml with the owner's daily server, so it must not write them.
     HEYLOOK_DB_PATH="$STATE/db.duckdb" HEYLOOK_READONLY_MODEL_CONFIG=1 nohup uv run heylookllm \
       --host "$HOST" --port "$PORT" --model-id "$MODEL" --log-level "$LOG_LEVEL" \
       >> "$LOG" 2>&1 &
@@ -177,7 +177,7 @@ case "$CMD" in
     echo "spawned pid $(cat "$PIDFILE"), waiting for readiness (log: $LOG)"
 
     # Readiness = HTTP up + model id CONFIGURED (exact match). /v1/models
-    # lists enabled models.toml entries regardless of load state -- actual
+    # lists enabled heylook.toml entries regardless of load state -- actual
     # model LOAD is absorbed by the warm request below, not this wait.
     DEADLINE=$(( $(date +%s) + 120 ))
     while :; do
@@ -188,7 +188,7 @@ case "$CMD" in
       sleep 2
     done
     if ! has_model "$LISTED" "$MODEL"; then
-      abort_start "model '$MODEL' is not in the server's enabled model list (check the exact id in models.toml; got: $LISTED)"
+      abort_start "model '$MODEL' is not in the server's enabled model list (check the exact id in GET /v1/models; got: $LISTED)"
     fi
 
     # Load (+ optionally warm) via the ONE canonical server-side call --

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""What would a models.toml edit do to the served set? Ask the server's merge.
+"""What would a heylook.toml edit do to the served set? Ask the server's merge.
 
 A dry run over `heylook_llm.model_registry.served_diff`, which merges and
 validates each side with the router's own code (`served`), so this cannot
-disagree with what the server would serve. models.toml is gitignored: an edit
+disagree with what the server would serve. heylook.toml is gitignored: an edit
 to it has no history to recover from, and every past surprise here came from
 predicting the merge instead of running it (plan_registry_sidecars.md,
 Phase 0).
@@ -18,7 +18,7 @@ Usage::
 deleting that entry alone would change. "none" means the entry is redundant
 with discovery; anything else is what the entry is holding in place.
 
-Read-only: it never writes models.toml. It scans once per distinct
+Read-only: it never writes heylook.toml. It scans once per distinct
 ``[scan]`` section. Exit 0 always; a scan that failed is printed as
 UNRELIABLE, since a lost model under it may only be unread.
 """
@@ -36,6 +36,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from heylook_llm.model_registry import ServedDiff, scan, served_diff  # noqa: E402
+from heylook_llm.router import CONFIG_FILENAME  # noqa: E402
 
 
 def _load(path: str) -> dict:
@@ -61,8 +62,8 @@ def _describe(d: ServedDiff) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="What would a models.toml edit do to the served set? Read-only.")
-    ap.add_argument("--config", default="models.toml", help="the current config (default models.toml)")
+        description="What would a heylook.toml edit do to the served set? Read-only.")
+    ap.add_argument("--config", default=CONFIG_FILENAME, help=f"the current config (default {CONFIG_FILENAME})")
     mode = ap.add_mutually_exclusive_group(required=True)
     mode.add_argument("--prune", action="store_true", help="each entry, deleted alone")
     mode.add_argument("--against", metavar="TOML", help="a candidate config to compare with")

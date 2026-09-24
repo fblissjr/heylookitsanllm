@@ -1,5 +1,5 @@
 # src/heylook_llm/toml_comments.py
-"""Carry comments forward across ``tomli_w`` rewrites of models.toml.
+"""Carry comments forward across ``tomli_w`` rewrites of heylook.toml.
 
 ``model_service._write_toml`` regenerates the whole file through ``tomli_w``,
 which emits no comments -- so before this module, any admin write silently
@@ -151,7 +151,7 @@ def _extract(doc) -> tuple[list, list[str] | None, list[dict]]:
             if trivia is not None and trivia.comment:
                 root_records.append(("inline", k, trivia.comment, trivia.comment_ws))
             # Root-level plain tables other than [[models]] don't exist in
-            # models.toml; their inner comments are not carried.
+            # heylook.toml; their inner comments are not carried.
     return root_records, before_first, model_infos
 
 

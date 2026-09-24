@@ -273,7 +273,7 @@ def read_template_info(
             logging.warning(
                 "No file chat template with a stop token for %s -- installing none; "
                 "the loader's built-in template will be used. Fix chat_template.jinja "
-                "or set chat_template_source in models.toml.", model_dir.name,
+                "or set chat_template_source in heylook.toml.", model_dir.name,
             )
 
     has_harmony = bool(
@@ -315,7 +315,7 @@ def _read_template(model_dir: Path, source: Optional[str]) -> tuple[str, str]:
     config_path = model_dir / SOURCE_FILES[TOKENIZER_CONFIG]
 
     # Readable by NAME as well as by winning the auto ladder, so the stop-less
-    # fallback can try it like any other rung. Not reachable from models.toml:
+    # fallback can try it like any other rung. Not reachable from heylook.toml:
     # `is_explicit_source` treats any non-auto string as explicit, but the
     # config field is documented as auto/jinja/tokenizer_config/
     # chat_template_json/path -- this spelling exists for the fallback loop.
@@ -418,7 +418,7 @@ def missing_template_error(tokenizer, model_id: Optional[str] = None) -> Optiona
         f"{who} has no chat template: none of chat_template.jinja, a "
         f"tokenizer_config.json 'chat_template' field, or chat_template.json "
         f"loaded from the model folder. Add one of those files or set "
-        f"chat_template_source in models.toml."
+        f"chat_template_source in heylook.toml."
     )
 
 

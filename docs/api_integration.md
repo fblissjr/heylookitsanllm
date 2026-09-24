@@ -66,7 +66,7 @@ answers come from one resolver and cannot diverge for MLX.
 
 That is a reason to relax, not to stop handling it. The guarantee covers the
 MLX path only — a gguf model's request is forwarded to `llama-server`, which
-decides for itself — and an explicit `capabilities` override in `models.toml`
+decides for itself — and an explicit `capabilities` override in `heylook.toml`
 is honoured verbatim, so an operator can still assert something the server
 will not deliver. A client that gates on `capabilities` **and** handles a 400
 is correct on every version; one that gates alone is correct only on

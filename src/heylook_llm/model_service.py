@@ -2,7 +2,7 @@
 """
 Service layer for model discovery, validation, and configuration management.
 
-Provides CRUD operations on models.toml and on a model's own
+Provides CRUD operations on heylook.toml and on a model's own
 model.heylook.toml, plus validation. Thread-safe for concurrent API access.
 """
 
@@ -112,7 +112,7 @@ class ModelService:
     # --- TOML I/O ---
 
     def _read_toml(self) -> dict:
-        """Read and parse the models.toml file."""
+        """Read and parse the heylook.toml file."""
         if not self.config_path.exists():
             return {"models": [], "default_model": "none", "max_loaded_models": 1}
         with open(self.config_path, "rb") as f:
@@ -149,7 +149,7 @@ class ModelService:
             with open(tmp_path, "rb") as f:
                 parsed = tomllib.load(f)
             # Validate it produces a valid AppConfig. `models` is defaulted in
-            # rather than required: since v1.69.0 a models.toml carrying only
+            # rather than required: since v1.69.0 a heylook.toml carrying only
             # [scan] is a legitimate config (everything is discovered), and
             # AppConfig.models is a REQUIRED field, so validating the raw
             # parse rejected the entry-less file the registry design promotes.
@@ -215,7 +215,7 @@ class ModelService:
     def list_configs(self) -> list[ModelConfig]:
         """List all model configs WRITTEN DOWN (including disabled).
 
-        Deliberately models.toml only -- do NOT fold discovery in here
+        Deliberately heylook.toml only -- do NOT fold discovery in here
         (found by review after an earlier version did): rescanning per call
         makes the admin surface disagree with the router in the WORSE
         direction, listing a model downloaded after startup that
@@ -240,7 +240,7 @@ class ModelService:
         entry -- constructing all N triggers each model's derive-at-load
         detection).
 
-        models.toml only, for the same two reasons as list_configs: a
+        heylook.toml only, for the same two reasons as list_configs: a
         per-request filesystem walk on the event loop, and answering for
         models the router's snapshot cannot load. Admin routes fall back to
         ``router.app_config`` for the discovered case.
@@ -299,7 +299,7 @@ class ModelService:
         ``model.heylook.toml`` (plan_registry_sidecars Phase 3).
 
         This replaced materialization, which copied the model's whole derived
-        config into a models.toml entry: an entry replaces the derived config
+        config into a heylook.toml entry: an entry replaces the derived config
         wholesale, so one edit froze every derived value for good and opted
         the model out of every later improvement to derivation. The file
         holds only what was set; everything else keeps being derived.

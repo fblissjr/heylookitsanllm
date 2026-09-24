@@ -62,7 +62,7 @@ def _get_loaded_model_ids(request: Request) -> set[str]:
 
 
 def _served_configs(request: Request) -> list:
-    """Every model the ROUTER can serve -- models.toml plus discovery.
+    """Every model the ROUTER can serve -- heylook.toml plus discovery.
 
     The router's ``app_config`` is the merged snapshot built at startup and
     refreshed on reload, so it already contains discovered models. Reading it
@@ -87,7 +87,7 @@ def _safe_reload_config(request: Request) -> str | None:
     """Reload router config, returning a warning string on failure instead of raising.
 
     BLOCKING, and by more than a file read: reload_config re-runs discovery
-    (model_registry.discover) as well as re-parsing models.toml. Every caller
+    (model_registry.discover) as well as re-parsing heylook.toml. Every caller
     must already be off the event loop -- see the threadpool banner below.
     """
     try:
@@ -99,7 +99,7 @@ def _safe_reload_config(request: Request) -> str | None:
 
 
 def _written_down_ids(request: Request) -> set[str]:
-    """Ids with an actual models.toml entry (as opposed to discovered ones).
+    """Ids with an actual heylook.toml entry (as opposed to discovered ones).
 
     One cheap TOML read, shared across a whole list render rather than paid
     per row.
@@ -111,7 +111,7 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
                               written_ids: set[str] | None = None) -> AdminModelResponse:
     """Convert a ModelConfig to an AdminModelResponse.
 
-    ``source`` distinguishes a models.toml entry from a model discovery
+    ``source`` distinguishes a heylook.toml entry from a model discovery
     serves with no entry at all, and it is NOT derivable from ``config``.
     Checked live rather than assumed: a discovered model's ``config`` is not
     empty, it carries whatever the SCANNER set (model_path, mmproj_path,
@@ -132,7 +132,7 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
     endpoint over, gated its whole UI on them.
 
     ``config`` is the STORED keys only (exclude_unset), not the resolved
-    model. Absent IS how a default is spelled in models.toml, and the config
+    model. Absent IS how a default is spelled in heylook.toml, and the config
     editor renders exactly that distinction: a stored key is a set value, a
     missing one shows the schema default as a placeholder, and the row's
     non-default summary chip only exists because this response can tell the
@@ -190,7 +190,7 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
 # =============================================================================
 # Why the mutating handlers below are `def`, not `async def`
 #
-# Each one does blocking work: a models.toml read/modify/write, and discovery
+# Each one does blocking work: a heylook.toml read/modify/write, and discovery
 # (model_registry.discover -- a recursive walk of the [scan] folders plus GGUF
 # header reads, unbounded in principle). An `async def` that never awaits runs
 # that work ON the event loop, which freezes every in-flight SSE generation
@@ -205,7 +205,7 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
 # writing from a scan the reload no longer agrees with. Both are off the loop,
 # so the cost is admin-request latency, not stalled streams.
 #
-# Read routes are models.toml-only or read the router's already-merged snapshot,
+# Read routes are heylook.toml-only or read the router's already-merged snapshot,
 # and never scan (see _served_configs) -- but the two that build an
 # AdminModelResponse (list, get) are `def` all the same: served vision is
 # derived per row from the model dir's config.json, so a list response is one
@@ -236,7 +236,7 @@ def list_model_configs(request: Request):
 @admin_router.post(
     "",
     summary="Add Model Config",
-    description="Add a new model configuration to models.toml.",
+    description="Add a new model configuration to heylook.toml.",
     response_model=AdminModelResponse,
     status_code=201,
 )
@@ -332,7 +332,7 @@ def evaluate_model_fit(model_id: str, request: Request, body: FitRequest):
         "if the client died between the calls. Same response shape as /load. "
         "`ctx_size` (gguf only, 400 otherwise) sets the model's context size "
         "for THIS load and persists it as the model's `ctx_size` config -- "
-        "the same models.toml write a PATCH makes, so there is one place the "
+        "the same heylook.toml write a PATCH makes, so there is one place the "
         "value lives. `0` means Auto: drop the stored value and let "
         "llama-server size the context from the model and device memory. "
         "When the value is unchanged and the model is already resident with "
@@ -359,7 +359,7 @@ async def reload_model(
         # builds the provider from the saved value -- and so a later PATCH,
         # the models page, and this route can never disagree about what the
         # model's context is. The provider check reads the merged view (a
-        # discovered model has no models.toml entry until this write
+        # discovered model has no heylook.toml entry until this write
         # materializes one); the stored value reads the service, which is the
         # file's truth rather than the router's last-loaded snapshot.
         mc = router.app_config.get_model_config(model_id)
@@ -375,7 +375,7 @@ async def reload_model(
         service = _get_service(request)
         written = service.get_config(model_id) or mc
         stored = written.config.model_dump(exclude_unset=True).get("ctx_size")
-        wanted = ctx_size or None  # 0 -> unset, the models.toml spelling of Auto
+        wanted = ctx_size or None  # 0 -> unset, the heylook.toml spelling of Auto
         if wanted != stored:
             try:
                 await asyncio.to_thread(
@@ -387,7 +387,7 @@ async def reload_model(
             # Same value, resident, nothing else pending: a restart would only
             # pay the load again for an identical process.
             return await load_and_warm(router, model_id, warm)
-    # Re-read models.toml first: the v3 editor flow has already
+    # Re-read heylook.toml first: the v3 editor flow has already
     # reload_config'd after its PATCH, but a hand-edit of the file has not --
     # without this, "reload" would rebuild the provider from stale config.
     try:
@@ -633,7 +633,7 @@ def update_model_config(model_id: str, request: Request, updates: ModelUpdateReq
         # "unset this field" and never get here.)
         raise HTTPException(
             status_code=400,
-            detail=f"Config value is not storable in models.toml: {e}",
+            detail=f"Config value is not storable in heylook.toml: {e}",
         )
 
 
@@ -641,7 +641,7 @@ def update_model_config(model_id: str, request: Request, updates: ModelUpdateReq
     "/{model_id:path}",
     summary="Remove Model Config",
     description=(
-        "Remove a model's models.toml entry. Model files stay on disk; a model "
+        "Remove a model's heylook.toml entry. Model files stay on disk; a model "
         "under a scan folder is served again from discovery."
     ),
 )
@@ -707,7 +707,7 @@ def _get_scan_config(request: Request):
 def _put_scan_config(request: Request, body: ScanConfigRequest):
     """Update [scan]; a folder added here becomes servable models.
 
-    `def`, not `async def`: this writes models.toml and then reloads the
+    `def`, not `async def`: this writes heylook.toml and then reloads the
     router, which re-runs discovery -- see the threadpool banner above.
 
     The reload is NOT optional here the way it is for a sampler tweak. Adding
@@ -750,9 +750,9 @@ scan_import_router.add_api_route(
     methods=["GET"],
     summary="Get Watch Folders",
     description=(
-        "The [scan] table from models.toml: which folders the server "
+        "The [scan] table from heylook.toml: which folders the server "
         "discovers models from. Since v1.69.0 a model found here is SERVED "
-        "with no [[models]] entry -- models.toml is override-only."
+        "with no [[models]] entry -- heylook.toml is override-only."
     ),
     response_model=ScanConfigResponse,
 )
@@ -766,7 +766,7 @@ scan_import_router.add_api_route(
         "Update [scan] and reload the router. Absent fields are left alone. "
         "Adding a folder makes every model under it servable; "
         "scan_interval_seconds=0 turns discovery off entirely. Comments in "
-        "models.toml survive the write."
+        "heylook.toml survive the write."
     ),
     response_model=ScanConfigResponse,
 )
@@ -897,7 +897,7 @@ async def get_model_options():
     summary="Reload Models",
     description=(
         "Reload model configuration and clear model cache without restarting "
-        "the server. Clears loaded models, re-reads models.toml, and returns "
+        "the server. Clears loaded models, re-reads heylook.toml, and returns "
         "the new model list."
     ),
 )

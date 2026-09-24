@@ -1,9 +1,9 @@
-"""Discovery-as-registry: the model store decides what exists, models.toml only overrides.
+"""Discovery-as-registry: the model store decides what exists, heylook.toml only overrides.
 
 Phase 6 item 1 of the roadmap ("registry-over-scan: structured, non-clobbering")
 specifies merging by RESOLVED ``model_path`` rather than by id. This module is
 that merge, applied at LOAD time instead of at write time -- so nothing is
-generated into models.toml at all.
+generated into heylook.toml at all.
 
 The rule, in one sentence: every ``[[models]]`` entry is served exactly as
 written, and any model found under ``[scan].folders`` that no entry already
@@ -12,8 +12,8 @@ describes is served with derived defaults.
 Consequences worth stating, because they are the whole point:
 
 - A new download in a scan folder is servable with no import, no symlink, and
-  no edit. models.toml is not touched -- there is nothing to clobber.
-- models.toml shrinks to what cannot be derived: a hand-chosen id, a
+  no edit. heylook.toml is not touched -- there is nothing to clobber.
+- heylook.toml shrinks to what cannot be derived: a hand-chosen id, a
   ``chat_template_path``, ``spec_type``, ``enabled = false``, a comment
   explaining a trap. Write an entry when you want to CHANGE something.
 - Explicit always wins. That is what keeps models outside the scan folders
@@ -27,7 +27,7 @@ folder make one file reachable by two spellings that share no prefix. Both failu
 produced a real duplicate entry on 2026-08-17.
 
 Discovery is best-effort by construction: a scan that raises is logged and
-dropped, and the server comes up on models.toml alone. Serving fewer models
+dropped, and the server comes up on heylook.toml alone. Serving fewer models
 than expected is recoverable; refusing to start is not.
 """
 
@@ -42,7 +42,7 @@ from typing import NamedTuple
 
 # Bootstrap-only, like HEYLOOK_DB_PATH: set by every launcher that is NOT the
 # owner's daily server (scripts/dev_server.sh, the E2E harness, loop runs).
-# Model folders, and the models.toml a dev server reads, are shared by every
+# Model folders, and the heylook.toml a dev server reads, are shared by every
 # instance, so an automated run must not be able to change the owner's real
 # model settings; it still serves them exactly (owner decision 2026-09-24).
 READONLY_ENV = "HEYLOOK_READONLY_MODEL_CONFIG"
@@ -53,12 +53,17 @@ class ModelConfigReadOnly(RuntimeError):
     it to 409 wherever it escapes a route (api.py)."""
 
 
+def readonly() -> bool:
+    """Whether this instance was started read-only (READONLY_ENV)."""
+    import os
+
+    return os.environ.get(READONLY_ENV, "") not in ("", "0")
+
+
 def refuse_if_readonly(what: str) -> None:
     """Raise :class:`ModelConfigReadOnly` when this instance is read-only.
     Called inside every writer of model settings, so a new route inherits it."""
-    import os
-
-    if os.environ.get(READONLY_ENV, "") not in ("", "0"):
+    if readonly():
         raise ModelConfigReadOnly(
             f"this server was started with {READONLY_ENV} set, so it does not write "
             f"model settings ({what}); make the change on the daily server")
@@ -94,7 +99,7 @@ def _entry_path(entry: dict) -> str:
 def merge_discovered(config_data: dict, discovered: list[dict]) -> dict:
     """Return ``config_data`` with unrepresented discovered models appended.
 
-    ``config_data`` is the parsed models.toml. ``discovered`` is a list of
+    ``config_data`` is the parsed heylook.toml. ``discovered`` is a list of
     entry dicts in the same shape (``{id, provider, enabled, config}``) as the
     importer builds. Neither input is mutated.
     """
@@ -103,7 +108,7 @@ def merge_discovered(config_data: dict, discovered: list[dict]) -> dict:
     # ALWAYS materialize `models`, even on the early returns. AppConfig.models
     # is a REQUIRED field, so handing back a dict without the key raises
     # ValidationError and the server does not start -- and the config shape
-    # that hits it is the one this design promotes: a models.toml carrying
+    # that hits it is the one this design promotes: a heylook.toml carrying
     # only [scan]. Empty folder, unmounted volume, or a failed scan all reach
     # here with discovered=[]. "Serve fewer models" must never become "refuse
     # to boot".
@@ -123,7 +128,7 @@ def merge_discovered(config_data: dict, discovered: list[dict]) -> dict:
         if not path:
             continue
         if path_identity(path) in configured_paths:
-            continue  # models.toml already describes this file; it wins
+            continue  # heylook.toml already describes this file; it wins
         model_id = str(entry.get("id") or "")
         if not model_id:
             continue
@@ -131,15 +136,15 @@ def merge_discovered(config_data: dict, discovered: list[dict]) -> dict:
             # Same derived name, DIFFERENT file. Serving both would make the
             # id ambiguous and get_model_config() would silently pick one, so
             # decline and say which file went unserved -- a rename in
-            # models.toml or on disk is the fix.
+            # heylook.toml or on disk is the fix.
             logging.warning(
                 "[registry] discovered model at %s not served: its derived id "
-                "%r is already used by a different models.toml entry",
+                "%r is already used by a different heylook.toml entry",
                 path, model_id)
             continue
         configured_ids.add(model_id)
         # Extend BOTH sets with what we just accepted, or discovery only
-        # dedupes against models.toml and not against itself. Two scanners
+        # dedupes against heylook.toml and not against itself. Two scanners
         # legitimately produce two ids for one file: scan_directory follows
         # symlinks, so two links to one store dir yield two names. Without this the same GGUF is servable twice and,
         # above max_loaded_models=1, loads into two llama-server processes.
@@ -150,14 +155,14 @@ def merge_discovered(config_data: dict, discovered: list[dict]) -> dict:
         return merged
 
     logging.info(
-        "[registry] serving %d discovered model(s) not in models.toml: %s",
+        "[registry] serving %d discovered model(s) not in heylook.toml: %s",
         len(added), ", ".join(str(e["id"]) for e in added))
     merged["models"] = explicit + added
     return merged
 
 
 def derived_for_explicit(config_data: dict, discovered: list[dict]) -> dict[str, dict]:
-    """For each models.toml entry, the config discovery derives for the SAME
+    """For each heylook.toml entry, the config discovery derives for the SAME
     file (matched by resolved path, the merge's identity rule), keyed by the
     entry's id. merge_discovered drops these, since the entry wins; the engine
     contract needs them to tell a stored value that differs from derivation
@@ -194,7 +199,7 @@ def scan(config_data: dict) -> Discovery:
 
     ``entries`` are entry dicts ready for :func:`merge_discovered`. They are
     empty for "no [scan] section", "scanning is off" and "the scan failed"
-    alike -- all three mean models.toml stands alone -- and ``failed`` is what
+    alike -- all three mean heylook.toml stands alone -- and ``failed`` is what
     tells the last apart: each folder that is missing or raised, each model
     the importer rejected, and the importer itself if it would not construct.
     """
@@ -219,7 +224,7 @@ def scan(config_data: dict) -> Discovery:
         importer = ModelImporter()
     except Exception:
         logging.warning(
-            "[registry] importer unavailable; serving models.toml alone",
+            "[registry] importer unavailable; serving heylook.toml alone",
             exc_info=True)
         return Discovery([], ["importer"])
 

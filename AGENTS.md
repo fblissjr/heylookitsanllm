@@ -20,7 +20,7 @@ subprocess per loaded model), and a vanilla-JS frontend (`frontend/`, served at 
 - [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md) §4: the authoritative API contract.
 - Loops (`/improve`, `/optimize`, `/design-scoreboard`): [docs/loops.md](./docs/loops.md) holds this repo's North star, Where things live, How to work, Other sessions, Measurement, Reporting and Loop state sections. It counts as part of this file; read it before any loop run.
 - Everything else: [docs/README.md](./docs/README.md).
-- `internal/` (logs, research, local notes), `models.toml` and `coderef/` are gitignored and never committed. `coderef/llama.cpp` is the checkout the running llama-server was built from (its `heylook-build.json` names the commit); read upstream tip from a separate clone.
+- `internal/` (logs, research, local notes), `heylook.toml` and `coderef/` are gitignored and never committed. `coderef/llama.cpp` is the checkout the running llama-server was built from (its `heylook-build.json` names the commit); read upstream tip from a separate clone.
 
 ## Rules by area
 
@@ -31,7 +31,7 @@ Each file below holds the mechanisms that bite in its area. Claude Code loads it
 | Provider and engine contract, thinking, sampling, template overrides | [.claude/rules/engine-contract.md](./.claude/rules/engine-contract.md) |
 | gguf: llama-server templates, context, memory, spec decode, binary | [.claude/rules/gguf.md](./.claude/rules/gguf.md) |
 | MLX engine: mlx-vlm, threads, caches, tokenizers, parsers | [.claude/rules/mlx.md](./.claude/rules/mlx.md) |
-| Model registry, models.toml, config effect classes | [.claude/rules/registry-config.md](./.claude/rules/registry-config.md) |
+| Model registry, heylook.toml, config effect classes | [.claude/rules/registry-config.md](./.claude/rules/registry-config.md) |
 | API routes, the Messages wire, DuckDB store, observability | [.claude/rules/api-and-store.md](./.claude/rules/api-and-store.md) |
 | Frontend | [.claude/rules/frontend.md](./.claude/rules/frontend.md) |
 | Test harnesses, mocks, e2e, smoke, eval | [.claude/rules/tests.md](./.claude/rules/tests.md) |

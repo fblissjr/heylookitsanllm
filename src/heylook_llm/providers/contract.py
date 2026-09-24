@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field
 
 Provenance = Literal[
     "derived",          # computed from config and files
-    "configured",       # stored for this model (a models.toml entry today)
+    "configured",       # stored for this model (a heylook.toml entry today)
     "observed",         # reported by the running process
     "observed_cached",  # observed at an earlier load, cached on disk
     "unknown",          # not known yet (e.g. decided at load, model not loaded)
@@ -208,7 +208,7 @@ def _same(a: Any, b: Any) -> bool:
     return False
 
 
-DEFAULT_STORE = "models.toml entry"
+DEFAULT_STORE = "heylook.toml entry"
 
 
 def store_name(written: Any) -> str:
@@ -221,7 +221,7 @@ def config_settings(config_cls: type, config_obj: Any, *, written: Any,
     """One Setting per configurable field of ``config_cls``.
 
     The field list is DERIVED (config.configurable_fields), never listed.
-    A value counts as CONFIGURED only when a models.toml entry stores it AND
+    A value counts as CONFIGURED only when a heylook.toml entry stores it AND
     it differs from what derivation gives that file (``derived``, the config
     discovery builds for the same path, else the schema default). Admin edits
     materialize an entry with every derived value in it, so "the entry has
@@ -305,7 +305,7 @@ _STATIC_LOCK = threading.Lock()
 def _provenance_inputs(model_id: str, router: Any) -> tuple[Any, dict]:
     """(written, derived) for one model, from what the router recorded at
     its last config load. ``written`` is where the model's stored values live
-    (a models.toml entry, or its model.heylook.toml), or False."""
+    (a heylook.toml entry, or its model.heylook.toml), or False."""
     written_ids = getattr(router, "written_ids", None) if router is not None else None
     derived_all = getattr(router, "derived_configs", None) if router is not None else None
     derived = derived_all.get(model_id, {}) if isinstance(derived_all, dict) else {}

@@ -169,11 +169,11 @@ sequenceDiagram
 
 ### 3.1. Binary Resolution Order & Shadow Warnings
 [`_resolve_binary()`](../../src/heylook_llm/providers/llama_server_provider.py) applies a strict lookup hierarchy:
-1. `config["server_binary"]` (explicit in `models.toml`)
+1. `config["server_binary"]` (explicit in `heylook.toml`)
 2. `$HEYLOOK_LLAMA_SERVER` environment variable
 3. **Canonical Build** (`LlamaServerProvider.DEFAULT_BUILD`): `.heylook/llama.cpp/build/bin/llama-server` under the user's home, built by `scripts/build_llama.py`. If none of the three yields a file, load fails loudly.
 
-**Shadow Warning**: If an environment variable or `models.toml` override is used while a canonical build exists, the backend emits a loud warning on every spawn, preventing stale development binaries from silently shadowing fresh canonical builds.
+**Shadow Warning**: If an environment variable or `heylook.toml` override is used while a canonical build exists, the backend emits a loud warning on every spawn, preventing stale development binaries from silently shadowing fresh canonical builds.
 
 ### 3.2. Subprocess Lifecycle & Process Group Isolation
 - **`start_new_session=True`**: `llama-server` is spawned in its own process **group**, so unload can signal the whole process tree rather than just the top process.
@@ -190,9 +190,9 @@ sequenceDiagram
   What reaches it: at llama.cpp's default verbosity threshold (`LOG_LEVEL_INFO`) the stream carries load-time model/Metal info, per-slot lifecycle, per-request timings and the per-request **draft-acceptance** line, but no prompt or response text -- request bodies are `SRV_DBG` (verbosity 5) and slot internals are `SLT_TRC` (4), and heylook never passes `-lv`.
 - **Pre-Flight File Checks**: before spawning, `load_model()` stats `model_path`, `mmproj_path` and `draft_model_path` and names the offending **field** if one is missing. This happens in `load_model`, not in `_build_args` (which stays pure so the argv drift test can call it with paths that do not exist), and it happens *before* argv is built, because the auto micro-batch sizes the model's files and a missing file must fail with the message that names the field rather than inside sizing.
 
-  It matters because at the default observability level the subprocess's output is kept nowhere, so `llama-server` exiting on an absent file leaves **no diagnostic anywhere**: a `models.toml` entry left behind by a directory rename produced `exited with code 1 -- output not captured` and nothing else. Worse, the missing file had already been noticed and thrown away -- `_sidecar_chat_template` stats the weights and returns `None` when they are absent, so the template ladder silently degraded to its bottom rung and the spawn log announced a template decision for a model file that did not exist.
+  It matters because at the default observability level the subprocess's output is kept nowhere, so `llama-server` exiting on an absent file leaves **no diagnostic anywhere**: a `heylook.toml` entry left behind by a directory rename produced `exited with code 1 -- output not captured` and nothing else. Worse, the missing file had already been noticed and thrown away -- `_sidecar_chat_template` stats the weights and returns `None` when they are absent, so the template ladder silently degraded to its bottom rung and the spawn log announced a template decision for a model file that did not exist.
 
-- **`LLAMA_ARG_*` environment variables are surfaced, not stripped -- with exactly one exception**: `llama-server` reads most flags from `LLAMA_ARG_*` env vars. A CLI arg heylook passes **wins** over its env var (llama.cpp warns and overrides), so anything in the spawn argv is safe. But a flag heylook does *not* pass is set **silently**, and the running process then differs from what `models.toml` and the admin API say it is. The provider logs a warning naming any such variables it finds. They are deliberately not scrubbed from the child's environment -- someone may be using one on purpose, and quietly editing the child's environment would be its own invisible behaviour change.
+- **`LLAMA_ARG_*` environment variables are surfaced, not stripped -- with exactly one exception**: `llama-server` reads most flags from `LLAMA_ARG_*` env vars. A CLI arg heylook passes **wins** over its env var (llama.cpp warns and overrides), so anything in the spawn argv is safe. But a flag heylook does *not* pass is set **silently**, and the running process then differs from what `heylook.toml` and the admin API say it is. The provider logs a warning naming any such variables it finds. They are deliberately not scrubbed from the child's environment -- someone may be using one on purpose, and quietly editing the child's environment would be its own invisible behaviour change.
 
   **`LLAMA_ARG_LOG_FILE` is removed** from the child's environment at spawn (`_ENV_STRIPPED_AT_SPAWN`), because it does not merely change behaviour -- it defeats the switch above. Set, it makes `llama-server` open its own log file, so `observability_level = "off"` would still put a file on disk; and llama.cpp's logger writes to a set file **instead of** stdout rather than in addition to it (`common/log.cpp`: `if (!fcur) { fcur = stdout; }`), so it would also divert the stream heylook *does* capture when the level is raised. heylook owns this subprocess's log destination, and `off` has to mean nothing on disk.
 
@@ -202,7 +202,7 @@ sequenceDiagram
 
   Two things the strip does **not** reach, both closed or disclosed rather than left implicit:
 
-  - **`extra_args` is appended to argv verbatim**, so it could carry the same three flags straight past the switch -- and `--log-prompts-dir` there writes **prompt text** to disk at `observability_level = "off"` with nothing announcing it. A `GGUFModelConfig` validator now refuses all three (matching the flag *name*, so the `--flag=value` form is caught too) and names `observability_level` as the lever instead. It lives on the config rather than at spawn so an import, an admin `PATCH` and a hand-edited `models.toml` all hit it.
+  - **`extra_args` is appended to argv verbatim**, so it could carry the same three flags straight past the switch -- and `--log-prompts-dir` there writes **prompt text** to disk at `observability_level = "off"` with nothing announcing it. A `GGUFModelConfig` validator now refuses all three (matching the flag *name*, so the `--flag=value` form is caught too) and names `observability_level` as the lever instead. It lives on the config rather than at spawn so an import, an admin `PATCH` and a hand-edited `heylook.toml` all hit it.
   - **llama.cpp reads `/etc/llama.cpp/config.ini` and the user config dir's `llama.cpp/config.ini` (`$XDG_CONFIG_HOME`, else the platform default) before both env and CLI** (`common/arg.cpp`: *"config file applies first, so env variables and CLI arguments override it"*), and their keys dispatch into the same arg handlers. A `log-file` line there is a spawn setting heylook neither passes nor can counter -- the only counter would be passing `--log-file` ourselves, which redirects the stream we capture. So the provider **reports their existence** at spawn instead of claiming an ownership it does not have.
 
   The removal is **logged at WARNING**, naming the variable and its value. That is what keeps the surfaced-not-stripped reasoning intact rather than contradicting it: the objection to stripping is that it is invisible, not that it is wrong. There is deliberately no shell-level equivalent -- llama.cpp has no negative form of the variable (the only env var is the positive one), and an `unset` in a shell profile would cover an interactive shell while missing launchd, E2E harnesses and every other spawn path.
@@ -296,7 +296,7 @@ flowchart TD
 
 **The media guard applies to whichever candidate won**, override or publisher sidecar alike — it is not specific to the publisher's. If the model is served with a projector (`mmproj`) and the candidate carries no media markers (e.g. `part['type'] == 'image'`, `vision_start`, `image_pad`), the candidate is rejected with a warning and resolution falls through to the embedded template, so image inputs are never silently dropped.
 
-A template can therefore change with no `models.toml` change at all — dropping a file beside the weights is enough — which is why the spawn log names the winning rung, and why any measurement that varies by prompt format must establish which template each arm ran against.
+A template can therefore change with no `heylook.toml` change at all — dropping a file beside the weights is enough — which is why the spawn log names the winning rung, and why any measurement that varies by prompt format must establish which template each arm ran against.
 
 The log names the **rung**, not the file's provenance. A hand-placed `chat_template.jinja` is indistinguishable from a publisher's sidecar, so it wins the sidecar rung silently. The [audit](../testing/gguf_runtime_audit_2026-09-23.md) §10 records exactly that: a hand-written sidecar whose comment lines leaked whitespace made every turn's history render differently from how it was generated, which cost that model its multi-turn prompt cache (§4.6) until the fixed body was moved into the operator override. Hand edits belong in `chat_template.heylook.jinja`, which survives a re-download and shows as an override. Showing every copy's provenance and linting templates for prefix stability is the plan's W3.
 
@@ -420,7 +420,7 @@ flowchart TD
     Sidecars["Sidecar Files (mmproj-*.gguf, mtp-*.gguf, chat_template.jinja)"] --> AutoDetect
     AutoDetect --> DefaultModelConfig["Derived Model Configuration"]
     
-    DefaultModelConfig --> TomlConfig["models.toml Explicit [[models]] Overrides"]
+    DefaultModelConfig --> TomlConfig["heylook.toml Explicit [[models]] Overrides"]
     TomlConfig --> AdminAPI["Admin Reload Endpoint (POST /v1/admin/models/{id}/reload?ctx_size=N)"]
     AdminAPI --> RunningProcess["Spawned llama-server Process Arguments"]
 ```
@@ -443,6 +443,6 @@ When scanning directories (`model_importer.py`):
 ### 5.3. Admin Reload & Dynamic Context Sizing
 Context size can be adjusted dynamically in the Chat and Models UI:
 1. **Endpoint**: `POST /v1/admin/models/{id}/reload?ctx_size=N` ([`admin_api.py`](../../src/heylook_llm/admin_api.py)).
-2. **Persistence First**: If `ctx_size` is provided, it is persisted to `models.toml` via `ModelService.update_config` before reloading. Passing `ctx_size=0` resets the model to **Auto** (`-c 0`).
-3. **No-Op Avoidance**: the comparison is against the **stored** `ctx_size` in `models.toml`, not against the context the process is actually running. If the requested value matches what is stored and nothing else is stale, the warm model stays resident. The consequence is worth holding: a model running at Auto has *no* stored value, so asking for the exact size it happens to be running still counts as a change and restarts it.
+2. **Persistence First**: If `ctx_size` is provided, it is persisted to `heylook.toml` via `ModelService.update_config` before reloading. Passing `ctx_size=0` resets the model to **Auto** (`-c 0`).
+3. **No-Op Avoidance**: the comparison is against the **stored** `ctx_size` in `heylook.toml`, not against the context the process is actually running. If the requested value matches what is stored and nothing else is stale, the warm model stays resident. The consequence is worth holding: a model running at Auto has *no* stored value, so asking for the exact size it happens to be running still counts as a change and restarts it.
 4. **UI Integration**: the Chat page uses [`context-select.js`](../../frontend/js/context-select.js) for a dropdown of context sizes up to the model's native ceiling. **Choosing a value does not reload anything** -- it reveals the Load/Reload button, and the chosen size is sent *with* that load when you press it.

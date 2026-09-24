@@ -1,6 +1,6 @@
 # Untracked files Claude Code copies into a new worktree (gitignore syntax).
-# models.toml holds server-wide settings ([scan].folders and the like); a
+# heylook.toml holds server-wide settings ([scan].folders, [settings]); a
 # worktree's server needs its own copy. Per-model settings are in each model
 # folder's model.heylook.toml, which a copy can't isolate; loop servers run
 # read-only through scripts/dev_server.sh instead.
-models.toml
+heylook.toml

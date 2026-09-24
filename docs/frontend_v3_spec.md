@@ -174,7 +174,7 @@ backend):**
   opt-in flag.
 
 ### 3e. Settings (`settings.js` + panel, ~200 lines) — keep contract, data-drive the panel
-- 10 sampler keys, all default `null` = "use backend cascade" (floor → vendor → thinking → models.toml → request).
+- 10 sampler keys, all default `null` = "use backend cascade" (floor → vendor → thinking → heylook.toml → request).
   `samplerParams()` copies only non-null keys (extra: `top_k` requires `>0`, `presence_penalty` requires
   `>0`), so omitted keys respect the backend cascade. **Preserve this exactly** — it's a real integration
   contract, not cosmetics.
@@ -270,7 +270,7 @@ documented on that route that are about the ENGINES rather than the wire still h
   `default_sampler` were removed in v2.0.30. The UI's null-means-cascade settings contract is
   unchanged -- and `sampler_defaults` on the admin row is what a blank field should PRINT.
 - **Thinking default.** Since v1.79.62 an omitted `thinking` resolves through the cascade
-  request > models.toml `enable_thinking` > the model's thinking capability, and the admin row's
+  request > heylook.toml `enable_thinking` > the model's thinking capability, and the admin row's
   `thinking_default` is that cascade's own answer. History of the previous rule: **omitting
   `enable_thinking` meant OFF, on every engine (2026-08-07 through v1.79.61)**. v3's toggle was
   binary — it sends `true` or omits the key, never `false` — so what "omitted" resolves to
@@ -566,7 +566,7 @@ Response bodies are typed in `/openapi.json` (`Preset`, `PresetList`, `PresetDel
 **Admin models** (`X-Heylook-Admin-Token`): `GET /v1/admin/models` →
 `{models:[{id,provider,description?,tags,capabilities,config,loaded,source,
 stale_reload_fields,engine,thinking_default,sampler_defaults}], total}`.
-`source` (v1.70.0) is `"config"` (a models.toml `[[models]]` entry) or `"discovered"`
+`source` (v1.70.0) is `"config"` (a heylook.toml `[[models]]` entry) or `"discovered"`
 (found under `[scan].folders`, served with no entry). NOT derivable from `config`: a
 discovered model's `config` is not empty — it carries what the scanner assigned
 (`model_path`, `mmproj_path`, `modalities`, `supports_thinking`), so on the wire it looks
@@ -577,7 +577,7 @@ its entry. The list itself comes from the router's merged snapshot, so everythin
 is loadable -- a rescan-per-request would advertise models the loaded router cannot
 serve.
 `config` is the model's STORED keys only (`exclude_unset`, 2026-08-11) — absent IS how a
-default is spelled in models.toml, and the config editor + the row's non-default summary
+default is spelled in heylook.toml, and the config editor + the row's non-default summary
 chip depend on telling "explicitly set" from "inherited default". The resolved dump it
 used to be made every default look deliberately chosen (chip on every row,
 `n_gpu_layers 999` rendered as an explicit choice). NB pydantic validators that ASSIGN
@@ -646,7 +646,7 @@ cache, thinking, speculative, image, steering}`.
 - `settings` covers EVERY configurable field of the provider (derived from the config
   class, never listed) plus load decisions with no field: gguf `binary`,
   `image_max_tokens`, `metal_keep_alive`. `configured` is non-null
-  only for a value a models.toml entry stores AND that differs from what discovery derives
+  only for a value a heylook.toml entry stores AND that differs from what discovery derives
   for that file (else the schema default): a materialized entry's copies read as
   `derived` with reason "stored ... same as derived". Sampler keys carry the cascade's
   own answer, equal to `sampler_defaults`. The micro-batch and image cap on gguf are
@@ -678,9 +678,9 @@ cache, thinking, speculative, image, steering}`.
 Adding it moved `GET /v1/admin/models` and `GET /v1/admin/models/{id}` off the event loop
 (plain `def`): the derivation stats each served model's `config.json`.
 `GET|PUT /v1/admin/models/scan-config` (v1.70.0) → `{folders,
-scan_interval_seconds,models_served,warning?}` (`watch_hf_cache` retired v2.0.118). The `[scan]` table from models.toml --
+scan_interval_seconds,models_served,warning?}` (`watch_hf_cache` retired v2.0.118). The `[scan]` table from heylook.toml --
 the watch folders discovery serves from. PUT takes any subset (absent = leave alone),
-writes models.toml (comments survive), then reloads the router, and answers with
+writes heylook.toml (comments survive), then reloads the router, and answers with
 `models_served` so the UI can name the consequence rather than say "Saved".
 `scan_interval_seconds = 0` switches discovery off; other values schedule nothing
 (the periodic rescan retired v2.0.118; discovery runs at load and reload). This is the
@@ -739,7 +739,7 @@ trimmed feature needs them.)
 **Per-model config editing** (consumed since 2026-08-11, backend v1.52-1.53):
 `GET /v1/admin/model-options` → `{providers:{[provider]:{fields:[{name,effect,
 description,type,default,required,minimum?,maximum?,exclusiveMinimum?,exclusiveMaximum?,
-enum?,arg?,ui?,shape?,reason?}]}}}` — every settable models.toml key per provider, derived
+enum?,arg?,ui?,shape?,reason?}]}}}` — every settable heylook.toml key per provider, derived
 from the provider config classes (a new backend field appears in the UI with no frontend
 change). `description` is the field's own help text and the only such text published
 anywhere. The provider key is the engine a field reaches (the `engines` tag that
@@ -750,7 +750,7 @@ UI may render it unconditionally.
 NOT under `/v1/admin/models` (its `{model_id:path}` catch-all would eat the path).
 `effect` says WHEN a change lands and drives the editor's layout:
 `per_request`/`applies_live`/`descriptive` = immediate; `requires_reload` = saved to
-models.toml, a loaded model keeps running as-is until reloaded (the editor offers
+heylook.toml, a loaded model keeps running as-is until reloaded (the editor offers
 "Reload now" = `POST /{id}/reload?warm=true` after such a save, v1.62.0); `load_time_only` = rendered
 disabled with the field's `reason`; `identity` fields are never listed. `arg` is the
 llama-server flag spelling (shown as a hint, pinned to the emitted argv by a backend
@@ -762,19 +762,19 @@ boolean flag. Array fields edit as one element per LINE, never comma-joined —
 elements legitimately contain commas (`extra_args`: `--tensor-split "3,1"`).
 `PATCH /v1/admin/models/{id}` body `{config:{key: value|null}}` →
 `{model, reload_required_fields, warning?}`. Values are TYPED JSON (numbers as numbers);
-**null means "unset — back to the default"** and removes the key from the model's own `model.heylook.toml` for a discovered model (v2.0.115; a file left empty is deleted), or from its models.toml entry (absent
+**null means "unset — back to the default"** and removes the key from the model's own `model.heylook.toml` for a discovered model (v2.0.115; a file left empty is deleted), or from its heylook.toml entry (absent
 IS how a default is spelled on disk; this is the same null-means-cascade philosophy as
 guardrail #3). `reload_required_fields` is the server's provider-aware answer — the
 frontend renders it rather than re-deriving reloadiness client-side. `warning` carries a
 post-save config-reload failure. A value TOML can't store returns 400, not 500.
-CAUTION for harnesses: the PATCH rewrites models.toml through `tomli_w`, which drops
+CAUTION for harnesses: the PATCH rewrites heylook.toml through `tomli_w`, which drops
 every comment in the file — E2E checks must intercept it, never let it land (the E2E
-server isolates only the DB, not models.toml).
+server isolates only the DB, not heylook.toml).
 **409 on a read-only instance** (v2.0.112): a server started with
 `HEYLOOK_READONLY_MODEL_CONFIG` set (dev_server.sh, the E2E harness) refuses every
 model-config write -- config PATCH/POST/DELETE, `/scan-config`, the chat-template
 PUT/DELETE -- with 409 and a `detail` naming why. It still serves the same config.
-`DELETE /v1/admin/models/{id}` → `{status,model_id,warning?}`: removes a models.toml
+`DELETE /v1/admin/models/{id}` → `{status,model_id,warning?}`: removes a heylook.toml
 entry; a model under a scan folder is served again from discovery. There is no enabled
 flag (retired v2.0.119: presence in a scan folder is served), so no disabled-override 409.
 Every mutating admin route runs in the server's threadpool, not on the event loop: each
@@ -854,7 +854,7 @@ residency refresh, for each staged image's size and its original's size: the
 thumbnail shows the staged cost, and "Fit" resizes the original to the
 planned `target` (a model that reports none gets no Fit).
 
-**Models list** `GET /v1/models` → `{data:[{id,provider?,capabilities?,modalities?,thinking_default?,sampler_defaults?,engine?}]}` (enabled models only; `engine` is the contract described under Admin models). `modalities` (v1.34.43) is the model's declared capability set (`["text","vision","audio","video"]`); `capabilities` stays gated to what the server actually serves (image input) -- description != served. Since v1.79.43 the MLX `vision` capability is DERIVED FROM THE LOADER ROUTER (`effective_loader == "mlx-vlm"`), the same answer `MLXProvider`'s image guard reads, so the advertised capability and the 400 cannot disagree. Before that it read the checkpoint's DECLARATION, and a hand-made text-only variant whose directory still carried vision blocks advertised `vision` and was then refused -- a client gating on `capabilities` exactly as this spec instructs got the refusal anyway. (The `loader` field that could force a dual-capable VLM to text was retired in v2.0.88.) NB `modalities` is UNCHANGED by this: the checkpoint still declares what it declares, which is why chat's history-media drop disclosure reads capabilities and not modalities. `thinking` (v1.34.60) is auto-detected from whether the model's chat template references `enable_thinking` (Qwen3 `<think>` blocks, gemma-4 thought channels) -- no `models.toml` flag needed; this is what shows/hides the drawer checkbox and composer icon.
+**Models list** `GET /v1/models` → `{data:[{id,provider?,capabilities?,modalities?,thinking_default?,sampler_defaults?,engine?}]}` (enabled models only; `engine` is the contract described under Admin models). `modalities` (v1.34.43) is the model's declared capability set (`["text","vision","audio","video"]`); `capabilities` stays gated to what the server actually serves (image input) -- description != served. Since v1.79.43 the MLX `vision` capability is DERIVED FROM THE LOADER ROUTER (`effective_loader == "mlx-vlm"`), the same answer `MLXProvider`'s image guard reads, so the advertised capability and the 400 cannot disagree. Before that it read the checkpoint's DECLARATION, and a hand-made text-only variant whose directory still carried vision blocks advertised `vision` and was then refused -- a client gating on `capabilities` exactly as this spec instructs got the refusal anyway. (The `loader` field that could force a dual-capable VLM to text was retired in v2.0.88.) NB `modalities` is UNCHANGED by this: the checkpoint still declares what it declares, which is why chat's history-media drop disclosure reads capabilities and not modalities. `thinking` (v1.34.60) is auto-detected from whether the model's chat template references `enable_thinking` (Qwen3 `<think>` blocks, gemma-4 thought channels) -- no `heylook.toml` flag needed; this is what shows/hides the drawer checkbox and composer icon.
 **Metrics** `GET /v1/system/metrics?force_refresh?` → `{system:{ram_used_gb,ram_available_gb,ram_total_gb,
 cpu_percent}, models:{[id]:{memory_mb,context_used,context_capacity,context_percent,requests_active,
 requests_queued}}}` (30s server cache).
@@ -918,7 +918,7 @@ paste; images render as a thumbnail strip capped at **8 attachments**, with an
 aria-live announcement when the cap is hit and a "Remove image N" label per
 thumbnail. The thinking toggle is visible only when the selected model reports
 the `thinking` capability (see §4 Models list -- auto-detected from the chat
-template, no `models.toml` flag required) and mirrors the drawer checkbox's
+template, no `heylook.toml` flag required) and mirrors the drawer checkbox's
 true/unset semantics 1:1 via `onSettingsChange`.
 
 **Settings entry points + presets (added post-spec -- 2026-07-11 shared-drawer

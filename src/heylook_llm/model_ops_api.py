@@ -220,7 +220,7 @@ List all language models currently available on this server.
   `capabilities` (what this server will SERVE) rather than `modalities` (what
   the checkpoint author declared) -- they differ on purpose.
 - The OpenAI list shape (`object: "list"`, `data: [...]`), which is what the bundled frontend and external clients read
-- Every served model: discovered under the scan folders, plus any models.toml entry
+- Every served model: discovered under the scan folders, plus any heylook.toml entry
     """,
     response_description="List of available models (OpenAI list shape, heylook fields per row)",
 )

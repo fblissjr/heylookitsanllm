@@ -209,14 +209,16 @@ def _resolve_config(model_id: str, overrides: dict) -> tuple[str, dict]:
     from heylook_llm.config import ModelConfig
     from heylook_llm.model_registry import discover, merge_discovered
 
-    data = tomllib.loads((REPO / "models.toml").read_text())
+    from heylook_llm.router import CONFIG_FILENAME
+
+    data = tomllib.loads((REPO / CONFIG_FILENAME).read_text())
     for m in merge_discovered(data, discover(data))["models"]:
         if m["id"] == model_id:
             mc = ModelConfig.model_validate(m)
             cfg = mc.config.model_dump()
             cfg.update(overrides)
             return mc.provider, cfg
-    sys.exit(f"{model_id}: not served (models.toml + discovery)")
+    sys.exit(f"{model_id}: not served (heylook.toml + discovery)")
 
 
 def _image_url() -> str:

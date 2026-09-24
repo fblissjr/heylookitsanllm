@@ -25,19 +25,21 @@ NEAR_TIE_MARGIN = 0.125
 
 
 def resolve_config(model_id: str, overrides: dict | None = None) -> tuple[str, dict]:
-    """(provider, config) for a served model: models.toml merged with
+    """(provider, config) for a served model: heylook.toml merged with
     discovery and VALIDATED through ModelConfig, as the router builds it."""
     from heylook_llm.config import ModelConfig
     from heylook_llm.model_registry import discover, merge_discovered
 
-    data = tomllib.loads((REPO / "models.toml").read_text())
+    from heylook_llm.router import CONFIG_FILENAME
+
+    data = tomllib.loads((REPO / CONFIG_FILENAME).read_text())
     for m in merge_discovered(data, discover(data))["models"]:
         if m["id"] == model_id:
             mc = ModelConfig.model_validate(m)
             cfg = mc.config.model_dump()
             cfg.update(overrides or {})
             return mc.provider, cfg
-    sys.exit(f"{model_id}: not served (checked models.toml + discovery)")
+    sys.exit(f"{model_id}: not served (checked heylook.toml + discovery)")
 
 
 def load_provider(model_id: str, overrides: dict | None = None):
