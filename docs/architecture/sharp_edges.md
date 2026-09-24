@@ -241,8 +241,26 @@ teardown-crash class.
 
 ### gguf speculative decoding
 
-Spec decode (`spec_type = "draft-mtp"`) is per-model opt-in and should stay
-off unless you have checked it is a win on your model at your context.
+**2026-09-24, owner decision: spec decode is on by default whenever a model
+ships a drafter** (a drafter file or an MTP head built into the GGUF). This
+replaces the per-model opt-in policy below, which is kept as history. The
+case was the owner's examples: DeepSeek V4 Flash Vision Q8 and Qwen3.8-27B
+both ship spec decode and neither ran it. Reading their files showed why, and
+each reason is a gap in discovery, not a choice. Qwen3.8-27B's head is built
+in (`blk.64.nextn.*` in both local GGUFs) and discovery only looks for
+drafter files. The DeepSeek Vision Q8 folder has no drafter of its own, while
+a drafter for the same model (`dspark-…-MXFP4.gguf`, arch `dflash`, the same
+`general.name`) sits in the ggml-org quant's neighbouring folder, where
+discovery never looks. And every such model had an explicit models.toml
+entry, which receives no derived fields. The evidence against defaulting on
+was thin all along: the paragraph on 2026-08-10 below found a wash, not a
+loss. Header-based detection is planned with the registry sidecars. Neither
+the built-in-head launch nor the cross-quant drafter had been run when this
+was written.
+
+Before 2026-09-24: spec decode (`spec_type = "draft-mtp"`) was per-model
+opt-in and was to stay off unless you had checked it was a win on your model
+at your context.
 
 `spec_type` is not the switch, and an unset `spec_type` does not mean spec
 decode is off (found 2026-09-19; the importer's comment asserted the opposite
@@ -277,11 +295,12 @@ is a wash, indistinguishable from noise. Every larger effect seen that day
 dissolved when one more variable was controlled: a big tuning win was a
 greedy artifact, a clear cost was a short-generation artifact, a dramatic
 context effect was a cache-ordering mistake, and a "broken drafter" was
-refuted by the drafter's own output. Default off for a new model is because it
-is unproven here, not because it is known harmful, and expect your own case
-to need its own check.
+refuted by the drafter's own output. Default off for a new model was because it
+was unproven here, not because it was known harmful (superseded 2026-09-24,
+above).
 
-Carve-out, do not undo it: the owner has decided the DeepSeek V4 Flash entry
+Carve-out (moot since 2026-09-24, when on became the default for every model
+that ships a drafter): the owner had decided the DeepSeek V4 Flash entry
 keeps spec decode on, on community evidence and their own judgement rather
 than anything measured here. "Default off" means do not enable it elsewhere
 without checking; it does not mean disable what is already running. Nothing

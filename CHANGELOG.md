@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.108]
+
+Documentation only.
+
+### Changed
+
+- **Spec decode is on by default whenever a model ships a drafter** (owner
+  decision): a drafter file, or an MTP head built into the GGUF. This
+  replaces "per-model opt-in, off for a new model", and the DeepSeek V4
+  Flash carve-out becomes moot. `.claude/rules/gguf.md` states the decision
+  and what discovery does today, which falls short of it: it pairs only a
+  drafter file beside the weights. Built-in heads (Qwen3.8-27B, Qwen3.6),
+  `MTP/` subfolders and a same-model drafter in a neighbouring quant folder
+  (DeepSeek V4 Flash Vision) are not detected yet; header-based detection is
+  planned with the registry sidecars. Until then it is set per model:
+  `spec_type = "draft-mtp"` alone for a built-in head (llama.cpp loads the
+  head from the target), `draft_model_path` for a drafter file.
+- `sharp_edges.md` records the reversal and its evidence as a dated entry and
+  keeps the old policy as history.
+
 ## [2.0.107]
 
 ### Added
