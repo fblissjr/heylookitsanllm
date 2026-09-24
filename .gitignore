@@ -22,6 +22,8 @@ adapters/*
 archive/
 artifacts/
 coderef/
+# upstream clones for contribution work (e.g. forks/mlx-vlm)
+forks/
 GEMINI.md
 docs/archive
 docs/frontend-mocks/
