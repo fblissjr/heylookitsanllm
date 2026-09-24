@@ -36,17 +36,22 @@ Record: `internal/claude/improve/archive/runs-2026-09-24/` (report.html has the 
 - [x] **Security: CORS, admin argv, RLM** (v2.0.123, owner call): the CORS
   wildcard is gone, admin writes refuse `config.FILE_ONLY_FIELDS` (422), and
   RLM (with its `sandbox: false` request field) is removed.
-- [ ] **Security, lower priority (owner decision).** `HEYLOOK_API_KEY` does not
-  gate the conversation, notebook, preset or generate routers; MLX image
-  sources may be http URLs (a server-side fetch) or local paths; no Host
-  check, so DNS rebinding can still reach the API from a browser. Details in
-  the run's report. Owner (2026-09-24): the server is LAN-only. That lowers
-  the first two, but not the Host check: DNS rebinding goes through a browser
-  already inside the LAN.
+- [x] **The partial inference API key is removed** (v2.0.127, owner: the
+  server is LAN-only and the key was never set). `HEYLOOK_API_KEY` gated
+  messages, model load and request cancellation but not the conversation,
+  notebook, preset or generate routers, so it looked like protection without
+  being it. If the server ever leaves the trusted LAN, a real gate must cover
+  every router at once (one app-level dependency, not per-router) and ship
+  with the Host check below.
+- [ ] **Security, lower priority (owner decision).** MLX image sources may be
+  http URLs (fetched by the server) or local paths; and there is no Host
+  check, so DNS rebinding can reach the API through a browser already inside
+  the LAN (LAN-only does not cover this one). Details in the run's report.
 - [ ] **Upstream PR to separate APC captures from store size** and let a
   caller name boundaries; it would delete heylook's local capture rule
-  (`vlm_engine.install_capture_policy`). Drafted in the run's ledger. File it
-  after #2356 lands (filing sends it off this machine: owner's go).
+  (`vlm_engine.install_capture_policy`). Drafted in `internal/claude/improve/ledger.md`, under "Upstream drafts (NOT posted)".
+  Kept here, not filed (owner, 2026-09-24): file it only after #2356 lands
+  and the owner says go, since filing sends it off this machine.
 - [x] **Hook: refuse `git add -A`/`-u`/`.`** and `git commit -a`
   (`scripts/hooks/git_add_guard.py`, v2.0.125, owner-approved).
 - [x] **Model pinning deleted** (v2.0.126, owner yes): RLM was its only caller.

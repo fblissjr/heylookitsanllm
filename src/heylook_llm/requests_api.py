@@ -24,16 +24,15 @@ which is exactly the traffic that needed cancelling.
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 
-from heylook_llm.auth import require_api_key
 from heylook_llm.request_registry import (
     REQUEST_ID_PATTERN,
     get_request_registry,
     is_valid_request_id,
 )
 
-requests_router = APIRouter(tags=["Requests"], dependencies=[Depends(require_api_key)])
+requests_router = APIRouter(tags=["Requests"])
 
 
 @requests_router.delete(

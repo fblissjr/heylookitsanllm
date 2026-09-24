@@ -206,10 +206,9 @@ backend):**
 
 ## 4. Backend API contract (integration surface — verified against source)
 
-Base: same-origin. Two independent, both-opt-in auth gates (loopback exempt from the API-key gate by
-default): `HEYLOOK_API_KEY` (`Authorization: Bearer`) on inference; `HEYLOOK_ADMIN_TOKEN`
-(`X-Heylook-Admin-Token`) on admin + `/v1/data/clear`. Conversations/notebooks/models-list/metrics/profile
-are unauthenticated.
+Base: same-origin. One opt-in auth gate: `HEYLOOK_ADMIN_TOKEN` (`X-Heylook-Admin-Token`) on admin +
+`/v1/data/clear`. Inference, conversations/notebooks/models-list/metrics/profile are unauthenticated
+(no inference API key since v2.0.127).
 
 **Chat completions** `POST /v1/chat/completions` and **Batch** `POST /v1/batch/chat/completions`:
 REMOVED in v1.79.66, together with the OpenAI SSE grammar (`choices[].delta` chunks, `data: [DONE]`,

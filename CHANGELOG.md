@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.127]
+
+### Removed
+
+- **The inference API key (`HEYLOOK_API_KEY`, `HEYLOOK_API_KEY_ENFORCE_LOOPBACK`)**
+  (owner decision: the server is LAN-only and the key was never set). It gated
+  `/v1/messages`, model load and request cancellation but not the
+  conversation, notebook, preset or generate routers, so it looked like
+  protection without being it. `require_api_key` and
+  `tests/unit/test_api_key_auth.py` are gone; `HEYLOOK_ADMIN_TOKEN` is
+  unchanged. Spec §4, `docs/api_integration.md`, the README and the OpenAPI
+  narrative say inference is unauthenticated. `TODO.md` records what a real
+  gate would need if the server ever leaves the trusted LAN.
+
 ## [2.0.126]
 
 ### Removed

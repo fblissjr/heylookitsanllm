@@ -136,10 +136,9 @@ response = client.messages.create(
   it takes the generation gate, so keep it out of a per-request pre-flight.
 - One model resident by default, LRU eviction; group your requests by model
   so consecutive ones do not each pay a load.
-- Auth is opt-in and off by default: `HEYLOOK_API_KEY`
-  (`Authorization: Bearer`, loopback-exempt unless
-  `HEYLOOK_API_KEY_ENFORCE_LOOPBACK=true`) gates inference,
-  `HEYLOOK_ADMIN_TOKEN` (`X-Heylook-Admin-Token`) gates admin.
+- Auth is opt-in and off by default: `HEYLOOK_ADMIN_TOKEN`
+  (`X-Heylook-Admin-Token`) gates admin. Inference is unauthenticated (a
+  trusted home LAN is the boundary).
 - Send `X-Request-ID`. `/v1/messages` and the generate route echo it back, it correlates the
   server-side logs, and it is the handle `DELETE /v1/requests/{{id}}` cancels
   by -- the only way to stop a NON-streaming run, which writes nothing until

@@ -576,14 +576,9 @@ is normal.
 
 ## 6. Auth
 
-Both gates are **opt-in and off by default**, and a default localhost
-deployment is open.
+Inference is unauthenticated: the server is meant for a trusted home LAN.
+The one gate is **opt-in and off by default**:
 
-- `HEYLOOK_API_KEY` → send `Authorization: Bearer <key>`. Gates inference
-  (messages, the conversation generate route, request cancellation). **Loopback
-  traffic is exempt by default**; `HEYLOOK_API_KEY_ENFORCE_LOOPBACK=true`
-  closes that carve-out. If your app is not on the same machine, this is the
-  gate you will meet.
 - `HEYLOOK_ADMIN_TOKEN` → send `X-Heylook-Admin-Token`. Gates admin routes.
   An integration should not need it.
 
@@ -600,11 +595,7 @@ server's logs.
 
 `DELETE /v1/requests/{request_id}` stops a generation that is still running.
 
-**It is behind the inference gate**, not the admin one: when `HEYLOOK_API_KEY`
-is set, send the same `Authorization: Bearer <key>` you send on
-`/v1/messages`. Loopback is exempt by default like the rest of inference, so
-this only bites off-machine — which is exactly where a client has to guess.
-No admin token is involved.
+It needs no auth, like the rest of inference; no admin token is involved.
 
 **The endpoint is v1.79.44.** Nothing was cancellable by id before that.
 The removed OpenAI wire read `X-Request-ID` earlier, but only for log

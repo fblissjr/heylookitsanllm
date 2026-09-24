@@ -8,9 +8,8 @@ inference request already does: ``/v1/messages`` calls
 generate can already trigger a multi-GB load and
 (at ``max_loaded_models=1``) an eviction, just by naming a model in the
 body. The admin gate only stopped a client from doing EXPLICITLY and
-OBSERVABLY what it could already do implicitly. It is gated on
-``require_api_key`` -- whoever may generate may load -- while ``unload`` and
-``reload`` stay admin, because those stop a model out from under other
+OBSERVABLY what it could already do implicitly. Whoever may generate may
+load, while ``unload`` and ``reload`` stay admin, because those stop a model out from under other
 clients, and ``GET /v1/admin/models`` stays admin because it discloses
 ``model_path`` and the full per-model config.
 
@@ -37,10 +36,9 @@ import time
 
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from heylook_llm.auth import require_api_key
 from heylook_llm.busy_response import model_busy_response
 from heylook_llm.capabilities import derived_model_facts
 from heylook_llm.providers.common.generation_gate import ModelBusyError
@@ -50,7 +48,6 @@ logger = logging.getLogger(__name__)
 model_ops_router = APIRouter(
     prefix="/v1/models",
     tags=["Models"],
-    dependencies=[Depends(require_api_key)],
 )
 
 
@@ -195,9 +192,8 @@ async def load_and_warm(router, model_id: str, warm: bool):
 
 
 # GET /v1/models is DISCOVERY, not an operation: it was mounted on the app with
-# no API-key dependency (v3 and external clients resolve ids from it before
-# they have anything to authenticate), so it keeps its own router rather than
-# inheriting the load route's require_api_key.
+# no auth dependency (clients resolve ids from it before they do anything
+# else), so it keeps its own router.
 models_router = APIRouter(tags=["Models"])
 
 

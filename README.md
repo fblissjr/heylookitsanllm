@@ -51,10 +51,9 @@ it holds to: [VISION.md](VISION.md).
 - **Defaults**: port 8000 (`--port`), bound to `127.0.0.1` (`--host 0.0.0.0`
   to expose it on your network). HTTPS is not built in; put your own reverse
   proxy in front if you need it.
-- **Opt-in auth, off by default**: `HEYLOOK_ADMIN_TOKEN` gates admin/destructive
-  endpoints (`X-Heylook-Admin-Token` header); `HEYLOOK_API_KEY` gates inference
-  (`Authorization: Bearer`; loopback exempt unless
-  `HEYLOOK_API_KEY_ENFORCE_LOOPBACK=true`).
+- **Opt-in admin auth, off by default**: `HEYLOOK_ADMIN_TOKEN` gates admin and
+  destructive endpoints (`X-Heylook-Admin-Token` header). Inference has no
+  key: the server is meant for a trusted home LAN.
 - **`heylook.toml` is override-only.** Anything under a `[scan].folders` watch
   folder is served automatically with defaults derived from the model's own
   files (modalities, chat template, sampling, KV-cache sizing) -- a new

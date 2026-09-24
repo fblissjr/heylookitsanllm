@@ -16,10 +16,9 @@ import uuid
 from contextlib import closing
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
-from heylook_llm.auth import require_api_key
 from heylook_llm.providers.abort import AbortEvent
 from heylook_llm.providers.base import GenerationFailed, InvalidGenerationRequest
 from heylook_llm.busy_response import model_busy_response
@@ -54,7 +53,6 @@ from heylook_llm.thinking_parser import HybridThinkingParser
 messages_router = APIRouter(
     prefix="/v1",
     tags=["Messages API"],
-    dependencies=[Depends(require_api_key)],
 )
 
 

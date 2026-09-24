@@ -1,23 +1,20 @@
-"""Optional admin + inference authentication.
+"""Optional admin authentication.
 
-Two independent gates, both opt-in via env vars:
+``HEYLOOK_ADMIN_TOKEN`` (header ``X-Heylook-Admin-Token``) gates the admin
+routers plus ``/v1/data/clear`` and ``/v1/cache/clear``. It is a no-op when
+the env var is unset or empty -- the default single-user deployment stays
+open. Token comparison uses ``hmac.compare_digest`` so a wrong-length guess
+and a close-match guess take the same time.
 
-- ``HEYLOOK_ADMIN_TOKEN`` (header ``X-Heylook-Admin-Token``): gates the
-  three admin routers plus ``/v1/data/clear`` and ``/v1/cache/clear``.
-  S1.6.
-- ``HEYLOOK_API_KEY`` (header ``Authorization: Bearer <value>``): gates
-  inference endpoints (messages, the conversation generate route). C1.5. Loopback traffic is exempt by default; set
-  ``HEYLOOK_API_KEY_ENFORCE_LOOPBACK=true`` to close the carve-out.
-
-Both dependencies are no-ops when their env var is unset or empty -- the
-default single-user localhost deployment stays open. Token comparison uses
-``hmac.compare_digest`` so a wrong-length guess and a close-match guess
-take the same time.
+There is no inference API key. ``HEYLOOK_API_KEY`` gated only some inference
+routes (not the conversation, notebook, preset or generate routers), which
+looked like protection without being it, and the owner does not set it; it
+was removed in v2.0.127 (see docs/project/TODO.md for what a real gate would
+need).
 
 Design rationale: the server's default LAN exposure (``--host 0.0.0.0`` so
-the Ubuntu+4090 box can reach it) makes the home network the implicit
-trust boundary. The admin-token + api-key pair lets users tighten that
-boundary without breaking the default UX when they don't need to.
+another LAN machine can reach it) makes the home network the trust
+boundary.
 """
 
 from __future__ import annotations
@@ -28,18 +25,9 @@ import os
 
 from fastapi import HTTPException, Request
 
-from heylook_llm.memory import parse_bool_env
-
 
 _ADMIN_TOKEN_ENV = "HEYLOOK_ADMIN_TOKEN"
 _ADMIN_TOKEN_HEADER = "X-Heylook-Admin-Token"
-
-_API_KEY_ENV = "HEYLOOK_API_KEY"
-_API_KEY_ENFORCE_LOOPBACK_ENV = "HEYLOOK_API_KEY_ENFORCE_LOOPBACK"
-_AUTHORIZATION_HEADER = "Authorization"
-# Uvicorn/Starlette populate request.client.host with the resolved peer IP,
-# never a hostname -- "localhost" never appears here.
-_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1"})
 
 
 def require_admin_token(request: Request) -> None:
@@ -63,60 +51,5 @@ def require_admin_token(request: Request) -> None:
         raise HTTPException(
             status_code=401,
             detail=f"Admin endpoint requires {_ADMIN_TOKEN_HEADER} header.",
-        )
-    return None
-
-
-def _is_loopback(request: Request) -> bool:
-    """Return True only when we can positively identify the request as
-    loopback. An absent ``request.client`` means we cannot tell, and the
-    safe default is to treat it as non-loopback (fail closed).
-    """
-    client = getattr(request, "client", None)
-    if client is None:
-        return False
-    host = getattr(client, "host", None)
-    return host in _LOOPBACK_HOSTS
-
-
-def require_api_key(request: Request) -> None:
-    """FastAPI dependency: gate inference routes behind HEYLOOK_API_KEY.
-
-    Raises ``HTTPException(401)`` when the env var is set AND the request
-    fails the check. The request passes when:
-
-    1. The env var is unset or empty.
-    2. The client is loopback AND ``HEYLOOK_API_KEY_ENFORCE_LOOPBACK`` is
-       not truthy (default carve-out -- local dev tools don't need to
-       carry the key).
-    3. The ``Authorization: Bearer <value>`` header matches the env value
-       under constant-time comparison. The ``Bearer`` scheme token is
-       matched case-insensitively per RFC 6750.
-    """
-    expected = os.environ.get(_API_KEY_ENV, "").strip()
-    if not expected:
-        return None
-
-    # Loopback carve-out -- only parse the enforce-loopback env var when the
-    # client is actually loopback (otherwise it's pure per-request overhead).
-    if _is_loopback(request):
-        enforce = parse_bool_env(
-            os.environ.get(_API_KEY_ENFORCE_LOOPBACK_ENV), default=False
-        )
-        if not enforce:
-            return None
-
-    provided = request.headers.get(_AUTHORIZATION_HEADER) or ""
-    scheme, _, token = provided.partition(" ")
-    if scheme.lower() != "bearer" or not hmac.compare_digest(token, expected):
-        logging.warning(
-            "api-key mismatch on %s from %s; set HEYLOOK_API_KEY or send "
-            "'Authorization: Bearer <key>'",
-            request.url.path if hasattr(request, "url") else "<request>",
-            getattr(getattr(request, "client", None), "host", "<unknown>"),
-        )
-        raise HTTPException(
-            status_code=401,
-            detail="Inference endpoint requires 'Authorization: Bearer <key>' header.",
         )
     return None

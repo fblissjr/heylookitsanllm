@@ -1,7 +1,7 @@
 """Minimal Starlette-Request stand-in for auth-dependency tests.
 
-Shared between test_admin_auth.py (admin-token) and test_api_key_auth.py
-(inference api-key). Covers the two attributes those dependencies touch:
+Used by test_admin_auth.py (admin token). Covers the two attributes an auth
+dependency touches:
 ``request.headers.get(name)`` (case-insensitive per RFC 7230) and
 ``request.client.host`` (resolved peer IP, optional -- ``None`` for test
 clients and some middlewares, which must fail closed).
