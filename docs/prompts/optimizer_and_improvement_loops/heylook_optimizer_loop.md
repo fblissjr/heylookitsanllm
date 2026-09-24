@@ -9,7 +9,7 @@ Done means:
 
 The target is a floor, not the finish line. Keep going while ideas are still paying off.
 
-This prompt shares its machinery with `docs/prompts/heylook_improvement_loop.md`. That file is mine, so read it in the main checkout. Follow its <how_to_run>, <parallel_sessions>, <state>, <measurement>, <visuals> and <scope> sections, plus the Speed, Memory, Quality and Code lines of its parameters, exactly as written. Ignore the rest of it (the lenses, the run cycle and the final report). AGENTS.md's rules apply in full and win any conflict.
+This prompt shares its machinery with `docs/prompts/optimizer_and_improvement_loops/heylook_improvement_loop.md`. That file is mine, so read it in the main checkout. Follow its <how_to_run>, <parallel_sessions>, <state>, <measurement>, <visuals> and <scope> sections, plus the Speed, Memory, Quality and Code lines of its parameters, exactly as written. Ignore the rest of it (the lenses, the run cycle and the final report). AGENTS.md's rules apply in full and win any conflict.
 
 <parameters>
 - Target: time to first token at least 1.2× faster than the base commit on the reuse scenarios (turn N of a conversation, a long system prompt reused across new conversations, text follow-ups after an image), on the mlx-text, mlx-vision and gguf arms. Past that, as fast as you can get it.

@@ -4,7 +4,7 @@ Improve heylook one run at a time.
 
 AGENTS.md's rules apply in full. Where this prompt and AGENTS.md disagree, follow AGENTS.md and name the conflict under "Needs from me". Decisions AGENTS.md records as mine (owner decision, owner call, owner rule) are settled: don't reopen one without a new reason, and if you have one, put it under "Needs from me".
 
-This file is also the shared layer for `docs/prompts/heylook_optimizer_loop.md`, which follows its <how_to_run>, <parallel_sessions>, <state>, <measurement>, <visuals> and <scope> sections.
+This file is also the shared layer for `docs/prompts/optimizer_and_improvement_loops/heylook_optimizer_loop.md`, which follows its <how_to_run>, <parallel_sessions>, <state>, <measurement>, <visuals> and <scope> sections.
 
 A run is done when:
 - anything that regressed since the last run is reported, and fixed if it is yours,
@@ -116,7 +116,7 @@ Start each lens from what the repo already knows: the approved plans in `docs/pr
 <each_run>
 1. Orient. Create the run id and the worktrees, and start the run record. In your worktree, read VISION.md, AGENTS.md, the handoff in `docs/project/CURRENT.md`, the approved plans and TODO.md. In the loop state, read the ledger, the scoreboard, the bookmarks and my answers. Read the git log since each bookmark, and check upstream releases since theirs. Before changing an area, read its sections of `sharp_edges.md`. Read the postmortems before touching providers.
    This prompt names many paths, commands and behaviours, and the refactor keeps moving them. Check each one against the base commit before relying on it. Where one no longer holds, follow the code and AGENTS.md, and list the stale line and its fix under "Needs from me".
-   If the loop state is empty, this is the first run. Build only the scenarios the first ideas need, record the base commit, and get to a first kept change in the same run. Grow the harness and the scoreboard as later ideas need them. `docs/prompts/heylook_optimizer_loop.md` may already have started them.
+   If the loop state is empty, this is the first run. Build only the scenarios the first ideas need, record the base commit, and get to a first kept change in the same run. Grow the harness and the scoreboard as later ideas need them. `docs/prompts/optimizer_and_improvement_loops/heylook_optimizer_loop.md` may already have started them.
 2. Measure. Run the scenarios on the base commit and compare them with the last run's rows. Any difference is a lead. Before calling it a regression, confirm it by alternating the two commits in two worktrees. Then find the commit that caused it (bisect if needed) and put it under "Needs from me".
 3. Find. Launch the reviewers in parallel, one per lens. Skip a lens whose bookmark shows nothing it covers has changed. Tell each one:
    - Read code and the web only, plus files in `internal/` last modified before the base commit's time (give them that time) and the loop state, and nothing in today's `internal/log/`. Don't edit files, build, run tests or benchmarks, start servers, or load models. Those compete for the GPU and unified memory and make timings meaningless.
