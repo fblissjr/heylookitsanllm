@@ -1621,10 +1621,16 @@ class MLXProvider(BaseProvider):
             )
 
     def clear_cache(self) -> bool:
-        """Clear this model's prefix cache (a fresh, empty APC store)."""
+        """Clear this model's prompt reuse: a fresh, empty APC store and an
+        empty vision feature cache. (Until 2026-09-24 the vision features
+        survived a clear, so a "cold" image check after one still skipped the
+        vision tower.)"""
         try:
             if self._apc is not None:
                 self._apc = vlm_engine.make_apc_manager()
+            vision = self._strategies.get("vision")
+            if vision is not None:
+                vision._vision_cache.clear()
             logging.info(f"Cleared prompt cache for {self.model_id}")
             return True
         except Exception as e:
