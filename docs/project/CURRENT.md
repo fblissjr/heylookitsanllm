@@ -123,13 +123,14 @@ one side left at f16.
 
 **Open items, first things first:**
 
-0. **Registry and spec decode, what is left** (details in `TODO.md`):
-   - DeepSeek live checks (Vision Q8, Q4, ggml-org Vision, 0731) waiting on
-     free memory: at 384K, Q8 with its drafter needs more than is free with
-     the browser open, so expect it to load without the drafter;
-   - spec decode is not yet in the engine report (`engine.speculative`);
-   - models.toml becomes `heylook.toml` with the DuckDB settings folded in;
-     the `enabled` field and `watch_hf_cache` retire.
+0. **Registry and spec decode, what is left** (details in `TODO.md`; all
+   three are `mrblue`'s, in this order):
+   - retire the `enabled` field (`watch_hf_cache` went in v2.0.118);
+   - spec decode in the engine report (`engine.speculative`);
+   - models.toml becomes `heylook.toml` with the DuckDB settings folded in.
+   The DeepSeek live checks are done: every DeepSeek build drafts when there
+   is room, and Vision Q4 took the drop path ("short by N GiB") when there was
+   not. Results are in the 2026-09-24 session log.
    **Environment (owner):**
    - Resolved later on 2026-09-24: no `models.toml` entry points at `modelzoo/`
      any more (checked against the local file), and the repo no longer names it
