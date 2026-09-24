@@ -1,6 +1,6 @@
 # Test Suite
 
-last updated: 2026-07-20
+last updated: 2026-09-23
 
 ## Overview
 
@@ -13,8 +13,9 @@ tests/
   unit/              # Fast isolated tests, no server required
   unit/mlx_perf/     # MLX performance correctness tests
   contract/          # API contract tests with TestClient (no server required)
-  integration/       # Tests requiring running server
-  integration/mlx_perf/  # Performance benchmarks (requires server + MLX)
+  smoke/             # Live smoke against a running server, per engine arm (opt-in)
+  eval/              # Behavioural eval bank against a running server (opt-in)
+  e2e/               # Browser E2E (opt-in, unsandboxed)
   helpers/           # Shared mocking utilities (mlx_mock.py)
   fixtures/          # Shared test data
   input/             # Test input files (images, audio)
@@ -22,11 +23,16 @@ tests/
   README.md          # This file
 ```
 
+What a file covers is in its own module docstring; this README does not keep
+a per-file list (the last one drifted into listing files that no longer
+existed). Before concluding the suite covers something, read the dated audits
+in `docs/testing/`.
+
 ## Running Tests
 
 ```bash
 # The suite (unit + contract) -- pytest.ini's testpaths, so a bare run is the
-# same thing and never sweeps the live-server scripts under integration/
+# same thing
 uv run pytest -v
 
 # Unit + contract (no server needed)
@@ -37,85 +43,13 @@ uv run pytest tests/unit/ -v
 
 # Contract only
 uv run pytest tests/contract/ -v
-
-# Integration (requires running server on port 8000)
-uv run pytest tests/integration/ -v
-
-# All tests
-uv run pytest tests/ -v
 ```
 
 **Invariant:** the suite is fully green. Any failure is a regression -- investigate it. There is no pre-existing-failure allowlist.
 
-## Unit Tests (`tests/unit/`)
-
-17 test files + 3 mlx_perf sub-files:
-
-- **test_mlx_provider.py** -- MLX provider: loading, generation, vision, streaming
-- **test_mlx_provider_safety.py** -- MLX provider safety guards
-- **test_config.py** -- Config loading, validation, provider types
-- **test_router.py** -- ModelRouter LRU cache and provider loading
-- **test_model_service.py** -- Model profiles, smart defaults, size regex
-- **test_generation_core.py** -- Core generation logic
-- **test_messages_api.py** -- Anthropic Messages-style API
-- **test_thinking_parser.py** -- Thinking block parsing
-- **test_thinking_roundtrip.py** -- Thinking block roundtrip fidelity
-- **test_radix_cache.py** -- Radix/prefix cache
-- **test_speculative.py** -- Speculative decoding
-- **test_draft_tuner.py** -- Draft model tuning for speculative decoding
-- **test_vlm_inputs.py** -- VLM input handling
-- **test_abort.py** -- Request abort/cancellation
-- **test_samplers.py** -- Sampling strategies
-- **test_unified_equivalence.py** -- OpenAI/Messages API equivalence
-
-**mlx_perf/** (3 files):
-- **test_type_consistency.py** -- MLX type consistency checks
-- **test_sync_boundaries.py** -- Synchronization boundary tests
-- **test_compilation_correctness.py** -- Compilation correctness
-
 ## Contract Tests (`tests/contract/`)
 
 API contract tests using FastAPI TestClient with mocked router/service. No real models or server needed.
-
-- **test_chat_completions.py** -- OpenAI chat completions: streaming, non-streaming, error cases
-- **test_messages.py** -- Anthropic Messages: content blocks, streaming events, typed input
-- **test_openapi_conformance.py** -- OpenAPI schema structure, route coverage, core endpoints
-- **test_admin.py** -- Admin API: config listing, profiles, scan, status
-- **test_models_endpoint.py** -- Model list: structure, required fields, provider info
-
-## Integration Tests (`tests/integration/`)
-
-Tests requiring a running heylookllm server (`heylookllm --port 8000`):
-
-- **test_hidden_states_api.py** -- Hidden states endpoints (raw + structured)
-- **test_api_integration.py** -- API endpoint validation, MLX provider
-- **test_keepalive.py** -- Keepalive and prompt caching
-
-**mlx_perf/** (2 files):
-- **test_baseline_benchmarks.py** -- Performance baseline measurements
-- **test_memory_profiling.py** -- Memory usage profiling
-
-## Coverage Matrix
-
-| Feature Area | Coverage | Test Location | Notes |
-|---|---|---|---|
-| MLX Provider | Good | unit/test_mlx_provider*.py | 45 tests |
-| Config/Validation | Good | unit/test_config.py | 23 tests |
-| Model Service | Good | unit/test_model_service.py | Profiles, defaults, size regex |
-| Model Routing | Good | unit/test_router.py | 5 tests, all pass |
-| Generation Core | Good | unit/test_generation_core.py | |
-| Messages API | Good | unit/test_messages_api.py, contract/test_messages.py | Unit + contract |
-| Chat Completions | Good | contract/test_chat_completions.py | Streaming + non-streaming |
-| Hidden States | Good | unit/test_hidden_states.py, integration/test_hidden_states_api.py | Unit + integration |
-| Thinking Blocks | Good | unit/test_thinking_parser.py, test_thinking_roundtrip.py | 47 tests |
-| Radix Cache | Good | unit/test_radix_cache.py | 26 tests |
-| Speculative Decoding | Good | unit/test_speculative.py, test_draft_tuner.py | 27 tests |
-| VLM Inputs | Good | unit/test_vlm_inputs.py | |
-| Abort/Cancel | Good | unit/test_abort.py | |
-| Samplers | Basic | unit/test_samplers.py | 5 tests |
-| OpenAPI Conformance | Good | contract/test_openapi_conformance.py | Schema validation |
-| Admin API | Good | contract/test_admin.py | Config, profiles, scan |
-| Error Handling | Good | contract/test_generation_errors.py | |
 
 ## Testing Guidelines
 
@@ -128,6 +62,7 @@ Tests requiring a running heylookllm server (`heylookllm --port 8000`):
 
 ## Related
 
+- `tests/smoke/` -- live smoke per engine arm; never spawns a server. See `tests/smoke/README.md`.
 - `tests/e2e/` -- v3 browser E2E (puppeteer-core + system Chrome; opt-in, unsandboxed)
 - `tests/eval/` -- LLM behavior-eval harness (chat-template/thinking-parser/stop-token/
   vision-budget regressions; needs a running server, opt-in, not wired into `/test-suite`).

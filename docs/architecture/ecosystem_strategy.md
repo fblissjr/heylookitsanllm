@@ -11,6 +11,14 @@ Facts below were verified 2026-07-06 (release pages, PyPI feeds, commit logs,
 primary announcements). Staleness warning: re-verify anything load-bearing
 after ~2026-09.
 
+> **Update 2026-09-23 (plan W10 stage 3): heylook no longer depends on
+> mlx-lm.** Every MLX model runs on mlx-vlm's engine; the one piece kept from
+> mlx-lm, its streaming detokenizer, is vendored as
+> `src/heylook_llm/providers/common/lm_detokenizer.py`, and samplers come
+> from mlx-vlm's `sample_utils`. The pin-and-contract-test posture below now
+> applies to mlx-vlm alone. What this doc says about mlx-lm's release cadence
+> is the dated reasoning that led there, not a live dependency.
+
 ## Overview
 
 The distilled message to any session working on performance right now:

@@ -23,7 +23,7 @@ from ..capabilities import model_context_length
 from ..samplers import GLOBAL_SAMPLER_FLOOR, load_vendor_sampling, resolve_effective_sampling
 from .common.samplers import build as build_sampler
 from .common.vlm_inputs import continue_from_generation_prompt, thinking_for_template
-from .common.generation_core import continuation_detokenizer, ensure_gen_tokenizer
+from .common.generation_core import continuation_detokenizer, detokenizer_source
 from .common import vlm_engine
 from .common.batch_vision import BatchVisionProcessor
 from .common.vision_feature_cache import VisionFeatureCache
@@ -876,16 +876,16 @@ class MLXProvider(BaseProvider):
         # app. Re-initialising them here would be harmless but misleading.)
 
     def streaming_detokenizer(self, continuing: bool):
-        """A reset streaming detokenizer for one request: mlx-lm's (primed at
-        load by ensure_gen_tokenizer), which streams per token where
+        """A reset streaming detokenizer for one request: mlx-lm's, vendored
+        (primed at load by detokenizer_source), which streams per token where
         mlx-vlm's holds space-free text until the end, with the continuation
         seam seeded (continuation_detokenizer)."""
         tok = self.get_tokenizer()
         if tok is None:
             return None
-        wrapper = ensure_gen_tokenizer(tok)
-        with continuation_detokenizer(wrapper, continuing):
-            return wrapper.detokenizer
+        source = detokenizer_source(tok)
+        with continuation_detokenizer(source, continuing):
+            return source.detokenizer
 
     def describe_observed(self):
         """The engine contract's observed half: the template body installed
@@ -932,14 +932,14 @@ class MLXProvider(BaseProvider):
             from .common.stop_tokens import extend_eos_from_generation_config
             extend_eos_from_generation_config(self.get_tokenizer(), model_path)
 
-            # Prime the detokenizer wrapper HERE, where model_path is known:
-            # streaming_detokenizer hands vlm_engine this wrapper's streaming
+            # Prime the detokenizer source HERE, where model_path is known:
+            # streaming_detokenizer hands vlm_engine this source's streaming
             # detokenizer, and one built without the path takes the naive
             # detokenizer (quadratic per line, read-only `text` -- see
-            # ensure_gen_tokenizer). After the eos extension above.
+            # detokenizer_source).
             gen_tokenizer = self.get_tokenizer()
             if gen_tokenizer is not None:
-                ensure_gen_tokenizer(gen_tokenizer, model_path)
+                detokenizer_source(gen_tokenizer, model_path)
             # The stop set, resolved ONCE here and checked in vlm_engine's own
             # loop -- never added per request to the shared tokenizer.
             from .common.stop_tokens import resolve_stop_tokens
@@ -1002,16 +1002,12 @@ class MLXProvider(BaseProvider):
                       if getattr(self.processor, "chat_template", None)
                       else tok)
             self.loaded_chat_template = getattr(holder, "chat_template", None) or None
-            # Warn only when NOTHING can render: no install happened, the
-            # tokenizer has no HF template, and there's no wrapper-level
-            # python template (mlx-lm chat_template_type sets
-            # has_chat_template on the wrapper while the inner tokenizer's
-            # chat_template attr stays None).
+            # Warn only when NOTHING can render: no install happened and
+            # neither holder carries a template.
             has_template = (
                 installed
                 or bool(getattr(tok, "chat_template", None))
-                or getattr(tok, "has_chat_template", False)
-                or getattr(self.processor, "has_chat_template", False)
+                or bool(getattr(self.processor, "chat_template", None))
             )
             if not has_template:
                 logging.warning(

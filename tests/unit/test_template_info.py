@@ -512,9 +512,7 @@ class TestIsExplicitSource:
 class TestMissingTemplateError:
     """``missing_template_error(tokenizer, model_id)`` decides 'the model
     truly has no chat template' from TOKENIZER STATE, not from matching
-    transformers' error prose (which is version-fragile). It must respect
-    mlx-lm's wrapper-level python templates (``has_chat_template``), which
-    render fine while the HF ``chat_template`` attr stays None."""
+    transformers' error prose (which is version-fragile)."""
 
     def test_returns_actionable_error_when_no_template(self):
         from heylook_llm.providers.common.template_info import missing_template_error
@@ -530,14 +528,6 @@ class TestMissingTemplateError:
         from heylook_llm.providers.common.template_info import missing_template_error
 
         tok = _FakeTokenizer(chat_template="{{ x }}")
-
-        assert missing_template_error(tok, "m") is None
-
-    def test_returns_none_for_wrapper_level_python_template(self):
-        from heylook_llm.providers.common.template_info import missing_template_error
-
-        tok = _FakeTokenizer(chat_template=None)
-        tok.has_chat_template = True
 
         assert missing_template_error(tok, "m") is None
 

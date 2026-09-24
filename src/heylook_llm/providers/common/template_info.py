@@ -397,14 +397,9 @@ def missing_template_error(tokenizer, model_id: Optional[str] = None) -> Optiona
     Call from an ``except ValueError`` around ``apply_chat_template`` --
     transformers raises a raw ValueError there whose message would otherwise
     surface verbatim as the HTTP error detail. The decision is made from
-    tokenizer STATE, not by matching upstream error prose (version-fragile):
-    ``chat_template`` covers HF templates; ``has_chat_template`` covers
-    mlx-lm's wrapper-level python templates (``chat_template_type``), which
-    render fine while the HF attribute stays None.
+    tokenizer STATE, not by matching upstream error prose (version-fragile).
     """
     if getattr(tokenizer, "chat_template", None):
-        return None
-    if getattr(tokenizer, "has_chat_template", False):
         return None
     who = f"Model '{model_id}'" if model_id else "This model"
     return ValueError(
@@ -428,8 +423,8 @@ def should_force_install(info: ModelTemplateInfo, source: Optional[str]) -> bool
 
 def install_chat_template(tokenizer, info: ModelTemplateInfo, *, force: bool,
                           processor=None) -> bool:
-    """Attach the resolved template to a live tokenizer (and its inner
-    ``_tokenizer`` for mlx-lm's TokenizerWrapper), plus the PROCESSOR.
+    """Attach the resolved template to a live tokenizer (and an inner
+    ``_tokenizer`` where the tokenizer wraps one), plus the PROCESSOR.
 
     ``force=True`` (explicit ``chat_template_source``, or our own override
     file): always overwrite -- the registry entry is authoritative.

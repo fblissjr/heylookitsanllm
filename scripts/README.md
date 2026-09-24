@@ -31,16 +31,15 @@ dependabot:
 
 ```bash
 uv lock --upgrade && uv sync              # everything, newest releases
-uv lock --upgrade-package mlx-lm && uv sync   # one package
+uv lock --upgrade-package mlx-vlm && uv sync  # one package
 ```
 
-The committed `pyproject.toml`/`uv.lock` always point at published releases,
-so a clone gets releases, never someone's experiment. Pinning a dependency to
-a git commit (a `[tool.uv.sources]` entry) is a machine-local, working-tree
-choice: `guard_stable_channel.sh` blocks committing it, because uv honors no
-gitignored file for source pins and every pin propagates into `uv.lock`.
-`HEYLOOK_ALLOW_CHANNEL_COMMIT=1` is the deliberate-exception escape hatch
-(e.g. a reviewed, intentional git dependency).
+The one committed git pin is mlx-vlm (`[tool.uv.sources]`, an exact `rev`;
+owner decision 2026-09-05); everything else points at published releases.
+`guard_stable_channel.sh` blocks committing any git pin by default, because uv
+honors no gitignored file for source pins and every pin propagates into
+`uv.lock`, so a stray experiment cannot land. Moving the mlx-vlm pin is a
+deliberate commit with `HEYLOOK_ALLOW_CHANNEL_COMMIT=1`.
 
 ## Vendored frontend libraries
 

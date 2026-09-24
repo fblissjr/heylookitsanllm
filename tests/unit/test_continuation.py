@@ -239,16 +239,17 @@ class TestContinuationKeepsTheSeamSpace:
 
     def test_a_read_only_text_detokenizer_is_left_alone(self):
         """The runtime shape on the mlx-vlm path: a raw HF tokenizer wrapped
-        by ensure_gen_tokenizer without a model_path takes mlx-lm's DEFAULT,
+        by detokenizer_source without a model_path takes the DEFAULT,
         NaiveStreamingDetokenizer, whose `text` is a property with no setter.
         v1.79.64 seeded it and raised AttributeError inside the first next()
         of every continuation on every mlx-vlm-loaded model. It never trims
         a leading space either, so leaving it alone is also the right
         output."""
-        from mlx_lm.tokenizer_utils import NaiveStreamingDetokenizer, TokenizerWrapper
-        from heylook_llm.providers.common.generation_core import continuation_detokenizer
+        from heylook_llm.providers.common.generation_core import (
+            continuation_detokenizer, detokenizer_source)
+        from heylook_llm.providers.common.lm_detokenizer import NaiveStreamingDetokenizer
 
-        wrapper = TokenizerWrapper(_FakeHfForDetok(), eos_token_ids={0})
+        wrapper = detokenizer_source(_FakeHfForDetok())
         assert type(wrapper._detokenizer) is NaiveStreamingDetokenizer
         with continuation_detokenizer(wrapper, True):
             d = wrapper.detokenizer
@@ -265,7 +266,7 @@ class TestContinuationKeepsTheSeamSpace:
         property with no setter, and seeding it raised inside the first
         next() of every continuation on the mlx-vlm path (v1.79.64)."""
         from heylook_llm.providers.common.generation_core import _seedable
-        from mlx_lm.tokenizer_utils import (
+        from heylook_llm.providers.common.lm_detokenizer import (
             BPEStreamingDetokenizer, NaiveStreamingDetokenizer, SPMStreamingDetokenizer)
         assert _seedable(SPMStreamingDetokenizer)
         assert _seedable(BPEStreamingDetokenizer)
@@ -273,24 +274,18 @@ class TestContinuationKeepsTheSeamSpace:
 
 
 class _FakeHfForDetok:
-    """A raw-HF-tokenizer stand-in that mlx-lm's TokenizerWrapper AND its
-    naive detokenizer can drive: vocab scan at construction, decode by id."""
-    eos_token_id = 0
-    eos_token_ids = {0}
-    chat_template = None
+    """A raw-HF-tokenizer stand-in the naive detokenizer can drive: decode by
+    id, and the encode/decode round trip it probes at construction."""
     clean_up_tokenization_spaces = False
 
     def __init__(self):
         self._pieces = {1: " need", 2: " the"}
 
-    def get_vocab(self):
-        return {"<eos>": 0}
-
     def decode(self, ids, **_kw):
         return "".join(self._pieces.get(i, "") for i in ids)
 
     def encode(self, text, **_kw):
-        # mlx-lm 0.32's naive detokenizer probes encode/decode of "a ,b" at
+        # the naive detokenizer probes encode/decode of "a ,b" at
         # construction to learn whether decode drops spaces; round-trip it.
         ids = [k for k, v in self._pieces.items() if v == text]
         if not ids:
@@ -298,56 +293,37 @@ class _FakeHfForDetok:
             self._pieces[ids[0]] = text
         return ids
 
-    def apply_chat_template(self, *_a, **_kw):
-        # mlx-lm (0.32) probes this on the tokenizer CLASS at wrap time.
-        return ""
 
+class TestDetokenizerSourcePicksAStreamingDetokenizer:
+    """With a model_path the class comes from tokenizer.json's decoder (the
+    vendored mlx-lm predicates), built on the tokenizer already loaded; the
+    provider primes it at load and the per-request call hits the cache."""
 
-class TestEnsureGenTokenizerPicksAStreamingDetokenizer:
-    """v1.79.66: with a model_path, the raw-tokenizer wrapper is built by
-    mlx-lm's own loader, which selects SPM/BPE streaming from tokenizer.json
-    -- the same choice the mlx-lm text path gets -- instead of the naive
-    default. The provider primes it at load; the per-request call from
-    streaming_detokenizer must then find it in the cache."""
+    @pytest.mark.parametrize("decoder, expected", [
+        ({"type": "ByteLevel"}, "BPEStreamingDetokenizer"),
+        ({"type": "Sequence", "decoders": [
+            {"type": "Replace", "pattern": {"String": "\u2581"}, "content": " "},
+            {"type": "ByteFallback"}, {"type": "Fuse"},
+            {"type": "Strip", "content": " ", "start": 1, "stop": 0}]},
+         "SPMStreamingDetokenizer"),
+        ({"type": "WordPiece"}, "NaiveStreamingDetokenizer"),
+        (None, "NaiveStreamingDetokenizer"),
+    ])
+    def test_class_follows_the_decoder(self, tmp_path, decoder, expected):
+        import json
+        from heylook_llm.providers.common.lm_detokenizer import detokenizer_class_for
+        if decoder is not None:
+            (tmp_path / "tokenizer.json").write_text(json.dumps({"decoder": decoder}))
+        cls = detokenizer_class_for(tmp_path)
+        assert getattr(cls, "__name__", None) == expected
 
-    def test_model_path_routes_through_the_mlx_lm_loader_and_primes_the_cache(self, monkeypatch, tmp_path):
-        from pathlib import Path
-        from heylook_llm.providers.common import generation_core as gc
-
-        built = object()
-        seen = {}
-
-        def fake_load(path, tokenizer_config_extra=None, eos_token_ids=None):
-            seen["path"] = path
-            seen["eos"] = set(eos_token_ids)
-            return built
-
-        monkeypatch.setattr(gc.lm_tokenizer_utils, "load", fake_load)
+    def test_primed_source_is_the_per_request_source(self, tmp_path):
+        from heylook_llm.providers.common.generation_core import detokenizer_source
         raw = _FakeHfForDetok()
-        assert gc.ensure_gen_tokenizer(raw, tmp_path) is built
-        assert seen["path"] == Path(tmp_path)
-        assert seen["eos"] == gc.resolve_stop_tokens(raw)   # the extended set, not the loader's own
-        assert gc.ensure_gen_tokenizer(raw) is built          # the per-request call: cache hit, no path needed
-
-    def test_a_loader_failure_falls_back_to_the_default_wrapper(self, monkeypatch, tmp_path):
-        from mlx_lm.tokenizer_utils import TokenizerWrapper
-        from heylook_llm.providers.common import generation_core as gc
-
-        def broken_load(path, tokenizer_config_extra=None, eos_token_ids=None):
-            raise OSError("no tokenizer.json here")
-
-        monkeypatch.setattr(gc.lm_tokenizer_utils, "load", broken_load)
-        raw = _FakeHfForDetok()
-        wrapped = gc.ensure_gen_tokenizer(raw, tmp_path)
-        assert isinstance(wrapped, TokenizerWrapper)        # a model that loaded still generates
-        assert gc.ensure_gen_tokenizer(raw) is wrapped
-
-    def test_no_model_path_keeps_the_old_default(self):
-        from mlx_lm.tokenizer_utils import NaiveStreamingDetokenizer, TokenizerWrapper
-        from heylook_llm.providers.common import generation_core as gc
-        wrapped = gc.ensure_gen_tokenizer(_FakeHfForDetok())
-        assert isinstance(wrapped, TokenizerWrapper)
-        assert type(wrapped._detokenizer) is NaiveStreamingDetokenizer
+        (tmp_path / "tokenizer.json").write_text("{not json")
+        primed = detokenizer_source(raw, tmp_path)       # unreadable: falls back, loads anyway
+        assert type(primed._detokenizer).__name__ == "NaiveStreamingDetokenizer"
+        assert detokenizer_source(raw) is primed          # the per-request call: cache hit
 
 
 @pytest.mark.unit

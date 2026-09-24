@@ -13,14 +13,13 @@ class TestApplyTemplateMissingTemplate:
     no embedded tokenizer_config template, no chat_template.json) makes
     transformers raise a raw ValueError deep inside apply_chat_template. The
     strategy must convert that into an actionable error naming the model and
-    the fix, deciding from TOKENIZER STATE (chat_template/has_chat_template)
+    the fix, deciding from TOKENIZER STATE (chat_template)
     rather than matching transformers' error prose -- the prose changes
     between versions and a string match silently reverts the fix."""
 
-    def _tokenizer(self, *, chat_template, has_chat_template=False, error="boom"):
+    def _tokenizer(self, *, chat_template, error="boom"):
         tokenizer = MagicMock()
         tokenizer.chat_template = chat_template
-        tokenizer.has_chat_template = has_chat_template
         tokenizer.apply_chat_template.side_effect = ValueError(error)
         return tokenizer
 
@@ -60,26 +59,6 @@ class TestApplyTemplateMissingTemplate:
         )
 
         with pytest.raises(ValueError, match="roles must alternate"):
-            strategy._render_template(
-                [{"role": "user", "content": "hi"}],
-                tokenizer, MagicMock(), MagicMock(), {},
-            )
-
-    def test_wrapper_level_python_template_errors_propagate(self, mock_mlx):
-        """mlx-lm chat_template_type models render via the wrapper's python
-        template while the HF chat_template attr stays None -- their errors
-        must NOT be mislabeled as 'no chat template'."""
-        from heylook_llm.providers.mlx_provider import UnifiedTextStrategy
-
-        strategy = UnifiedTextStrategy(
-            model_id="m", is_vlm=False, model_config={},
-        )
-        tokenizer = self._tokenizer(
-            chat_template=None, has_chat_template=True,
-            error="python template render error",
-        )
-
-        with pytest.raises(ValueError, match="python template render error"):
             strategy._render_template(
                 [{"role": "user", "content": "hi"}],
                 tokenizer, MagicMock(), MagicMock(), {},

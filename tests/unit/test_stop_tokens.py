@@ -77,50 +77,6 @@ class _SetattrGuardedTokenizer:
         object.__setattr__(self, name, value)
 
 
-class _FakeHfTokenizer:
-    """Minimal raw-HF-tokenizer stand-in for TokenizerWrapper construction."""
-    eos_token_id = 1
-    eos_token_ids = {1, 106, 50}  # as extended from generation_config at load
-    chat_template = None
-
-    def get_vocab(self):
-        return {}
-
-    def apply_chat_template(self, *_a, **_kw):
-        # mlx-lm (0.32) probes this on the tokenizer CLASS at wrap time.
-        return ""
-
-    # TokenizerWrapper builds its detokenizer eagerly since mlx-lm's
-    # detokenizer refactor, and the naive one probes decode/encode.
-    def decode(self, ids, **_kw):
-        return "".join(str(i) for i in ids)
-
-    def encode(self, text, **_kw):
-        return [0]
-
-
-@pytest.mark.unit
-class TestEnsureGenTokenizer:
-    """The detokenizer wrapper carries the FULL stop set: mlx-lm's own
-    auto-wrap uses only the single eos_token_id, silently dropping the extra
-    terminators (gemma-4's <turn|>)."""
-
-    def test_raw_tokenizer_wrapped_with_full_stop_set(self):
-        from mlx_lm.tokenizer_utils import TokenizerWrapper
-        from heylook_llm.providers.common.generation_core import ensure_gen_tokenizer
-
-        wrapped = ensure_gen_tokenizer(_FakeHfTokenizer())
-        assert isinstance(wrapped, TokenizerWrapper)
-        assert resolve_stop_tokens(wrapped) == {1, 106, 50}
-
-    def test_already_wrapped_passes_through_untouched(self):
-        from mlx_lm.tokenizer_utils import TokenizerWrapper
-        from heylook_llm.providers.common.generation_core import ensure_gen_tokenizer
-
-        w = TokenizerWrapper(_FakeHfTokenizer(), eos_token_ids={7})
-        assert ensure_gen_tokenizer(w) is w
-
-
 @pytest.mark.unit
 class TestResolveStopTokens:
     def test_plural_eos_token_ids(self):

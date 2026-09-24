@@ -29,7 +29,6 @@ classifiers = [
 dependencies = [
     # MLX / model stack (darwin-only)
     "mlx>=0.32.1; sys_platform == 'darwin'",
-    "mlx-lm>=0.31.3; sys_platform == 'darwin'",
     "mlx-vlm>=0.6.15; sys_platform == 'darwin'",
     "transformers>=5.15.0",    # Floor only; the real constraint is the [tool.uv] override below
     # REQUIRED, and deliberately NOT derivable from the declared dep graph -- do
@@ -71,7 +70,7 @@ dependencies = [
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
-    "httpx>=0.28.1",       # TestClient / API contract tests + tests/integration
+    "httpx>=0.28.1",       # TestClient / API contract tests
     "pyyaml>=6.0.3",       # scripts/export_openapi.py --yaml
     "rich>=15.0.0",        # scripts/benchmark.py console output
     "py-spy>=0.4.2",       # Sampling profiler
@@ -103,20 +102,21 @@ version = { attr = "heylook_llm.__version__" }
 # ── uv resolver config ──────────────────────────────────────────────────────
 [tool.uv]
 # Replaces every transformers constraint in the graph (strips the upper bounds
-# mlx-lm/mlx-vlm pin). Keep equal to the [project.dependencies] floor.
+# mlx-vlm pins). Keep equal to the [project.dependencies] floor.
 override-dependencies = ["transformers>=5.15.0"]
 
 [tool.uv.sources]
-# COMMITTED git pins (owner decision 2026-09-05). mlx-lm is release-starved:
-# PyPI's newest is 0.31.3 (April) while main carries 0.32.0 and the detokenizer
-# and tokenizer-wrap behaviour the server is now written against. Exact `rev`
-# on purpose, never `branch`: a branch pin moves under a plain `uv lock
-# --upgrade` and the manifest would stop saying what it depends on. Moving a
-# pin = edit the rev here, `uv lock --upgrade-package <name> && uv sync`, run
-# the suite, name the new SHA in CHANGELOG. The pre-commit guard still blocks
-# these by default; committing one is HEYLOOK_ALLOW_CHANNEL_COMMIT=1, so the
-# act stays deliberate. `mlx` itself is a PyPI release, not pinned here.
-mlx-lm = { git = "https://github.com/ml-explore/mlx-lm", rev = "c69d1288440a0dc4e6401fc417098b07598dccd5" }
+# COMMITTED git pin (owner decision 2026-09-05, when it also covered mlx-lm;
+# mlx-lm left the dependency set in plan W10 stage 3, its streaming
+# detokenizer vendored as providers/common/lm_detokenizer.py). mlx-vlm is the
+# engine every MLX model runs on, and the server is written against its main,
+# not a PyPI release. Exact `rev` on purpose, never `branch`: a branch pin
+# moves under a plain `uv lock --upgrade` and the manifest would stop saying
+# what it depends on. Moving the pin = edit the rev here, `uv lock
+# --upgrade-package mlx-vlm && uv sync`, run the suite, name the new SHA in
+# CHANGELOG. The pre-commit guard still blocks a git pin by default;
+# committing one is HEYLOOK_ALLOW_CHANNEL_COMMIT=1, so the act stays
+# deliberate. `mlx` itself is a PyPI release, not pinned here.
 mlx-vlm = { git = "https://github.com/Blaizzy/mlx-vlm", rev = "b1a85530931b119fe0a6b2f6843e303023269f1d" }
 
 # ── Pytest ──────────────────────────────────────────────────────────────────
@@ -125,7 +125,6 @@ testpaths = ["tests"]
 markers = [
     "unit: Unit tests (no external dependencies)",
     "contract: Contract tests (TestClient, no running server)",
-    "integration: Integration tests (requires server or model)",
     "mlx_perf: MLX performance optimization tests (requires MLX and model)",
     "slow: Slow tests (deselect with '-m \"not slow\"')",
 ]

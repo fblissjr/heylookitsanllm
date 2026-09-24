@@ -1282,7 +1282,9 @@ found, each silent:
   `APC_CHECKPOINT_ENTRIES` are the spike's measured settings.
 - **The detokenizer.** mlx-vlm's BPE streaming detokenizer flushes only on a
   token that starts with a space, so a count, code or CJK text arrived in one
-  lump at the end; the engine streams through mlx-lm's. The smoke walk-away
+  lump at the end; the engine streams through mlx-lm's (vendored in stage 3
+  as `providers/common/lm_detokenizer.py`, when mlx-lm left the dependency
+  set). The smoke walk-away
   check caught it, as a false "truncated" verdict: the whole answer had been
   delivered in the final flush.
 The one-hash image salt is also why a turn that adds an image re-prefills;
@@ -1293,7 +1295,8 @@ different image behind identical placeholder tokens (owner decision: accepted,
 ### Logits processor shape
 
 A logits processor receives `(tokens, logits)` with logits shaped
-`(1, vocab)`: mlx-lm passes `logits[:, -1, :]`, batch axis kept.
+`(1, vocab)`: mlx-lm passed `logits[:, -1, :]`, batch axis kept, and
+mlx-vlm's engine passes the same shape.
 `zeros_like(logits).at[tokens]` scatters along the size-1 batch axis, and MLX
 does not bounds-check a Metal scatter, so it is silent memory corruption
 followed by a mid-generation Metal fault and a poisoned process (v1.79.63,
@@ -1325,6 +1328,14 @@ property. `MLXProvider.load_model` therefore primes the wrapper with
 (`_seedable`). v1.79.64 seeded unconditionally and raised inside the first
 `next()` of every continuation on every mlx-vlm-routed model, behind a 48/48
 browser run whose resume check had a legal early exit that reported green.
+
+(v2.0.88) Since plan W10 there is one tokenizer shape: every model loads with
+mlx-vlm, and the tokenizer is its raw HF one. The wrapper is gone with
+mlx-lm. `generation_core.detokenizer_source` builds the vendored class
+`lm_detokenizer.detokenizer_class_for` picks from tokenizer.json on that
+tokenizer, primed at load with `model_path`, and the stop set is the
+provider's own, resolved once at load and checked in `vlm_engine`'s loop. The
+Naive-default and `_seedable` lessons above still hold for that source.
 
 mlx-lm's `TokenizerWrapper.apply_chat_template` silently injects
 `enable_thinking=True` when the kwarg is absent. The kwarg is the cross-model
@@ -1474,6 +1485,15 @@ pin commit stays a named act rather than a stray relock, which is also why a
 trying-things `branch = "main"` pin in the working tree is safe: it cannot
 land by accident. A cloner's `uv sync` needs git and GitHub reachable; that is
 the price, priced.
+
+(v2.0.88) mlx-lm is no longer a dependency: plan W10 moved every MLX model
+onto mlx-vlm's engine. Its streaming detokenizer is vendored, because
+mlx-vlm's BPE one holds space-free text. Samplers come from mlx-vlm's
+`sample_utils`, which gave identical results to mlx-lm's on seeded runs of
+every knob heylook sends. mlx-vlm is the one pinned engine. protobuf left the
+lock with mlx-lm: every MLX model here ships a `tokenizer.json`, and a
+sentencepiece-only checkpoint would now fail at load with transformers naming
+protobuf.
 
 The optloop-lib bench exists because the app-level optloop (retired
 2026-07-06) bypassed the server code it claimed to measure.

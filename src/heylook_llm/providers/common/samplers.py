@@ -1,10 +1,11 @@
 # src/heylook_llm/providers/common/samplers.py
 """
 Why this file exists:
-This module centralizes the creation of sampler and logits processor functions,
-ensuring that all MLX-based models (both LLM and VLM) use the exact same,
-feature-rich generation hyperparameters as the standalone mlx-lm library.
-It acts as a single source of truth for sampling logic.
+This module centralizes the creation of sampler and logits processor functions
+for every MLX model, from mlx-vlm's ``sample_utils`` (the engine's own; for
+every knob heylook sends it samples identically to mlx-lm's, checked with seeded
+runs when mlx-lm was dropped in plan W10 stage 3). It acts as a single source
+of truth for sampling logic.
 
 Performance note:
 Compiled functions follow the mlx-lm pattern using @partial(mx.compile, ...)
@@ -13,7 +14,7 @@ to generate optimized Metal kernels for sampling operations.
 from __future__ import annotations
 
 import mlx.core as mx
-from mlx_lm.sample_utils import make_sampler, make_logits_processors
+from mlx_vlm.sample_utils import make_sampler, make_logits_processors
 from transformers import PreTrainedTokenizer
 
 from .stop_tokens import resolve_stop_tokens

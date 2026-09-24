@@ -122,8 +122,6 @@ def _run(args) -> dict:
     from heylook_llm.providers import mlx_provider as mp
     from mlx_vlm.generate.common import generation_stream
 
-    from heylook_llm.providers.common.generation_core import ensure_gen_tokenizer
-
     cfg = _resolve_config(args.model)
     if args.step:
         cfg["prefill_step_size"] = args.step
@@ -142,9 +140,8 @@ def _run(args) -> dict:
         return out
 
     mp.vlm_prepare_inputs = recording_prepare
-    tokenizer = ensure_gen_tokenizer(
-        getattr(provider.processor, "tokenizer", provider.processor))
-    stop_ids = set(getattr(tokenizer, "eos_token_ids", []) or [])
+    tokenizer = provider.get_tokenizer()
+    stop_ids = set(provider._stop_tokens)
 
     def heylook(content) -> list[int]:
         captured.clear()

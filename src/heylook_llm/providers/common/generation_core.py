@@ -6,10 +6,10 @@ Generation itself runs in ``vlm_engine``. This module holds the pieces of
 the old decode loop the engine still uses, because they are heylook's
 contract rather than an engine's:
 
-- ``ensure_gen_tokenizer`` / ``continuation_detokenizer``: the streaming
-  detokenizer the engine streams through (mlx-lm's: mlx-vlm's BPE one holds
-  space-free text until the end) with a continuation's first-token space
-  kept;
+- ``detokenizer_source`` / ``continuation_detokenizer``: the streaming
+  detokenizer the engine streams through (mlx-lm's, vendored in
+  ``lm_detokenizer``: mlx-vlm's BPE one holds space-free text until the end)
+  with a continuation's first-token space kept;
 - ``generated_only``: logits processors scoped to the tokens this reply has
   generated (owner decision 2026-09-21), whatever the engine prefilled.
 """
@@ -18,64 +18,56 @@ import copy
 import logging
 from contextlib import contextmanager
 from functools import lru_cache
-from pathlib import Path
 
-from mlx_lm import tokenizer_utils as lm_tokenizer_utils
-from mlx_lm.tokenizer_utils import TokenizerWrapper
-
-from .stop_tokens import resolve_stop_tokens
+from .lm_detokenizer import NaiveStreamingDetokenizer, detokenizer_class_for
 
 
-def ensure_gen_tokenizer(tokenizer, model_path=None):
-    """Wrap a raw HF tokenizer for generation with the FULL stop set and a
-    real streaming detokenizer.
+class DetokenizerSource:
+    """One tokenizer's streaming detokenizer, built once; ``detokenizer``
+    hands each caller a reset copy of the prototype (``_detokenizer``), the
+    shape ``continuation_detokenizer`` swaps for the length of one reply."""
 
-    mlx-lm's ``stream_generate`` auto-wraps raw tokenizers as
-    ``TokenizerWrapper(tokenizer)``, whose eos set defaults to the single
-    ``eos_token_id`` -- dropping any extra terminators resolved from
-    generation_config (gemma-4 via mlx-vlm: <turn|> and <|tool_response|>
-    would be lost, and generation runs past end-of-turn). Wrapping here with
-    ``resolve_stop_tokens`` preserves them. Already-wrapped tokenizers
-    (mlx-lm loads) pass through untouched.
+    def __init__(self, prototype):
+        self._detokenizer = prototype
 
-    ``model_path`` (v1.79.66) picks the streaming detokenizer the way mlx-lm's
-    own loader does, from tokenizer.json's decoder. Without it the wrapper
-    takes mlx-lm's DEFAULT, ``NaiveStreamingDetokenizer``: it re-decodes the
-    whole current line on every token (quadratic per line) and computes
-    ``text`` as a read-only property -- every mlx-vlm-loaded model streamed
-    through it, and the v1.79.64 continuation seed raised on it inside the
-    first next() of every continuation. The provider primes the cache at
-    load, where the path is known; the per-request call then
-    hits the cache. The loader wraps a SECOND tokenizer instance read from
-    the same files (public API rather than mlx-lm's private class-selection
-    predicates); the eos set is passed explicitly so the raw tokenizer's
-    extended set (extend_eos_from_generation_config) still wins.
+    @property
+    def detokenizer(self):
+        detokenizer = copy.copy(self._detokenizer)
+        detokenizer.reset()
+        return detokenizer
+
+
+def detokenizer_source(tokenizer, model_path=None) -> DetokenizerSource:
+    """The streaming detokenizer source for a raw HF tokenizer.
+
+    ``model_path`` picks the class from tokenizer.json's decoder
+    (``lm_detokenizer.detokenizer_class_for``): SPM or BPE, which stream per
+    token. Without it the class is the naive one, which re-decodes the whole
+    current line on every token and computes ``text`` as a read-only
+    property. The provider primes the source at load, where the path is
+    known; the per-request call then hits the cache.
+
+    Cached ON the raw tokenizer: building a detokenizer scans the vocab, pure
+    waste to repeat per request. The attribute dies with the tokenizer, so a
+    reload invalidates it.
     """
-    if isinstance(tokenizer, TokenizerWrapper):
-        return tokenizer
-    # Cache the wrapper ON the raw tokenizer: TokenizerWrapper.__init__ runs a
-    # full-vocab get_vocab() scan (_infer_thinking), pure waste to repeat per
-    # request. The attribute dies with the tokenizer/model, so a reload
-    # naturally invalidates it.
-    cached = getattr(tokenizer, "_heylook_gen_wrapper", None)
+    cached = getattr(tokenizer, "_heylook_detokenizer_source", None)
     if cached is not None:
         return cached
-    eos = resolve_stop_tokens(tokenizer)
-    wrapped = None
+    cls = NaiveStreamingDetokenizer
     if model_path is not None:
         try:
-            wrapped = lm_tokenizer_utils.load(Path(model_path), eos_token_ids=eos)
+            cls = detokenizer_class_for(model_path)
         except Exception as e:
             # A model that loaded still has to generate: fall back to the
-            # default wrapper (naive streaming) and say why, rather than
-            # turn a detokenizer choice into a load failure.
+            # naive detokenizer and say why, rather than turn a detokenizer
+            # choice into a load failure.
             logging.warning(
-                f"Could not build a streaming detokenizer from {model_path} ({e}); "
-                f"generation falls back to mlx-lm's naive detokenizer")
-    if wrapped is None:
-        wrapped = TokenizerWrapper(tokenizer, eos_token_ids=eos)
-    tokenizer._heylook_gen_wrapper = wrapped
-    return wrapped
+                f"Could not choose a streaming detokenizer from {model_path} ({e}); "
+                f"generation falls back to the naive detokenizer")
+    source = DetokenizerSource(cls(tokenizer))
+    tokenizer._heylook_detokenizer_source = source
+    return source
 
 
 def _seedable(detokenizer) -> bool:
@@ -114,9 +106,10 @@ def _seeding_subclass(cls: type) -> type:
 def generated_only(processors):
     """Scope logits processors to the tokens THIS reply has generated.
 
-    mlx-lm hands a processor ``(tokens, logits)`` where ``tokens`` is every
-    prompt token mlx-lm ITSELF prefilled plus what it has generated. How much
-    prompt that is was an accident of the path, so until v2.0.60 a presence or
+    The engine hands a processor ``(tokens, logits)`` where ``tokens`` is every
+    prompt token the engine ITSELF prefilled plus what it has generated. Under
+    mlx-lm, how much prompt that was was an accident of the path, so until
+    v2.0.60 a presence or
     repetition penalty meant three different things on MLX:
 
     - text request, cold cache: the WHOLE prompt -- system prompt, every
@@ -163,7 +156,7 @@ def continuation_detokenizer(tokenizer, continuing: bool):
     ``_maybe_trim_space`` on an empty buffer). Right for a fresh turn, where
     the space after the role marker is an artifact -- wrong for a continuation,
     where the model's first token completes a prefilled "First I" and the
-    space in " need" is real. ``TokenizerWrapper.detokenizer`` hands each
+    space in " need" is real. ``DetokenizerSource.detokenizer`` hands each
     caller a ``copy.copy`` of one prebuilt prototype and resets it, so the
     PROTOTYPE is swapped for the duration of one generation (the
     process-global gate serialises them) for one whose ``reset`` seeds a
@@ -172,11 +165,10 @@ def continuation_detokenizer(tokenizer, continuing: bool):
     the sentinel, and no caller ever sees it. Restored in ``finally``
     whatever happens to the generator.
 
-    The prototype is ``_detokenizer``; before mlx-lm's detokenizer refactor
-    it was a CLASS on ``_detokenizer_class``, instantiated per access. A
-    rename is SILENT here by construction -- no attribute means no seeding
-    means the space goes back to being trimmed, with nothing raised -- so
-    the seam-space tests drive the real wrapper, not a stand-in alone.
+    The prototype is ``_detokenizer``. A rename would be SILENT here by
+    construction -- no attribute means no seeding means the space goes back
+    to being trimmed, with nothing raised -- so the seam-space tests drive
+    the real source and the vendored classes, not a stand-in alone.
     """
     prototype = getattr(tokenizer, "_detokenizer", None)
     if not continuing or prototype is None or not _seedable(prototype):

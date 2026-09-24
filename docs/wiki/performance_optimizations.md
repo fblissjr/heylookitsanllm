@@ -77,12 +77,12 @@ In multimodal VLM conversations, re-evaluating high-resolution images across mul
 - So a turn whose image list is unchanged passes `cached_image_features` to the language model and skips the vision tower, but a turn that **adds** an image misses and re-encodes every image in the history. A per-image cache is part of the plan's W10.
 
 ### 2.3. Streaming Detokenizer
-The engine streams through **mlx-lm's** streaming detokenizer, not mlx-vlm's. mlx-vlm's BPE detokenizer flushes only when a token starts with a space, so an answer with no spaces -- a count, code, CJK text -- arrives in one lump at the end; mlx-lm's streams per token (checked on Qwen3.5's tokenizer, 2026-09-23; the smoke walk-away check caught it).
-- `MLXProvider.load_model` primes the wrapper with `model_path` (`ensure_gen_tokenizer`), so mlx-lm's own loader picks the SPM or BPE streaming detokenizer instead of the naive one, which re-decodes the whole current line on every token.
+The engine streams through **mlx-lm's** streaming detokenizer, vendored as [`lm_detokenizer.py`](../../src/heylook_llm/providers/common/lm_detokenizer.py) (mlx-lm itself is not a dependency), not mlx-vlm's. mlx-vlm's BPE detokenizer flushes only when a token starts with a space, so an answer with no spaces -- a count, code, CJK text -- arrives in one lump at the end; mlx-lm's streams per token (checked on Qwen3.5's tokenizer, 2026-09-23; the smoke walk-away check caught it).
+- `MLXProvider.load_model` primes it with `model_path` (`generation_core.detokenizer_source`), so the class comes from tokenizer.json's decoder -- SPM or BPE -- instead of the naive one, which re-decodes the whole current line on every token.
 - A continuation keeps its first token's leading space: `continuation_detokenizer` seeds a class with a settable `text`, and only such a class.
 
 ### 2.4. Logits Processors Receive a Batch Axis
-A logits processor is called as `(tokens, logits)` with logits shaped **`(1, vocab)`** -- mlx-lm passes `logits[:, -1, :]`, keeping the batch axis. Index the **vocab** axis (`logits.shape[-1]`, 1-D scratch vectors that broadcast), never `zeros_like(logits).at[tokens]`: that scatters along the size-1 batch axis, and MLX does not bounds-check a Metal scatter. The result is silent memory corruption followed by a mid-generation Metal fault and a poisoned process. Unit tests using 1-D logits stay green against it -- test the shape mlx-lm actually sends.
+A logits processor is called as `(tokens, logits)` with logits shaped **`(1, vocab)`** -- the engine passes `logits[:, -1, :]`, keeping the batch axis. Index the **vocab** axis (`logits.shape[-1]`, 1-D scratch vectors that broadcast), never `zeros_like(logits).at[tokens]`: that scatters along the size-1 batch axis, and MLX does not bounds-check a Metal scatter. The result is silent memory corruption followed by a mid-generation Metal fault and a poisoned process. Unit tests using 1-D logits stay green against it -- test the shape the engine actually sends.
 
 ---
 

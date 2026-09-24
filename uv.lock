@@ -377,7 +377,6 @@ dependencies = [
     { name = "duckdb" },
     { name = "fastapi" },
     { name = "mlx", marker = "sys_platform == 'darwin'" },
-    { name = "mlx-lm", marker = "sys_platform == 'darwin'" },
     { name = "mlx-vlm", marker = "sys_platform == 'darwin'" },
     { name = "numpy" },
     { name = "orjson" },
@@ -408,7 +407,6 @@ requires-dist = [
     { name = "duckdb", specifier = ">=1.5.5" },
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "mlx", marker = "sys_platform == 'darwin'", specifier = ">=0.32.1" },
-    { name = "mlx-lm", marker = "sys_platform == 'darwin'", git = "https://github.com/ml-explore/mlx-lm?rev=c69d1288440a0dc4e6401fc417098b07598dccd5" },
     { name = "mlx-vlm", marker = "sys_platform == 'darwin'", git = "https://github.com/Blaizzy/mlx-vlm?rev=b1a85530931b119fe0a6b2f6843e303023269f1d" },
     { name = "numpy", specifier = ">=2.5.2" },
     { name = "orjson", specifier = ">=3.12.0" },
@@ -727,20 +725,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b0/71/07fc039c603d8fb6531a2eca75b18b150c4ee9f3780c03ba20538a576f32/mlx_audio-0.5.4.tar.gz", hash = "sha256:3e1895860d9a636360a9377b5651239f5197e649d56fe25f1382cac6f2ed1e55", size = 1725509, upload-time = "2026-09-14T15:26:06.632Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/76/99/08dbae6b2e7771b3f9cf55c8c160d104f8c41c6c71dffebe785ed1344248/mlx_audio-0.5.4-py3-none-any.whl", hash = "sha256:d350ecc43a65b94b1578381370be64229948f79aef9ff599d20adb65e38351b3", size = 2077152, upload-time = "2026-09-14T15:26:04.598Z" },
-]
-
-[[package]]
-name = "mlx-lm"
-version = "0.32.0"
-source = { git = "https://github.com/ml-explore/mlx-lm?rev=c69d1288440a0dc4e6401fc417098b07598dccd5#c69d1288440a0dc4e6401fc417098b07598dccd5" }
-dependencies = [
-    { name = "jinja2" },
-    { name = "mlx" },
-    { name = "numpy" },
-    { name = "protobuf" },
-    { name = "pyyaml" },
-    { name = "sentencepiece" },
-    { name = "transformers" },
 ]
 
 [[package]]
@@ -1172,16 +1156,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f9/e2/3e91f31a7d2b083fe6ef3fa267035b518369d9511ffab804f839851d2779/pluggy-1.6.0.tar.gz", hash = "sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3", size = 69412, upload-time = "2025-05-15T12:30:07.975Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/54/20/4d324d65cc6d9205fabedc306948156824eb9f0ee1633355a8f7ec5c66bf/pluggy-1.6.0-py3-none-any.whl", hash = "sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746", size = 20538, upload-time = "2025-05-15T12:30:06.134Z" },
-]
-
-[[package]]
-name = "protobuf"
-version = "7.36.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/d9/89/5b8517baa72f84a67b8a307ba953c91057af618bf40bf676f3c03551f8f0/protobuf-7.36.2.tar.gz", hash = "sha256:497d0463ff3316681da6c0b9e8d06cb465d61abce00b613ab42226175644d1bb", size = 512737, upload-time = "2026-09-17T20:07:59.326Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/32/72/98342feb672507c8f3a69e34b4fa8961f608edba5c1a48a6f47156d92cb5/protobuf-7.36.2-cp310-abi3-macosx_10_9_universal2.whl", hash = "sha256:cbc70b17ee27e28894c7fee8bb04be1abead49e936bc70eb60052531eee2079e", size = 456039, upload-time = "2026-09-17T20:07:51.542Z" },
-    { url = "https://files.pythonhosted.org/packages/e4/04/d52c7016b04b6c5108f26691f9d33ec82a9b65d041f1a9c771137693d618/protobuf-7.36.2-py3-none-any.whl", hash = "sha256:bdb3a345d48db958e6ce1f18e508beb0cc981d64f24088427549c866cd039f1e", size = 179806, upload-time = "2026-09-17T20:07:58.211Z" },
 ]
 
 [[package]]

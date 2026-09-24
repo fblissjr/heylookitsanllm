@@ -7,7 +7,7 @@
 # WARNING: ALWAYS apply these mocks with a scoped `with patch.dict(sys.modules, ...)`
 # context (or the `mock_mlx` fixture in conftest.py). NEVER call
 # `patch.dict(...).start()` at module level -- pytest imports every test module
-# during collection, so a module-level start() replaces real `mlx`/`mlx_lm` with
+# during collection, so a module-level start() replaces real `mlx`/`mlx_vlm` with
 # MagicMocks for the ENTIRE session, silently breaking every later real-MLX test.
 # That leak caused ~50 spurious "Metal context" failures until it was scoped.
 
@@ -28,7 +28,6 @@ def real_mlx_available() -> bool:
     """
     try:
         import mlx.core  # noqa: F401
-        import mlx_lm  # noqa: F401
         import mlx_vlm  # noqa: F401
     except Exception:
         return False
@@ -44,7 +43,7 @@ def create_mlx_module_mocks() -> dict:
     heylook module reaches for needs its own key, because ``import a.b`` /
     ``from a.b import x`` looks up ``sys.modules['a.b']`` and a MagicMock ``a``
     is not a package. Plain attribute pulls off an already-mocked module
-    (``from mlx_lm.generate import wired_limit``) are free. A path missing
+    (``from mlx_vlm.generate.common import wired_limit``) are free. A path missing
     here surfaces as "No module named 'X'; 'Y' is not a package" -- which is
     how ``mlx_lm.tokenizer_utils`` went missing until 2026-08-18. When you add
     a module-level MLX import to src/, add its path here.
@@ -59,8 +58,7 @@ def create_mlx_module_mocks() -> dict:
 
     Covers:
     - mlx, mlx.core, mlx.nn
-    - mlx_lm (sample_utils, tokenizer_utils)
-    - mlx_vlm (utils, generate, prompt_utils)
+    - mlx_vlm (utils, generate, generate.common, prompt_utils, sample_utils)
     - PIL / PIL.Image
     - transformers (PreTrainedTokenizer)
     """
@@ -72,24 +70,6 @@ def create_mlx_module_mocks() -> dict:
     mock_mx.core.new_thread_local_stream.return_value = MagicMock()
     mock_mx.core.default_device.return_value = MagicMock()
 
-    # mlx_lm tree
-    mock_mlx_lm = MagicMock()
-    mock_mlx_lm.sample_utils = MagicMock()
-    mock_mlx_lm.sample_utils.make_sampler = MagicMock()
-    mock_mlx_lm.sample_utils.make_logits_processors = MagicMock(return_value=[])
-    mock_mlx_lm.tokenizer_utils = MagicMock()
-
-    # A real TYPE, not a MagicMock instance: consumers do
-    # `isinstance(tok, TokenizerWrapper)` (generation_core.ensure_gen_tokenizer),
-    # and isinstance against an instance raises TypeError -- which is exactly
-    # how tests/unit/test_generation_core.py failed in ISOLATION for as long
-    # as its first import happened under this mock (ordering review
-    # 2026-08-18: the only file of 100 failing alone).
-    class _FakeTokenizerWrapper:
-        pass
-
-    mock_mlx_lm.tokenizer_utils.TokenizerWrapper = _FakeTokenizerWrapper
-
     # mlx_vlm tree
     mock_mlx_vlm = MagicMock()
     mock_mlx_vlm.utils = MagicMock()
@@ -98,6 +78,9 @@ def create_mlx_module_mocks() -> dict:
     mock_mlx_vlm.stream_generate = MagicMock()
     mock_mlx_vlm.prompt_utils = MagicMock()
     mock_mlx_vlm.prompt_utils.apply_chat_template = MagicMock(return_value="formatted prompt")
+    mock_mlx_vlm.sample_utils = MagicMock()
+    mock_mlx_vlm.sample_utils.make_sampler = MagicMock()
+    mock_mlx_vlm.sample_utils.make_logits_processors = MagicMock(return_value=[])
 
     mock_pil = MagicMock()
     mock_transformers = MagicMock()
@@ -107,16 +90,13 @@ def create_mlx_module_mocks() -> dict:
         "mlx": mock_mx,
         "mlx.core": mock_mx.core,
         "mlx.nn": mock_mx.nn,
-        # mlx_lm
-        "mlx_lm": mock_mlx_lm,
-        "mlx_lm.sample_utils": mock_mlx_lm.sample_utils,
-        "mlx_lm.tokenizer_utils": mock_mlx_lm.tokenizer_utils,
         # mlx_vlm
         "mlx_vlm": mock_mlx_vlm,
         "mlx_vlm.utils": mock_mlx_vlm.utils,
         "mlx_vlm.generate": mock_mlx_vlm.generate,
         "mlx_vlm.generate.common": mock_mlx_vlm.generate.common,
         "mlx_vlm.prompt_utils": mock_mlx_vlm.prompt_utils,
+        "mlx_vlm.sample_utils": mock_mlx_vlm.sample_utils,
         # PIL
         "PIL": mock_pil,
         "PIL.Image": mock_pil.Image,
