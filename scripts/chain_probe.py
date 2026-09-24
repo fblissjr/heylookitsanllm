@@ -7,14 +7,15 @@ model class the change touches -- unit tests on fakes stayed green through
 every live cache failure in this repo, and the eval bank never hits a restore.
 
 For each hop, the same request runs twice at temperature 0:
-  fresh    -- after an unrelated request replaced the single slot
-  restored -- right after the previous hop, so the slot holds its prefix
-The texts must match, and the restored run must report `reused`.
-Hops: extends (multi-turn), then one edit (diverges mid-history -> trim).
+  fresh    -- after an unrelated request, so nothing of this chain is fresh
+             in the model's cache to restore from the last hop
+  restored -- right after the previous hop, so its prefix is cached
+The texts must match.
+Hops: extends (multi-turn), then one edit (diverges mid-history).
 Only a CHAIN discriminates: single-hop restores have passed on models whose
 chained restores were broken. Greedy is right here and nowhere else: this is
 a text EQUALITY check, not a throughput measurement. A restored run that
-that does not report `reused` proves nothing about the restore: every extend
+does not report `reused` proves nothing about the restore: every extend
 hop is required to restore, an edit may re-prefill (it can diverge before the
 earliest kept checkpoint), and the restored hops are printed. Exits 1 on a
 mismatch or a required restore that did not happen.
