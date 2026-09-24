@@ -109,15 +109,15 @@ class GenerationChunk:
     queue_wait_ms: float = 0.0
     # Per-request reports (plan W5). None = this chunk does not carry one;
     # ChunkTelemetry.absorb latches the latest not-None value. MLX stamps the
-    # cache report on the first chunk and the running spec totals on every
-    # chunk; llama-server reports both on its final usage/timings frames.
+    # cache report on the first chunk (it has no speculative decoding since
+    # plan W10); llama-server reports both on its final usage/timings frames.
     cache: Optional[CacheReport] = None
     spec: Optional[SpecReport] = None
 
     @classmethod
     def from_engine(cls, r: Any) -> "GenerationChunk":
-        """Duck-convert an engine chunk (mlx-lm GenerationResponse, mlx-vlm
-        diffusion chunk) -- absent attributes take the field defaults."""
+        """Duck-convert an engine chunk (an mlx-vlm diffusion chunk) --
+        absent attributes take the field defaults."""
         return cls(
             text=getattr(r, "text", "") or "",
             token=getattr(r, "token", None),

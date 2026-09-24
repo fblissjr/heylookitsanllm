@@ -303,7 +303,8 @@ class TestVlmEngineSurface:
         # `import mlx_vlm.generate.ar as ar` resolves against the package's
         # re-exported `generate` function, not the submodule.
         src = inspect.getsource(importlib.import_module("mlx_vlm.generate.ar"))
-        for field in ("self._prompt_batch", "_processed_prompt_columns", "_inputs_embeds"):
+        for field in ("self._prompt_batch", "_processed_prompt_columns", "_inputs_embeds",
+                      "_cached_tokens_per_row", "def _release_apc_meta_blocks", "self._apc_meta"):
             assert field in src, field
 
     def test_apc_takes_our_overrides_and_no_disk(self):

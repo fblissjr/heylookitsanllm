@@ -103,19 +103,44 @@ def cache_report(prompt_tokens: int, cached_tokens: Optional[int], *,
                        reason="no stored prefix matched this prompt")
 
 
-def prefill_progress(prompt_batch, prompt_tokens: int, cached: int) -> Optional[tuple[int, int]]:
+def prefill_progress(prompt_batch, prompt_tokens: int) -> Optional[tuple[int, int]]:
     """(done, total) of THIS request's prefill work, cached prefix excluded
     (the cross-engine meaning). ``done`` is the prompt batch's processed-column
-    count (a private field; None when absent); ``total`` is the prompt's own
-    length minus the cached prefix -- never the batch's embeddings, which it
-    trims as it consumes them, so a total read there shrinks between reports."""
+    count, which counts the uncached tail only; ``total`` is the prompt's own
+    length minus the batch's cached prefix (both private fields; None when
+    absent). The cached count is read off the batch because the engine's
+    prompt response, which also carries it, arrives only once prefill is
+    over: a total without it left a mostly-cached follow-up stuck at a few
+    percent. Never the batch's embeddings for the total -- it trims them as
+    it consumes them, so a total read there shrinks between reports."""
     if prompt_batch is None:
         return None
     processed = getattr(prompt_batch, "_processed_prompt_columns", None)
     if processed is None:
         return None
-    total = max(0, prompt_tokens - cached)
+    cached = max(getattr(prompt_batch, "_cached_tokens_per_row", None) or [0])
+    total = max(0, prompt_tokens - int(cached))
     return min(int(processed), total), total
+
+
+def release_prefill(bg) -> None:
+    """Give back the prefix-cache blocks a request's prefill still holds.
+
+    A prefix hit acquires the matched APC blocks (a reference count), and
+    mlx-vlm releases them when the prompt batch finishes. ``remove()`` during
+    prefill -- a cancel -- and an exception out of ``next()`` drop the batch
+    without releasing, and a block with references is never evictable: every
+    cancelled follow-up would pin its matched prefix in the model's cache
+    until unload. Idempotent: the batch's metadata is emptied after release.
+    """
+    batch = getattr(bg, "_prompt_batch", None)
+    if batch is None:
+        return
+    try:
+        batch._release_apc_meta_blocks()
+        batch._apc_meta = []
+    except Exception as e:  # noqa: BLE001 - cleanup must never mask the cause
+        logging.debug(f"APC block release skipped: {e}")
 
 
 def _token_int(t) -> int:
@@ -219,6 +244,7 @@ def generate(
         last_progress = None
         while True:
             if abort_event is not None and abort_event.is_set():
+                release_prefill(bg)
                 bg.remove(uid)
                 logging.info("Generation aborted")
                 return
@@ -229,7 +255,7 @@ def generate(
                     cache_rep = cache_report(n, cached, cold=cold, has_media=has_media)
                     prefill_done_at = time.perf_counter()
             if prefill_done_at is None and report_progress is not None:
-                progress = prefill_progress(getattr(bg, "_prompt_batch", None), n, cached)
+                progress = prefill_progress(getattr(bg, "_prompt_batch", None), n)
                 if progress is not None and progress != last_progress:
                     last_progress = progress
                     report_progress(*progress)
@@ -241,7 +267,13 @@ def generate(
                     continue
                 if r.token is not None:
                     tok = _token_int(r.token)
-                    if tok in stop:
+                    # Either stop set ends the reply, and neither's token is
+                    # text. mlx-vlm stops on its own list (config.json eos,
+                    # the tokenizer's, the processor's extras), which can
+                    # hold an id heylook's set lacks; treating that token as
+                    # content streamed its text ("<end_of_utterance>") and
+                    # counted it.
+                    if tok in stop or r.finish_reason == "stop":
                         finish = "stop"
                     else:
                         token = tok
@@ -278,6 +310,7 @@ def generate(
             if finish is not None:
                 return
     finally:
+        release_prefill(bg)
         try:
             bg.close()
         except Exception as e:  # noqa: BLE001 - closed off its thread (GC)

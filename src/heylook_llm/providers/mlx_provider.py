@@ -303,14 +303,6 @@ def vlm_apply_chat_template(processor, config, messages, num_images=None, enable
         model_id=model_id)
 
 
-def resolve_add_generation_prompt(messages) -> bool:
-    """Prefill convention: a trailing assistant message means the client
-    wants the model to CONTINUE that message (no new generation prompt);
-    otherwise open a fresh assistant turn."""
-    last_is_assistant = messages[-1].get('role') == 'assistant' if messages else False
-    return not last_is_assistant
-
-
 class UnifiedTextStrategy:
     """Every text request, on every MLX model (text-only and vision models
     alike): render the prompt (template path by ``is_vlm``, thinking,
@@ -682,10 +674,9 @@ class DiffusionStrategy:
 
     Diffusion models are NOT autoregressive. They denoise a fixed-length
     canvas (``config.canvas_length``) over N steps instead of extending a
-    sequence one token at a time. mlx-lm's ``stream_generate`` -- which
-    generation_core calls, and which is heylook's only other text path --
-    drives a model as AR: it forwards the prompt, samples the last position,
-    and repeats. Handed a diffusion checkpoint that samples one meaningless
+    sequence one token at a time. The autoregressive engine every other MLX
+    request takes (``vlm_engine``) forwards the prompt, samples the last
+    position, and repeats. Handed a diffusion checkpoint that samples one meaningless
     token which lands on an EOS almost immediately, so the request completes
     with zero emitted tokens and the client renders an empty reply. That is
     the bug this strategy exists to fix.
@@ -821,13 +812,10 @@ class DiffusionStrategy:
 
 class MLXProvider(BaseProvider):
     """
-    MLX Provider with dual-path architecture for VLM and text-only generation.
-
-    Key optimizations:
-    1. Pre-compiled path decision logic using strategy pattern
-    2. Cached generation strategies to avoid object creation
-    3. LanguageModelLogitsWrapper for mlx-lm compatibility
-    4. Single-pass content scanning for path decisions
+    MLX Provider: every model loads with mlx-vlm and generates through
+    ``vlm_engine``. Strategies, built once at load, pick the request's shape:
+    text (template path by ``is_vlm``), vision (images through mlx-vlm's
+    ``prepare_inputs``), or a masked-diffusion model's denoising loop.
     """
 
     provider_name = "mlx"
@@ -1025,7 +1013,7 @@ class MLXProvider(BaseProvider):
                 logging.info(
                     "diffusion: %s is a masked-diffusion checkpoint "
                     "(canvas_length=%s) -- routing to the denoising engine, "
-                    "not mlx-lm autoregressive generation",
+                    "not autoregressive generation",
                     self.model_id,
                     getattr(self.model.config, "canvas_length", "?"),
                 )
@@ -1452,7 +1440,7 @@ class MLXProvider(BaseProvider):
         if not prompt_tokens:
             return
 
-        # Diffusion checkpoints must prime the denoising loop, not mlx-lm's AR
+        # Diffusion checkpoints must prime the denoising loop, not the AR
         # decode -- priming the path real requests DON'T take is how the VLM
         # LanguageModelOutput bug stayed hidden (see this docstring's warning).
         if self.is_diffusion:

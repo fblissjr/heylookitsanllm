@@ -7,9 +7,10 @@ every knob heylook sends it samples identically to mlx-lm's, checked with seeded
 runs when mlx-lm was dropped in plan W10 stage 3). It acts as a single source
 of truth for sampling logic.
 
-Performance note:
-Compiled functions follow the mlx-lm pattern using @partial(mx.compile, ...)
-to generate optimized Metal kernels for sampling operations.
+A key absent from ``params`` falls back to the shared sampler floor
+(``heylook_llm.samplers.GLOBAL_SAMPLER_FLOOR``), never to a copy of some
+engine's defaults: requests arrive through the cascade with every key set, so
+only direct callers (warmup, scripts) ever reach a fallback.
 """
 from __future__ import annotations
 
@@ -17,12 +18,8 @@ import mlx.core as mx
 from mlx_vlm.sample_utils import make_sampler, make_logits_processors
 from transformers import PreTrainedTokenizer
 
+from ...samplers import GLOBAL_SAMPLER_FLOOR
 from .stop_tokens import resolve_stop_tokens
-
-# Default hyper-parameters from mlx-lm/generate.py
-DEFAULT_TEMP = 1.0
-DEFAULT_TOP_P = 0.95
-DEFAULT_REPETITION_PENALTY = 1.1
 
 
 def _apply_presence_penalty(logits: mx.array, tokens: mx.array, penalty: float) -> mx.array:
@@ -67,7 +64,7 @@ def make_presence_penalty_processor(penalty: float):
         penalty: Penalty value (0.0-2.0). Higher values discourage repetition more.
 
     Returns:
-        A logits processor function compatible with mlx-lm.
+        A logits processor function, ``(tokens, logits) -> logits``.
     """
     def processor(tokens: mx.array, logits: mx.array) -> mx.array:
         if penalty <= 0.0 or len(tokens) == 0:
@@ -104,10 +101,10 @@ def build(tokenizer: PreTrainedTokenizer | None, params: dict) -> tuple[callable
         mx.random.seed(seed)
 
     sampler = make_sampler(
-        temp=params.get("temperature", DEFAULT_TEMP),
-        top_p=params.get("top_p", DEFAULT_TOP_P),
-        min_p=params.get("min_p", 0.0),
-        top_k=params.get("top_k", 0),
+        temp=params.get("temperature", GLOBAL_SAMPLER_FLOOR["temperature"]),
+        top_p=params.get("top_p", GLOBAL_SAMPLER_FLOOR["top_p"]),
+        min_p=params.get("min_p", GLOBAL_SAMPLER_FLOOR["min_p"]),
+        top_k=params.get("top_k", GLOBAL_SAMPLER_FLOOR["top_k"]),
         xtc_probability=params.get("xtc_probability", 0.0),
         xtc_threshold=params.get("xtc_threshold", 0.0),
         xtc_special_tokens=_xtc_special_tokens(tokenizer),
@@ -115,12 +112,12 @@ def build(tokenizer: PreTrainedTokenizer | None, params: dict) -> tuple[callable
 
     processors = make_logits_processors(
         logit_bias=params.get("logit_bias"),
-        repetition_penalty=params.get("repetition_penalty", DEFAULT_REPETITION_PENALTY),
+        repetition_penalty=params.get("repetition_penalty", GLOBAL_SAMPLER_FLOOR["repetition_penalty"]),
         repetition_context_size=params.get("repetition_context_size", 20),
     )
 
     # Add presence penalty processor if specified
-    presence_penalty = params.get("presence_penalty", 0.0)
+    presence_penalty = params.get("presence_penalty", GLOBAL_SAMPLER_FLOOR["presence_penalty"])
     if presence_penalty > 0.0:
         processors.append(make_presence_penalty_processor(presence_penalty))
 

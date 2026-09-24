@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.90]
+
+### Fixed (from an independent review of the W10 engine)
+
+- **Cancelling an MLX request during prefill pinned its prefix-cache
+  blocks.** A prefix hit acquires the matched APC blocks, and mlx-vlm's
+  `BatchGenerator.remove()` drops a prefilling batch without releasing them
+  (an exception out of `next()` does the same). A block with references is
+  never evictable, so every cancelled follow-up kept its prefix resident
+  until unload. `vlm_engine.release_prefill` gives them back on cancel and in
+  the loop's `finally`. The fields it reaches are pinned in
+  `test_mlxvlm_surface.py`. The same fix belongs upstream in `remove()`;
+  not filed.
+- **A token mlx-vlm stops on but heylook's stop set lacks was streamed as
+  text.** mlx-vlm stops on its own list (config.json `eos_token_id`, the
+  tokenizer's, the processor's extras); such a token was detokenized into
+  the reply and counted before the stream ended. Either stop set now ends
+  the reply without emitting its token. Latent: no local model has a
+  config-only eos.
+- **The prefill progress total ignored a prefix hit until prefill ended**, so
+  a mostly cached follow-up showed a few percent and then jumped to done.
+  The total now reads the prompt batch's own cached count.
+- The MLX sampler builder's fallbacks for absent keys were mlx-lm's defaults
+  (a repetition penalty of 1.1 among them); they now come from
+  `GLOBAL_SAMPLER_FLOOR`. Only direct callers reach them (warmup, scripts):
+  requests arrive through the cascade with every key set.
+
+### Removed
+
+- `resolve_add_generation_prompt` (no caller outside its tests) and comments
+  still describing the retired mlx-lm path.
+
 ## [2.0.89]
 
 ### Removed
