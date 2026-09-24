@@ -77,7 +77,7 @@ Providers yield [`GenerationChunk`](../../src/heylook_llm/providers/base.py) dat
 ### 2.1. One Engine: mlx-vlm
 Every MLX model, text-only included, loads with `mlx_vlm.utils.load` and generates on mlx-vlm's own engine (the runtime visibility plan's W10, outcome A2). mlx-vlm has native ports of the text-only families served here, and on them its greedy output matches mlx-lm's token for token (the W10 spike; record in `internal/claude/w10/`). `engine.runtime` therefore reads `mlx-vlm` for every MLX model (and `llama.cpp` for gguf), answered for unloaded models too.
 
-[`loader_routing.py`](../../src/heylook_llm/providers/common/loader_routing.py) still resolves `effective_loader`, and `is_vlm` still derives from it, but it no longer picks a library. It decides whether a model is served as vision-capable (the reported `vision` capability and the provider's image guard read the same resolver, so `/v1/models` cannot advertise images a 400 then refuses) and which template path renders the prompt. Its retirement is stage 3 of that plan.
+[`loader_routing.py`](../../src/heylook_llm/providers/common/loader_routing.py) still resolves `effective_loader`, and `is_vlm` still derives from it, but it no longer picks a library (the `loader` field that could force one was retired in stage 3; the checkpoint's declared `modalities` and whether mlx-vlm registers its `model_type` are the inputs). It decides whether a model is served as vision-capable (the reported `vision` capability and the provider's image guard read the same resolver, so `/v1/models` cannot advertise images a 400 then refuses) and which template path renders the prompt.
 
 Because it reads each model directory's `config.json`, the two admin read routes that build a model response are plain `def` (threadpool), not `async def`.
 
@@ -154,16 +154,7 @@ model lists. Two consequences the provider key cannot express:
   too, and the gguf provider looks for the same key on its own config, where
   no such field exists, and so always contributes the default).
 
-**`engines` is per-engine and cannot express a per-ARCHITECTURE exception.**
-The MLX KV-cache knobs (`cache_type`, `max_kv_size`, `kv_bits`,
-`kv_group_size`) are declared for both MLX engines and are nonetheless inert
-on any architecture that defines its own `make_cache` -- qwen3_5, gemma3, the
-mamba family and others -- because
-[`create_kv_cache`](../../src/heylook_llm/providers/common/cache_helpers.py)
-returns the model's own cache before it reads any of them. No error, no
-warning, no log above debug: the setting validates, the model reloads clean,
-and nothing happens. Where that is true the field's own `description` says so,
-because the tag cannot.
+**`engines` is per-engine and cannot express a per-ARCHITECTURE exception.** When a field is inert on some architectures of the engine it names, its own `description` has to say so. (The MLX KV-cache knobs were the case, silently inert wherever a model defined its own `make_cache`; they were retired with the mlx-vlm engine in plan W10 stage 3.)
 
 Fields that exist on one engine and have no counterpart on the other are the
 common case, and the descriptions name the counterpart where one exists. The

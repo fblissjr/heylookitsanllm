@@ -421,15 +421,3 @@ def test_model_options_publishes_both_facts(provider):
     for entry in _field_options(_PCC[provider]):
         assert entry.get("description"), f"{provider}.{entry['name']} lost its description"
         assert entry.get("engines"), f"{provider}.{entry['name']} lost its engines"
-
-
-
-def test_kv_cache_knobs_disclose_the_make_cache_blind_spot():
-    """These three are declared for both MLX engines and are nonetheless inert
-    on any architecture defining its own make_cache -- silently, with no error
-    and no log. The engines tag cannot express a per-ARCHITECTURE exception,
-    so the description has to, and a description that stops saying so is worse
-    than none: it reads as an assurance."""
-    for name in ("cache_type", "max_kv_size", "kv_bits"):
-        text = _PCC["mlx"].model_fields[name].description or ""
-        assert "make_cache" in text, f"{name} no longer discloses the blind spot"

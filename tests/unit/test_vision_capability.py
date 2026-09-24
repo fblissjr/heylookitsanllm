@@ -9,6 +9,9 @@ capability read the checkpoint's DECLARATION (its dir carries
 the guard read ``is_vlm`` -- and a client doing exactly what the API docs say,
 gating on ``capabilities``, got refused anyway.
 
+(That entry's `loader = "mlx-lm"` field was retired with the mlx-vlm
+engine, plan W10 stage 3; the declaration is now the only input.)
+
 The claim these tests pin is not "text-only models report no vision". It is
 that ONE resolver answers for both surfaces, so they cannot drift apart
 again: ``capabilities.py`` and ``MLXProvider.__init__`` both call
@@ -62,47 +65,21 @@ def _caps_and_guard(model_dir, **config_overrides):
 
 @pytest.mark.unit
 class TestVisionCapabilityMatchesTheProviderGuard:
-    def test_explicit_text_loader_on_a_vision_checkpoint_reports_no_vision(self, tmp_path):
-        """The exact shipped defect. `loader = "mlx-lm"` is how the registry
-        spells "serve this dual-capable checkpoint as text", and the entry that
-        did it kept advertising images it would then refuse."""
-        caps, is_vlm = _caps_and_guard(_model_dir(tmp_path, vision=True),
-                                       loader="mlx-lm")
-        assert "vision" not in caps
-        assert is_vlm is False
-
-    def test_the_declaration_still_survives_as_a_modality(self, tmp_path):
-        """Capabilities narrowed; the DESCRIPTION did not. The two fields mean
-        different things and `/v1/models` ships both -- collapsing them would
-        lose the "this checkpoint has a vision tower we chose not to serve"
-        signal that explains the entry."""
-        _, config = _entry(_model_dir(tmp_path, vision=True), loader="mlx-lm")
-        assert config.modalities is not None and "vision" in config.modalities
-
-    def test_explicit_vision_loader_reports_vision(self, tmp_path):
-        caps, is_vlm = _caps_and_guard(_model_dir(tmp_path, vision=True),
-                                       loader="mlx-vlm")
-        assert "vision" in caps
-        assert is_vlm is True
 
     def test_a_text_checkpoint_reports_no_vision(self, tmp_path):
         caps, is_vlm = _caps_and_guard(_model_dir(tmp_path, vision=False))
         assert "vision" not in caps
         assert is_vlm is False
 
-    @pytest.mark.parametrize("vision,loader", [
-        (True, "mlx-lm"), (True, "mlx-vlm"), (True, "auto"),
-        (False, "mlx-lm"), (False, "mlx-vlm"), (False, "auto"),
-    ])
-    def test_the_two_surfaces_agree_on_every_combination(self, tmp_path, vision, loader):
+    @pytest.mark.parametrize("vision", [True, False])
+    def test_the_two_surfaces_agree_on_every_combination(self, tmp_path, vision):
         """The invariant, stated as the equality rather than as six expected
         answers: whatever the router decides, the advertised capability and the
         guard say the same thing. A future change to the routing rule moves both
         or fails here -- which is the property, since either surface alone can be
         "correct" while the pair is a lie to the client.
         """
-        caps, is_vlm = _caps_and_guard(_model_dir(tmp_path, vision=vision),
-                                       loader=loader)
+        caps, is_vlm = _caps_and_guard(_model_dir(tmp_path, vision=vision))
         assert ("vision" in caps) is is_vlm
 
     def test_an_explicit_capabilities_override_still_wins(self, tmp_path):
@@ -112,7 +89,7 @@ class TestVisionCapabilityMatchesTheProviderGuard:
         cannot see."""
         from heylook_llm.capabilities import effective_capabilities
 
-        mc, _ = _entry(_model_dir(tmp_path, vision=True), loader="mlx-lm")
+        mc, _ = _entry(_model_dir(tmp_path, vision=False))
         mc.capabilities = ["chat", "vision"]
         assert effective_capabilities(mc) == ["chat", "vision"]
 

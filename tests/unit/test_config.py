@@ -132,9 +132,6 @@ class TestModelConfig:
         mc = MLXModelConfig(model_path="/fake")
         assert mc.vision is False
         assert mc.enable_thinking is None  # v1.79.62: unset = follow the thinking capability
-        # None = auto: resolved at model load from actual weight size vs RAM
-        # (derive-at-load, 6a). A stored value is an explicit override.
-        assert mc.cache_type is None
 
     def test_capabilities_list(self):
         mc = ModelConfig(
@@ -196,12 +193,9 @@ class TestMLXRuntimeDefaultFields:
 
     # quantized_kv_start was removed 2026-07-06: stored and forwarded but
     # never consumed by _build_cache_config/make_cache (dead config).
+    # The KV cache knobs and num_draft_tokens were retired with the mlx-vlm
+    # engine (plan W10 stage 3).
     EXPECTED_RUNTIME_DEFAULTS = frozenset({
-        "cache_type",
-        "kv_bits",
-        "kv_group_size",
-        "max_kv_size",
-        "num_draft_tokens",
         "prefill_step_size",
     })
 
@@ -233,27 +227,6 @@ class TestMLXModelConfigValidation:
         # extra="forbid": a typo like `temperatue` must not silently vanish.
         with pytest.raises(ValidationError):
             MLXModelConfig(**self.BASE, temperatue=0.9)
-
-    def test_kv_bits_must_be_2_4_or_8(self):
-        # MLX QuantizedKVCache supports only 2/4/8-bit.
-        for bad in (1, 3, 5, 6, 7):
-            with pytest.raises(ValidationError):
-                MLXModelConfig(**self.BASE, kv_bits=bad)
-        for good in (2, 4, 8):
-            assert MLXModelConfig(**self.BASE, kv_bits=good).kv_bits == good
-
-    def test_kv_group_size_constrained(self):
-        with pytest.raises(ValidationError):
-            MLXModelConfig(**self.BASE, kv_group_size=48)
-        for good in (32, 64, 128):
-            assert MLXModelConfig(**self.BASE, kv_group_size=good).kv_group_size == good
-
-    def test_rotating_cache_requires_max_kv_size(self):
-        # Inert on the mlx-vlm engine; retired in plan W10 stage 3.
-        with pytest.raises(ValidationError):
-            MLXModelConfig(**self.BASE, cache_type="rotating")
-        cfg = MLXModelConfig(**self.BASE, cache_type="rotating", max_kv_size=4096)
-        assert cfg.max_kv_size == 4096
 
     def test_max_queue_depth_is_a_real_field(self):
         # The provider reads config["max_queue_depth"]; without a field the
@@ -287,7 +260,6 @@ class TestModalitiesAndLoader:
         cfg = MLXModelConfig(**self.BASE)
         assert cfg.modalities == ["text"]
         assert cfg.vision is False
-        assert cfg.loader == "auto"
 
     def test_legacy_vision_true_derives_modalities(self):
         # Old entries carry only ``vision = true``; modalities derives from it.
@@ -323,24 +295,19 @@ class TestModalitiesAndLoader:
         cfg = MLXModelConfig(**self.BASE, modalities=["text", "vision", "vision"])
         assert cfg.modalities == ["text", "vision"]
 
-    def test_loader_default_auto(self):
-        assert MLXModelConfig(**self.BASE).loader == "auto"
-
-    def test_loader_accepts_explicit_engines(self):
-        for good in ("auto", "mlx-vlm", "mlx-lm"):
-            assert MLXModelConfig(**self.BASE, loader=good).loader == good
-
-    def test_loader_rejects_unknown(self):
-        with pytest.raises(ValidationError):
-            MLXModelConfig(**self.BASE, loader="torch")
-        with pytest.raises(ValidationError):
-            MLXModelConfig(**self.BASE, loader="vllm")
+    def test_retired_mlx_fields_are_refused(self):
+        # Retired with the mlx-vlm engine (plan W10 stage 3): an entry still
+        # carrying one fails at load rather than silently doing nothing.
+        for field, value in (("loader", "mlx-lm"), ("cache_type", "quantized"),
+                             ("kv_bits", 8), ("draft_model_path", "/d"),
+                             ("num_draft_tokens", 3)):
+            with pytest.raises(ValidationError):
+                MLXModelConfig(**self.BASE, **{field: value})
 
     def test_modalities_and_loader_not_runtime_defaults(self):
         # They are model-level metadata, not per-request sampler defaults --
         # they must not leak into MLX_RUNTIME_DEFAULT_FIELDS.
         assert "modalities" not in MLX_RUNTIME_DEFAULT_FIELDS
-        assert "loader" not in MLX_RUNTIME_DEFAULT_FIELDS
 
 
 @pytest.mark.unit

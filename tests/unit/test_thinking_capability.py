@@ -78,15 +78,12 @@ class TestCapabilitiesReachBothSurfaces:
         from heylook_llm.config import ModelConfig
 
         (tmp_path / "chat_template.jinja").write_text(_GEMMA_JINJA)
-        (tmp_path / "config.json").write_text('{"model_type": "gemma", "vision_config": {}}')
-        # loader PINNED, not left to `auto`. Since v1.79.43 the vision
-        # capability resolves through the loader router, and `auto` would make
-        # this assertion depend on mlx-vlm being installed AND registering
-        # `gemma` -- an install condition, not a property of the thing under
-        # test. Under the helpers.mlx_mock tree the probe returns False and
-        # this would go red for a reason unrelated to capability plumbing.
+        # A model_type mlx-vlm registers: the vision capability resolves
+        # through its registry probe (the `loader` field that could pin it
+        # was retired in plan W10 stage 3).
+        (tmp_path / "config.json").write_text('{"model_type": "gemma4", "vision_config": {}}')
         mc = ModelConfig(id="m", provider="mlx",
-                         config={"model_path": str(tmp_path), "loader": "mlx-vlm"})
+                         config={"model_path": str(tmp_path)})
         assert mc.capabilities == [], "fixture must not pre-set an override"
 
         caps = _model_config_to_response(mc, set()).capabilities

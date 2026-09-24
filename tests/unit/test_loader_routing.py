@@ -21,18 +21,6 @@ def _getter(value, calls):
 
 @pytest.mark.unit
 class TestResolveEffectiveLoader:
-    def test_explicit_mlx_vlm(self):
-        calls = []
-        assert resolve_effective_loader(
-            {"loader": "mlx-vlm", "modalities": ["text"]}, _getter("x", calls),
-            vlm_supports=lambda mt: True) == "mlx-vlm"
-        assert calls == []                         # explicit -> no registry probe
-
-    def test_explicit_mlx_lm_overrides_vision(self):
-        # The Qwen-as-text escape hatch: force mlx-lm even for a vision model.
-        assert resolve_effective_loader(
-            {"loader": "mlx-lm", "modalities": ["text", "vision"]},
-            _getter("qwen3_5", []), vlm_supports=lambda mt: True) == "mlx-lm"
 
     def test_auto_no_vision_is_mlx_lm(self):
         calls = []
@@ -96,16 +84,6 @@ class TestEffectiveLoaderForConfig:
         assert effective_loader_for_config("gguf", cfg) is None
         assert effective_loader_for_config("mlx", cfg) in ("mlx-lm", "mlx-vlm")
 
-    def test_explicit_loader_wins_over_the_vision_capability(self):
-        # The conflation this whole field exists to prevent: an explicit
-        # `loader = "mlx-lm"` on a dual-capable VLM still declares vision, so
-        # anything splitting on the capability would call it mlx-vlm and go
-        # green having run mlx-lm twice.
-        from heylook_llm.providers.common.loader_routing import effective_loader_for_config
-
-        assert effective_loader_for_config(
-            "mlx", {"loader": "mlx-lm", "modalities": ["text", "vision"]}) == "mlx-lm"
-
     def test_missing_model_path_does_not_raise(self):
         # Discovered entries, draft/MTP heads, half-written configs: a read
         # that cannot happen must degrade to the vision declaration, not to a
@@ -141,11 +119,6 @@ class TestUnresolvedDescriptionIsRefused:
     def test_a_config_declaring_nothing_is_refused(self):
         with pytest.raises(ValueError, match="modalities"):
             self._f()("mlx", {"loader": "auto", "model_path": "/synthetic/x"})
-
-    def test_an_explicit_loader_needs_no_declaration(self):
-        # The explicit loader wins outright, so the declaration is never read
-        # and its absence cannot mislead. Refusing here would be a false alarm.
-        assert self._f()("mlx", {"loader": "mlx-lm"}) == "mlx-lm"
 
     def test_the_legacy_vision_bool_counts_as_a_declaration(self):
         # `_modalities_of` still honours the old `vision` key, so a config

@@ -317,12 +317,11 @@ class UnifiedTextStrategy:
     continuation shapes), tokenize with mlx-vlm's ``prepare_inputs``, and
     run it through ``vlm_engine`` (plan W10)."""
 
-    def __init__(self, draft_model=None, model_id=None, model_config=None, is_vlm=False,
+    def __init__(self, model_id=None, model_config=None, is_vlm=False,
                  template_info=None, context_length=None, owner=None):
         # The provider: its APC store and stop set are read at CALL time,
         # so clear_cache replacing the store is seen by the next request.
         self.owner = owner
-        self.draft_model = draft_model
         self.context_length = context_length  # the provider's, for the over-length guard
         self.model_id = model_id
         self.model_config = model_config or {}
@@ -837,7 +836,6 @@ class MLXProvider(BaseProvider):
         super().__init__(model_id, config, verbose)
         self.model = None
         self.processor = None
-        self.draft_model = None
         # mlx-vlm's prefix cache for this model (vlm_engine), its mode, the
         # stop set resolved ONCE at load, and the last request's context.
         self._apc = None
@@ -915,10 +913,6 @@ class MLXProvider(BaseProvider):
 
     def load_model(self):
         model_path = self.config['model_path']
-
-        # Derive-at-load (6a): cache_type=None means auto -- resolve from
-        # actual weight bytes vs RAM here, BEFORE anything reads the config
-        # for cache construction. Explicit values pass through untouched.
 
         logging.info(f"Loading model with mlx-vlm from: {model_path}")
 
@@ -1084,16 +1078,6 @@ class MLXProvider(BaseProvider):
             logging.error(f"Failed to load model: {e}")
             raise e
 
-        # Load draft model if specified
-        if draft_path := self.config.get('draft_model_path'):
-            # mlx-lm's draft-model path does not run on mlx-vlm's engine (plan
-            # W10, A2). No served MLX model sets one; say so rather than load
-            # a drafter nothing uses.
-            logging.warning(
-                f"draft_model_path is set for {self.model_id} ({draft_path}); "
-                f"speculative decoding is not run on the MLX engine, generating without it")
-            self.draft_model = None
-
         # Pre-compile generation strategies after model loading
         self._compile_strategies()
 
@@ -1192,7 +1176,6 @@ class MLXProvider(BaseProvider):
         """Pre-compile generation strategies to avoid runtime branching."""
         # Unified text strategy handles both text-only and VLM text paths
         self._strategies['text'] = UnifiedTextStrategy(
-            draft_model=self.draft_model,
             model_id=self.model_id,
             model_config=self.config,
             is_vlm=self.is_vlm,
@@ -1682,8 +1665,6 @@ class MLXProvider(BaseProvider):
             del self.model
         if hasattr(self, 'processor'):
             del self.processor
-        if hasattr(self, 'draft_model'):
-            del self.draft_model
 
         if not drain:
             # THE DESTRUCTOR STOPS HERE. Dropping references above is free --

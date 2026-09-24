@@ -37,11 +37,8 @@ enabled = true
   # sampling overrides beat the model's generation_config.json
   temperature = 0.6
   max_tokens = 8192
-  # force the KV cache instead of the RAM-relative auto default
-  cache_type = "quantized"
-  kv_bits = 8
-  # run a dual-capable VLM as text-only (routing override)
-  # loader = "mlx-lm"
+  # serve a dual-capable VLM as text-only
+  # modalities = ["text"]
   # force a template source instead of load-time auto resolution
   # chat_template_source = "tokenizer_config"
 

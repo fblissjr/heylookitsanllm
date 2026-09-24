@@ -6,7 +6,6 @@ Provides CRUD operations on models.toml, filesystem scanning (the discovery
 cache), and smart defaults. Thread-safe for concurrent API access.
 
 This module is the single source of truth for:
-- Smart defaults (get_smart_defaults)
 - HuggingFace cache paths (get_hf_cache_paths)
 - Config CRUD, scanning, validation
 """
@@ -25,7 +24,7 @@ from typing import Any, Optional
 
 import tomli_w  # type: ignore[import-untyped]
 
-from heylook_llm.cache_defaults import smart_cache_defaults, weights_size_gb
+from heylook_llm.cache_defaults import weights_size_gb
 from heylook_llm.config import (
     PROVIDER_CONFIG_CLASSES,
     AppConfig,
@@ -64,42 +63,6 @@ def get_hf_cache_paths() -> list[str]:
 # =============================================================================
 # Smart defaults
 # =============================================================================
-
-
-def get_smart_defaults(model_info: dict[str, Any]) -> dict[str, Any]:
-    """Generate LOAD-TIME smart defaults based on model characteristics.
-
-    Post-C4, sampler fields (temperature, top_k, top_p, min_p, max_tokens,
-    repetition_penalty) are NOT returned here -- those are the request-time
-    concern of the preset cascade. This function emits only the fields that
-    determine how the model loads and what its cache looks like: cache_type,
-    KV quantization knobs, draft-token count.
-
-    Sampler values are NOT touched here -- they resolve per request through
-    ``samplers.resolve_effective_sampling``.
-    """
-    provider = model_info.get("provider", "mlx")
-
-    defaults: dict[str, Any] = {}
-    size_gb = model_info.get("size_gb", 0)
-
-    if provider == "mlx":
-        # ONE implementation with the load-time auto resolution (6a):
-        # cache_defaults.smart_cache_defaults owns the RAM-relative policy.
-        # Since 2026-07-28 import paths no longer materialize these fields
-        # (cache_type=None = auto at load); this function survives for the
-        # admin "what would the defaults be" surface.
-        #
-        # num_draft_tokens is deliberately NOT emitted: it only matters when
-        # a draft_model_path is configured (speculative decoding), and import
-        # never configures one -- stamping it on every model is dead config.
-        defaults.update(smart_cache_defaults(size_gb))
-
-    # gguf gets no smart defaults here: llama-server owns its own KV cache
-    # (ctx_size/n_gpu_layers live on GGUFModelConfig directly) -- there's
-    # nothing analogous to cache_type/kv_bits to bake in at import time.
-
-    return defaults
 
 
 # Fields that require a model reload vs runtime-changeable.
@@ -533,12 +496,6 @@ class ModelService:
             draft_model_path=draft_path,
             draft_spec_type=draft_spec_type,
         )
-
-    # --- Smart Defaults ---
-
-    def get_smart_defaults(self, model_info: dict) -> dict:
-        """Generate smart defaults based on model characteristics."""
-        return get_smart_defaults(model_info)
 
     # --- Config CRUD ---
 

@@ -1,40 +1,11 @@
 # tests/unit/test_cache_defaults.py
-"""Derive-at-load cache defaults (Wave 1 / 6a, 2026-07-28).
-
-``cache_type = None`` means AUTO: resolved at model load from the actual
-weight bytes on disk vs machine RAM -- the same RAM-relative policy
-``get_smart_defaults`` applied at import time, now computed where it can't
-rot (import-time materialization froze the decision against whatever
-machine/weights existed at import).
-
-Claims: (1) the threshold policy lives in ONE place (cache_defaults.py)
-shared by import-time and load-time consumers; (2) an explicit stored
-cache_type is never overridden; (3) resolution is best-effort -- a missing
-dir yields the standard cache, never an exception at load.
-"""
+"""weights_size_gb: the byte-summing size probe model_service uses. (The
+RAM-relative MLX KV-cache defaults that shared this module were retired with
+the mlx-vlm engine, plan W10 stage 3.)"""
 
 import pytest
 
-from heylook_llm.cache_defaults import (
-    smart_cache_defaults,
-    weights_size_gb,
-)
-
-
-@pytest.mark.unit
-class TestSmartCacheDefaults:
-    def test_small_model_standard(self, monkeypatch):
-        monkeypatch.setattr(
-            "heylook_llm.cache_defaults._system_ram_gb", lambda: 192.0)
-        assert smart_cache_defaults(30.0) == {"cache_type": "standard"}
-
-    def test_large_model_quantized(self, monkeypatch):
-        # >35% of RAM -> 8-bit KV quantization (RAM-relative, not absolute).
-        monkeypatch.setattr(
-            "heylook_llm.cache_defaults._system_ram_gb", lambda: 64.0)
-        assert smart_cache_defaults(30.0) == {
-            "cache_type": "quantized", "kv_bits": 8, "kv_group_size": 64,
-        }
+from heylook_llm.cache_defaults import weights_size_gb
 
 
 @pytest.mark.unit

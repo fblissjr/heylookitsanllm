@@ -41,7 +41,7 @@ class _ConfigDictProvider(BaseProvider):
         pass
 
 
-def _toml(temperature=None, max_kv_size=None, model_id="m1", enabled=True):
+def _toml(temperature=None, context_length=None, model_id="m1", enabled=True):
     lines = [
         f'default_model = "{model_id}"',
         "max_loaded_models = 1",
@@ -56,8 +56,8 @@ def _toml(temperature=None, max_kv_size=None, model_id="m1", enabled=True):
     ]
     if temperature is not None:
         lines.append(f"temperature = {temperature}")
-    if max_kv_size is not None:
-        lines.append(f"max_kv_size = {max_kv_size}")
+    if context_length is not None:
+        lines.append(f"context_length = {context_length}")
     return "\n".join(lines) + "\n"
 
 
@@ -105,13 +105,13 @@ class TestPerRequestRefresh(unittest.TestCase):
     def test_requires_reload_key_stays_a_snapshot(self):
         router, provider = self._router_with_loaded_provider()
 
-        self._rewrite(max_kv_size=4096)
+        self._rewrite(context_length=4096)
         router.reload_config()
 
         # The loaded process really does keep the old value; refreshing the
         # dict would make the dict lie in the OPPOSITE direction (claiming a
         # live change the process never saw).
-        self.assertIsNone(provider.config.get("max_kv_size"))
+        self.assertIsNone(provider.config.get("context_length"))
 
     def test_removed_entry_is_skipped(self):
         router, provider = self._router_with_loaded_provider()
@@ -135,15 +135,15 @@ class TestPerRequestRefresh(unittest.TestCase):
         router, provider = self._router_with_loaded_provider()
         self.assertEqual(router.stale_reload_fields("m1"), [])
 
-        self._rewrite(max_kv_size=4096)
+        self._rewrite(context_length=4096)
         router.reload_config()
 
         # requires_reload change on a loaded model -> reported stale...
-        self.assertEqual(router.stale_reload_fields("m1"), ["max_kv_size"])
+        self.assertEqual(router.stale_reload_fields("m1"), ["context_length"])
         # ...while a per_request change never is (it refreshes live).
-        self._rewrite(max_kv_size=4096, temperature=0.9)
+        self._rewrite(context_length=4096, temperature=0.9)
         router.reload_config()
-        self.assertEqual(router.stale_reload_fields("m1"), ["max_kv_size"])
+        self.assertEqual(router.stale_reload_fields("m1"), ["context_length"])
         # Unloaded models report nothing regardless of saved diffs.
         self.assertEqual(router.stale_reload_fields("m2"), [])
 

@@ -21,6 +21,7 @@ narrative starting "audit: model import / config / loading system"):
 
 - **Import-time KV-cache defaults are RAM-relative, and `max_kv_size` is
   never defaulted** (v1.31.3) -- see "Smart Defaults at Import" below.
+  (Both retired v2.0.88 with the MLX KV fields.)
 - **Chat-sane request defaults + strict config validation** (v1.32.0) --
   see "Sampler Defaults and the Effective-Request Cascade" and
   "Validation" below. `quantized_kv_start` was removed as dead config.
@@ -113,8 +114,6 @@ enabled = true
   model_path = "modelzoo/my-tuned-model"
   temperature = 0.6         # beats the model's generation_config.json
   max_tokens = 8192
-  cache_type = "quantized"  # beats the RAM-relative auto default
-  kv_bits = 8
 ```
 
 More shapes (GGUF sidecars): `models.example.toml`.
@@ -133,7 +132,7 @@ Do not put it in `models.toml`.)
 |---|---|---|---|
 | `model_path` | string | required | HuggingFace model ID or local path |
 | `modalities` | list[str] | derived | Author-declared capability set (`text`/`vision`/`audio`/`video`); `text` always present. **Derive-at-load (v1.47.0)**: when absent, detected at CONFIG-LOAD time from the model dir's `config.json` blocks (`vision_config`/`audio_config` + `*_token_id`, shared detector `modality_detect.py`); a stored value is an explicit override and wins. No config.json to read -> legacy derivation from `vision`. The importer no longer materializes it (MLX entries; GGUF still does -- no config.json to probe at load). |
-| `loader` | `auto`\|`mlx-vlm`\|`mlx-lm` | `auto` | Engine routing (within `provider="mlx"`). `auto`: mlx-vlm iff the model declares vision AND mlx-vlm registers its `model_type`, else mlx-lm (degrades only on positive non-support). Explicit forces the engine (e.g. run a dual-capable VLM as text via `mlx-lm`). |
+| ~~`loader`~~ | -- | -- | REMOVED v2.0.88 (plan W10 stage 3): every MLX model runs on mlx-vlm's engine, which builds its own caches, has no mlx-lm drafter path, and needs no library routing. An entry still carrying it fails validation. |
 | `vision` | bool | `false` | **Derived mirror** of `"vision" in modalities`, retained for back-compat. Setting it seeds `modalities` when `modalities` is omitted; if both are set, `modalities` wins. Load routing goes through `loader`/`effective_loader`, not this flag. |
 | `context_length` | int (`gt=0`), none | none = read config.json | The model's context window when `config.json` does not tell the truth (a YaRN-scaled checkpoint ships the ORIGINAL `max_position_embeddings` with the factor in `rope_scaling`). Absent = `capabilities.model_context_length` reads the file. Read once at load into `MLXProvider.context_length`, the number `run_generation` refuses an over-length prompt against and the admin row / `/v1/models` report; requires a reload. MLX only -- gguf's window is what the process was spawned with (`ctx_size`). |
 | `max_tokens` | int | none | Default maximum tokens to generate. Unset falls through the effective-request cascade to `GLOBAL_SAMPLER_FLOOR['max_tokens']` (16384) -- see below. |
@@ -143,16 +142,16 @@ Do not put it in `models.toml`.)
 | `min_p` | float | none | Min-p sampling |
 | `repetition_penalty` | float | none | Repetition penalty |
 | `presence_penalty` | float | none | Presence penalty |
-| `cache_type` | `Literal["standard", "rotating", "quantized"]`, none | none = auto | KV cache implementation. **None = AUTO (v1.48.0)**: resolved at model load from actual weight bytes vs machine RAM (`cache_defaults.resolve_cache_config`; may also fill `kv_bits`/`kv_group_size`, never overriding pinned knobs). A stored value is an explicit override. `"rotating"` requires `max_kv_size` (validated at config load) |
-| `max_kv_size` | int | none | Rotating-cache size cap. **Never set by smart defaults** -- see "Smart Defaults at Import" below. |
-| `kv_bits` | `Literal[2, 4, 8]` | none | KV quantization bits -- constrained to what MLX's `QuantizedKVCache` actually supports |
-| `kv_group_size` | `Literal[32, 64, 128]` | `64` | KV quantization group size -- constrained to what MLX supports |
+| ~~`cache_type`~~ | -- | -- | REMOVED v2.0.88 (plan W10 stage 3): every MLX model runs on mlx-vlm's engine, which builds its own caches, has no mlx-lm drafter path, and needs no library routing. An entry still carrying it fails validation. |
+| ~~`max_kv_size`~~ | -- | -- | REMOVED v2.0.88 (plan W10 stage 3): every MLX model runs on mlx-vlm's engine, which builds its own caches, has no mlx-lm drafter path, and needs no library routing. An entry still carrying it fails validation. |
+| ~~`kv_bits`~~ | -- | -- | REMOVED v2.0.88 (plan W10 stage 3): every MLX model runs on mlx-vlm's engine, which builds its own caches, has no mlx-lm drafter path, and needs no library routing. An entry still carrying it fails validation. |
+| ~~`kv_group_size`~~ | -- | -- | REMOVED v2.0.88 (plan W10 stage 3): every MLX model runs on mlx-vlm's engine, which builds its own caches, has no mlx-lm drafter path, and needs no library routing. An entry still carrying it fails validation. |
 | `max_queue_depth` | int (`ge=1`) | `8` | Requests admitted behind the active generation before 503 backpressure. A real config field as of v1.32.0 -- previously read by the generation gate but not declared on `MLXModelConfig`, so it was silently dropped by Pydantic and permanently 8 regardless of `models.toml` |
 | `enable_thinking` | bool | `false` | Thinking-mode default for this model (any thinking-capable template, not Qwen3-specific -- see "Sampler Defaults" below for the request-time cascade) |
 | ~~`vision_tokens`~~ | -- | -- | REMOVED v2.0.64 (measured dead on Qwen-family MLX: mlx-vlm drops the `max_pixels` kwarg; cap pixels client-side instead). Was: per-model default visual token budget per image (16-16384). A request's own `vision_tokens` overrides; `none` leaves the image processor's own default. Mapped per model family by `providers/common/vision_budget.py` (gemma-4: discrete `max_soft_tokens` bucket; qwen2/3-VL: `max_pixels`) |
 | ~~`supports_thinking`~~ | -- | -- | REMOVED v1.46.0 (MLX only; the GGUF config keeps its flag). MLX thinking capability is derived: `enable_thinking`, else template probe, else the explicit `ModelConfig.capabilities` override. |
-| `draft_model_path` | string | none | Path to draft model for speculative decoding |
-| `num_draft_tokens` | int | `3` | Draft tokens for speculative decoding. The importer no longer stamps this on every import (v1.32.0) -- it's inert without `draft_model_path`, so writing it on every model was dead config. The field and its default of 3 remain; only the automatic import-time write was removed. |
+| ~~`draft_model_path`~~ | -- | -- | REMOVED v2.0.88 (plan W10 stage 3): every MLX model runs on mlx-vlm's engine, which builds its own caches, has no mlx-lm drafter path, and needs no library routing. An entry still carrying it fails validation. |
+| ~~`num_draft_tokens`~~ | -- | -- | REMOVED v2.0.88 (plan W10 stage 3): every MLX model runs on mlx-vlm's engine, which builds its own caches, has no mlx-lm drafter path, and needs no library routing. An entry still carrying it fails validation. |
 | `unload_after_idle_seconds` | int, none | none | Per-model idle-unload override. `None` = use `AppConfig.idle_unload_seconds`; `0` = never idle-unload this model |
 | `chat_template_source` | string, none | none | `"auto"` / `"jinja"` / `"tokenizer_config"` / absolute path -- overrides chat-template source detection. Since v1.47.0 the importer records this ONLY for an explicit CLI `--chat-template` override; absent = load-time auto resolution (template_info.py, same policy the detection duplicated). |
 
@@ -255,6 +254,11 @@ system, which is editable and client-expanded -- a preset reaches the wire as
 explicit sampler fields, so it arrives at layer 4 and needs no layer of its own.
 
 ### Smart Defaults at Import
+
+> **Historical (removed v2.0.88).** `get_smart_defaults` and the
+> RAM-relative KV-cache defaults went with the MLX KV fields when the
+> mlx-vlm engine replaced mlx-lm's caches (plan W10 stage 3; owner decision:
+> f16 KV everywhere). The section below records what they did.
 
 `get_smart_defaults()` (`src/heylook_llm/model_service.py`, lines
 153-193) computes **load-time** defaults (`cache_type`, `kv_bits`,

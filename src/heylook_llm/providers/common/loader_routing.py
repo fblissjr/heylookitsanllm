@@ -88,17 +88,17 @@ def resolve_effective_loader(
 ) -> str:
     """Resolve to ``"mlx-vlm"`` or ``"mlx-lm"``.
 
-    ``config``: the model's config dict (``loader`` + ``modalities``/``vision``).
+    ``config``: the model's config dict (``modalities``/``vision``).
     Usually a validated ``model_dump()``, but the provider accepts raw dicts too,
     so modalities are read via :func:`_modalities_of`.
-    ``model_type_getter``: lazy -- called only when ``auto`` must probe the
-    mlx-vlm registry (skipped for explicit loaders and non-vision models).
-    """
-    loader = config.get("loader", "auto")
-    if loader != "auto":
-        return loader                      # explicit engine (Literal: mlx-vlm | mlx-lm)
+    ``model_type_getter``: lazy -- called only when a vision model must probe
+    the mlx-vlm registry.
 
-    # auto: non-vision -> text loader.
+    Every MLX model runs on mlx-vlm's engine since v2.0.86 (plan W10); the two
+    answers now mean "served with vision" and "served as text", and the
+    ``loader`` field that could force one was retired in stage 3.
+    """
+    # non-vision -> served as text.
     if "vision" not in _modalities_of(config):
         return "mlx-lm"
     # vision: keep the historical vision->mlx-vlm default UNLESS we can POSITIVELY
@@ -163,9 +163,7 @@ def effective_loader_for_config(provider: str, config: dict) -> Optional[str]:
     # set before and after an edit calls this per model, so an unvalidated
     # snapshot on either side reports engine changes that never happened.
     #
-    # Only when the answer would actually DEPEND on it: an explicit `loader`
-    # wins outright, so an absent description is harmless there. Raise rather
-    # than warn -- this runs per row of GET /v1/admin/models, where a warning
+    # Raise rather than warn -- this runs per row of GET /v1/admin/models, where a warning
     # is either noise or filtered, and no legitimate caller reaches it (the
     # production caller passes a validated config, and every existing test
     # states `modalities` explicitly).
@@ -175,12 +173,12 @@ def effective_loader_for_config(provider: str, config: dict) -> Optional[str]:
     # guard, which is the failure this whole change is about. The honest test
     # is that NEITHER declaration is present: no `modalities`, no `vision`.
     declared = config.get("modalities") is not None or "vision" in config
-    if config.get("loader", "auto") in (None, "auto") and not declared:
+    if not declared:
         raise ValueError(
             "effective_loader_for_config was given a config whose `modalities` "
             "is unresolved, which happens when the config has not been through "
             "MLXModelConfig validation (merge_discovered returns raw dicts). "
-            "Answering would report every model as mlx-lm. Validate first -- "
+            "Answering would report every model as text-only. Validate first -- "
             "AppConfig(**merged) -- and pass that config."
         )
     return resolve_effective_loader(

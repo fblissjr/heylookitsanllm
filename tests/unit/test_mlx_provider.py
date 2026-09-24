@@ -26,7 +26,6 @@ class TestMLXProviderInit:
         assert mock_mlx_provider._active_generations == 0
         assert mock_mlx_provider.model is None
         assert mock_mlx_provider.processor is None
-        assert mock_mlx_provider.draft_model is None
 
     def test_init_text_only_not_vlm(self, mock_mlx_provider):
         assert mock_mlx_provider.is_vlm is False

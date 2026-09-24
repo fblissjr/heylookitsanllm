@@ -1,79 +1,13 @@
-"""Unit tests for model service after C4 preset migration.
-
-Historical context: the v1.19.0 profile system baked sampler fields into
-``models.toml`` at import time. C4 deleted that behavior -- sampler fields
-now live in the runtime preset registry and are applied at request time
-on the model's config; ``get_smart_defaults()`` emits only load-time
-fields (cache type, KV quantization, draft tokens). (The intermediate
-``SamplerPreset``/``load_sampler_presets`` adapter layer was collapsed
-onto the sampler registry, itself removed in v2.0.30.)
-
-Preset-registry semantics are covered by ``test_preset_registry.py``.
-This file focuses on:
-  - ``get_smart_defaults`` returning only load-time fields
-  - ``ModelImporter`` model-size regex (unchanged)
-"""
+"""Unit tests for model service: the import wizard's chat-template detection
+and model-size handling. (The load-time smart defaults it used to emit --
+MLX KV cache settings -- were retired with the mlx-vlm engine, plan W10
+stage 3.)"""
 
 import json
 
 import pytest
 
-from heylook_llm.model_service import get_smart_defaults
 from heylook_llm.model_importer import ModelImporter
-
-
-class TestSmartDefaultsLoadTimeOnly:
-    """After C4, sampler fields (temperature, top_k, etc.) are NEVER in
-    ``get_smart_defaults``. Only cache/KV/draft-token load-time config."""
-
-    def test_no_sampler_fields(self):
-        defaults = get_smart_defaults({
-            "provider": "mlx", "name": "test", "size_gb": 7,
-            "is_vision": False,
-        })
-        for forbidden in (
-            "temperature", "top_p", "top_k", "min_p",
-            "max_tokens", "repetition_penalty", "repetition_context_size",
-        ):
-            assert forbidden not in defaults, (
-                f"sampler field {forbidden!r} leaked into get_smart_defaults"
-            )
-
-    def test_model_large_relative_to_ram_gets_quantized_cache(self, monkeypatch):
-        # 40GB weights on a 64GB machine: real memory pressure -> quantize.
-        monkeypatch.setattr("heylook_llm.cache_defaults._system_ram_gb", lambda: 64.0)
-        defaults = get_smart_defaults({
-            "provider": "mlx", "name": "big", "size_gb": 40,
-        })
-        assert defaults["cache_type"] == "quantized"
-        assert defaults["kv_bits"] == 8
-
-    def test_same_model_on_big_ram_machine_gets_standard_cache(self, monkeypatch):
-        # The SAME 40GB model on a 192GB machine: no pressure -> fp16 KV.
-        # KV quantization is a memory trade-off, not a free default.
-        monkeypatch.setattr("heylook_llm.cache_defaults._system_ram_gb", lambda: 192.0)
-        defaults = get_smart_defaults({
-            "provider": "mlx", "name": "big", "size_gb": 40,
-        })
-        assert defaults["cache_type"] == "standard"
-
-    def test_small_model_gets_standard_cache(self, monkeypatch):
-        monkeypatch.setattr("heylook_llm.cache_defaults._system_ram_gb", lambda: 64.0)
-        defaults = get_smart_defaults({
-            "provider": "mlx", "name": "small", "size_gb": 3,
-        })
-        assert defaults["cache_type"] == "standard"
-
-    def test_max_kv_size_is_never_a_default(self, monkeypatch):
-        # max_kv_size is a RotatingKVCache cap that SILENTLY DROPS context
-        # beyond it -- truncation must be an explicit user choice, never an
-        # import-time default (it shipped 2048 on every >30GB model once).
-        for ram, size in ((64.0, 40), (192.0, 155), (32.0, 20)):
-            monkeypatch.setattr("heylook_llm.cache_defaults._system_ram_gb", lambda r=ram: r)
-            defaults = get_smart_defaults({
-                "provider": "mlx", "name": "m", "size_gb": size,
-            })
-            assert "max_kv_size" not in defaults
 
 
 class TestImportWizardChatTemplateDetection:

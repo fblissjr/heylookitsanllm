@@ -244,10 +244,8 @@ def _extra(field) -> dict:
 # defect class; do not write one.
 #
 # WHAT THE TAG CANNOT SAY. It is per-ENGINE, and a field can be inert on
-# the engine it names: since v2.0.86 the MLX KV cache knobs (cache_type,
-# kv_bits, kv_group_size, max_kv_size, quantized_kv_start) reach nothing --
-# vlm_engine builds mlx-vlm's own caches and passes none of them. Plan W10
-# stage 3 retires them. When you add a field, ask both questions.
+# the engine it names (the MLX KV cache knobs were, from v2.0.86 until plan
+# W10 stage 3 retired them). When you add a field, ask both questions.
 ENGINE_MLX_LM = "mlx-lm"
 ENGINE_MLX_VLM = "mlx-vlm"
 ENGINE_GGUF = "gguf"
@@ -367,36 +365,12 @@ class MLXModelConfig(BaseModel):
             "model rather than the same one reconfigured, which is why it is "
             "not editable in place."),
         json_schema_extra={"effect": EFFECT_IDENTITY, "engines": ENGINES_MLX})
-    draft_model_path: Optional[str] = Field(
-        default=None,
-        description=(
-            "Path to a smaller model used as the drafter for speculative "
-            "decoding. Set it when you have measured spec decode a win on "
-            "THIS model at YOUR context length -- it is unproven in general "
-            "here, and a LoRA erodes whatever win exists because the adapter "
-            "reaches the target only. Unset = no speculative decoding."),
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
-                           "engines": ENGINES_MLX})
-    # Classified requires_reload rather than per_request despite being a
-    # runtime default: spec decode is set up when the draft model is loaded,
-    # and the old hand-written reload set listed it. An unnecessary reload
-    # prompt is a nuisance; a missed one silently serves stale behaviour.
-    num_draft_tokens: Optional[int] = Field(
-        default=3,
-        description=(
-            "How many tokens the drafter proposes per speculation round. "
-            "Inert without `draft_model_path`. Higher drafts more per round "
-            "and wastes more when the target rejects; tune it against your "
-            "own model rather than porting a number from another one."),
-        json_schema_extra={"is_runtime_default": True,
-                           "effect": EFFECT_REQUIRES_RELOAD,
-                           "engines": ENGINES_MLX},
-    )
     # DESCRIPTION vs ROUTING split (Phase 6 refinement 2026-07-11). ``vision``
     # historically did both jobs; it is now a derived mirror of
     # ``"vision" in modalities`` (kept for back-compat with readers of
-    # config["vision"]). ``modalities`` is the author-declared capability set;
-    # ``loader`` selects the mlx engine (within provider="mlx" only).
+    # config["vision"]). ``modalities`` is the author-declared capability set.
+    # (Every MLX model runs on mlx-vlm's engine since v2.0.86; the ``loader``
+    # field that picked a library was retired in plan W10 stage 3.)
     # ui:"hidden": a derived mirror is a dead knob in an editor -- config
     # re-derives it whenever modalities is set or detectable, so an edit
     # silently reverts at the next load. Edit modalities instead.
@@ -423,21 +397,6 @@ class MLXModelConfig(BaseModel):
             "this is not merely descriptive as it is on gguf: it feeds "
             "`effective_loader`, so changing it changes WHICH ENGINE holds the "
             "weights (mlx-vlm vs mlx-lm)."),
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
-                           "engines": ENGINES_MLX})
-    # Engine routing. "auto": mlx-vlm if "vision" in modalities AND mlx-vlm
-    # registers the model_type, else mlx-lm. Explicit values force the engine
-    # (e.g. run a dual-capable VLM as text via "mlx-lm"). Resolution + the
-    # effective loader live in the provider (is_vlm derives from it).
-    loader: Literal["auto", "mlx-vlm", "mlx-lm"] = Field(
-        default="auto",
-        description=(
-            "Which MLX engine loads this model. \"auto\" picks mlx-vlm when "
-            "\"vision\" is in modalities AND mlx-vlm registers the model_type, "
-            "else mlx-lm. Set it explicitly to force one -- e.g. run a "
-            "dual-capable VLM as text-only via \"mlx-lm\". This is the field "
-            "that DECIDES a model's engine, so it is the one place where both "
-            "MLX engines are the answer by construction."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
                            "engines": ENGINES_MLX})
     # The model's context window, when config.json does not tell the truth.
@@ -533,65 +492,6 @@ class MLXModelConfig(BaseModel):
             "engine design: llama.cpp also counts the tail of the prompt."),
         json_schema_extra={"effect": EFFECT_PER_REQUEST,
                            "engines": ENGINES_MLX})
-    # None = AUTO (6a derive-at-load): resolved at model load from actual
-    # weight bytes vs RAM (cache_defaults.resolve_cache_config). A stored
-    # value is an explicit operator override.
-    cache_type: Optional[Literal["standard", "rotating", "quantized"]] = Field(
-        default=None,
-        description=(
-            "KV cache implementation. Unset = AUTO, resolved at load from "
-            "weight bytes against this machine's RAM (quantized once the "
-            "weights alone claim over ~35% of it). \"quantized\" trades a "
-            "little quality for KV bytes; \"rotating\" bounds the cache by "
-            "DROPPING context past `max_kv_size` and requires it. "
-            "IGNORED ENTIRELY for architectures that define their own "
-            "make_cache -- qwen3_5, gemma3, the mamba family and others -- "
-            "because create_kv_cache returns the model's cache before reading "
-            "this field. No error and no warning; the setting simply does "
-            "nothing. Check your model before tuning it."),
-        json_schema_extra={"is_runtime_default": True,
-                           "effect": EFFECT_REQUIRES_RELOAD,
-                           "engines": ENGINES_MLX},
-    )
-    max_kv_size: Optional[int] = Field(
-        default=None,
-        description=(
-            "Cap on KV cache length, which creates a RotatingKVCache that "
-            "silently DROPS context past the cap. Deliberately never "
-            "defaulted: truncation is a correctness trade, not a tuning knob. "
-            "NOT A PREALLOCATION and not a load-time lever -- RotatingKVCache "
-            "grows lazily in 256-token steps like every other MLX cache, and "
-            "the cache is constructed per generation, not at load, so this "
-            "cannot speed up loading or time-to-first-token. Same make_cache "
-            "blind spot as `cache_type`: inert on architectures defining one."),
-        json_schema_extra={"is_runtime_default": True,
-                           "effect": EFFECT_REQUIRES_RELOAD,
-                           "engines": ENGINES_MLX},
-    )
-    # MLX QuantizedKVCache supports exactly 2/4/8 bits and group sizes that
-    # divide the head dim; anything else fails at first generation, so reject
-    # it at config-load time instead.
-    kv_bits: Optional[Literal[2, 4, 8]] = Field(
-        default=None,
-        description=(
-            "Bit width for a quantized KV cache. Only 2/4/8 exist in MLX; "
-            "anything else fails at first generation, so it is refused here "
-            "instead. Applies when `cache_type` resolves to \"quantized\" -- "
-            "and shares that field's make_cache blind spot."),
-        json_schema_extra={"is_runtime_default": True,
-                           "effect": EFFECT_REQUIRES_RELOAD,
-                           "engines": ENGINES_MLX},
-    )
-    kv_group_size: Literal[32, 64, 128] = Field(
-        default=64,
-        description=(
-            "Quantization group size for a quantized KV cache; must divide "
-            "the head dim. Leave it at 64 unless you have a reason. Shares "
-            "`cache_type`'s make_cache blind spot."),
-        json_schema_extra={"is_runtime_default": True,
-                           "effect": EFFECT_REQUIRES_RELOAD,
-                           "engines": ENGINES_MLX},
-    )
     # In-flight + queued requests admitted before 503 backpressure. Consumed
     # by the generation gate (process-wide; the first provider created wins).
     # Process-wide once the gate exists (first provider created wins), so it
@@ -760,15 +660,6 @@ class MLXModelConfig(BaseModel):
                 self.__pydantic_fields_set__.discard(name)
         return self
 
-    @model_validator(mode="after")
-    def _rotating_requires_max_kv_size(self):
-        # A config the old slot cache would have refused at first generation.
-        # Inert on the mlx-vlm engine (v2.0.86); retired with the KV cache
-        # knobs in plan W10 stage 3.
-        if self.cache_type == "rotating" and self.max_kv_size is None:
-            raise ValueError("cache_type='rotating' requires max_kv_size")
-        return self
-
 
 # Derived at import time; callers of _apply_model_defaults read from this set
 # rather than a hardcoded list. If you annotate a new field with
@@ -778,14 +669,6 @@ class MLXModelConfig(BaseModel):
 # they should agree. They answer different questions:
 #   is_runtime_default -> does this flow into effective_request per generation?
 #   effect             -> when does CHANGING it in models.toml take effect?
-# Five fields are is_runtime_default AND requires_reload (cache_type, kv_bits,
-# kv_group_size, max_kv_size, num_draft_tokens). That is correct, not a drift:
-# they ride the per-request plumbing (_build_cache_config reads them out of
-# effective_request every generation), but no ChatRequest field can override
-# them, and a loaded provider holds its own config copy -- so editing one in
-# models.toml does nothing until the model is reloaded. Do not "reconcile"
-# these two sets; reconciling them would make one of the questions
-# unanswerable.
 MLX_RUNTIME_DEFAULT_FIELDS: frozenset[str] = frozenset(
     # via _extra(): pydantic allows json_schema_extra to be a CALLABLE, and
     # `.get` on one raises at runtime, not just under a type checker. One
@@ -1112,7 +995,8 @@ class GGUFModelConfig(BaseModel):
             "EMERGENCIES, not as a tuning default. For a headroom problem "
             "this is usually the better first lever than expert offload -- it "
             "shrinks the KV bytes themselves rather than moving weight math "
-            "to the CPU. MLX's counterpart is `cache_type`/`kv_bits`."),
+            "to the CPU. MLX has no counterpart (its KV fields were retired "
+            "with the mlx-vlm engine)."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ctk",
                            "ui": "advanced", "engines": [ENGINE_GGUF]},
     )

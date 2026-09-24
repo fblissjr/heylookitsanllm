@@ -1,22 +1,10 @@
 # src/heylook_llm/cache_defaults.py
 #
-# RAM-relative KV-cache defaults -- ONE implementation (Wave 1 / 6a,
-# 2026-07-28) shared by import-time smart defaults (model_service) and the
-# load-time auto resolution (MLXProvider.load_model for entries with
-# cache_type = None). Computing this at load is the point: an import-time
-# copy froze the decision against whatever machine/weights existed at
-# import and rotted when either changed.
+# Weight bytes under a model dir. It used to also hold the RAM-relative MLX
+# KV-cache defaults; those fields were retired with the mlx-vlm engine (plan
+# W10 stage 3), and the size probe is what remains in use (model_service).
 
 from pathlib import Path
-from typing import Any
-
-
-def _system_ram_gb() -> float:
-    try:
-        import psutil
-        return psutil.virtual_memory().total / (1024 ** 3)
-    except Exception:
-        return 64.0
 
 
 # load_model recurs under idle-unload/LRU cycles; skip the rglob+stat pass
@@ -46,21 +34,3 @@ def weights_size_gb(model_path: str) -> float:
     size = total / (1024 ** 3)
     _SIZE_CACHE[str(path)] = (mtime, size)
     return size
-
-
-def smart_cache_defaults(size_gb: float) -> dict[str, Any]:
-    """Cache fields for a model of ``size_gb`` weight bytes on THIS machine.
-
-    KV quantization is a memory/quality trade-off, so it must be
-    RAM-relative, not an absolute weight threshold: a 40GB model is "large"
-    on a 64GB MacBook and trivial on a 192GB Studio. Quantize only when the
-    weights alone claim over ~35% of unified memory (leaving the rest for
-    KV, vision towers, and the OS).
-
-    max_kv_size is deliberately NEVER defaulted: it creates a
-    RotatingKVCache that silently drops context beyond the cap --
-    truncation is an explicit user choice, not a default.
-    """
-    if size_gb > _system_ram_gb() * 0.35:
-        return {"cache_type": "quantized", "kv_bits": 8, "kv_group_size": 64}
-    return {"cache_type": "standard"}
