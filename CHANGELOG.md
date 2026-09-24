@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.133]
+
+Documentation only.
+
+### Verified
+
+- **The mlx-vlm pin move (v2.0.124, `ac737ef3`) meets the release standard**:
+  `tests/smoke/` green on all three arms at v2.0.132. mlx-text
+  (`gpt-oss-20b-MXFP4-Q8-mlx`, thinking depth covered) and mlx-vision
+  (`Qwen3.5-0.8B-MLX-8bit`) 59/59; gguf (`JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`)
+  37/37. Uncovered, named: audio (no arm model declares it), thinking on the
+  mlx-text model and depth on the mlx-vision model (neither advertises it),
+  and vision on the text arm. `scripts/vendor_frontend.py --check` not run (no
+  vendored-library change). The pin does not include Blaizzy/mlx-vlm#2356, so
+  v2.0.121's known issue (a restored qwen3_5 request decodes slower than cold)
+  still holds.
+
 ## [2.0.132]
 
 ### Added

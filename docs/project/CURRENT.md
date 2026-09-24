@@ -16,10 +16,10 @@ rather than carried forward as green.
 | Suite | Result | As of |
 |---|---|---|
 | unit + contract | green (1619 passed) | v2.0.129 |
-| 2026-09-24 evening, v2.0.129 | `tests/smoke/` gguf arm on `JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`: 37/37 (audio uncovered; `engine.speculative` in force via the built-in MTP head). `e2e:render` 99/99. `bun run e2e` on the default gemma-4-26b-a4b-it-8bit-mlx: chat 52/52, pages 32/32 (pages re-run 32/32 after the models-page text fix). `E2E_ARMS=gguf bun run e2e:chat`: 50/51, then 51/51 after the v2.0.131 fix (`mropt`). MLX smoke arms not run on the new pin | v2.0.129 |
+| 2026-09-24 evening, v2.0.129 | `tests/smoke/` gguf arm on `JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`: 37/37 (audio uncovered; `engine.speculative` in force via the built-in MTP head). `e2e:render` 99/99. `bun run e2e` on the default gemma-4-26b-a4b-it-8bit-mlx: chat 52/52, pages 32/32 (pages re-run 32/32 after the models-page text fix). `E2E_ARMS=gguf bun run e2e:chat`: 50/51, then 51/51 after the v2.0.131 fix (`mropt`). MLX smoke on the new pin (v2.0.132): mlx-text `gpt-oss-20b-MXFP4-Q8-mlx` + mlx-vision `Qwen3.5-0.8B-MLX-8bit` 59/59, thinking depth covered on mlx-text; the 6 skips are capabilities those models lack | v2.0.132 |
 | `tests/smoke/` on `improve/2026-09-24` | green on all three arms (mlx-text Qwen3-0.6B, mlx-vision Qwen3.5-0.8B, gguf Qwen3.8-27B); the new system-prompt and back-to-A reuse checks fail on the base commit | improve/2026-09-24, merged as v2.0.121 |
 | `bun run e2e:render` (model-free) | 98/98, including the thinking-depth control check | v2.0.95 |
-| `tests/smoke/` (arms `mlx-text` / `mlx-vision` / `gguf` since v2.0.88) | 82/82 at v2.0.95 on `gpt-oss-20b-MXFP4-Q8-mlx`, `Qwen3.5-0.8B-MLX-8bit` and `JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`: depth covered on mlx-text and gguf (an offered value accepted, an unoffered one a 400 on gguf); a turn that adds a new image is the named known gap; audio uncovered on the arms picked | v2.0.95 |
+| `tests/smoke/` (arms `mlx-text` / `mlx-vision` / `gguf` since v2.0.88) | 82/82 at v2.0.95 on `gpt-oss-20b-MXFP4-Q8-mlx`, `Qwen3.5-0.8B-MLX-8bit` and Qwen3.8-27B: depth covered on mlx-text and gguf (an offered value accepted, an unoffered one a 400 on gguf); a turn that adds a new image is the named known gap; audio uncovered on the arms picked | v2.0.95 |
 | `scripts/vlm_parity_probe.py` | v2.0.124 (mlx-vlm 0.7.3, `ac737ef3`): ok on Qwen3.5-0.8B, the image case a near-tie at upstream margin 0.0. Before: MATCH on both cases, Qwen3.5-0.8B, against mlx-vlm's own loop. Earlier: Qwen-Image-2.1-PE-I21, Qwen3.5-27B-8bit, Qwen3-VL-32B at v2.0.55 | v2.0.124 / v2.0.88 (0.8B) |
 | `tests/smoke/` gguf arm | green on `unsloth_Qwen3.8-27B-UD-Q8_K_XL`, all three reuse checks pass; audio UNCOVERED (the model declares none) | v2.0.84 |
 | `bun run e2e` (chat + pages) | on the default gemma-4-26B-A4B: 84/84 at v2.0.95 (chat + pages). Earlier the same day: 83/84 at v2.0.92, the one failure fixed in v2.0.93 | v2.0.95 |
@@ -41,7 +41,7 @@ advertises `reasoning_effort`.
   1.33, mlx-audio 0.5.6, small bumps; mlx and the mlx-vlm pin unchanged).
 - **mlx-vlm pin moved to upstream main** `ac737ef3` (0.7.3, includes #2328;
   owner: "the current latest commit"); `coderef/mlx-vlm` matches. Suite green,
-  parity and chain probe ok on Qwen3.5-0.8B. **Smoke not run on it yet.**
+  parity and chain probe ok on Qwen3.5-0.8B. Smoke green on all three arms on it.
 - **Model pinning removed** (RLM was its last caller); protection of a model
   in use is the generating check and the gate, as before.
 - **The partial inference API key removed** (owner: LAN-only, never set);

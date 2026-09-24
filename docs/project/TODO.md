@@ -36,11 +36,11 @@ Record: `internal/claude/improve/archive/runs-2026-09-24/` (report.html has the 
   minimax_m3_vl, molmo, molmo2 and sam3 have `encode_image()` but do not read
   `vision_cache`, so they would lose feature caching. Re-apply as: the
   kwargs where the model reads them, the old branch elsewhere, and a content
-  key for http/file image URLs (the URL key serves stale features when the
+  key for http(s) image URLs (local paths are refused since v2.0.128; the URL key serves stale features when the
   file changes). Then `scripts/vlm_parity_probe.py` and an image warm==cold.
 - [x] **mlx-vlm pin moved to upstream main** `ac737ef3` (v0.7.3, v2.0.124; owner:
   "the current latest commit"), which includes #2328. Suite green; vision
-  parity ok and chain probe matching on Qwen3.5-0.8B. Smoke not run on it.
+  parity ok and chain probe matching on Qwen3.5-0.8B. Smoke green on all three arms on it (v2.0.133 record).
 - [ ] **Move the pin again past Blaizzy/mlx-vlm#2356** once it merges (restored
   qwen3_5 decode). Usual suite, chain probe and smoke.
 - [x] **Security: CORS, admin argv, RLM** (v2.0.123, owner call): the CORS
