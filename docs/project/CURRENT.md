@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-24, v2.0.94, `main`.
+Last updated: 2026-09-24, v2.0.95, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `CLAUDE.md`, the backlog in [TODO.md](./TODO.md), and what each release
@@ -15,12 +15,12 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
-| unit + contract | green | v2.0.94 |
-| `bun run e2e:render` (model-free) | 97/97 | v2.0.93 |
-| `tests/smoke/` (arms `mlx-text` / `mlx-vision` / `gguf` since v2.0.88) | 82/82 on `Qwen3-0.6B-8bit-mlx`, `Qwen3.5-0.8B-MLX-8bit` and `JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`; a turn that adds a new image is the named known gap; audio and thinking depth uncovered on the arms picked | v2.0.92 |
+| unit + contract | green | v2.0.95 |
+| `bun run e2e:render` (model-free) | 98/98, including the thinking-depth control check | v2.0.95 |
+| `tests/smoke/` (arms `mlx-text` / `mlx-vision` / `gguf` since v2.0.88) | 82/82 at v2.0.95 on `gpt-oss-20b-MXFP4-Q8-mlx`, `Qwen3.5-0.8B-MLX-8bit` and `JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`: depth covered on mlx-text and gguf (an offered value accepted, an unoffered one a 400 on gguf); a turn that adds a new image is the named known gap; audio uncovered on the arms picked | v2.0.95 |
 | `scripts/vlm_parity_probe.py` | MATCH on both cases, Qwen3.5-0.8B, against mlx-vlm's own loop. Earlier: Qwen-Image-2.1-PE-I21, Qwen3.5-27B-8bit, Qwen3-VL-32B at v2.0.55 | v2.0.88 (0.8B) |
 | `tests/smoke/` gguf arm | green on `unsloth_Qwen3.8-27B-UD-Q8_K_XL`, all three reuse checks pass; audio UNCOVERED (the model declares none) | v2.0.84 |
-| `bun run e2e` (chat + pages) | on the default gemma-4-26B-A4B: chat + pages 83/84 at v2.0.92 (the one failure was the Save & Continue edited-thinking check, fixed in v2.0.93); chat 52/52 at v2.0.93; pages 32/32 at v2.0.94 | v2.0.94 / v2.0.93 |
+| `bun run e2e` (chat + pages) | on the default gemma-4-26B-A4B: 84/84 at v2.0.95 (chat + pages). Earlier the same day: 83/84 at v2.0.92, the one failure fixed in v2.0.93 | v2.0.95 |
 | MLX greedy chain probe (`scripts/chain_probe.py`) | v2.0.92: gemma-4-26B-A4B and gpt-oss-20b pass every hop; Qwen3-VL-32B's extend-3 mismatched once and matched on rerun, the same hop and flap as its v2.0.86 record (a near-tie). v2.0.88: Qwen3.5-0.8B and Qwen3-0.6B pass. Records in `internal/claude/chain_probe/` | v2.0.92 / v2.0.88 |
 | `bun run e2e:ios` | see `TODO.md` and the harness's own header | -- |
 | `tests/eval/` (behavioural bank) | full bank on `Qwen3.5-27B-8bit-mlx` matches the W10 baseline at v2.0.86 (NOT re-run at v2.0.88). v2.0.88, stop/thinking/text on the text models: Qwen3-0.6B 6/6; gpt-oss-20b 2/4, the two failures are thinking-off text tasks with 10- and 30-token budgets that harmony's analysis channel uses up. Records in `internal/claude/w10/`. v2.0.91, thinking tasks: `thinking_requested_split` (now under a 256-token budget) passes on Qwen3.5-0.8B and gemma-4-26B-A4B; the one failure is Qwen3.5-0.8B's known two-image colour flap (`internal/claude/w7/eval_w7.jsonl`) | v2.0.91 / v2.0.88 / v2.0.86 |
@@ -38,6 +38,12 @@ advertises `reasoning_effort`.
   models (see item 4).
 - v2.0.94: W3's prefix-stability lint, on `engine.template.prefix_stable`
   and the template panel. Every served model passes.
+- v2.0.95: **W2 shipped.** Thinking controls are detected from the in-force
+  template (`engine.thinking`). `reasoning_effort` is sent under the
+  template's own variable name, and a value the model does not offer is a 400.
+  The hand-kept level list is gone. It was verified live on Muse and Qwen3.8
+  (gguf) and on gpt-oss and Qwen3.5 (MLX), and smoke is 82/82 on all three
+  arms.
 
 Earlier the same day:
 - v2.0.89 cleanup: the config `engines` tag is gone (it could only restate
@@ -59,13 +65,20 @@ Earlier the same day:
   (`internal/claude/perf/throughput_2026-09-24/`).
 
 **The plan, in order** ([plan_runtime_visibility.md](./plan_runtime_visibility.md),
-"Sequencing"): W2+W3 next. W7 is done, and so is W3's lint on the template in
-force; W3's sources list, copy-to-override and the lint over every source
-remain. Then W4, W0 (Phase 0 `served_diff` first), then W1.
+"Sequencing"): W2 and W7 are done; W3 has its lint. Next, per the owner
+(2026-09-24): `scripts/perf_ab.py`, the memory/timing A/B tool (W12's
+instrument), then the chain probe's near-tie handling (in-process, fresh
+forward at the divergence). Then the rest of W3 (sources list,
+copy-to-override, the lint over every source), W4, W0 (Phase 0 `served_diff`
+first), then W1. 8-bit KV waits for a larger MLX model and the tool's numbers.
+Owner decisions for that: K and V independently on gguf already exist; on
+MLX, mlx-vlm offers only both-at-one-width or TurboQuant per-side widths, not
+one side left at f16.
 
 **Open items, first things first:**
 
-1. **235B long context: an owner decision.** At f16 KV,
+1. **235B long context: decided (owner, 2026-09-24): accept the finding; a
+   larger MLX model comes later for optimizing.** The record follows. At f16 KV,
    `Qwen3-VL-235B-A22B-Instruct-4bit-mlx` answers the needle at ~32k tokens.
    At ~53-56k it fails mid-prefill with a Metal "Impacting Interactivity"
    command-buffer error, the OS GPU watchdog. It fails at the same point with
