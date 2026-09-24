@@ -19,7 +19,7 @@ PROVIDER_CONFIG_CLASSES = {
 ```mermaid
 flowchart TD
     Base["BaseProvider (Abstract Interface)"]
-    Base --> MLX["MLXProvider<br/>In-Process Metal / mlx-lm & mlx-vlm"]
+    Base --> MLX["MLXProvider<br/>In-Process Metal / mlx-vlm"]
     Base --> GGUF["LlamaServerProvider<br/>Subprocess HTTP SSE Adapter"]
 
     MLX --> UnifiedText["UnifiedTextStrategy (Text Generation)"]
@@ -44,7 +44,7 @@ Read a stub as a contract, not as inherited behaviour: a provider that inherits 
 
 Every engine answers the same questions about a model, and `/v1/models`, the admin row and the frontend read one shape: [`providers/contract.py`](../../src/heylook_llm/providers/contract.py)'s `EngineDescription`. The same keys appear for every engine:
 
-- `runtime` -- the library that runs the model (`mlx-lm`, `mlx-vlm`, `llama.cpp`).
+- `runtime` -- the library that runs the model (`mlx-vlm`, `llama.cpp`).
 - `context` -- `length`, the ceiling the model's files declare, and `running`, what a resident gguf process was sized to (not applicable on MLX).
 - `template` -- which ladder rung won, the file, and the sha256 of the body the next load will use beside the one the running process loaded.
 - `settings` -- every configurable field of the provider plus the load decisions that have no field (gguf: `binary`, `image_max_tokens`, `metal_keep_alive`), each as `{value, configured, auto, reason, provenance, effect}`.
@@ -135,20 +135,18 @@ GET /v1/admin/model-options
   providers.<provider>.fields[]
     name          the config key
     effect        WHEN a change lands (per_request, requires_reload, ...)
-    engines       WHERE it lands: mlx-lm | mlx-vlm | gguf
+    engines       WHERE it lands: mlx-vlm | gguf
     description   what it does and why you would reach for it
     arg, ui, shape, reason, type, default, bounds, enum
 ```
 
-**Read `engines`, not the provider key.** Provider is not engine: provider
-`mlx` is two upstream repos on separate release trains (mlx-lm for text,
-mlx-vlm for vision), which is the same split
-[`engine.runtime`](#21-library-routing-via-effective_loader) reports on both
-model lists. Two consequences the provider key cannot express:
+**Read `engines`, not the provider key.** Until plan W10 stage 3 provider
+`mlx` was two upstream repos (mlx-lm for text, mlx-vlm for vision), which is
+why the tag exists; now every MLX model runs on mlx-vlm, so the vocabulary is
+the one [`engine.runtime`](#21-library-routing-via-effective_loader) reports
+(`mlx-vlm`, and `gguf` for llama.cpp). One consequence the provider key still
+cannot express:
 
-- a field declared on the MLX config may reach only ONE of the two engines
-  (none does today -- `vision_tokens` was the example until its removal in
-  v2.0.64 -- but the tag is per engine so one can);
 - a field declared on ONE provider may govern every engine (`max_queue_depth`
   configures the process-global generation gate that gguf generations queue in
   too, and the gguf provider looks for the same key on its own config, where

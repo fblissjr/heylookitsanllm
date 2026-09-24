@@ -5,12 +5,13 @@
 //   bun run e2e             # both suites, ONE arm
 //   bun run e2e:chat        # chat suite only
 //   bun run e2e:pages       # pages suite only
-//   E2E_ARMS=all bun run e2e        # every engine arm (mlx-lm, mlx-vlm, gguf)
-//   E2E_ARMS=gguf,mlx-lm bun run e2e
+//   E2E_ARMS=all bun run e2e        # every arm (mlx-text, mlx-vision, gguf)
+//   E2E_ARMS=gguf,mlx-text bun run e2e
 //
-// ARMS ARE ENGINES, not providers: "mlx" is TWO upstream repos (mlx-lm text /
-// mlx-vlm vision, separate release trains), so a text arm and a vision arm are
-// different code. The mapping is the SERVER's answer (`engine.runtime`), read
+// ARMS ARE NOT PROVIDERS: "mlx" runs a text model and a vision model down
+// different paths (on one engine, mlx-vlm), so a text arm and a vision arm are
+// different code. The mapping is the SERVER's answer (`engine.runtime` and
+// the vision capability), read
 // through tests/helpers/engines.py -- the same module tests/smoke and
 // tests/eval use. The JS side shells out to it rather than re-deriving "which
 // engine is this model" in a second language.

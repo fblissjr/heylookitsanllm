@@ -11,15 +11,20 @@ the server has no reason to carry a test taxonomy. What the server owes is the
 FACTS -- `provider` and the engine contract's `engine.runtime` on the admin
 row -- and it does.
 
-Why the arms are engines and not providers
-------------------------------------------
-    provider "mlx"  -> mlx-lm   (text)     ) two SEPARATE upstream repos, on
-                    -> mlx-vlm  (vision)   ) separate release trains
-    provider "gguf" -> llama-server subprocess (one engine, one local binary)
+Why the arms are not providers
+------------------------------
+    provider "mlx"  -> mlx-vlm, text-only model   (mlx-text)
+                    -> mlx-vlm, vision model      (mlx-vision)
+    provider "gguf" -> llama-server subprocess    (gguf)
 
-So "we covered mlx" is a claim about a config value, not about code. Which
-library decodes is `engine.runtime` (mlx-lm | mlx-vlm | llama.cpp), which the
-admin listing serves for UNLOADED models too, precisely so a harness can
+Every MLX model runs on mlx-vlm's engine since plan W10 (mlx-lm is gone), but
+a text model and a vision model still take different paths through heylook:
+the template path (`is_vlm`), media handling, the vision prefill. So "we
+covered mlx" is still a claim about a config value, not about code. The
+library is `engine.runtime` (mlx-vlm | llama.cpp); the MLX split is the
+served `vision` capability, which derives from the same resolver as `is_vlm`
+(the retired `loader` field was the only way the two could disagree). Both
+are on the admin listing for UNLOADED models too, precisely so a harness can
 choose its arms without loading anything.
 
 Stdlib only, same rule as the harnesses that import it (they run as scripts,
@@ -34,8 +39,12 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 
-# The engines a live run can have an arm for. Order is display order.
-ARMS = ("mlx-lm", "mlx-vlm", "gguf")
+# The arms a live run can have. Order is display order.
+ARMS = ("mlx-text", "mlx-vision", "gguf")
+
+# The engine (`engine.runtime`, and config's `engines` vocabulary) each arm
+# runs on. Pinned against config.ENGINES by test_config_effects.
+ARM_ENGINE = {"mlx-text": "mlx-vlm", "mlx-vision": "mlx-vlm", "gguf": "gguf"}
 
 
 @dataclass
@@ -46,7 +55,6 @@ class Coverage:
     capabilities: dict[str, set[str]] = field(default_factory=dict)  # model_id -> caps
     resident: set[str] = field(default_factory=set)              # already loaded
     unclassified: dict[str, str] = field(default_factory=dict)   # model_id -> why
-    unconfirmable: dict[str, str] = field(default_factory=dict)  # named, not confirmed
 
     def models_for(self, arm: str) -> list[str]:
         return [m for m, a in self.by_engine.items() if a == arm]
@@ -86,21 +94,10 @@ def classify(server: str, *, get_json=None) -> Coverage:
     harness that already carries an authenticated fetcher. Defaults to plain
     stdlib GETs.
 
-    ENGINE IDENTITY IS ``engine.runtime``, not the vision capability, and
-    that distinction is the whole reason this module exists:
-
-    - An explicit ``loader = "mlx-lm"`` on a dual-capable VLM still reports the
-      vision capability. Splitting on the capability alone puts it in the
-      mlx-vlm arm and goes green having run mlx-lm twice.
-    - ``loader = "auto"`` degrades vision -> mlx-lm whenever mlx-vlm does not
-      register the ``model_type``, which no amount of client-side reasoning can
-      see.
-
-    Both are answered by the server now. Where the field is ABSENT (an older
-    server, or a row that predates it) the old capability inference runs as a
-    fallback and the model is recorded as UNCONFIRMABLE -- named, but not
-    claimed. A harness that names engines must be able to say which ones it
-    could not confirm.
+    The library is ``engine.runtime``; an MLX model's arm is its served
+    ``vision`` capability. A row with no runtime (a server older than the
+    engine contract, or an admin endpoint behind a token) is UNCLASSIFIED,
+    with the reason: named as a coverage hole, never guessed into an arm.
     """
     fetch = get_json or (lambda path: _get(server, path))
 
@@ -122,34 +119,17 @@ def classify(server: str, *, get_json=None) -> Coverage:
         if row.get("loaded"):
             cov.resident.add(mid)
 
-        provider = row.get("provider") or entry.get("provider")
-        # The server's own answer: the engine contract's runtime (v2.0.73),
-        # the library that actually runs the model.
         runtime = ((row.get("engine") or {}).get("runtime") or {}).get("value")
-        arm = {"llama.cpp": "gguf"}.get(runtime, runtime)
-        if arm in ("mlx-lm", "mlx-vlm", "gguf"):
-            cov.by_engine[mid] = arm
-            continue
-        # Fallbacks for a server older than the engine contract.
-        if provider == "gguf":
+        if runtime == "llama.cpp":
             cov.by_engine[mid] = "gguf"
-            continue
-        if provider != "mlx":
+        elif runtime == "mlx-vlm":
+            cov.by_engine[mid] = "mlx-vision" if "vision" in caps else "mlx-text"
+        elif runtime:
+            cov.unclassified[mid] = f"engine.runtime {runtime!r} is no arm this harness knows"
+        else:
             cov.unclassified[mid] = (
-                f"provider {provider!r} names no engine this harness knows"
-                if provider else
-                "no provider on either /v1/models or /v1/admin/models "
-                "(is the admin endpoint behind a token?)")
-            continue
-        loader = row.get("effective_loader")  # v1.79.31 - v2.0.72 servers
-        if loader in ("mlx-lm", "mlx-vlm"):
-            cov.by_engine[mid] = loader
-            continue
-        cov.by_engine[mid] = "mlx-vlm" if "vision" in caps else "mlx-lm"
-        cov.unconfirmable[mid] = (
-            "no `engine.runtime` on the admin row -- engine inferred from the "
-            "vision capability, which an explicit `loader` or an mlx-vlm "
-            "degradation would contradict")
+                "no engine.runtime on the admin row (a server older than the "
+                "engine contract, or /v1/admin/models behind a token?)")
 
     return cov
 
@@ -171,14 +151,11 @@ def format_coverage(cov: Coverage, *, spanned: list[str] | None = None,
     for arm in ARMS:
         models = cov.models_for(arm)
         if arm in ran:
-            lines.append(f"  {arm:<8} covered ({len(models)} model(s) served)")
+            lines.append(f"  {arm:<10} covered ({len(models)} model(s) served)")
         elif models:
-            lines.append(f"  {arm:<8} UNCOVERED -- {len(models)} model(s) served, none run")
+            lines.append(f"  {arm:<10} UNCOVERED -- {len(models)} model(s) served, none run")
         else:
-            lines.append(f"  {arm:<8} UNCOVERED -- no model served for this engine")
-    if cov.unconfirmable:
-        lines.append("  engine identity NOT confirmed for: "
-                     + ", ".join(sorted(cov.unconfirmable)))
+            lines.append(f"  {arm:<10} UNCOVERED -- no model served for this arm")
     if cov.unclassified:
         lines.append("  unclassified (a coverage hole with no name): "
                      + ", ".join(sorted(cov.unclassified)))
@@ -277,8 +254,7 @@ def resolve_arms(server: str, wanted=None, overrides=None, *, caps_required=None
     of this engine exists" are different facts and must not print the same.
 
     ``caps_required`` narrows candidates to models advertising every named
-    capability, which is how a harness asks for "the vision arm" rather than
-    "the mlx-vlm arm and hope".
+    capability (a gguf model with vision, say).
     """
     cov = classify(server)
     wanted = list(wanted or ARMS)
@@ -299,7 +275,6 @@ def resolve_arms(server: str, wanted=None, overrides=None, *, caps_required=None
             for arm in wanted if arm in chosen
         },
         "absent": [a for a in wanted if a not in chosen],
-        "unconfirmable": sorted(cov.unconfirmable),
     }
 
 
@@ -307,8 +282,8 @@ def _main(argv=None) -> int:
     """CLI so a non-Python harness can consume the taxonomy.
 
     `python -m helpers.engines --server URL --json` is what tests/e2e shells
-    out to; it exists so the JS side never re-implements "which engine is this
-    model", which the server answers via engine.runtime.
+    out to; it exists so the JS side never re-implements "which arm is this
+    model", which the server answers via engine.runtime and capabilities.
     """
     import argparse
     ap = argparse.ArgumentParser(description="Resolve e2e/smoke arms to models.")
@@ -341,9 +316,9 @@ def _main(argv=None) -> int:
     else:
         for arm, info in out["arms"].items():
             resident = " (resident)" if info["resident"] else ""
-            print(f"  {arm:<8} {info['model']}{resident}")
+            print(f"  {arm:<10} {info['model']}{resident}")
         for arm in out["absent"]:
-            print(f"  {arm:<8} NO MODEL -- arm is uncovered, not green")
+            print(f"  {arm:<10} NO MODEL -- arm is uncovered, not green")
     return 0
 
 

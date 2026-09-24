@@ -28,7 +28,7 @@ from heylook_llm.providers.contract import (
 
 @lru_cache(maxsize=1)
 def _engine_build() -> str:
-    """The installed mlx-lm and mlx-vlm, by commit where installed from git.
+    """The installed mlx-vlm, by commit where installed from git.
 
     Read from each distribution's own install record (direct_url.json), not
     from uv.lock: the lock can say one thing while the venv holds another,
@@ -38,7 +38,7 @@ def _engine_build() -> str:
     from importlib import metadata
 
     parts = []
-    for dist in ("mlx-lm", "mlx-vlm"):
+    for dist in ("mlx-vlm",):
         try:
             d = metadata.distribution(dist)
         except metadata.PackageNotFoundError:
@@ -160,7 +160,7 @@ def describe_static(model_id: str, cfg: dict, config_obj: Any, *,
                            else "config.json declares no context length")
 
     settings = config_settings(MLXModelConfig, config_obj, written=written,
-                               derived=derived, engine_default="mlx-lm/mlx-vlm")
+                               derived=derived, engine_default="mlx-vlm")
 
     return EngineDescription(
         cache=_cache_static(),

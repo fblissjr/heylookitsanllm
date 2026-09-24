@@ -1524,6 +1524,15 @@ about a config value, since `"mlx"` routes to two separate upstream repos
 prints differently from "no model of this engine exists", because the first
 is the quiet one.
 
+(v2.0.88) With mlx-lm gone, every MLX model's runtime reads mlx-vlm, and
+classifying by runtime alone left an mlx-lm arm that was empty on every run:
+a permanent UNCOVERED that people learn to skim past. The arms are now
+mlx-text / mlx-vision / gguf. The MLX split is the served `vision`
+capability, which is exact now that the retired `loader` field can no longer
+make it disagree with `is_vlm`. The older-server fallbacks and their
+"unconfirmable" bookkeeping went with it; a row with no runtime is
+unclassified.
+
 `scripts/dev_server.sh`'s RAM pre-flight sizes through `scripts/ram_report.py`,
 which resolves a model through the same `discover()` / `merge_discovered()` the
 router uses, so a discovered model sizes like an explicit one. It did not

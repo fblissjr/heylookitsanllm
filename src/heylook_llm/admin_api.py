@@ -141,9 +141,9 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
 
     ``engine`` is the engine contract (providers/contract.py), the same
     object /v1/models carries. Its ``runtime`` names the library that runs the
-    model (mlx-lm, mlx-vlm or llama.cpp) and is derived from the config, so
-    it answers for UNLOADED models: provider ``mlx`` is two upstream repos,
-    and a harness choosing engine arms needs the answer before loading. The
+    model (mlx-vlm or llama.cpp) and is derived from the config, so it
+    answers for UNLOADED models: a harness choosing arms needs the answer
+    before loading. The
     router is passed for every row, loaded or not, because the contract reads
     which models have an entry from it.
     """
@@ -887,9 +887,9 @@ def _field_options(cls) -> list[dict]:
             if key in inner:
                 entry[key] = inner[key]
         # Pass-through hints declared on the field: `description` (what it
-        # does and why you would reach for it), `engines` (which of mlx-lm /
-        # mlx-vlm / gguf it actually reaches -- the provider key above is NOT
-        # that answer, since provider "mlx" is two engines), `arg` (the flag
+        # does and why you would reach for it), `engines` (which of mlx-vlm /
+        # gguf it actually reaches -- the provider key above is not always
+        # that answer, since a field can govern both), `arg` (the flag
         # actually emitted -- pinned to the argv builder by a test), `ui`,
         # `shape` ("flag" = a bare flag, no value), and `reason` (why a
         # load_time_only field is not editable, which the class cannot imply).
@@ -924,16 +924,12 @@ def _field_options(cls) -> list[dict]:
         "reloading), descriptive (changes what we advertise, not the process). "
         "Each field also carries `description` -- what it does and why you "
         "would reach for it -- and `engines`, WHICH ENGINE it actually "
-        "reaches: one or more of mlx-lm, mlx-vlm, gguf. "
-        "READ `engines`, NOT THE PROVIDER KEY. Provider `mlx` is TWO upstream "
-        "engines on separate release trains, so a field listed under it may "
-        "reach only one of them (no field does today; the tag can say so), and one "
-        "field governs every engine from a single provider\'s config "
-        "(`max_queue_depth`: the generation gate is process-global). "
-        "`engines` is per-ENGINE and cannot express a per-ARCHITECTURE "
-        "exception -- the MLX KV-cache knobs are silently inert on any model "
-        "that defines its own make_cache -- so where that is true the field\'s "
-        "own `description` says so. "
+        "reaches: mlx-vlm, gguf or both. "
+        "READ `engines`, NOT THE PROVIDER KEY: one field governs every engine "
+        "from a single provider\'s config (`max_queue_depth`: the generation "
+        "gate is process-global). `engines` is per-ENGINE and cannot express "
+        "a per-ARCHITECTURE exception, so where a field is inert on some "
+        "architectures of its engine, the field\'s own `description` says so. "
         "Derived from the provider config classes, so a new field appears here "
         "without touching this route, and cannot be added without declaring "
         "all three."

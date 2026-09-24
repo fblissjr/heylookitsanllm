@@ -32,7 +32,7 @@ Server version **{__version__}**. Default base URL `http://localhost:{DEFAULT_PO
 
 ## Providers
 
-- **mlx** -- text and vision, via mlx-lm / mlx-vlm, Metal-accelerated.
+- **mlx** -- text and vision, on mlx-vlm's engine, Metal-accelerated.
 - **gguf** -- one `llama-server` subprocess per loaded model. Adds audio
   input; MLX rejects audio (400), because audio towers are stripped at load.
 

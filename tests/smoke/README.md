@@ -30,44 +30,40 @@ you one with its own `HEYLOOK_DB_PATH`). It creates and deletes presets and
 conversations; it cleans up in a `finally`, but a crash mid-run would leave
 `smoke-<timestamp>` rows in whatever store it was pointed at.
 
-## Why arms are ENGINES, not providers
-
-The provider `Literal` has three values. They are not three engines:
+## Why arms are not providers
 
 ```
-provider "mlx"   ──┬──▶ mlx-lm    (text)     two SEPARATE upstream repos,
-                   └──▶ mlx-vlm   (vision)   separate release trains
-provider "gguf"  ─────▶ llama-server subprocess (one engine, one local binary)
+provider "mlx"   ──┬──▶ mlx-vlm, text-only model   (mlx-text)
+                   └──▶ mlx-vlm, vision model      (mlx-vision)
+provider "gguf"  ─────▶ llama-server subprocess    (gguf)
 ```
 
-Which MLX library actually decodes is `engine.runtime`, derived from the
-model's modalities and its `loader` hint — **not** the provider field. So "we
-covered mlx" is a claim about a config value, not about code: a text model and
-a vision model on the same provider run through different libraries, with
-different release cadences and different failure modes. This harness treats
-them as separate arms and reports a missing arm as **uncovered**, never as
+Every MLX model runs on mlx-vlm's engine (plan W10; mlx-lm is gone), but a
+text model and a vision model still take different paths through heylook: the
+template path, media handling, the vision prefill. So "we covered mlx" is a
+claim about a config value, not about code, and this harness treats text and
+vision as separate arms and reports a missing arm as **uncovered**, never as
 green.
 
 The classification itself is `tests/helpers/engines.py`, shared with
-`tests/eval/run.py` (two copies of a taxonomy is one drifting copy). It reads
-`engine.runtime` off `GET /v1/admin/models`, which the server answers for
-UNLOADED models too — a field sourced from a live provider would be
-null for exactly the models an arm has yet to choose from. Against a server too
-old to serve it, the engine is inferred from the vision capability and the model
-is reported as *engine identity NOT confirmed* rather than claimed.
+`tests/eval/run.py` and the e2e harness (two copies of a taxonomy is one
+drifting copy). It reads `engine.runtime` off `GET /v1/admin/models` and the
+`vision` capability off `/v1/models`, both answered for UNLOADED models too.
+The capability derives from the same resolver as the provider's `is_vlm`, so
+the split is exact. A model whose admin row carries no runtime is reported as
+unclassified, never guessed into an arm.
 
 ## What each arm checks
 
 Per engine: load + warm, a generation that streams and persists, **a run that
 survives the reader disconnecting**, and a stop that leaves the conversation
-idle. The vision arm additionally asserts the model reports the `vision`
-capability.
+idle. The vision arm sends an image.
 
 Plus the **same-feature-two-mechanisms** rows (plan Phase 3) — one feature with
 two implementations split by engine, which is where reasoning from the provider
 Literal hides the second one:
 
-| feature | mlx-lm / mlx-vlm | gguf |
+| feature | mlx-text / mlx-vision | gguf |
 |---|---|---|
 | audio input | tower stripped at load — must fail **loudly** with a 400 | supported |
 | thinking capability | probes the template FILE | rides `supports_thinking` from GGUF metadata |

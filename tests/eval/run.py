@@ -44,10 +44,10 @@ DEFAULT_OUT = Path(__file__).parent / "results.jsonl"
 
 # `fetch_models` used to live here, reading capabilities off /v1/models. It is
 # now `helpers.engines.classify`, shared with tests/smoke/run.py, which answers
-# the same question plus the one this harness could not: which ENGINE each model
-# is. Provider "mlx" is two upstream repos, so a green run over a list of text
-# models is not evidence about mlx-vlm -- and this file used to print exactly
-# that green with nothing said.
+# the same question plus the one this harness could not: which ARM each model
+# is. Provider "mlx" is a text path and a vision path, so a green run over a
+# list of text models is not evidence about vision -- and this file used to
+# print exactly that green with nothing said.
 
 
 # The bank's tasks are written in OpenAI's chat vocabulary (it predates the

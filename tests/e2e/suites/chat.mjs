@@ -6,7 +6,7 @@
 import { assert, waitFor, sleep, skip } from '../lib/harness.mjs';
 
 // The E2E model is whatever E2E_MODEL names, and the default (a gemma-4 VLM)
-// is not the only thing people run this against: a text-only mlx-lm entry or
+// is not the only thing people run this against: a text-only MLX model or
 // a gguf without an mmproj has no `vision` capability, and a check that
 // assumes one then fails on the suite's assumption, not on the app -- and
 // leaves the drawer open for the next check to trip over. A check whose
@@ -339,7 +339,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     // passed. Per-arm thresholds were the alternative and were rejected --
     // there is nothing to calibrate them against, so every number would be
     // invented per model.
-    if (config.arm && config.arm !== (process.env.E2E_CADENCE_ARM || 'mlx-vlm')) {
+    if (config.arm && config.arm !== (process.env.E2E_CADENCE_ARM || 'mlx-vision')) {
       skip(`cadence is measured on one fast arm only (this is ${config.arm})`);
     }
     // Guards the Phase 1 delivery fix. The old poll capped delivery at ~10/s

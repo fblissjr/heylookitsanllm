@@ -727,10 +727,10 @@ description,type,default,required,minimum?,maximum?,exclusiveMinimum?,exclusiveM
 enum?,arg?,ui?,shape?,reason?}]}}}` — every settable models.toml key per provider, derived
 from the provider config classes (a new backend field appears in the UI with no frontend
 change). `description` is the field's own help text and the only such text published
-anywhere; `engines` is which of `mlx-lm`/`mlx-vlm`/`gguf` it actually reaches, which the
-PROVIDER KEY DOES NOT ANSWER — provider `mlx` is two engines, so a field under it may
-reach only one (none does today; the tag can say so), and `max_queue_depth` reaches all three
-from the mlx config because the generation gate is process-global. Both are required on
+anywhere; `engines` is which of `mlx-vlm`/`gguf` it actually reaches (v2.0.88: `mlx-lm`
+left the vocabulary with the dependency), which the provider key does not always answer:
+`max_queue_depth` reaches both from the mlx config because the generation gate is
+process-global. Both are required on
 every field (the backend refuses to import otherwise), so a UI may render them
 unconditionally.
 NOT under `/v1/admin/models` (its `{model_id:path}` catch-all would eat the path).
@@ -808,7 +808,7 @@ no cheap file to scan (best-effort — a thinking-capable GGUF whose template ig
 variable shows the control and the kwarg goes unread). Sent whenever set, NOT gated on
 thinking being on: harmony reads it unconditionally and has no enable_thinking at all.
 
-**Models list** `GET /v1/models` → `{data:[{id,provider?,capabilities?,modalities?,thinking_default?,sampler_defaults?,engine?}]}` (enabled models only; `engine` is the contract described under Admin models). `modalities` (v1.34.43) is the model's declared capability set (`["text","vision","audio","video"]`); `capabilities` stays gated to what the server actually serves (image input) -- description != served. Since v1.79.43 the MLX `vision` capability is DERIVED FROM THE LOADER ROUTER (`effective_loader == "mlx-vlm"`), the same answer `MLXProvider`'s image guard reads, so the advertised capability and the 400 cannot disagree. Before that it read the checkpoint's DECLARATION, and a hand-made text-only variant whose directory still carried vision blocks advertised `vision` and was then refused -- a client gating on `capabilities` exactly as this spec instructs got the refusal anyway. An explicit `loader = "mlx-lm"` on a dual-capable VLM now correctly reports no `vision` too. NB `modalities` is UNCHANGED by this: the checkpoint still declares what it declares, which is why chat's history-media drop disclosure reads capabilities and not modalities. `thinking` (v1.34.60) is auto-detected from whether the model's chat template references `enable_thinking` (Qwen3 `<think>` blocks, gemma-4 thought channels) -- no `models.toml` flag needed; this is what shows/hides the drawer checkbox and composer icon.
+**Models list** `GET /v1/models` → `{data:[{id,provider?,capabilities?,modalities?,thinking_default?,sampler_defaults?,engine?}]}` (enabled models only; `engine` is the contract described under Admin models). `modalities` (v1.34.43) is the model's declared capability set (`["text","vision","audio","video"]`); `capabilities` stays gated to what the server actually serves (image input) -- description != served. Since v1.79.43 the MLX `vision` capability is DERIVED FROM THE LOADER ROUTER (`effective_loader == "mlx-vlm"`), the same answer `MLXProvider`'s image guard reads, so the advertised capability and the 400 cannot disagree. Before that it read the checkpoint's DECLARATION, and a hand-made text-only variant whose directory still carried vision blocks advertised `vision` and was then refused -- a client gating on `capabilities` exactly as this spec instructs got the refusal anyway. (The `loader` field that could force a dual-capable VLM to text was retired in v2.0.88.) NB `modalities` is UNCHANGED by this: the checkpoint still declares what it declares, which is why chat's history-media drop disclosure reads capabilities and not modalities. `thinking` (v1.34.60) is auto-detected from whether the model's chat template references `enable_thinking` (Qwen3 `<think>` blocks, gemma-4 thought channels) -- no `models.toml` flag needed; this is what shows/hides the drawer checkbox and composer icon.
 **Metrics** `GET /v1/system/metrics?force_refresh?` → `{system:{ram_used_gb,ram_available_gb,ram_total_gb,
 cpu_percent}, models:{[id]:{memory_mb,context_used,context_capacity,context_percent,requests_active,
 requests_queued}}}` (30s server cache).

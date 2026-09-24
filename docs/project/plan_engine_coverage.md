@@ -2,6 +2,12 @@
 
 last updated: 2026-08-28 (ALL PHASES SHIPPED -- 0 at v1.79.28, 1-2 at v1.79.31, 3-4 at v1.79.34)
 
+> **2026-09-23 (v2.0.88, plan W10 stage 3):** mlx-lm is gone; every MLX model
+> runs on mlx-vlm's engine. The arms are now `mlx-text`, `mlx-vision` and
+> `gguf` (`tests/helpers/engines.py`), split on `engine.runtime` plus the
+> served `vision` capability. The engine split below is the record of why
+> the arms exist.
+
 ## Context
 
 The provider `Literal` has three values. They are not three engines:

@@ -170,16 +170,17 @@ composer focus is worth building.
 ### Arms (v1.79.78)
 
 One arm by default -- whatever `E2E_MODEL` is, no extra load. `E2E_ARMS=all`
-(or a comma list) resolves a model per ENGINE and loads each in turn:
+(or a comma list) resolves a model per arm and loads each in turn:
 
 ```bash
-E2E_ARMS=all bun run e2e          # mlx-lm, mlx-vlm, gguf
+E2E_ARMS=all bun run e2e          # mlx-text, mlx-vision, gguf
 E2E_ARMS=gguf bun run e2e:chat
 ```
 
-Arms are ENGINES, not providers -- `"mlx"` is two upstream repos with separate
-release trains, so a text arm and a vision arm are different code. The mapping
-is the SERVER's (`engine.runtime`), read through `tests/helpers/engines.py`,
+Arms are not providers -- `"mlx"` runs text and vision models down different
+paths (on one engine, mlx-vlm), so a text arm and a vision arm are different
+code. The mapping is the SERVER's (`engine.runtime` and the vision
+capability), read through `tests/helpers/engines.py`,
 the same module `tests/smoke` and `tests/eval` use; the JS side shells out to
 `python -m helpers.engines --json` rather than re-deriving it. An arm with no
 model prints as UNCOVERED, never as a pass.
@@ -190,7 +191,7 @@ cost driver, not tokens (`E2E_MAX_TOKENS` is 24).
 
 Checks that need a capability skip on an arm that lacks it and are tallied as
 SKIPPED. The cadence check is arm-scoped (`E2E_CADENCE_ARM`, default
-`mlx-vlm`): what it guards is client-side and engine-independent, but it can
+`mlx-vision`): what it guards is client-side and engine-independent, but it can
 only be measured on a fast model, so running it everywhere would manufacture a
 red per slow arm.
 

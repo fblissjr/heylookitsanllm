@@ -217,7 +217,7 @@ def test_descriptive_fields_are_not_reload_required():
     nothing about the running process depends on them.
 
     Note the deliberate asymmetry: MLX marks `modalities` requires_reload
-    because there it selects the engine (mlx-vlm vs mlx-lm). Same field name,
+    because there it picks the vision or text path at load. Same field name,
     different effect per provider -- which a single shared frozenset could
     never express.
     """
@@ -363,8 +363,8 @@ def test_an_empty_engines_list_is_refused_not_treated_as_all():
 
 def test_the_provider_name_is_not_an_engine_name():
     """'mlx' is a PROVIDER and the likeliest wrong value to write here. It
-    must not validate, because accepting it would re-collapse exactly the
-    mlx-lm/mlx-vlm distinction the tag exists to make."""
+    must not validate: the vocabulary is the engine contract's runtime, and
+    a provider name there is a category error that happens to look right."""
     from pydantic import BaseModel, Field
 
     class Bogus(BaseModel):
@@ -402,13 +402,14 @@ def test_bad_documentation_fails_at_import_not_just_under_test():
 
 
 def test_engine_vocabulary_matches_the_live_harness_taxonomy():
-    """`tests/helpers/engines.ARMS` is what the smoke and eval harnesses call
-    these, derived from `effective_loader` on the admin row. Two spellings of
-    one taxonomy is the drift this repo keeps paying for, so the two are
-    pinned to each other rather than to a comment claiming they agree."""
-    from helpers.engines import ARMS
+    """The live harnesses' arms each run on one engine, spelled the way this
+    vocabulary spells it. Two spellings of one taxonomy is the drift this
+    repo keeps paying for, so they are pinned to each other rather than to a
+    comment claiming they agree."""
+    from helpers.engines import ARM_ENGINE, ARMS
 
-    assert tuple(ENGINES) == tuple(ARMS)
+    assert set(ARM_ENGINE) == set(ARMS)
+    assert set(ARM_ENGINE.values()) == set(ENGINES)
 
 
 @pytest.mark.parametrize("provider", PROVIDERS)

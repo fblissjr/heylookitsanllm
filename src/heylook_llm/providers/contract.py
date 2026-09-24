@@ -84,7 +84,7 @@ class Setting(BaseModel):
 
 class EngineDescription(BaseModel):
     """What one model runs on, with what, and why. Same keys on every engine."""
-    runtime: Fact[str] = Field(description="The engine library: mlx-lm, mlx-vlm or llama.cpp.")
+    runtime: Fact[str] = Field(description="The engine library: mlx-vlm or llama.cpp.")
     context: ContextFacts
     template: TemplateFacts
     settings: Dict[str, Setting] = Field(

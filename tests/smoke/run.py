@@ -9,17 +9,16 @@
 # conversation, a run that DETACHES and finishes after the reader walks away)
 # is invisible to it. This is the other half.
 #
-# Why per ENGINE and not per provider. The provider Literal has three values
-# but they are not three engines:
+# Why per ARM and not per provider:
 #
-#   provider "mlx"  -> mlx-lm   (text)     ) two SEPARATE upstream repos, on
-#                   -> mlx-vlm  (vision)   ) separate release trains
-#   provider "gguf" -> llama-server subprocess (one engine, one local binary)
+#   provider "mlx"  -> mlx-vlm, text-only model   (mlx-text)
+#                   -> mlx-vlm, vision model      (mlx-vision)
+#   provider "gguf" -> llama-server subprocess    (gguf)
 #
-# Which of the two MLX libraries runs is `MLXProvider.effective_loader`, not
-# the provider field, so "we covered mlx" is a claim about a config value
-# rather than about code. A text arm and a vision arm are different engines
-# and this harness treats them that way.
+# Every MLX model runs on mlx-vlm's engine, but a text model and a vision
+# model take different paths through heylook (template path, media, vision
+# prefill), so "we covered mlx" is a claim about a config value rather than
+# about code. The taxonomy is tests/helpers/engines.py.
 #
 # This tool NEVER spawns a server -- same rule as tests/eval/run.py. Point
 # --server at a running `heylookllm`.
@@ -27,8 +26,8 @@
 # Usage:
 #   uv run python tests/smoke/run.py --server http://127.0.0.1:8000
 #   uv run python tests/smoke/run.py --server ... --contract-only   # no model loads
-#   uv run python tests/smoke/run.py --server ... --arm gguf        # one engine
-#   uv run python tests/smoke/run.py --server ... --model mlx-lm=Qwen3.5-0.8B-MLX-8bit
+#   uv run python tests/smoke/run.py --server ... --arm gguf        # one arm
+#   uv run python tests/smoke/run.py --server ... --model mlx-text=Qwen3.5-0.8B-MLX-8bit
 from __future__ import annotations
 
 import argparse
@@ -567,7 +566,7 @@ def audio_checks(server, r, arm, model_id, caps):
         r.check(f"{arm}: audio is accepted", st == 200, f"got {st}: {str(body)[:300]}")
         return
 
-    # mlx-lm / mlx-vlm
+    # mlx-text / mlx-vision
     st, body = _messages_probe(server, model_id, audio, timeout=60)
     r.check(f"{arm}: audio is REFUSED, loudly", st == 400,
             f"got {st} -- a 200 means the audio part was dropped and the model "
@@ -741,8 +740,6 @@ def arm_checks(server, r, arm, model_id, load_timeout):
 
     st, models = call(server, "GET", "/v1/models", timeout=30)
     caps = next((set(m.get("capabilities") or []) for m in models["data"] if m["id"] == model_id), set())
-    if arm == "mlx-vlm":
-        r.check(f"{arm}: reports the vision capability", "vision" in caps, f"caps: {sorted(caps)}")
 
     # Phase 3 rows, before the lifecycle: they are cheap (one short
     # non-streaming request each) and they run on a model that is now loaded
@@ -778,7 +775,7 @@ def arm_checks(server, r, arm, model_id, load_timeout):
 
         # -- an ordinary generation completes and persists ------------------
         content = "Say hello in one short sentence."
-        if arm == "mlx-vlm":
+        if arm == "mlx-vision":
             content = [
                 {"type": "text", "text": "Reply with one short sentence about this image."},
                 {"type": "image", "source": {"type": "base64", "media_type": "image/png",
@@ -812,7 +809,7 @@ def arm_checks(server, r, arm, model_id, load_timeout):
         # and it is what discriminates -- under the bug the image arm reported
         # 1, i.e. LOWER than the text arm, so "> 1" alone would have been a
         # weaker check than the one the bug actually fails.
-        if arm == "mlx-vlm":
+        if arm == "mlx-vision":
             probe = {"model": model_id, "max_tokens": 4, "stream": False}
             say_it = {"type": "text", "text": "Reply with one short sentence."}
             st_t, body_t = call(server, "POST", "/v1/messages",
@@ -979,14 +976,8 @@ def main():
                               narrowed=bool(args.arm or args.model)))
         for arm in wanted:
             if arm not in chosen:
-                r.skip(f"{arm}: whole arm", "no model of this engine is served")
+                r.skip(f"{arm}: whole arm", "no model of this arm is served")
                 continue
-            # Say it ONCE per arm, not once per model: on a server too old to
-            # serve `engine.runtime` the engine is inferred from the vision
-            # capability, and a harness that names engines should say when it
-            # is guessing.
-            if chosen[arm] in cov.unconfirmable:
-                r.skip(f"{arm}: engine identity NOT confirmed", cov.unconfirmable[chosen[arm]])
             arm_checks(server, r, arm, chosen[arm], args.load_timeout)
 
     total = r.passed + len(r.failed)

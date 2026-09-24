@@ -228,13 +228,13 @@ def _extra(field) -> dict:
 
 # ``engines`` alongside ``effect``: WHICH ENGINE a field actually reaches.
 #
-# The provider a field is declared on ("mlx", "gguf") is not the answer,
-# because provider != engine -- provider "mlx" is TWO upstream repos on
-# separate release trains (mlx-lm for text, mlx-vlm for vision), which is
-# the same split `effective_loader` reports on the admin row and the same
-# one `tests/helpers/engines.ARMS` names. A reader asking "does this do
-# anything for my model" needs the engine, and until this tag existed the
-# only answer was to read the provider source.
+# The vocabulary is the engine contract's `engine.runtime` (mlx-vlm, and
+# gguf for llama.cpp). Until plan W10 stage 3 provider "mlx" was TWO engines
+# (mlx-lm for text, mlx-vlm for vision), which is why the tag exists; now
+# every MLX model runs on mlx-vlm, so it follows the provider except on a
+# field both config classes share. A reader asking "does this do anything
+# for my model" needs the engine, and until this tag existed the only answer
+# was to read the provider source.
 #
 # Same rule as ``effect``: declared AT the field, derived everywhere else
 # (``/v1/admin/model-options`` passes it through, docs link to that rather
@@ -246,17 +246,15 @@ def _extra(field) -> dict:
 # WHAT THE TAG CANNOT SAY. It is per-ENGINE, and a field can be inert on
 # the engine it names (the MLX KV cache knobs were, from v2.0.86 until plan
 # W10 stage 3 retired them). When you add a field, ask both questions.
-ENGINE_MLX_LM = "mlx-lm"
 ENGINE_MLX_VLM = "mlx-vlm"
 ENGINE_GGUF = "gguf"
 
-# Order is display order, and matches tests/helpers/engines.ARMS -- pinned
-# by a test rather than by this comment.
-ENGINES: tuple = (ENGINE_MLX_LM, ENGINE_MLX_VLM, ENGINE_GGUF)
+# Order is display order. Every arm in tests/helpers/engines.ARM_ENGINE maps
+# to one of these -- pinned by a test rather than by this comment.
+ENGINES: tuple = (ENGINE_MLX_VLM, ENGINE_GGUF)
 
-# Both MLX engines. The common case on MLXModelConfig: most fields reach
-# generation the same way whichever library holds the weights.
-ENGINES_MLX: list = [ENGINE_MLX_LM, ENGINE_MLX_VLM]
+# Every MLXModelConfig field reaches the one MLX engine.
+ENGINES_MLX: list = [ENGINE_MLX_VLM]
 
 
 def field_engines(field) -> Optional[list]:
@@ -387,16 +385,17 @@ class MLXModelConfig(BaseModel):
     # Detected at import from the config's own blocks (vision_config/audio_config
     # + *_token_id); see model_importer.detect_modalities.
     # requires_reload here, DESCRIPTIVE on the gguf config: for MLX this feeds
-    # effective_loader (mlx-vlm vs mlx-lm), so changing it changes which engine
-    # holds the weights. Provider-aware classification is the point.
+    # effective_loader, which is decided at load (is_vlm: the template path
+    # and the served vision capability). Provider-aware classification is the
+    # point.
     modalities: Optional[List[str]] = Field(
         default=None,
         description=(
             "Author-declared capability set (e.g. [\"text\", \"vision\"]). Unset "
             "= detected at load from the model dir's own config.json. On MLX "
             "this is not merely descriptive as it is on gguf: it feeds "
-            "`effective_loader`, so changing it changes WHICH ENGINE holds the "
-            "weights (mlx-vlm vs mlx-lm)."),
+            "`effective_loader`, decided at load, which picks the vision or "
+            "text template path and whether the model is served with vision."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
                            "engines": ENGINES_MLX})
     # The model's context window, when config.json does not tell the truth.
@@ -513,14 +512,15 @@ class MLXModelConfig(BaseModel):
                            "reason": "process-wide: the first provider created "
                                      "wins, so reloading this model cannot "
                                      "change it"})
-    # Chunk size for prompt prefill. None lets mlx-lm use its default (2048).
+    # Chunk size for prompt prefill. None lets mlx-vlm use its default
+    # (mlx_vlm.generate.common.DEFAULT_PREFILL_STEP_SIZE).
     # Larger values reduce kernel-launch overhead on very long prompts at the
     # cost of higher peak memory during prefill.
     prefill_step_size: Optional[int] = Field(
         default=None, gt=0,
         description=(
             "How many prompt tokens one prefill chunk processes. Unset = "
-            "mlx-lm's default of 2048. THE lever on a prefill-bound workload "
+            "mlx-vlm's default (DEFAULT_PREFILL_STEP_SIZE). THE lever on a prefill-bound workload "
             "-- a long fixed system prompt with a short answer, a prompt "
             "encoder, a classifier -- where raising it cuts kernel-launch "
             "overhead at the cost of higher peak memory during prefill. "
@@ -1388,9 +1388,8 @@ def _validate_documentation_declarations() -> None:
     their ``model_json_schema()`` carries both facts, which is the trap, not
     the carrying path.)
 
-    ``engines`` -- which of mlx-lm / mlx-vlm / gguf the field actually
-    reaches. The class a field is declared on does NOT answer this: provider
-    "mlx" is two upstream repos on separate release trains, and at least one
+    ``engines`` -- which of mlx-vlm / gguf the field actually reaches. The
+    class a field is declared on does not always answer this: at least one
     field (``max_queue_depth``) governs every engine from a single provider's
     config.
 
@@ -1694,7 +1693,7 @@ class AdminModelResponse(BaseModel):
     engine: Dict[str, Any] = Field(
         default_factory=dict,
         description="The engine contract (providers/contract.py): runtime "
-                    "(mlx-lm|mlx-vlm|llama.cpp), context (length from the "
+                    "(mlx-vlm|llama.cpp), context (length from the "
                     "files; running from the process), the template in force, "
                     "and every setting as {value, configured, auto, reason, "
                     "provenance, effect}. Every value carries its provenance. "

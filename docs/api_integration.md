@@ -44,7 +44,7 @@ themselves.)
 ```
 
 `engine` (v2.0.73) is the same object on every engine: which library runs the
-model (`engine.runtime.value`: `mlx-lm`, `mlx-vlm` or `llama.cpp`), its context
+model (`engine.runtime.value`: `mlx-vlm` or `llama.cpp`), its context
 ceiling (`engine.context.length.value`), the template in force, and every
 setting with its value, the stored value, what auto would pick and why. Each
 value carries a `provenance`. It replaced the top-level `context_length`.
@@ -245,8 +245,8 @@ non-streaming and `generation_duration_ms` streaming, which is exactly the
 ambiguity the rename removed.
 
 **Rates are the engine's own measurement or nothing.** `prompt_tps` and
-`generation_tps` come from mlx-lm's own instrumentation around prefill and
-decode. If the engine did not report one, the field is absent (or null) — the
+`generation_tps` come from the engine's own timing around prefill and decode
+(on MLX, `vlm_engine`'s; on gguf, llama-server's). If the engine did not report one, the field is absent (or null) — the
 server no longer substitutes a wall-clock figure. Before .58 the non-streaming
 path ran `generation_tps` through a fallback that produced a plausible number
 the engine never measured, while the stream omitted it: one field name, two
@@ -314,7 +314,7 @@ produce a response at all — it is an HTTP 4xx/5xx — so there is no error
 member and no branch to write for one.
 
 In practice you will see **only `end_turn` and `max_tokens`**: those are what
-both engines produce (mlx-lm and llama-server both report OpenAI's
+both engines produce (the MLX engine and llama-server both report OpenAI's
 `stop`/`length`, renamed at the boundary). `stop_sequence` is declared and
 mapped so a provider that learns to emit it needs no change here, but nothing
 produces it today. It is kept, unlike the removed `error`, because it is a

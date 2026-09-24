@@ -70,7 +70,7 @@ A foundational design decision in `heylookitsanllm` is how providers are hosted:
 
 | Provider | Host Execution Model | Dependency Boundary | Lifecycle Model |
 | :--- | :--- | :--- | :--- |
-| **`mlx`** (Text/Vision) | **In-Process** | `mlx`, `mlx-lm`, `mlx-vlm` Python packages running on GPU streams | Memory-managed by MLX cache and Python GC; pinned executor threadpool |
+| **`mlx`** (Text/Vision) | **In-Process** | `mlx` and `mlx-vlm` Python packages running on GPU streams | Memory-managed by MLX cache and Python GC; pinned executor threadpool |
 | **`gguf`** | **Out-of-Process Subprocess** | Zero MLX dependency; pure Python stdlib (`urllib`, `subprocess`, `socket`) | 1 `llama-server` process per loaded model; spawned on load, killed on unload |
 
 ### Why Out-of-Process `llama-server`?

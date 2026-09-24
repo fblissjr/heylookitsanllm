@@ -31,8 +31,9 @@ it holds to: [VISION.md](VISION.md).
   removed in v1.79.66: no page of the web UI had used it since v1.74.0 and the
   owner's other project speaks `/v1/messages`, so one generation now has one
   grammar.
-- **Two providers**: MLX text + vision ([mlx-lm](https://github.com/ml-explore/mlx-lm),
-  [mlx-vlm](https://github.com/Blaizzy/mlx-vlm)), and GGUF via a managed
+- **Two providers**: MLX text + vision ([mlx-vlm](https://github.com/Blaizzy/mlx-vlm)'s
+  engine, with a streaming detokenizer vendored from
+  [mlx-lm](https://github.com/ml-explore/mlx-lm)), and GGUF via a managed
   llama-server subprocess (vision mmproj sidecars, audio input, speculative
   decoding/MTP, prefix caching)
 - **Thinking blocks**: format-aware reasoning parsing driven by the model's
