@@ -83,7 +83,7 @@ def _image(variant: int) -> str:
 def _resolve_config(model_id: str) -> dict:
     """The provider config the ROUTER would hand MLXProvider: the merged entry
     validated through ModelConfig and dumped. A raw dict skips the validator
-    that derives `modalities`, and a vision model then routes to mlx-lm."""
+    that derives `modalities`, and a vision model is then served as text."""
     from heylook_llm.config import ModelConfig
     from heylook_llm.model_registry import discover, merge_discovered
 

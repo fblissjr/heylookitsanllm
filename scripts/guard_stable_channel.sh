@@ -3,8 +3,8 @@
 # Pre-commit guard: a git pin (a [tool.uv.sources] entry with a 40-hex `rev`,
 # a git-sourced entry in uv.lock) never lands in a commit by ACCIDENT.
 #
-# Since 2026-09-05 (v1.79.69) mlx-lm and mlx-vlm ARE committed git pins --
-# exact revs, because mlx-lm is release-starved. This guard did not go away
+# Since 2026-09-05 (v1.79.69) the MLX engine is a committed git pin (mlx-vlm
+# since plan W10 dropped mlx-lm, v2.0.88) -- an exact rev. This guard did not go away
 # with the releases-only rule: it is what makes moving a pin a named act
 # (override below, SHA in CHANGELOG) and what keeps a `branch = "main"`
 # experiment in the working tree from riding along with an unrelated commit.
@@ -72,7 +72,7 @@ fi
 if [ "$errors" -ne 0 ]; then
     echo ""
     echo "A git pin does not land by accident. If this commit MOVES a committed pin"
-    echo "(mlx-lm / mlx-vlm: exact rev, new SHA named in CHANGELOG):"
+    echo "(mlx-vlm: exact rev, new SHA named in CHANGELOG):"
     echo "    HEYLOOK_ALLOW_CHANNEL_COMMIT=1 git commit ..."
     echo "If the pin is a working-tree experiment, unstage pyproject.toml/uv.lock"
     echo "(or remove the entry and 'uv lock') and commit the rest."
