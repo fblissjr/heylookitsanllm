@@ -15,7 +15,7 @@ backlog pass*
 
 Record: `internal/claude/improve/archive/runs-2026-09-24/` (report.html has the evidence).
 
-- [ ] **qwen3_5 vision features (owner decision).** heylook's vision feature
+- [ ] **qwen3_5 vision features: owner said yes (2026-09-24), done the reworked way below, in a fresh session.** heylook's vision feature
   cache runs only for models with `encode_image()`; qwen3_5 has none, so every
   turn of an image conversation re-runs the vision tower. Passing the cache as
   mlx-vlm's `vision_cache`/`_image_key` kwargs (as mlx-vlm's server does)
@@ -28,9 +28,11 @@ Record: `internal/claude/improve/archive/runs-2026-09-24/` (report.html has the 
   kwargs where the model reads them, the old branch elsewhere, and a content
   key for http/file image URLs (the URL key serves stale features when the
   file changes). Then `scripts/vlm_parity_probe.py` and an image warm==cold.
-- [ ] **Move the mlx-vlm pin** past upstream #2328 (a KV-retention fix heylook
-  hits through `remove()`), and past Blaizzy/mlx-vlm#2356 once it merges
-  (restored qwen3_5 decode). Usual suite, chain probe and smoke.
+- [x] **mlx-vlm pin moved to upstream main** `ac737ef3` (v0.7.3, v2.0.124; owner:
+  "the current latest commit"), which includes #2328. Suite green; vision
+  parity ok and chain probe matching on Qwen3.5-0.8B. Smoke not run on it.
+- [ ] **Move the pin again past Blaizzy/mlx-vlm#2356** once it merges (restored
+  qwen3_5 decode). Usual suite, chain probe and smoke.
 - [x] **Security: CORS, admin argv, RLM** (v2.0.123, owner call): the CORS
   wildcard is gone, admin writes refuse `config.FILE_ONLY_FIELDS` (422), and
   RLM (with its `sandbox: false` request field) is removed.
@@ -38,12 +40,20 @@ Record: `internal/claude/improve/archive/runs-2026-09-24/` (report.html has the 
   gate the conversation, notebook, preset or generate routers; MLX image
   sources may be http URLs (a server-side fetch) or local paths; no Host
   check, so DNS rebinding can still reach the API from a browser. Details in
-  the run's report.
+  the run's report. Owner (2026-09-24): the server is LAN-only. That lowers
+  the first two, but not the Host check: DNS rebinding goes through a browser
+  already inside the LAN.
 - [ ] **Upstream PR to separate APC captures from store size** and let a
   caller name boundaries; it would delete heylook's local capture rule
-  (`vlm_engine.install_capture_policy`). Drafted in the run's ledger.
-- [ ] **Hook: refuse `git add -A`/`-u`/`.`** (AGENTS.md's staging rule is
-  reminded, not enforced); proposed by the loop, not installed.
+  (`vlm_engine.install_capture_policy`). Drafted in the run's ledger. File it
+  after #2356 lands (filing sends it off this machine: owner's go).
+- [x] **Hook: refuse `git add -A`/`-u`/`.`** and `git commit -a`
+  (`scripts/hooks/git_add_guard.py`, v2.0.125, owner-approved).
+- [ ] **Delete model pinning** (owner yes, 2026-09-24): RLM was its only
+  caller. Router `pin_model`/`unpin_model`, the pinned-eviction, unload and
+  family-switch guards, the "pinned" refusals in admin_api, the config text
+  that says "non-pinned", `tests/unit/test_router_pinning.py`, and the
+  `.claude/rules/mlx.md` line telling new MLX paths to pin.
 
 ## Runtime visibility + one behaviour across engines (2026-09-23) — APPROVED
 
