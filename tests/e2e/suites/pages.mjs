@@ -645,7 +645,7 @@ export async function runPagesSuite({ suite, ctx, config }) {
     await waitFor(async () => Boolean((await textOf(page, '.cfg-tmpl__origin') || '').trim()),
       { timeout: 10000, message: 'template panel never resolved an origin' });
     // The other half of the same flag. This asserts the WRITABLE case, which
-    // is what the local modelzoo serves. A model whose directory is NOT
+    // is what the local model folders serve. A model whose directory is NOT
     // writable stays disabled after render on purpose and would fail here for
     // a legitimate reason -- worth knowing if E2E_MODEL ever points at a
     // read-only snapshot.

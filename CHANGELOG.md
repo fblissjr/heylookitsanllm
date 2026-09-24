@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.104]
+
+### Changed
+
+- **No `modelzoo/` left in live code, examples or docs** (the folder went in
+  `b899f70`; models now live in the `[scan].folders` watch folders). The
+  `.gitignore` entry stays, so a recreated local `modelzoo/` still can't be
+  committed.
+  - `scripts/convert_gguf.py`: `--dest` is required. Its old default wrote
+    into `modelzoo/`; defaulting into a watch folder instead would serve the
+    model before `gguf_probe.py` checks it, which the script's own workflow
+    says comes first.
+  - `ModelService._compute_allowed_roots` no longer adds `modelzoo/`. The
+    path check it feeds accepts any existing path whether or not a root
+    matches, so this changes no result.
+  - `test_vlm_inputs.py` uses its inline gemma4 config instead of reading one
+    from `modelzoo/`.
+  - Example paths (`models.example.toml`, `docs/architecture/config.md`,
+    `docs/mlx_conversion_guide.md`, the models page's scan-folder
+    placeholder), comments, docstrings, the wiki, `sharp_edges.md`, the
+    dev-server skill and the improvement-loop prompt's stop rule name the
+    model folders instead.
+- Dated history (CHANGELOG, `docs/archive/`, `docs/project/`) still says
+  `modelzoo/` where that was true at the time.
+
 ## [2.0.103]
 
 ### Added (plan W4, frontend)

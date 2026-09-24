@@ -22,8 +22,8 @@ Consequences worth stating, because they are the whole point:
 
 Matching is on the resolved path (``.resolve()`` follows symlinks) because id
 matching is what broke: an id is derived from the directory name, so a
-hand-renamed entry stops matching itself, and ``modelzoo/<vendor>`` symlinks
-make one file reachable by two spellings that share no prefix. Both failures
+hand-renamed entry stops matching itself, and vendor symlinks in a model
+folder make one file reachable by two spellings that share no prefix. Both failures
 produced a real duplicate entry on 2026-08-17.
 
 Discovery is best-effort by construction: a scan that raises is logged and

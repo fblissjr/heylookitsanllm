@@ -19,7 +19,7 @@
 #     they are worth getting wrong in exactly zero places.
 #   - Only ever kills the PID it spawned itself (recorded in the state dir).
 #
-# Must run UNSANDBOXED: needs Metal, localhost, and modelzoo traversal.
+# Must run UNSANDBOXED: needs Metal, localhost, and model-folder traversal.
 #
 # Usage discipline (for agents and humans):
 #   - Reuse first: run `status` before `start`. If ANY heylookllm process is

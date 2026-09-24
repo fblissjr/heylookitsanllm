@@ -48,7 +48,7 @@ class TestMergeDiscovered:
         assert merged["models"][0]["config"]["supports_thinking"] is True
 
     def test_symlinked_spelling_counts_as_the_same_file(self, tmp_path):
-        """modelzoo/<vendor> symlinks mean two paths, one file.
+        """Vendor symlinks in a model folder mean two paths, one file.
 
         Without resolution these compare unequal and the model is served
         twice under two ids.
@@ -57,7 +57,7 @@ class TestMergeDiscovered:
         real.mkdir()
         blob = real / "a.gguf"
         blob.write_text("x")
-        link = tmp_path / "modelzoo"
+        link = tmp_path / "vendor-alias"
         link.symlink_to(real, target_is_directory=True)
 
         cfg = {"models": [entry("via-link", link / "a.gguf")]}

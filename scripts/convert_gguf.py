@@ -7,7 +7,7 @@ checkout, one source). Zero footprint on the repo venv: torch rides a
 `uv run --with` overlay for the conversion only.
 
     uv run python scripts/convert_gguf.py <hf-checkpoint-dir> \
-        --name Muse-Glimmer-30B --dest modelzoo/meta/Muse-Glimmer-30B-GGUF
+        --name Muse-Glimmer-30B --dest <staging-dir>/Muse-Glimmer-30B-GGUF
 
 Produces <dest>/<name>-<OUTTYPE>.gguf (default q8_0 -- the near-lossless
 choice on a RAM-rich box; convert_hf_to_gguf quantizes q8_0 directly, no
@@ -66,7 +66,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
     ap.add_argument("src", help="local HF checkpoint dir (config.json + safetensors)")
     ap.add_argument("--name", help="output stem (default: src dir name)")
-    ap.add_argument("--dest", help="output dir (default: modelzoo/<name>-GGUF)")
+    ap.add_argument("--dest", required=True,
+                    help="output dir, outside the watch folders until the probe passes")
     ap.add_argument("--outtype", default="q8_0",
                     choices=["f32", "f16", "bf16", "q8_0", "auto"],
                     help="text-model quantization (default q8_0)")
@@ -82,8 +83,7 @@ def main() -> None:
     # relative dest would silently write the multi-GB output into the
     # llama.cpp tree while this script printed the repo-side path (review
     # finding 2026-08-13 -- the default branch was the unresolved one).
-    dest = (Path(args.dest).expanduser() if args.dest
-            else Path("modelzoo") / f"{name}-GGUF").resolve()
+    dest = Path(args.dest).expanduser().resolve()
     dest.mkdir(parents=True, exist_ok=True)
     checkout = llama_dir(None)
 

@@ -9,7 +9,7 @@ Thin wrapper: the harness lives GIT-TRACKED at `scripts/dev_server.sh` (repo
 root). Read its header comment for the full usage discipline; the short form:
 
 ```bash
-# All must run UNSANDBOXED (Metal + localhost + modelzoo traversal).
+# All must run UNSANDBOXED (Metal + localhost + model-folder traversal).
 bash scripts/dev_server.sh status [--port 8991]
 bash scripts/dev_server.sh start --model <exact-model-id> [--port 8991] [--headroom-gb 12] [--no-warm]
 bash scripts/dev_server.sh stop   [--port 8991]

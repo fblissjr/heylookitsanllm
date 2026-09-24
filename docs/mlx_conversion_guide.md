@@ -61,6 +61,6 @@ Worked example (gemma-4 QAT downloaded to a local checkout dir):
 ```bash
 python -m mlx_vlm convert \
   --hf-path <download-dir>/gemma-4-26B-A4B-it-qat-q4_0-unquantized \
-  --mlx-path modelzoo/google/gemma-4-26B-A4B-it-qat-4bit-g32-mlx \
+  --mlx-path <models-folder>/google/gemma-4-26B-A4B-it-qat-4bit-g32-mlx \
   -q --q-bits 4 --q-group-size 32
 ```

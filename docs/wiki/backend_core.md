@@ -156,7 +156,7 @@ Model availability is governed by [`model_registry.py`](../../src/heylook_llm/mo
 
 ### 5.2. Resolved Path Matching (`path_identity`)
 Models are deduplicated and merged based on **`path_identity(path)`**, which executes `Path(path).expanduser().resolve()`.
-- Matching on model IDs is strictly forbidden: IDs derive from directory names, which break when directories are symlinked across `modelzoo/<vendor>/` aliases.
+- Matching on model IDs is strictly forbidden: IDs derive from directory names, which break when directories are symlinked across vendor aliases in a model folder.
 - **The Explicit Entry Gotcha**: if an entry already names a model's resolved path, `merge_discovered()` **skips** that discovered model, so nothing re-derives for it ever again. **An explicit entry receives NONE of discovery's derived fields.** Adding one field means hand-writing every *other* field that model needs -- `mmproj_path`, `draft_model_path` and the rest. This has bitten in both directions: a thin materialized entry once cost a vision model its `mmproj_path`, so the next spawn had no `--mmproj` with the projector sitting unreferenced beside the weights; and enabling `spec_type` on a text model required writing `draft_model_path` longhand, because the drafter the importer would have auto-paired is not contributed to an entry that already exists.
 
   Before adding a field to an entry, check what discovery *was* giving that model -- `merge_discovered(data, discover(data))` -- and carry it forward, or the edit is a silent capability removal.

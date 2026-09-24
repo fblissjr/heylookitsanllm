@@ -583,7 +583,7 @@ can only add.
 
 Matching is the resolved `model_path` (`.resolve()` follows symlinks), never
 the id. An id is derived from the directory name, so a hand-renamed entry
-stops matching itself, and `modelzoo/<vendor>` symlinks make one file
+stops matching itself, and vendor symlinks in a model folder make one file
 reachable by two spellings sharing no prefix. That pair silently duplicated a
 Muse-Glimmer entry (with a wrong `supports_thinking`) on 2026-08-17, which is
 also why the importer now dedups on resolved path. Discovery is best-effort: a

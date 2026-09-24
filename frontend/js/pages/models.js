@@ -111,7 +111,7 @@ function buildScanControls(ctx) {
     id: 'scan-folders',
     class: 'input',
     rows: '3',
-    placeholder: 'modelzoo\nmodelzoo/gguf',
+    placeholder: '/path/to/models\n/path/to/more-models',
   });
   s.foldersHf = createEl('input', { id: 'watch-hf', type: 'checkbox' });
   s.foldersSaveBtn = createEl('button', { class: 'btn btn--sm' }, ['Save watch folders']);

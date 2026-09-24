@@ -99,7 +99,7 @@ provider = "mlx"
 enabled = true
 
   [models.config]
-  model_path = "modelzoo/my-model-4bit"
+  model_path = "/path/to/models/my-model-4bit"
 ```
 
 Fields you write are explicit overrides (each a deliberate choice):
@@ -111,7 +111,7 @@ provider = "mlx"
 enabled = true
 
   [models.config]
-  model_path = "modelzoo/my-tuned-model"
+  model_path = "/path/to/models/my-tuned-model"
   temperature = 0.6         # beats the model's generation_config.json
   max_tokens = 8192
 ```
@@ -169,7 +169,7 @@ entirely in v1.32.0. If an older `models.toml` still carries this key,
 model_path = "mlx-community/Qwen2.5-3B-Instruct-4bit"
 
 # Local path (relative to the repo, or absolute; tilde expanded)
-model_path = "modelzoo/qwen-2.5-custom"
+model_path = "/path/to/models/qwen-2.5-custom"
 ```
 
 ### Sampler Defaults and the Effective-Request Cascade

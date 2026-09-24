@@ -3,7 +3,7 @@
 
 Import-time GGUF handling used to infer facts from filenames. This module
 reads them from the file, so these tests pin the parser against hand-built
-headers -- never modelzoo/, whose real GGUFs are multi-GB and gitignored.
+headers -- never the real model folders, whose GGUFs are multi-GB.
 
 Claims (what breaks if a test is deleted):
 - parser tests: the KV walk mis-steps a value type and every key AFTER the

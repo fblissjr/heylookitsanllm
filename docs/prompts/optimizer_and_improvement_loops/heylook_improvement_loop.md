@@ -32,7 +32,7 @@ When a step doesn't need my input, keep going. Put status notes and results in t
 
 Stop and ask only when you can't continue without me, or before you:
 - touch my running server, my conversations, my settings, or the shared `.venv`,
-- download or delete a model, or delete anything under `adapters/` or `modelzoo/`,
+- download or delete a model, or delete anything under `adapters/` or in the model folders (`[scan].folders` in `models.toml`),
 - move a dependency pin or rebuild llama.cpp (propose it with its evidence instead),
 - bump `_SCHEMA_VERSION`, which drops my conversations the next time I start my server,
 - merge, push, force-push, or rewrite history,

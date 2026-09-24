@@ -14,8 +14,8 @@ The scan previously only knew MLX/safetensors layouts. It must now:
 - keep the CLI TOML generator producing entries that validate through
   ModelConfig/AppConfig for the new provider.
 
-All fixtures use tmp_path with tiny fake files -- never modelzoo/ (real
-GGUF files there are multi-GB and gitignored).
+All fixtures use tmp_path with tiny fake files -- never the real model
+folders (their GGUF files are multi-GB).
 """
 import json
 
@@ -541,7 +541,7 @@ class TestModelServiceGGUFNoCrash:
 def test_mmproj_suffix_naming_detected(tmp_path):
     # Deleting this re-breaks google-style projector names (<model>-mmproj.gguf,
     # suffix not prefix) -- the entry silently imports text-only and the real
-    # modelzoo google E4B dir loses vision (caught by live scan 2026-07-26).
+    # google E4B model dir loses vision (caught by live scan 2026-07-26).
     d = tmp_path / "google_style"
     d.mkdir()
     (d / "gemma-x-q4_0.gguf").write_bytes(b"0" * 1000)

@@ -11,7 +11,7 @@
 //
 // WHAT THIS DOES NOT DECIDE. How much resolution a vision model can actually
 // use is a MODEL question, not a transport one, and the answer is not uniform:
-// the Qwen-VL family in this repo's modelzoo declares dynamic resolution
+// the Qwen-VL family in the local model folders declares dynamic resolution
 // (preprocessor_config.json: `size.longest_edge` is a PIXEL BUDGET of 16777216,
 // ~4096x4096), so it consumes what it is given and pays for it in vision tokens
 // and prefill; a fixed-input tower discards the surplus instead. MAX_EDGE_PX

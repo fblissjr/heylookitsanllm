@@ -8,7 +8,7 @@ across into the other test module for a release, which is not importable under
 this suite's `helpers.`-rooted convention and is the hand-copied second copy
 this repo derives away everywhere else.
 
-Never modelzoo/: the real GGUFs are multi-GB and gitignored.
+Never the real model folders: their GGUFs are multi-GB.
 """
 from __future__ import annotations
 

@@ -248,7 +248,7 @@ class ModelRouter:
         # discovered model on `Path(...).resolve()`, so answering "does another
         # entry claim this" on `expanduser()` alone predicts a DIFFERENT
         # relation than the one the reader is about to act on. Two spellings of
-        # one directory -- a modelzoo vendor symlink and the real path -- are
+        # one directory -- a vendor symlink in a model folder and the real path -- are
         # the case this repo has already hit, and expanduser reports them as
         # unrelated. Falls back to expanduser for a path that cannot resolve.
         def _identity(value: str) -> str:

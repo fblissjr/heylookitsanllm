@@ -192,11 +192,6 @@ class ModelService:
             expanded = Path(p).expanduser()
             if expanded.exists():
                 roots.append(expanded.resolve())
-        # Project modelzoo
-        project_root = self.config_path.parent
-        modelzoo = project_root / "modelzoo"
-        if modelzoo.exists():
-            roots.append(modelzoo.resolve())
         # Paths already in config
         try:
             data = self._read_toml()
