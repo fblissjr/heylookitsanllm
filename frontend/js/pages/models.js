@@ -113,7 +113,6 @@ function buildScanControls(ctx) {
     rows: '3',
     placeholder: '/path/to/models\n/path/to/more-models',
   });
-  s.foldersHf = createEl('input', { id: 'watch-hf', type: 'checkbox' });
   s.foldersSaveBtn = createEl('button', { class: 'btn btn--sm' }, ['Save watch folders']);
   s.foldersSaveBtn.addEventListener('click', () => saveWatchFolders(ctx));
   // role=status: the saved-count line is the only feedback that a folder took
@@ -125,15 +124,11 @@ function buildScanControls(ctx) {
       createEl('label', { for: 'scan-folders' }, ['Watch folders (served automatically)']),
       s.foldersInput,
     ]),
-    createEl('div', { class: 'scan-controls__row scan-controls__row--check' }, [
-      s.foldersHf,
-      createEl('label', { for: 'watch-hf' }, ['Also watch the HuggingFace cache']),
-    ]),
     createEl('div', { class: 'scan-controls__row' }, [s.foldersSaveBtn, s.foldersNote]),
     createEl('div', { class: 'muted small' }, [
       'One per line, read on the SERVER. Every model under a watch folder is '
-      + 'served without a models.toml entry — write an entry only to change '
-      + 'something (rename it, pin a chat template, turn it off).',
+      + 'served. Its settings live in its own folder (model.heylook.toml), '
+      + 'written by the config editor below.',
     ]),
   ]);
 }
@@ -144,7 +139,6 @@ async function loadWatchFolders(ctx) {
     const cfg = await api.adminScanConfig({ signal: ctx.signal });
     if (!ctx.alive) return;
       s.foldersInput.value = (cfg.folders || []).join('\n');
-    s.foldersHf.checked = Boolean(cfg.watch_hf_cache);
     if (cfg.scan_interval_seconds === 0) {
       s.foldersNote.textContent = 'Discovery is off (scan_interval_seconds = 0).';
     }
@@ -161,10 +155,7 @@ async function saveWatchFolders(ctx) {
   s.foldersNote.textContent = 'Saving…';
   try {
     const folders = s.foldersInput.value.split('\n').map((f) => f.trim()).filter(Boolean);
-    const cfg = await api.adminSetScanConfig({
-      folders,
-      watch_hf_cache: s.foldersHf.checked,
-    });
+    const cfg = await api.adminSetScanConfig({ folders });
     if (!ctx.alive) return;
       // models_served is the POINT of the edit -- naming the consequence beats
     // "Saved", which says nothing about whether the folder found anything.

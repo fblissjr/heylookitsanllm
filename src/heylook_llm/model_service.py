@@ -2,18 +2,13 @@
 """
 Service layer for model discovery, validation, and configuration management.
 
-Provides CRUD operations on models.toml, filesystem scanning (the discovery
-cache), and smart defaults. Thread-safe for concurrent API access.
-
-This module is the single source of truth for:
-- HuggingFace cache paths (get_hf_cache_paths)
-- Config CRUD, scanning, validation
+Provides CRUD operations on models.toml and on a model's own
+model.heylook.toml, plus validation. Thread-safe for concurrent API access.
 """
 
 import copy
 import logging
 import os
-import platform
 import re
 import shutil
 import threading
@@ -24,7 +19,6 @@ from typing import Any, Optional
 
 import tomli_w  # type: ignore[import-untyped]
 
-from heylook_llm.cache_defaults import weights_size_gb
 from heylook_llm.config import (
     PROVIDER_CONFIG_CLASSES,
     AppConfig,
@@ -34,30 +28,6 @@ from heylook_llm.config import (
 from heylook_llm.toml_comments import merge_comments
 
 logger = logging.getLogger(__name__)
-
-
-# =============================================================================
-# HuggingFace cache paths (platform-specific)
-# =============================================================================
-
-
-def get_hf_cache_paths() -> list[str]:
-    """Get platform-specific HuggingFace cache paths."""
-    if platform.system() == "Windows":
-        return [
-            os.path.expanduser("~/.cache/huggingface/hub"),  # path-privacy: ignore
-            os.path.expanduser("~/AppData/Local/huggingface/hub"),  # path-privacy: ignore
-        ]
-    elif platform.system() == "Darwin":
-        return [
-            os.path.expanduser("~/.cache/huggingface/hub"),  # path-privacy: ignore
-            os.path.expanduser("~/Library/Caches/huggingface/hub"),  # path-privacy: ignore
-        ]
-    else:
-        return [
-            os.path.expanduser("~/.cache/huggingface/hub"),  # path-privacy: ignore
-            os.path.expanduser("~/.huggingface/hub"),  # path-privacy: ignore
-        ]
 
 
 # =============================================================================
@@ -107,50 +77,6 @@ RUNTIME_CHANGEABLE_FIELDS = frozenset(
 
 # Valid model ID pattern: alphanumeric, hyphens, underscores, dots, slashes
 MODEL_ID_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._\-/]*$")
-
-
-@dataclass
-class ScannedModel:
-    """A model discovered during filesystem scan.
-
-    Everything past ``vision`` is REPORTING, not configuration: the importer
-    already derives these facts (projector flags, the GGUF's own embedded
-    chat template, the drafter's name prefix) and used to keep them to
-    itself or to the server log. They ride along so the one surface where
-    someone decides whether to import a model can show what it actually is.
-    """
-
-    id: str
-    path: str
-    provider: str  # "mlx", "gguf"
-    size_gb: float
-    vision: bool
-    quantization: Optional[str] = None
-    already_configured: bool = False
-    tags: list[str] = field(default_factory=list)
-    description: str = ""
-    # The author-declared modality set (["text", "vision", "audio", ...]).
-    # ``vision`` above is its boolean shadow, kept for existing readers.
-    modalities: list[str] = field(default_factory=list)
-    # Thinking support read from the model's own chat template. None = there
-    # was no template to judge (an MTP/drafter head legitimately has none) --
-    # deliberately distinct from a known-false.
-    supports_thinking: Optional[bool] = None
-    # A paired speculative drafter and the ``--spec-type`` it REQUIRES.
-    # Import never turns spec decode on for you (that is a per-model
-    # measurement), but which type this drafter needs is a fact about the
-    # file, and guessing it wrong is a load failure.
-    draft_model_path: Optional[str] = None
-    draft_spec_type: Optional[str] = None
-    # Is the ROUTER already serving this file? Since v1.69.0 a model under
-    # [scan].folders is servable with no models.toml entry, which splits the
-    # old two-state world in three: written down / served-by-discovery /
-    # neither. `already_configured` still means "has an entry"; only this
-    # says whether importing would actually change what you can call. The
-    # scan route fills it from the router snapshot -- ModelService has no
-    # router, and inventing a second discovery pass here would be the
-    # per-request walk the read paths were just freed from.
-    served: bool = False
 
 
 @dataclass
@@ -241,87 +167,6 @@ class ModelService:
         tmp_path.rename(self.config_path)
         logger.info(f"Config written to {self.config_path}")
 
-    # --- Discovery ---
-
-    def scan_directory(
-        self, path: str, identity: tuple[set[str], set[str]] | None = None
-    ) -> list[ScannedModel]:
-        """Scan a directory for importable models.
-
-        ``identity`` lets a caller that's scanning multiple sources (see
-        ``scan_paths``) pass in a precomputed ``_configured_identity()``
-        result so models.toml isn't re-read and re-validated per source.
-        """
-        from heylook_llm.model_importer import ModelImporter
-
-        importer = ModelImporter()
-        raw_models = importer.scan_directory(path)
-        configured_ids, configured_paths = identity or self._configured_identity()
-        return [self._raw_to_scanned(m, configured_ids, configured_paths) for m in raw_models]
-
-    def scan_hf_cache(
-        self, identity: tuple[set[str], set[str]] | None = None
-    ) -> list[ScannedModel]:
-        """Scan HuggingFace cache directories for models.
-
-        ``identity`` lets a caller that's scanning multiple sources (see
-        ``scan_paths``) pass in a precomputed ``_configured_identity()``
-        result so models.toml isn't re-read and re-validated per source.
-        """
-        from heylook_llm.model_importer import ModelImporter
-
-        importer = ModelImporter()
-        raw_models = importer.scan_hf_cache()
-        configured_ids, configured_paths = identity or self._configured_identity()
-        return [self._raw_to_scanned(m, configured_ids, configured_paths) for m in raw_models]
-
-    def _configured_identity(self) -> tuple[set[str], set[str]]:
-        """Configured ids AND resolved weight paths.
-
-        ``already_configured`` must match on either: a rescan can derive a
-        different id for weights that are already configured (id matching
-        alone invited duplicate entries pointing at the same weights).
-        Paths are resolved so symlinked spellings compare equal.
-        """
-        from heylook_llm.model_registry import path_identity
-
-        ids: set[str] = set()
-        paths: set[str] = set()
-        for m in self.list_configs():
-            ids.add(m.id)
-            model_path = getattr(m.config, "model_path", "")
-            if model_path:
-                paths.add(path_identity(model_path))
-        return ids, paths
-
-    def scan_paths(
-        self, paths: list[str] | None = None, scan_hf: bool = True
-    ) -> list[ScannedModel]:
-        """Scan multiple paths and optionally HF cache."""
-        results: list[ScannedModel] = []
-        seen_ids: set[str] = set()
-
-        # Computed once and threaded through every scan_directory/scan_hf_cache
-        # call below -- each call independently recomputes this from a full
-        # models.toml read + per-model Pydantic validation, so without sharing
-        # it a K-source scan re-reads and re-resolves the config K times.
-        identity = self._configured_identity()
-
-        if paths:
-            for p in paths:
-                for model in self.scan_directory(p, identity=identity):
-                    if model.id not in seen_ids:
-                        results.append(model)
-                        seen_ids.add(model.id)
-
-        if scan_hf:
-            for model in self.scan_hf_cache(identity=identity):
-                if model.id not in seen_ids:
-                    results.append(model)
-                    seen_ids.add(model.id)
-
-        return results
-
     # --- [scan] watch folders -------------------------------------------
 
     def get_scan_config(self) -> dict:
@@ -329,12 +174,10 @@ class ModelService:
         raw = self._read_toml().get("scan") or {}
         return {
             "folders": [str(f) for f in (raw.get("folders") or [])],
-            "watch_hf_cache": bool(raw.get("watch_hf_cache", False)),
             "scan_interval_seconds": int(raw.get("scan_interval_seconds", 900)),
         }
 
-    def set_scan_config(self, folders=None, watch_hf_cache=None,
-                        scan_interval_seconds=None) -> dict:
+    def set_scan_config(self, folders=None, scan_interval_seconds=None) -> dict:
         """Update ``[scan]``; only the arguments given are changed.
 
         These folders decide what the server SERVES (model_registry), so this
@@ -357,8 +200,6 @@ class ModelService:
                         seen.add(f)
                         unique.append(f)
                 scan["folders"] = unique
-            if watch_hf_cache is not None:
-                scan["watch_hf_cache"] = bool(watch_hf_cache)
             if scan_interval_seconds is not None:
                 interval = int(scan_interval_seconds)
                 if interval < 0:
@@ -369,120 +210,16 @@ class ModelService:
             self._write_toml(data)
         return self.get_scan_config()
 
-    def _raw_to_scanned(
-        self,
-        raw: dict,
-        configured_ids: set[str],
-        configured_paths: set[str] | None = None,
-    ) -> ScannedModel:
-        """Convert raw importer dict to ScannedModel."""
-        config = raw.get("config", {})
-        model_path = config.get("model_path", "")
-
-        # Detect quantization from name
-        name_lower = raw.get("id", "").lower()
-        quantization = None
-        if "4bit" in name_lower or "q4" in name_lower:
-            quantization = "4bit"
-        elif "8bit" in name_lower or "q8" in name_lower:
-            quantization = "8bit"
-        elif "mxfp4" in name_lower:
-            quantization = "mxfp4"
-
-        # Estimate size (dir case shares the mtime-cached implementation with
-        # the load-time cache-defaults probe -- one byte-summing rule).
-        size_gb = 0.0
-        p = Path(model_path)
-        if p.is_dir():
-            size_gb = weights_size_gb(model_path)
-        elif p.is_file():
-            if raw.get("provider") == "gguf":
-                # model_path is the PRIMARY .gguf FILE -- sidecars (mmproj
-                # precision variants, mtp drafter) live alongside it in the
-                # same directory, so report the combined directory size
-                # rather than just the one weight file.
-                total = sum(f.stat().st_size for f in p.parent.glob("*.gguf"))
-                size_gb = total / (1024**3)
-            else:
-                size_gb = p.stat().st_size / (1024**3)
-
-        # Configured if the id matches OR the resolved weights path is
-        # already configured under any id (see _configured_identity).
-        already = raw.get("id", "") in configured_ids
-        if not already and configured_paths and model_path:
-            already = str(Path(model_path).expanduser().resolve()) in configured_paths
-
-        # Modalities, and `vision` as their boolean shadow. Neither is read
-        # from a config key any more, because after derive-at-load (6a) no
-        # entry reliably has one: MLX entries are THIN (modalities resolve at
-        # model load) and the gguf builder never wrote `vision` at all -- so
-        # `config["vision"]` reported false for every scanned model of either
-        # provider. gguf states its modalities in the entry (read from the
-        # projector's own header); for everything else this derives them from
-        # the model dir through the same shared detector the config validator
-        # uses. Deriving is right HERE specifically because a scan result is
-        # reporting, not stored config.
-        modalities = list(config.get("modalities") or [])
-        if not modalities and p.is_dir():
-            from heylook_llm.modality_detect import detect_modalities
-
-            modalities = detect_modalities(p)
-        vision = "vision" in modalities
-
-        # Which speculative type this entry runs: the one it pins, else the
-        # one the drafter's own header offers (llama.cpp's rule).
-        draft_path = config.get("draft_model_path")
-        draft_spec_type = config.get("spec_type")
-        if draft_path and not draft_spec_type:
-            from heylook_llm import gguf_metadata
-
-            draft_spec_type = gguf_metadata.spec_type_from_gguf(
-                gguf_metadata.splits(Path(draft_path)))
-
-        # Thinking support. Only the gguf entry builder writes this (read from
-        # the GGUF's embedded template); MLXModelConfig actively REJECTS the
-        # key, so reading the config alone reported null for every MLX row --
-        # and the same page then listed `thinking` in that model's
-        # capabilities after import, disagreeing with itself. The MLX answer
-        # comes from the same template probe the capability surface uses.
-        supports_thinking = config.get("supports_thinking")
-        if supports_thinking is None and raw.get("provider") != "gguf" and p.is_dir():
-            from heylook_llm.capabilities import template_supports_thinking
-
-            supports_thinking = template_supports_thinking(model_path)
-
-        return ScannedModel(
-            id=raw.get("id", ""),
-            path=model_path,
-            provider=raw.get("provider", "mlx"),
-            size_gb=round(size_gb, 2),
-            vision=vision,
-            quantization=quantization,
-            already_configured=already,
-            tags=raw.get("tags", []),
-            description=raw.get("description", ""),
-            modalities=modalities,
-            supports_thinking=supports_thinking,
-            draft_model_path=draft_path,
-            draft_spec_type=draft_spec_type,
-        )
-
     # --- Config CRUD ---
 
     def list_configs(self) -> list[ModelConfig]:
         """List all model configs WRITTEN DOWN (including disabled).
 
-        Deliberately models.toml only -- do NOT fold discovery in here. Two
-        reasons, both found by review after an earlier version did:
-
-        1. This feeds ``_configured_identity``, which is what marks a scanned
-           model ``already_configured``. Including discovered models marks
-           every one of them configured, which silently empties
-           ``GET /v1/admin/models/discovered`` -- the C3 feature -- forever.
-        2. Rescanning per call makes the admin surface disagree with the
-           router in the WORSE direction: it would list a model downloaded
-           after startup that ``router.get_provider`` cannot resolve, so the
-           v3 Load button 400s.
+        Deliberately models.toml only -- do NOT fold discovery in here
+        (found by review after an earlier version did): rescanning per call
+        makes the admin surface disagree with the router in the WORSE
+        direction, listing a model downloaded after startup that
+        ``router.get_provider`` cannot resolve, so the v3 Load button 400s.
 
         The admin list route composes ``router.app_config.models`` instead --
         one snapshot, so everything listed is loadable. See admin_api.

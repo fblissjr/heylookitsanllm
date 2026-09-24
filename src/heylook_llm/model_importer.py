@@ -2,12 +2,11 @@
 """
 Filesystem scanner behind model discovery.
 
-ModelImporter turns what is on disk into models.toml-shaped entries; discovery
-(model_registry.discover) and the admin scan cache (ModelService.scan_paths)
-both call it. It no longer writes anything: the `heylookllm import` CLI and
-its TOML writer were retired in v2.0.72, since every model lives in a
-[scan].folders watch folder and is served with no entry. Profiles, smart
-defaults, and HF cache paths are defined in model_service.py.
+ModelImporter turns what is on disk into entry-shaped dicts for discovery
+(model_registry.scan), layering each model's own model.heylook.toml over what
+it derives. It writes nothing: the `heylookllm import` CLI and its TOML writer
+were retired in v2.0.72, since every model lives in a [scan].folders watch
+folder.
 """
 
 import glob
@@ -18,16 +17,13 @@ from pathlib import Path
 from typing import Any, Optional
 
 from heylook_llm import gguf_metadata
-from heylook_llm.model_service import get_hf_cache_paths
 from heylook_llm.modality_detect import (
     detect_modalities,
     has_vision_weight_files,
     read_model_config_json,
 )
 
-__all__ = ["ModelImporter", "get_hf_cache_paths"]
-
-HF_CACHE_PATHS = get_hf_cache_paths()
+__all__ = ["ModelImporter"]
 
 # A model's own settings, in its own folder (plan_registry_sidecars Phase 2).
 # The `<what>.heylook.<ext>` shape of chat_template.heylook.jinja: no vendor
@@ -98,53 +94,6 @@ class ModelImporter:
                     logging.info(f"Added MLX model: {model['id']}")
 
         logging.info(f"Scan complete: {dirs_scanned} directories scanned, {len(models)} models imported")
-        return self._validate(models)
-
-    def scan_hf_cache(self) -> list[dict]:
-        """Scan HuggingFace cache directories for models."""
-        models = []
-
-        for cache_path in HF_CACHE_PATHS:
-            path = Path(cache_path).expanduser()
-            if path.exists():
-                logging.info(f"Scanning HF cache: {path}")
-                for model_dir in path.glob("models--*"):
-                    if model_dir.is_dir():
-                        snapshots = model_dir / "snapshots"
-                        if snapshots.exists():
-                            for snapshot in snapshots.iterdir():
-                                if snapshot.is_dir():
-                                    found_models = self._scan_hf_snapshot(snapshot)
-                                    models.extend(found_models)
-        return self._validate(models)
-
-    def _scan_hf_snapshot(self, snapshot_path: Path) -> list[dict]:
-        """Scan a HF cache snapshot directory."""
-        models = []
-        config_data = self._read_model_config(snapshot_path)
-
-        if self._is_drafter_checkpoint(config_data):
-            model = None
-        elif self._is_embedding_checkpoint(snapshot_path, config_data):
-            model = None
-        elif self._is_gguf_model(snapshot_path):
-            model = self._create_gguf_entry(snapshot_path)
-        elif self._is_mlx_model(snapshot_path):
-            model = self._create_mlx_entry(snapshot_path, config_data)
-        else:
-            model = None
-
-        if model:
-            parts = snapshot_path.parent.parent.name.split("--")
-            if len(parts) >= 2:
-                model['id'] = f"{parts[1]}/{parts[2]}" if len(parts) > 2 else parts[1]
-                # A gguf model_path is the primary .gguf FILE (sidecars live
-                # alongside it) -- overwriting it with the snapshot DIRECTORY
-                # would point GGUFModelConfig.model_path at the wrong thing.
-                if model.get('provider') != 'gguf':
-                    model['config']['model_path'] = str(snapshot_path)
-            models.append(model)
-
         return self._validate(models)
 
     def _apply_sidecar(self, entry: dict, folder: Path) -> Optional[dict]:

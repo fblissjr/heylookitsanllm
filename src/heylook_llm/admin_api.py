@@ -197,17 +197,14 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
 # that work ON the event loop, which freezes every in-flight SSE generation
 # stream for its whole duration. A plain `def` hands the handler to FastAPI's
 # threadpool instead; a handler that genuinely must await (remove_model_config)
-# wraps the blocking calls in asyncio.to_thread. Same reasoning, same scan, as
-# MemoryManager._maybe_rescan_models (memory.py), which pushes it to an executor
-# so a periodic rescan doesn't stall streams.
+# wraps the blocking calls in asyncio.to_thread.
 #
-# Note a single mutation runs the walk TWICE -- once in ModelService (to
-# materialize a discovered model into an entry, or for the delete guard), once
-# in the reload -- so this is not a theoretical stall. Kept as two scans on
+# Note a single mutation runs the walk TWICE -- once in ModelService (to find
+# the model whose own file an edit writes, or for the delete guard), once in
+# the reload -- so this is not a theoretical stall. Kept as two scans on
 # purpose: sharing one snapshot across the write and the reload would mean
-# materializing an entry from a scan the reload no longer agrees with, and the
-# staleness would land exactly where entries get WRITTEN. Both are off the loop
-# now, so the cost is admin-request latency, not stalled streams.
+# writing from a scan the reload no longer agrees with. Both are off the loop,
+# so the cost is admin-request latency, not stalled streams.
 #
 # Read routes are models.toml-only or read the router's already-merged snapshot,
 # and never scan (see _served_configs) -- but the two that build an
@@ -693,24 +690,6 @@ async def remove_model_config(model_id: str, request: Request):
 # resolves routes in registration order, so we use the router's add_api_route
 # to control order. The final registration order is handled at the bottom.
 
-async def _discovered_models(request: Request):
-    """Return the passively-discovered models cache (C3).
-
-    Populated by ``MemoryManager`` scanning the ``[scan]`` folders + HF cache
-    at ``scan_interval_seconds``. Read-only, and read by no frontend page
-    today: a model under a watch folder is already served, so there is
-    nothing to add (the import route went in v2.0.72). It retires with
-    watch_hf_cache in the registry-sidecars plan.
-    """
-    memory_manager = getattr(request.app.state, "memory_manager", None)
-    if memory_manager is None:
-        return {"discovered": [], "last_scan_ts": 0.0, "count": 0}
-    try:
-        return memory_manager.discovered_snapshot()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Discovery snapshot failed: {e}")
-
-
 # --- Validate ---
 
 async def _validate_config(request: Request, validate_request: ModelValidateRequest):
@@ -751,7 +730,6 @@ def _put_scan_config(request: Request, body: ScanConfigRequest):
     try:
         saved = service.set_scan_config(
             folders=body.folders,
-            watch_hf_cache=body.watch_hf_cache,
             scan_interval_seconds=body.scan_interval_seconds,
         )
     except ValueError as e:
@@ -801,18 +779,6 @@ scan_import_router.add_api_route(
         "models.toml survive the write."
     ),
     response_model=ScanConfigResponse,
-)
-
-scan_import_router.add_api_route(
-    "/discovered",
-    _discovered_models,
-    methods=["GET"],
-    summary="Discovered Models (Watch Folders)",
-    description=(
-        "Read-only snapshot of the passive watch-folders discovery cache. "
-        "Populated by MemoryManager periodically scanning the [scan].folders + "
-        "HF cache. Returns {discovered, last_scan_ts, count}."
-    ),
 )
 
 scan_import_router.add_api_route(

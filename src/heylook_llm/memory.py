@@ -246,10 +246,6 @@ class MemoryManager:
         self.model_metadata: dict[str, ModelMetadata] = {}
         self.mode = "background"
 
-        # Watch-folders discovery cache (C3). Keyed by model_id.
-        self._discovered: dict[str, dict[str, Any]] = {}
-        self._last_scan_ts: float = 0.0
-
         # No eager mkdir: the log dir is created lazily on first actual write
         # (_append_jsonl), so observability_level=off leaves no logs/ footprint.
 
@@ -324,7 +320,7 @@ class MemoryManager:
     def tick(self) -> None:
         """Periodic maintenance called from the 60s resource-snapshot loop.
 
-        Currently: idle-unload via the router, watch-folders rescan.
+        Currently: idle-unload via the router.
         S2.4 adds memory-pressure reclaim. Best-effort -- per-call exceptions
         log at debug and never propagate (observability-path discipline).
         """
@@ -334,116 +330,6 @@ class MemoryManager:
                 router.unload_idle_models()
             except Exception:
                 logging.debug("MemoryManager.tick: unload_idle_models failed", exc_info=True)
-
-        try:
-            self._maybe_rescan_models()
-        except Exception:
-            logging.debug("MemoryManager.tick: _maybe_rescan_models failed", exc_info=True)
-
-    # -- watch-folders discovery (C3) --------------------------------------
-
-    def _maybe_rescan_models(self, now_ts: float | None = None) -> None:
-        """Rescan watch folders when the interval has elapsed.
-
-        The scan is a blocking filesystem walk. When a running event loop is
-        available (production path via ``tick()`` on ``_resource_snapshot_loop``),
-        the walk runs in a thread-pool executor so a ~seconds-scale scan over
-        a large HF cache doesn't stall in-flight SSE streams. Tests call
-        ``_maybe_rescan_models`` synchronously without a loop, so the fallback
-        path completes inline.
-
-        No-op when ``app_config.scan`` is unset or
-        ``scan.scan_interval_seconds == 0``.
-        """
-        scan_cfg = getattr(self.app_config, "scan", None)
-        if scan_cfg is None:
-            return
-        interval = int(getattr(scan_cfg, "scan_interval_seconds", 0) or 0)
-        if interval <= 0:
-            return
-        if now_ts is None:
-            now_ts = time.time()
-        if now_ts - self._last_scan_ts < interval:
-            return
-
-        # Update ts eagerly so the next 60s tick doesn't re-enqueue while the
-        # previous scan is still in flight.
-        self._last_scan_ts = now_ts
-
-        folders = list(getattr(scan_cfg, "folders", []) or [])
-        scan_hf = bool(getattr(scan_cfg, "watch_hf_cache", False))
-
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            # Sync fallback: tests and any caller without an event loop.
-            self._apply_scan_results(self._scan_paths_sync(folders, scan_hf))
-            return
-
-        future = loop.run_in_executor(None, self._scan_paths_sync, folders, scan_hf)
-        future.add_done_callback(self._on_scan_done)
-
-    def _on_scan_done(self, future: asyncio.Future) -> None:
-        try:
-            results = future.result()
-        except Exception:
-            logging.debug("MemoryManager: scan executor failed", exc_info=True)
-            return
-        self._apply_scan_results(results)
-
-    def _apply_scan_results(self, results: list) -> None:
-        """Build the discovered-cache dict from scanner output and install it
-        under the lock so ``discovered_snapshot`` readers see a consistent
-        view.
-        """
-        discovered: dict[str, dict[str, Any]] = {}
-        for m in results:
-            if getattr(m, "already_configured", False):
-                continue
-            model_id = getattr(m, "id", "") or ""
-            if not model_id:
-                continue
-            raw_path = getattr(m, "path", "") or ""
-            discovered[model_id] = {
-                "id": model_id,
-                "path": _normalize_path_for_log(raw_path),
-                "provider": getattr(m, "provider", "mlx"),
-                "size_gb": float(getattr(m, "size_gb", 0.0) or 0.0),
-                "vision": bool(getattr(m, "vision", False)),
-                "quantization": getattr(m, "quantization", None),
-                "tags": list(getattr(m, "tags", []) or []),
-                "description": getattr(m, "description", "") or "",
-            }
-        with self._lock:
-            self._discovered = discovered
-
-    def _scan_paths_sync(self, paths: list[str], scan_hf: bool) -> list:
-        """Blocking scan. Runs on an executor thread in production; called
-        directly by tests. Fresh ``ModelService`` per call -- scans are
-        15-min-interval by default, the service is cheap."""
-        try:
-            from heylook_llm.model_service import ModelService
-        except Exception:
-            logging.debug("MemoryManager: ModelService unavailable", exc_info=True)
-            return []
-        config_path = getattr(self.app_config, "_config_path", "models.toml")
-        try:
-            service = ModelService(config_path)
-            return service.scan_paths(paths=paths, scan_hf=scan_hf)
-        except Exception:
-            logging.debug("MemoryManager: scan_paths failed", exc_info=True)
-            return []
-
-    def discovered_snapshot(self) -> dict[str, Any]:
-        """Snapshot consumed by ``GET /v1/admin/models/discovered``. Reads
-        are lock-guarded against the executor-thread rebuild in
-        ``_apply_scan_results``."""
-        with self._lock:
-            return {
-                "discovered": list(self._discovered.values()),
-                "last_scan_ts": self._last_scan_ts,
-                "count": len(self._discovered),
-            }
 
     # -- periodic baseline -------------------------------------------------
 

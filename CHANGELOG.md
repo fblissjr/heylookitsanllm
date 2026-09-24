@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.118]
+
+### Removed
+
+- **The HuggingFace-cache watch, the periodic rescan and the discovered-models cache** (plan_registry_sidecars; owner decision 2026-09-23: models live only in the configured scan folders).
+  - `[scan].watch_hf_cache`, `ModelImporter.scan_hf_cache`, `get_hf_cache_paths`, and the models-page checkbox.
+  - `MemoryManager`'s periodic rescan and the passive discovered-models cache it fed, with `GET /v1/admin/models/discovered`, which no page read.
+  - `ModelService.scan_directory` / `scan_hf_cache` / `scan_paths`, `ScannedModel` and the scan projection behind them.
+
+  Discovery now runs at load and reload only. `scan_interval_seconds = 0` still switches it off; other values schedule nothing. An old `watch_hf_cache` key in a config file is ignored.
+
 ## [2.0.117]
 
 Documentation only.

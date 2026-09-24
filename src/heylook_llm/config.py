@@ -1359,23 +1359,17 @@ class ScanConfig(BaseModel):
     models.toml entry. Nothing is written -- models.toml stays override-only,
     and an entry there always wins (see model_registry for the merge rule).
 
-    ``scan_interval_seconds = 0`` disables scanning entirely: no periodic
-    rescan (``MemoryManager.tick()``) AND no load-time discovery. Setting it
-    to 0 must not leave load-time discovery running, or the documented off
-    switch would instead silently serve every model under the folders.
-
-    ``MemoryManager.tick()`` additionally maintains the passive
-    discovered-but-not-configured cache behind
-    ``GET /v1/admin/models/discovered`` -- still useful for "what is here
-    that I have not customized", now that being discovered is enough to be
-    served.
+    ``scan_interval_seconds = 0`` switches discovery off: nothing under the
+    folders is served. Any other value serves them; it no longer schedules a
+    rescan (the periodic rescan, the discovered-models cache it fed, and the
+    HF-cache watch all retired in v2.0.118). Discovery runs at load and reload.
     """
     folders: List[str] = Field(default_factory=list)
-    watch_hf_cache: bool = False
     scan_interval_seconds: int = Field(
         default=900, ge=0,
-        description="Seconds between rescans. 0 disables periodic rescans "
-                    "(no initial scan either).",
+        description="0 switches discovery off (nothing under the folders is "
+                    "served). Other values schedule nothing: discovery runs "
+                    "at load and reload.",
     )
 
 
@@ -1495,7 +1489,6 @@ class ScanConfigRequest(BaseModel):
                     "expanded by the scanner. Order preserved, duplicates "
                     "dropped.",
     )
-    watch_hf_cache: Optional[bool] = Field(default=None)
     scan_interval_seconds: Optional[int] = Field(
         default=None, ge=0,
         description="0 disables scanning entirely -- no periodic rescan AND "
@@ -1506,7 +1499,6 @@ class ScanConfigRequest(BaseModel):
 class ScanConfigResponse(BaseModel):
     """``[scan]`` as saved, plus what it currently adds up to."""
     folders: List[str] = Field(default_factory=list)
-    watch_hf_cache: bool = False
     scan_interval_seconds: int = 900
     models_served: int = Field(
         default=0,

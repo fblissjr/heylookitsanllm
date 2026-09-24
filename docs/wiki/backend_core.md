@@ -147,8 +147,7 @@ Model availability is governed by [`model_registry.py`](../../src/heylook_llm/mo
 
 ### 5.1. The Override-Only Philosophy
 `models.toml` is strictly an override file:
-- Scanning happens at **load time** (so both startup and every config reload) and again periodically on the memory manager's tick. The cadence is `[scan].scan_interval_seconds` in [`config.py`](../../src/heylook_llm/config.py); setting it to `0` disables the periodic rescan **and the load-time scan too**, because switching scanning off must not silently start serving everything under the folders instead.
-- Folders are not the only trigger: `[scan].watch_hf_cache` runs discovery over the HuggingFace cache with no folders configured at all.
+- Scanning happens at **load time**: startup and every config reload. There is no periodic rescan (retired with the unused discovered-models cache it fed); a new download is served after the next reload. `[scan].scan_interval_seconds = 0` in [`config.py`](../../src/heylook_llm/config.py) switches discovery off, so nothing under the folders is served; its other values schedule nothing.
 - Discovered models not listed in `models.toml` are served with automatically derived parameters. A new download needs no import, no symlink and no edit.
 - The merge **never writes `models.toml`**. A `[[models]]` entry is served exactly as written and always wins; discovery can only ADD.
 - Discovery is **best-effort**: a failing scan is logged and dropped, never fatal. An empty result is the correct answer for "no `[scan]` section", "scanning is off" and "the scan failed" alike -- all three mean `models.toml` stands alone. `scan()` tells the last apart: it returns the entries plus the sources that failed, where a missing or unmounted folder counts as failed (not as "no models here"), and one model the importer rejects is dropped alone and named, rather than failing its whole folder.

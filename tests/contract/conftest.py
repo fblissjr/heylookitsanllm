@@ -225,8 +225,6 @@ class MockModelService:
     def get_config(self, model_id):
         return self.app_config.get_model_config(model_id)
 
-    def scan_paths(self, paths=None, scan_hf=True):
-        return []  # No real scanning in tests
 
     def update_config(self, model_id, updates):
         """Apply a config update to the in-memory roster (what the real

@@ -100,9 +100,8 @@ class TestMergeDiscovered:
     def test_two_discoveries_of_one_file_are_served_once(self, store):
         """Dedup must apply within the batch, not only against models.toml.
 
-        scan_hf_cache rewrites the id to `org/name` after the directory-name
-        id is registered, and scan_directory follows symlinks -- so one file
-        legitimately arrives twice under different ids.
+        scan_directory follows symlinks, so one file legitimately arrives
+        twice under different ids.
         """
         blob = store / "same.gguf"
         merged = merge_discovered({"models": []}, [entry("a", blob), entry("b", blob)])
@@ -200,7 +199,8 @@ class TestAnEditWritesTheModelsOwnFile:
         svc, cfg = self._service(tmp_path, store)
         self._stub_scan(monkeypatch, [entry("found", blob)])
         before = cfg.read_text()
-        svc.scan_paths(paths=[str(store)], scan_hf=False)
+        svc.list_configs()
+        svc.get_config("found")
         assert cfg.read_text() == before and not (store / "model.heylook.toml").exists()
 
     def test_unknown_id_and_non_config_keys_are_refused(self, tmp_path, store, monkeypatch):
@@ -257,9 +257,8 @@ class TestAdminSurfaceSeesDiscovered:
                             lambda self, path: [dict(e) for e in entries])
 
     def test_list_configs_is_written_down_only(self, tmp_path, store, monkeypatch):
-        """It feeds _configured_identity; folding discovery in here marks every
-        scanned model already_configured and permanently empties
-        GET /v1/admin/models/discovered."""
+        """Folding discovery in here would list models the router's snapshot
+        cannot load."""
         blob = store / "found.gguf"
         blob.write_text("x")
         svc = self._service(tmp_path, store)
@@ -267,19 +266,6 @@ class TestAdminSurfaceSeesDiscovered:
 
         assert [c.id for c in svc.list_configs()] == []
         assert svc.get_config("found") is None
-
-    def test_discovered_endpoint_still_sees_unconfigured_models(
-            self, tmp_path, store, monkeypatch):
-        """The C3 cache drops anything already_configured -- so a discovered
-        model must NOT be reported as configured."""
-        blob = store / "found.gguf"
-        blob.write_text("x")
-        svc = self._service(tmp_path, store)
-        self._stub_scan(monkeypatch, [entry("found", blob)])
-
-        scanned = svc.scan_paths(paths=[str(store)], scan_hf=False)
-        assert [s.id for s in scanned] == ["found"]
-        assert scanned[0].already_configured is False
 
     def test_listing_does_not_write(self, tmp_path, store, monkeypatch):
         blob = store / "found.gguf"
@@ -310,13 +296,13 @@ class TestScanConfigAccessors:
     def test_defaults_when_no_scan_table(self, tmp_path):
         svc, _ = self._service(tmp_path)
         assert svc.get_scan_config() == {
-            "folders": [], "watch_hf_cache": False, "scan_interval_seconds": 900}
+            "folders": [], "scan_interval_seconds": 900}
 
     def test_partial_update_leaves_other_keys_alone(self, tmp_path):
-        svc, _ = self._service(tmp_path, '\n[scan]\nfolders = ["a"]\nwatch_hf_cache = true\n')
+        svc, _ = self._service(tmp_path, '\n[scan]\nfolders = ["a"]\nscan_interval_seconds = 0\n')
         out = svc.set_scan_config(folders=["b", "c"])
         assert out["folders"] == ["b", "c"]
-        assert out["watch_hf_cache"] is True, "an absent field must not be reset"
+        assert out["scan_interval_seconds"] == 0, "an absent field must not be reset"
 
     def test_duplicate_folders_are_dropped_in_order(self, tmp_path):
         svc, _ = self._service(tmp_path)

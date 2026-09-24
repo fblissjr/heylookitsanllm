@@ -17,9 +17,6 @@ in FastAPI's threadpool, ``async def`` + ``asyncio.to_thread``) pass this;
 only blocking fails it. ``test_the_heartbeat_can_actually_starve`` is the
 control -- it mounts a route that DOES block and asserts the harness sees it,
 so a green run here cannot be the heartbeat quietly measuring nothing.
-
-Same reasoning as ``MemoryManager._maybe_rescan_models`` (memory.py), which
-pushes the identical scan to an executor for the identical reason.
 """
 
 import asyncio

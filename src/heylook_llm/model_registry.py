@@ -140,10 +140,8 @@ def merge_discovered(config_data: dict, discovered: list[dict]) -> dict:
         configured_ids.add(model_id)
         # Extend BOTH sets with what we just accepted, or discovery only
         # dedupes against models.toml and not against itself. Two scanners
-        # legitimately produce two ids for one file: scan_hf_cache rewrites
-        # the id to `org/name` after the directory-name id was registered,
-        # and scan_directory follows symlinks, so two links to one store dir
-        # yield two names. Without this the same GGUF is servable twice and,
+        # legitimately produce two ids for one file: scan_directory follows
+        # symlinks, so two links to one store dir yield two names. Without this the same GGUF is servable twice and,
         # above max_loaded_models=1, loads into two llama-server processes.
         configured_paths.add(path_identity(path))
         added.append(entry)
@@ -202,25 +200,16 @@ def scan(config_data: dict) -> Discovery:
     """
     scan_cfg = config_data.get("scan") or {}
     folders = [str(f) for f in (scan_cfg.get("folders") or [])]
-    watch_hf = bool(scan_cfg.get("watch_hf_cache", False))
-    if not folders and not watch_hf:
+    if not folders:
         return Discovery([], [])
-    # scan_interval_seconds = 0 is the documented off switch ("0 disables
-    # periodic rescans (no initial scan either)", ScanConfig) and
-    # MemoryManager._maybe_rescan_models honors it. Load-time discovery has to
-    # honor it too, or setting it to 0 to STOP scanning silently starts
-    # serving everything under the folders instead -- the opposite of what the
-    # operator asked for.
+    # scan_interval_seconds = 0 is the documented off switch (ScanConfig):
+    # setting it to 0 to STOP scanning must not keep serving everything under
+    # the folders. Its other values schedule nothing since the periodic rescan
+    # was retired (v2.0.118).
     if int(scan_cfg.get("scan_interval_seconds", 900) or 0) <= 0:
         return Discovery([], [])
 
     try:
-        # ModelImporter, NOT ModelService.scan_paths: the latter projects each
-        # hit into a ScannedModel for the admin UI, and that projection drops
-        # mmproj_path -- every vision GGUF would come back text-only. The
-        # importer's raw dicts are already the models.toml entry shape, which
-        # is exactly what the merge wants.
-        #
         # A FRESH importer per call is deliberate: its existing_ids
         # bookkeeping makes the scanners skip already-configured models, and
         # discovery wants everything. Deduplication is merge_discovered's job,
@@ -253,13 +242,6 @@ def scan(config_data: dict) -> Discovery:
                 "[registry] scan of %s failed; skipping that folder only",
                 folder, exc_info=True)
             failed.append(folder)
-    if watch_hf:
-        try:
-            entries.extend(importer.scan_hf_cache())
-        except Exception:
-            logging.warning(
-                "[registry] HF cache scan failed; skipping it", exc_info=True)
-            failed.append("hf-cache")
     failed.extend(path for path, _ in importer.rejected)
 
     return Discovery([e for e in entries if isinstance(e, dict) and e.get("config")], failed)

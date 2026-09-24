@@ -670,14 +670,14 @@ cache, thinking, image, steering}`.
 - Checked through both routes by `tests/contract/test_engine_contract.py`.
 Adding it moved `GET /v1/admin/models` and `GET /v1/admin/models/{id}` off the event loop
 (plain `def`): the derivation stats each served model's `config.json`.
-`GET|PUT /v1/admin/models/scan-config` (v1.70.0) → `{folders,watch_hf_cache,
-scan_interval_seconds,models_served,warning?}`. The `[scan]` table from models.toml --
+`GET|PUT /v1/admin/models/scan-config` (v1.70.0) → `{folders,
+scan_interval_seconds,models_served,warning?}` (`watch_hf_cache` retired v2.0.118). The `[scan]` table from models.toml --
 the watch folders discovery serves from. PUT takes any subset (absent = leave alone),
 writes models.toml (comments survive), then reloads the router, and answers with
 `models_served` so the UI can name the consequence rather than say "Saved".
-`scan_interval_seconds = 0` disables discovery entirely -- no periodic rescan AND no
-load-time discovery. This is the primary "add models" flow; scan+import is the fallback
-for a folder you do not want watched.
+`scan_interval_seconds = 0` switches discovery off; other values schedule nothing
+(the periodic rescan retired v2.0.118; discovery runs at load and reload). This is the
+"add models" flow.
 `POST /{id}/fit` (added v1.60.0) body `{config_overrides?:{key: value|null}, headroom_gb?:8}` →
 `{weights_gb, headroom_gb, reclaimable_gb, working_set_gb?, max_buffer_gb?,
 sysctl_wired_mb?, sysctl_suggest_mb?, kv_headroom_gb?, headroom_thin, hard_working_set,
@@ -725,7 +725,7 @@ gated its entire UI on them.
 `POST /v1/models/{id}/load?warm=true` is what v3's Load button sends, so "Loaded" means ready
 rather than merely resident; the page renders `warm_ms` as a note and surfaces
 `warm_error` without calling the load a failure (the model is loaded either way).
-(Backend also exposes status/validate/discovered — the sampler roster and
+(Backend also exposes status/validate — `/discovered` retired v2.0.118; the sampler roster and
 bulk-default-sampler routes were removed in v2.0.30; out of scope unless a
 trimmed feature needs them.)
 

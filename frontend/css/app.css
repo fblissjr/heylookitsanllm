@@ -1419,12 +1419,6 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
 }
 .scan-controls__row label { color: var(--ink-muted); font-size: var(--text-sm); }
 .scan-controls .input { width: 100%; text-align: left; }
-.scan-controls__row--check {
-  flex-direction: row;
-  align-items: center;
-  gap: 0.5rem;
-}
-.scan-controls__row--check label { font-size: var(--text-ui); }
 
 .scan-controls textarea.input { resize: vertical; min-height: 4.5rem; font-family: var(--mono); }
 
@@ -1460,8 +1454,6 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
     min-height: 44px;
     padding: 0.55rem 0.9rem;
   }
-  /* Comfortable hit target for the one checkbox on this page (§7). */
-  .scan-controls__row--check input[type="checkbox"] { width: 20px; height: 20px; }
   .scan-controls .input { min-height: 44px; }
   /* Config editor stacks label-over-control on the phone; §7 touch targets. */
   .cfg-field {
