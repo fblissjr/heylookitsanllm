@@ -20,7 +20,7 @@ Route modules in src/heylook_llm/:
 ├── model_ops_api.py             # models_router (/v1/models list) + model_ops_router (load)
 ├── admin_api.py                 # THREE routers, all defined here:
 │                                #   admin_router        -> /v1/admin/models  (CRUD, status, fit,
-│                                #                          toggle, reload, unload,
+│                                #                          reload, unload,
 │                                #                          chat-template)
 │                                #   scan_import_router  -> /v1/admin/models  (scan, import,
 │                                #                          discovered, validate, samplers,
@@ -154,7 +154,7 @@ Model availability is governed by [`model_registry.py`](../../src/heylook_llm/mo
 - Discovery is **best-effort**: a failing scan is logged and dropped, never fatal. An empty result is the correct answer for "no `[scan]` section", "scanning is off" and "the scan failed" alike -- all three mean `models.toml` stands alone. `scan()` tells the last apart: it returns the entries plus the sources that failed, where a missing or unmounted folder counts as failed (not as "no models here"), and one model the importer rejects is dropped alone and named, rather than failing its whole folder.
 - **A model's own settings** live in `model.heylook.toml` in the model's folder. The scan that finds the model reads it and layers it over the derived config, so derivation keeps reaching every field the file does not set, which is the reason it exists: a models.toml entry replaces the derived config wholesale and freezes it. `unset = ["draft_model_path"]` drops a derived field (TOML has no null); relative `*_path` values are relative to the folder; the folder is the model's identity and its name the id. The engine contract names the file as the source of each value it sets.
 - The router builds its `AppConfig` through `model_registry.served` (merge, then validate on a copy), and nothing else does, so any "what would be served" question asked through it cannot disagree with the server.
-- Admin edits **materialize** an entry on write (`update_config`, `toggle_enabled`), because editing *is* the override. Reads never do, or browsing the models page would grow the file. `remove_config` deliberately does not materialize: the next scan would serve the model back, and a "removed" model that reappears is worse than a clear refusal.
+- An admin edit to a discovered model writes its **`model.heylook.toml`**, holding only what was set; null drops a field back to derived, and a file left empty is deleted (reverting is deleting a file). This replaced materialization, which copied the whole derived config into a models.toml entry and so froze every derived value at the moment of the first edit. There is no enable toggle: a model in a scan folder is served, and to stop serving one you move it out.
 
 ### 5.2. Resolved Path Matching (`path_identity`)
 Models are deduplicated and merged based on **`path_identity(path)`**, which executes `Path(path).expanduser().resolve()`.

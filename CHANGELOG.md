@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.115]
+
+### Changed
+
+- **An admin edit to a model writes that model's own `model.heylook.toml`** (plan_registry_sidecars Phase 3). Before, the edit materialized a models.toml entry holding the model's whole derived config, which froze every derived value at the first edit.
+  - The file holds only what was set, and null reverts a field to derived.
+  - A file left empty is deleted.
+  - The whole effective config is validated before anything is written.
+
+### Removed
+
+- Materialization (`ModelService._materialize_discovered`) and the enable toggle (`ModelService.toggle_enabled`, `POST /v1/admin/models/{id}/toggle`). Owner decision: a model in a scan folder is served; to stop serving it, move it out.
+
 ## [2.0.114]
 
 Documentation only.

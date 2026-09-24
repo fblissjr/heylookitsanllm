@@ -6,8 +6,8 @@ Claims (what breaks if a test is deleted):
 - merge tests: a new download stops being servable without an import, or --
   worse -- discovery starts overriding hand-written entries, which is the
   clobbering the whole design exists to prevent.
-- materialization tests: editing a discovered model 404s, or a bulk edit
-  reports success and changes nothing.
+- model-file tests: editing a discovered model 404s, freezes its derived
+  config into models.toml, or loses what its model.heylook.toml already held.
 """
 import textwrap
 
@@ -157,17 +157,14 @@ class TestDiscoverIsBestEffort:
 
 
 @pytest.mark.unit
-class TestMaterializeOnWrite:
-    """A discovered model has no entry; an edit has to create one."""
+class TestAnEditWritesTheModelsOwnFile:
+    """Plan_registry_sidecars Phase 3: an admin edit to a discovered model
+    writes its model.heylook.toml. It used to materialize a models.toml entry
+    holding the whole derived config, which froze every derived value."""
 
     def _service(self, tmp_path, store):
         cfg = tmp_path / "models.toml"
-        cfg.write_text(textwrap.dedent(f"""
-            default_model = "none"
-
-            [scan]
-            folders = ["{store}"]
-        """).strip())
+        cfg.write_text(f'default_model = "none"\n[scan]\nfolders = ["{store}"]\n')
         return ModelService(str(cfg)), cfg
 
     def _stub_scan(self, monkeypatch, entries):
@@ -175,99 +172,62 @@ class TestMaterializeOnWrite:
         monkeypatch.setattr(mi.ModelImporter, "scan_directory",
                             lambda self, path: [dict(e) for e in entries])
 
-    def test_update_config_materializes_then_applies(
+    def test_set_then_reset_writes_only_what_was_set_and_reverts_by_deleting(
             self, tmp_path, store, monkeypatch):
-        blob = store / "found.gguf"
-        blob.write_text("x")
-        svc, cfg = self._service(tmp_path, store)
-        self._stub_scan(monkeypatch, [entry("found", blob)])
-
-        updated, _ = svc.update_config(
-            "found", {"config": {"chat_template_path": str(blob)}})
-
-        assert updated.id == "found"
         import tomllib
-        data = tomllib.loads(cfg.read_text())
-        written = {m["id"]: m for m in data["models"]}
-        assert "found" in written, "edit did not write an entry"
-        assert written["found"]["config"]["chat_template_path"] == str(blob)
-
-    def test_reading_does_not_materialize(self, tmp_path, store, monkeypatch):
-        """Browsing the models page must not grow models.toml."""
-        blob = store / "found.gguf"
-        blob.write_text("x")
-        svc, cfg = self._service(tmp_path, store)
-        self._stub_scan(monkeypatch, [entry("found", blob)])
-        before = cfg.read_text()
-
-        svc.scan_paths(paths=[str(store)], scan_hf=False)
-
-        assert cfg.read_text() == before
-
-    def test_toggle_enabled_materializes_so_the_off_switch_sticks(
-            self, tmp_path, store, monkeypatch):
-        blob = store / "found.gguf"
-        blob.write_text("x")
-        svc, cfg = self._service(tmp_path, store)
-        self._stub_scan(monkeypatch, [entry("found", blob)])
-
-        result = svc.toggle_enabled("found")
-
-        assert result.enabled is False
-        import tomllib
-        data = tomllib.loads(cfg.read_text())
-        assert data["models"][0]["enabled"] is False
-
-    def test_unknown_id_still_raises(self, tmp_path, store, monkeypatch):
-        svc, _ = self._service(tmp_path, store)
-        self._stub_scan(monkeypatch, [])
-        with pytest.raises(ValueError, match="not found"):
-            svc.toggle_enabled("ghost")
-
-    def test_materializing_keeps_what_discovery_derived(
-            self, tmp_path, store, monkeypatch):
-        """Editing a discovered vision model must not cost it its projector.
-
-        This used to write identity ONLY, on the reasoning that the derived
-        fields would re-derive at load. They do not: merge_discovered SKIPS a
-        discovered model whose resolved path an explicit entry already names,
-        so the moment an entry exists nothing re-derives for it. Setting a
-        context size on a discovered vision model therefore spawned
-        llama-server with no --mmproj and served it text-only, with the
-        projector sitting unreferenced beside the weights (2026-09-06).
-
-        The frozen copy can still go stale against a dir edited in place. That
-        is the better failure: it is written down where it can be read and
-        deleted, rather than a modality disappearing with nothing naming it.
-        """
         blob = store / "found.gguf"
         blob.write_text("x")
         mm = store / "mm.gguf"
         mm.write_text("x")
         svc, cfg = self._service(tmp_path, store)
-        self._stub_scan(monkeypatch, [dict(
-            entry("found", blob), config={
-                "model_path": str(blob), "modalities": ["text", "vision"],
-                "supports_thinking": True, "mmproj_path": str(mm)})])
+        self._stub_scan(monkeypatch, [dict(entry("found", blob), config={
+            "model_path": str(blob), "mmproj_path": str(mm)})])
+        before = cfg.read_text()
 
-        svc.toggle_enabled("found")
+        updated, reload = svc.update_config("found", {"config": {"ctx_size": 8192}})
+        assert updated.config.ctx_size == 8192 and "ctx_size" in reload
+        assert updated.config.mmproj_path == str(mm)            # derived value kept
+        assert tomllib.loads((store / "model.heylook.toml").read_text()) == {"ctx_size": 8192}
+        assert cfg.read_text() == before                         # models.toml untouched
 
-        import tomllib
-        written = tomllib.loads(cfg.read_text())["models"][0]
-        assert written["config"]["mmproj_path"] == str(mm), written["config"]
-        assert written["config"]["modalities"] == ["text", "vision"]
-        assert written["config"]["supports_thinking"] is True
-        assert written["enabled"] is False
+        svc.update_config("found", {"config": {"ctx_size": None}})
+        assert not (store / "model.heylook.toml").exists()
+
+    def test_reading_does_not_write(self, tmp_path, store, monkeypatch):
+        """Browsing the models page must not write anything."""
+        blob = store / "found.gguf"
+        blob.write_text("x")
+        svc, cfg = self._service(tmp_path, store)
+        self._stub_scan(monkeypatch, [entry("found", blob)])
+        before = cfg.read_text()
+        svc.scan_paths(paths=[str(store)], scan_hf=False)
+        assert cfg.read_text() == before and not (store / "model.heylook.toml").exists()
+
+    def test_unknown_id_and_non_config_keys_are_refused(self, tmp_path, store, monkeypatch):
+        blob = store / "found.gguf"
+        blob.write_text("x")
+        svc, _ = self._service(tmp_path, store)
+        self._stub_scan(monkeypatch, [entry("found", blob)])
+        with pytest.raises(ValueError, match="not found"):
+            svc.update_config("ghost", {"config": {"ctx_size": 1}})
+        with pytest.raises(ValueError, match="config fields only"):
+            svc.update_config("found", {"enabled": False})
 
     def test_deleting_a_disabled_override_is_refused(
             self, tmp_path, store, monkeypatch):
         """Otherwise the delete silently RE-ENABLES the model."""
         blob = store / "found.gguf"
         blob.write_text("x")
-        svc, _ = self._service(tmp_path, store)
+        svc, cfg = self._service(tmp_path, store)
         self._stub_scan(monkeypatch, [entry("found", blob)])
-        svc.toggle_enabled("found")  # materializes enabled = false
-
+        cfg.write_text(cfg.read_text() + f"""
+[[models]]
+id = "found"
+provider = "gguf"
+enabled = false
+[models.config]
+model_path = "{blob}"
+""")
         with pytest.raises(ValueError, match="re-enable"):
             svc.remove_config("found")
 
@@ -528,15 +488,18 @@ class TestModelHeylookToml:
         assert setting.provenance == "configured" and setting.value == 8192
         assert "model.heylook.toml" in setting.reason
 
-    def test_an_admin_edit_does_not_shadow_the_file(self, tmp_path):
-        """An edit would materialize a models.toml entry, which wins wholesale
-        and would silently void every later edit to the model's own file."""
+    def test_an_admin_edit_keeps_the_files_other_settings(self, tmp_path):
+        """An edit rewrites the file with the edited field; what the file
+        already held (including `unset`) survives, and models.toml gets no
+        entry."""
+        import tomllib
         store = tmp_path / "store"
-        self._model(store, sidecar="ctx_size = 8192\n")
+        d = self._model(store, sidecar='ctx_size = 8192\nunset = ["draft_model_path"]\n')
         cfg = tmp_path / "models.toml"
         cfg.write_text(f'[scan]\nfolders = ["{store}"]\n')
-        with pytest.raises(ValueError, match="model.heylook.toml"):
-            ModelService(str(cfg)).update_config("m", {"config": {"ctx_size": 4096}})
+        ModelService(str(cfg)).update_config("m", {"config": {"n_ubatch": 512}})
+        assert tomllib.loads((d / "model.heylook.toml").read_text()) == {
+            "ctx_size": 8192, "n_ubatch": 512, "unset": ["draft_model_path"]}
         assert "[[models]]" not in cfg.read_text()
 
 

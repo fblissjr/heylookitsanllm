@@ -370,6 +370,15 @@ building either.**
 
 ### Phase 3 — move the writers
 
+> **Done 2026-09-24 (v2.0.115).** `update_config` on a discovered model
+> writes its `model.heylook.toml` (only the fields set; null reverts one; an
+> empty file is deleted), validated as the whole effective config first.
+> `_materialize_discovered` and the enable toggle (`toggle_enabled`, `POST
+> .../toggle`) are gone, per the owner's "presence in a scan folder IS
+> enabled". Non-daily instances cannot write (`HEYLOOK_READONLY_MODEL_CONFIG`,
+> v2.0.112). Still open: the `enabled` field itself, `watch_hf_cache`, and
+> renaming models.toml to heylook.toml with the DB settings folded in.
+
 **Writable now.** An earlier draft said to write this phase only after the
 bundled-sampler cut landed. It has landed, and the prediction it made is now
 fact: `_materialize_discovered` is called from `update_config` and

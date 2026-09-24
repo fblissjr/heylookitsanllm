@@ -723,7 +723,7 @@ gated its entire UI on them.
 `POST /v1/models/{id}/load?warm=true` is what v3's Load button sends, so "Loaded" means ready
 rather than merely resident; the page renders `warm_ms` as a note and surfaces
 `warm_error` without calling the load a failure (the model is loaded either way).
-(Backend also exposes toggle/status/validate/discovered — the sampler roster and
+(Backend also exposes status/validate/discovered — the sampler roster and
 bulk-default-sampler routes were removed in v2.0.30; out of scope unless a
 trimmed feature needs them.)
 
@@ -753,7 +753,7 @@ boolean flag. Array fields edit as one element per LINE, never comma-joined —
 elements legitimately contain commas (`extra_args`: `--tensor-split "3,1"`).
 `PATCH /v1/admin/models/{id}` body `{config:{key: value|null}}` →
 `{model, reload_required_fields, warning?}`. Values are TYPED JSON (numbers as numbers);
-**null means "unset — back to the default"** and removes the key from models.toml (absent
+**null means "unset — back to the default"** and removes the key from the model's own `model.heylook.toml` for a discovered model (v2.0.115; a file left empty is deleted), or from its models.toml entry (absent
 IS how a default is spelled on disk; this is the same null-means-cascade philosophy as
 guardrail #3). `reload_required_fields` is the server's provider-aware answer — the
 frontend renders it rather than re-deriving reloadiness client-side. `warning` carries a

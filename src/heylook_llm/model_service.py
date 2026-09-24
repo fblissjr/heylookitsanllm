@@ -556,71 +556,92 @@ class ModelService:
 
             return validated
 
-    def _materialize_discovered(self, data: dict, model_id: str) -> bool:
-        """Give a discovery-only model a real models.toml entry, in place.
+    def _update_model_file(self, data: dict, model_id: str,
+                           updates: dict) -> tuple[ModelConfig, list[str]]:
+        """Apply an edit to a discovered model by writing its own
+        ``model.heylook.toml`` (plan_registry_sidecars Phase 3).
 
-        Under discovery-as-registry (model_registry) a model can be servable
-        with no entry at all, so every mutating admin call can be handed an id
-        that ``_read_toml`` has never heard of. Editing one is BY DEFINITION
-        the moment it stops being default-shaped, so the edit is what writes
-        it down -- materialization happens on write and never on read, which
-        is what keeps a browse of the models page from growing the file.
+        This replaced materialization, which copied the model's whole derived
+        config into a models.toml entry: an entry replaces the derived config
+        wholesale, so one edit froze every derived value for good and opted
+        the model out of every later improvement to derivation. The file
+        holds only what was set; everything else keeps being derived.
 
-        Returns True when an entry was appended to ``data["models"]``. The
-        caller must then re-find the model; the entry is unsaved until the
-        caller's own ``_write_toml``.
+        ``{"config": {key: value}}`` sets a field; ``value = None`` drops the
+        setting so the derived value comes back (and takes the field off
+        ``unset``). An edit that leaves the file empty deletes it: reverting
+        is deleting a file. Validated as the whole effective config before
+        anything is written, the property the retired import writer held.
         """
-        from heylook_llm.model_registry import discover, merge_discovered
+        from heylook_llm.model_importer import SIDECAR_FILENAME
+        from heylook_llm.model_registry import merge_discovered, refuse_if_readonly, scan
 
+        extra = set(updates) - {"config"}
+        if extra:
+            raise ValueError(
+                f"{', '.join(sorted(extra))}: not stored per model; a model's own file "
+                f"holds config fields only")
         existing = len(data.get("models") or [])
-        # Route through merge_discovered rather than matching discover()
-        # output directly: it owns the "explicit wins / id collision loses"
-        # rule, and materializing something the router would refuse to serve
-        # would write an entry that shadows a different model.
-        merged = merge_discovered(data, discover(data))
-        for entry in (merged.get("models") or [])[existing:]:
-            if str(entry.get("id")) != str(model_id):
-                continue
-            if entry.get("sidecar"):
-                # A models.toml entry would shadow the model's own file for
-                # good (an entry wins wholesale), so a later edit there would
-                # silently do nothing. Writing the file itself is Phase 3 of
-                # plan_registry_sidecars; until then, edit it by hand.
-                raise ValueError(
-                    f"'{model_id}' keeps its settings in {entry['sidecar']}; edit that file "
-                    f"(the admin editor does not write it yet)")
-            # Materialize the WHOLE derived config, not just identity.
-            #
-            # This used to write a thin `{id, provider, enabled, model_path}`
-            # entry, on the reasoning that everything else the scanner derived
-            # (modalities, supports_thinking, mmproj_path, draft_model_path)
-            # would be "re-derived at load" and a frozen copy would rot when
-            # the model dir changed in place. THE PREMISE WAS FALSE, and it
-            # cost a vision model its vision: merge_discovered SKIPS a
-            # discovered model whose resolved path an explicit entry already
-            # names ("models.toml already describes this file; it wins"), so
-            # once an entry exists nothing re-derives anything for it. Setting
-            # a context size on a discovered vision model therefore turned its
-            # vision off -- the next spawn had no --mmproj, with the projector
-            # sitting unreferenced beside the weights (measured 2026-09-06).
-            #
-            # A frozen copy CAN still go stale against a model dir edited in
-            # place. That is the strictly better failure: it is written down in
-            # models.toml where it can be read, diffed and deleted, whereas the
-            # thin entry lost a modality with nothing anywhere naming the loss.
-            src = copy.deepcopy(entry.get("config") or {})
-            materialized = {
-                "id": entry.get("id"),
-                "provider": entry.get("provider"),
-                "enabled": entry.get("enabled", True),
-                "config": src,
-            }
-            data.setdefault("models", []).append(materialized)
-            logger.info(
-                "[registry] materializing discovered model %r into models.toml "
-                "so the edit has somewhere to live", model_id)
-            return True
-        return False
+        merged = merge_discovered(data, scan(data).entries)
+        entry = next((e for e in (merged.get("models") or [])[existing:]
+                      if str(e.get("id")) == str(model_id)), None)
+        if entry is None:
+            raise ValueError(f"Model '{model_id}' not found")
+
+        model_path = Path(str(entry["config"]["model_path"]))
+        folder = model_path if model_path.is_dir() else model_path.parent
+        file = folder / SIDECAR_FILENAME
+        try:
+            old_text = file.read_text(encoding="utf-8") if file.is_file() else ""
+            stored = tomllib.loads(old_text) if old_text else {}
+        except (OSError, tomllib.TOMLDecodeError) as e:
+            raise ValueError(f"{file} does not read ({e}); fix it by hand first") from e
+        unset = [k for k in stored.pop("unset", []) if isinstance(k, str)]
+
+        changes = updates.get("config") or {}
+        for key, value in changes.items():
+            if key in ("model_path", "id"):
+                raise ValueError(f"`{key}` is not settable: the folder is the model")
+            stored.pop(key, None)
+            if key in unset:
+                unset.remove(key)
+            if value is not None:
+                stored[key] = value
+
+        derived = dict(entry.get("derived") or entry["config"])
+        effective = {k: v for k, v in derived.items() if k not in unset}
+        for key, value in stored.items():
+            if key.endswith("_path") and isinstance(value, str) and not Path(value).expanduser().is_absolute():
+                value = str(folder / value)
+            effective[key] = value
+        try:
+            validated = ModelConfig(**{"id": model_id, "provider": entry["provider"],
+                                       "config": dict(effective)})
+        except Exception as e:
+            raise ValueError(f"Updated config is invalid: {e}") from e
+
+        reload_fields = reload_required_for(entry.get("provider"))
+        before = entry["config"]
+        changed = [k for k in changes if k in reload_fields and before.get(k) != effective.get(k)]
+
+        refuse_if_readonly(file.name)
+        if unset:
+            stored["unset"] = unset
+        if not stored:
+            file.unlink(missing_ok=True)
+            logger.info("[registry] %s: removed %s, back to derived", model_id, file)
+        else:
+            text = tomli_w.dumps(stored)
+            if old_text:
+                text = merge_comments(old_text, text)
+            tmp = file.with_name(file.name + f".tmp.{os.getpid()}")
+            try:
+                tmp.write_text(text, encoding="utf-8")
+                os.replace(tmp, file)
+            finally:
+                tmp.unlink(missing_ok=True)
+            logger.info("[registry] %s: wrote %s", model_id, file)
+        return validated, changed
 
     def update_config(
         self, model_id: str, updates: dict
@@ -640,12 +661,8 @@ class ModelService:
                     idx = i
                     break
 
-            if idx is None and self._materialize_discovered(data, model_id):
-                models = data["models"]
-                idx = len(models) - 1
-
             if idx is None:
-                raise ValueError(f"Model '{model_id}' not found")
+                return self._update_model_file(data, model_id, updates)
 
             # Work on a deep copy so the original is untouched if validation fails
             model = copy.deepcopy(models[idx])
@@ -705,10 +722,9 @@ class ModelService:
     def remove_config(self, model_id: str) -> bool:
         """Remove a model's entry from config. Files stay on disk.
 
-        Deliberately NOT materializing: removing the entry for a discovered
-        model would be a no-op that reads as a success, because the next scan
-        serves it straight back. Disable it (``toggle_enabled``, which does
-        materialize) or take it out of the scan folder.
+        A discovered model has no entry to remove: the next scan serves it
+        straight back. To stop serving it, take it out of the scan folder
+        (owner decision 2026-09-23: presence in a scan folder IS enabled).
 
         Raises when the entry is a DISABLED override for a file discovery
         still finds. Deleting that entry does not remove the model -- it
@@ -750,32 +766,6 @@ class ModelService:
             data["models"] = models
             self._write_toml(data)
             return True
-
-    def toggle_enabled(self, model_id: str) -> ModelConfig:
-        """Toggle a model's enabled state."""
-        with self._lock:
-            data = self._read_toml()
-            models = data.get("models", [])
-
-            if not any(m.get("id") == model_id for m in models):
-                # A discovered model is enabled by default, so the only useful
-                # toggle is OFF -- and that needs an entry to hold the flag,
-                # or the next scan just serves it again.
-                if self._materialize_discovered(data, model_id):
-                    models = data["models"]
-
-            for model in models:
-                if model.get("id") == model_id:
-                    model["enabled"] = not model.get("enabled", True)
-                    data["models"] = models
-                    self._write_toml(data)
-                    return ModelConfig(**model)
-
-            raise ValueError(f"Model '{model_id}' not found")
-
-    # --- Import ---
-
-    # --- Validation ---
 
     def validate_config(self, config_data: dict) -> ValidationResult:
         """Validate a model config without saving."""

@@ -140,7 +140,6 @@ def _case(app, name):
     return {
         "patch": ("PATCH", "/v1/admin/models/found",
                   {"json": {"config": {"chat_template_path": blob}}}),
-        "toggle": ("POST", "/v1/admin/models/found/toggle", {}),
         "delete": ("DELETE", "/v1/admin/models/written-off", {}),
         "reload": ("POST", "/v1/admin/reload", {}),
     }[name]
@@ -177,7 +176,7 @@ class TestMutatingAdminRoutesStayOffTheEventLoop:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("case", [
-        "patch", "toggle", "delete", "reload",
+        "patch", "delete", "reload",
     ])
     async def test_route_does_not_freeze_the_loop(self, admin_app, case):
         method, url, kwargs = _case(admin_app, case)
@@ -234,10 +233,12 @@ class TestDeleteRefusalIsAConflict:
 
     @pytest.mark.asyncio
     async def test_deleting_a_disabled_override_returns_409(self, admin_app):
-        # Give the discovered model an entry, disabled -- now discovery still
-        # finds the file the entry turns off.
+        # A disabled entry for a file discovery still finds.
         service = admin_app.state.model_service
-        service.toggle_enabled("found")
+        data = service._read_toml()
+        data["models"].append({"id": "found", "provider": "gguf", "enabled": False,
+                               "config": {"model_path": admin_app.state.scan_blob}})
+        service._write_toml(data)
 
         transport = ASGITransport(app=admin_app)
         async with AsyncClient(transport=transport, base_url="http://t") as client:

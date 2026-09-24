@@ -328,24 +328,6 @@ def evaluate_model_fit(model_id: str, request: Request, body: FitRequest):
 
 
 @admin_router.post(
-    "/{model_id:path}/toggle",
-    summary="Toggle Model Enabled",
-    description="Toggle a model's enabled/disabled state.",
-    response_model=AdminModelResponse,
-)
-def toggle_model(model_id: str, request: Request):
-    service = _get_service(request)
-    router = request.app.state.router_instance
-    try:
-        config = service.toggle_enabled(model_id)
-        _safe_reload_config(request)
-        loaded_ids = _get_loaded_model_ids(request)
-        return _model_config_to_response(config, loaded_ids, router)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-
-@admin_router.post(
     "/{model_id:path}/reload",
     summary="Reload Model",
     description=(
