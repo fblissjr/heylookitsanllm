@@ -73,9 +73,11 @@ file, only the daily server writes, and discovery pairs drafters wherever
 they ship. Read the plan before touching `model_registry.py`,
 `model_importer.py`, `model_service.py` or the admin config editor.
 
-- [ ] **DeepSeek live checks** on Vision Q8, Vision Q4, ggml-org Vision and
-  0731, when enough memory is free. Expect Q8 at 384K to load without its
-  drafter while the browser is open, logged as "short by N GiB".
+- [x] **DeepSeek live checks** (2026-09-24): Vision Q8 and Q4 draft with the
+  neighbouring folder's MXFP4 dspark on text and image; ggml-org Vision and
+  0731 draft with their own. With too little free memory, Q4 dropped its
+  drafter at spawn as designed ("short by N GiB"). Record:
+  `internal/log/log_2026-09-24.md`.
 - [ ] **Spec decode in the engine report** (`engine.speculative`): whether a
   drafter is available, whether it is in force, and why, with provenance, so
   "available, not in use" shows on the models page.
