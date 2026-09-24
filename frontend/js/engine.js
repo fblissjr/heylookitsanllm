@@ -112,6 +112,22 @@ function slotRows(slot) {
   return rows;
 }
 
+// Speculative decoding in a word, or null when the model has no drafter (no
+// noise on models that cannot draft). `in_force` is the running process's
+// answer: true drafting, false found but not in use (the fit check dropped
+// it, or the build could not load it), null not loaded yet.
+function specState(engine) {
+  const spec = engine?.speculative;
+  const drafter = readFact(spec?.drafter);
+  if (!drafter) return null;
+  const inForce = readFact(spec?.in_force);
+  const word = inForce === true ? 'on' : inForce === false ? 'not in use' : 'ready';
+  const reason = [spec.drafter?.source ? `${drafter}: ${spec.drafter.source}` : drafter,
+    readFact(spec.type) ? `type ${readFact(spec.type)}` : null,
+    spec.in_force?.source].filter(Boolean).join('. ');
+  return { word, provenance: spec.in_force?.provenance, reason };
+}
+
 // A one-line summary for a collapsed panel or a chip.
 export function engineSummary(engine) {
   if (!engine) return '';
@@ -122,6 +138,8 @@ export function engineSummary(engine) {
   else if (ceiling) parts.push(`ctx ${formatTokens(ceiling)}`);
   const origin = readFact(engine.template?.origin);
   if (origin) parts.push(`template ${origin}`);
+  const spec = specState(engine);
+  if (spec) parts.push(`spec decode ${spec.word}`);
   return parts.filter(Boolean).join(' · ');
 }
 
@@ -181,7 +199,8 @@ export function renderEngine(engine, { fields = null } = {}) {
 // template in force, with the full panel one link away. No settings: the
 // chat sampler panel owns the per-request ones, and everything else lives on
 // the models page. The cache line is the one reuse fact each engine leads
-// with: gguf's reuse class, MLX's text reuse.
+// with: gguf's reuse class, MLX's text reuse. The spec decode line appears
+// only for a model with a drafter.
 export function renderEngineCompact(engine) {
   if (!engine) {
     return createEl('div', { class: 'muted small' }, ['This server reports no engine description.']);
@@ -194,6 +213,8 @@ export function renderEngineCompact(engine) {
       engine.template?.origin?.source),
   ];
   if (reuse) rows.push(factRow('cache reuse', reuse.value, reuse.provenance, reuse.source));
+  const spec = specState(engine);
+  if (spec) rows.push(factRow('spec decode', spec.word, spec.provenance, spec.reason));
   return createEl('div', { class: 'engine-panel__body engine-panel__body--compact' }, [
     ...rows,
     createEl('a', { href: '#/models', class: 'small' }, ['Every setting and why: Models page']),

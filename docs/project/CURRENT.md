@@ -16,7 +16,7 @@ rather than carried forward as green.
 | Suite | Result | As of |
 |---|---|---|
 | unit + contract | green (1619 passed) | v2.0.129 |
-| 2026-09-24 evening, v2.0.129 | `tests/smoke/` gguf arm on `JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`: 37/37 (audio uncovered; `engine.speculative` in force via the built-in MTP head). `e2e:render` 99/99. `bun run e2e` on the default gemma-4-26b-a4b-it-8bit-mlx: chat 52/52, pages 32/32 (pages re-run 32/32 after the models-page text fix). `E2E_ARMS=gguf bun run e2e:chat`: 50/51, one known failure (see open item 0). MLX smoke arms not run on the new pin | v2.0.129 |
+| 2026-09-24 evening, v2.0.129 | `tests/smoke/` gguf arm on `JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`: 37/37 (audio uncovered; `engine.speculative` in force via the built-in MTP head). `e2e:render` 99/99. `bun run e2e` on the default gemma-4-26b-a4b-it-8bit-mlx: chat 52/52, pages 32/32 (pages re-run 32/32 after the models-page text fix). `E2E_ARMS=gguf bun run e2e:chat`: 50/51, then 51/51 after the v2.0.131 fix (`mropt`). MLX smoke arms not run on the new pin | v2.0.129 |
 | `tests/smoke/` on `improve/2026-09-24` | green on all three arms (mlx-text Qwen3-0.6B, mlx-vision Qwen3.5-0.8B, gguf Qwen3.8-27B); the new system-prompt and back-to-A reuse checks fail on the base commit | improve/2026-09-24, merged as v2.0.121 |
 | `bun run e2e:render` (model-free) | 98/98, including the thinking-depth control check | v2.0.95 |
 | `tests/smoke/` (arms `mlx-text` / `mlx-vision` / `gguf` since v2.0.88) | 82/82 at v2.0.95 on `gpt-oss-20b-MXFP4-Q8-mlx`, `Qwen3.5-0.8B-MLX-8bit` and `JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`: depth covered on mlx-text and gguf (an offered value accepted, an unoffered one a 400 on gguf); a turn that adds a new image is the named known gap; audio uncovered on the arms picked | v2.0.95 |
@@ -153,12 +153,9 @@ one side left at f16.
 
 **Open items, first things first:**
 
-0. **gguf Save & Continue keeps a trailing newline on an edited thought**
-   (found 2026-09-24 by the first gguf-arm browser run; with `mropt`). The
-   chat test "edited thinking plus a partial response" fails on gguf only: the
-   kept thought gains "\n". Not spec decode (same result with it off), and no
-   commit today touched the continuation path, so probably older. Being traced
-   hop by hop: page, store, `_wire_message`, llama-server's echo and split.
+0. **Fixed (v2.0.131, `mropt`): gguf Save & Continue kept a trailing newline**
+   on an edited thought (llama-server's echo of a closed thought keeps the
+   template's framing newline). Found by the first gguf-arm browser run.
    **Registry and spec decode: done** (`mrblue`: `enabled` retired v2.0.119,
    `engine.speculative` v2.0.120, the config file is `heylook.toml` with its
    `[settings]` table v2.0.122). Left, per `mrblue`'s end-of-day list: live

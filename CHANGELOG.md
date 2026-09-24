@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.132]
+
+### Added
+
+- **Speculative decoding shows in the frontend** (owner). The models page's
+  one-line summary for each model ends in "spec decode on", "not in use" (a
+  drafter was found but the fit check dropped it, or the build could not load
+  it) or "ready" (not loaded yet), and the chat bar's compact engine view has
+  a "spec decode" row whose reason names the drafter, where it came from, its
+  type and what the process did. A model with no drafter shows nothing. The
+  full engine panel on the models page already listed the `speculative` slot,
+  since it renders every slot the server fills. `bun run e2e` 84/84.
+
 ## [2.0.131]
 
 ### Fixed

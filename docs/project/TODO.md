@@ -13,13 +13,13 @@ backlog pass*
 
 ## gguf: Save & Continue on an edited thought keeps a trailing newline (2026-09-24)
 
-- [ ] **Found by `E2E_ARMS=gguf bun run e2e:chat`** (test "edited thinking plus
-  a partial response"; the MLX arm passes): the kept thought comes back as the
-  edited text plus "\n". Ruled out: spec decode (same with it off). Not
-  touched today: the gguf continuation functions. Trace each hop (page ->
-  store -> `_wire_message` -> llama-server echo and reasoning split ->
-  `_continuation_echo_chars`) and fix at the first hop that differs. Owner:
-  "a shitty bug", handed to `mropt`.
+- [x] **Fixed in v2.0.131** (`mropt`, 160f505). With content prefilled the
+  thought is closed, and llama-server's reasoning echo for it keeps the
+  template's framing newline before `</think>`; `_continuation_echo_chars`
+  stripped exactly the thought's length, so the "\n" arrived as new thinking.
+  Whitespace-only reasoning right after the echo is now dropped when both
+  channels were prefilled (an open thought is untouched). gguf e2e:chat 51/51.
+  Trace: `internal/claude/gguf_continue/`.
 
 ## From the 2026-09-24 improvement loop (merged as v2.0.121)
 
