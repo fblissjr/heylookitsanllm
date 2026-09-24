@@ -662,6 +662,22 @@ server-irrelevant; the pin posture is mlx-vlm alone. It also found and fixed
 a v2.0.86 regression (text models resolved their stop set from the Rust
 backend; Qwen3's was empty). W10 is done; next per the order is W2+W3+W7.
 
+**Follow-up (v2.0.119, the 2026-09-24 improvement loop).** W10 as built
+reused less than planned on checkpoint models: mlx-vlm spends one number on
+both a request's captures and the store size, so each request evicted every
+other conversation and a new chat with the same system prompt reused
+nothing. heylook now installs its own capture rule per generator, adds a
+snapshot at the end of a leading system prompt, keeps that snapshot fresh
+while in use, and uses `APC_CHECKPOINT_ENTRIES` as the store size alone. Two
+upstream items remain: a restored qwen3_5 request decodes slower than cold
+(Blaizzy/mlx-vlm#2356, filed; picked up when the pin moves), and a PR that
+separates captures from store size and lets a caller name boundaries would
+delete heylook's local capture rule (drafted in the run record, not filed).
+The per-image vision key below is still open. A qwen3_5 vision-feature change
+(pass the cache as mlx-vlm's `vision_cache` kwargs, since qwen3_5 has no
+`encode_image()`) was reverted on the branch for a speed-tolerance breach on
+the small model and waits on the owner (TODO.md).
+
 **Step 2: build the chosen outcome.** In every outcome:
 - **Per-image vision feature cache**, so a new image stops re-encoding the old
   ones (unless APC under A1/A2 already covers it).

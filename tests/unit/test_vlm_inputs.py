@@ -398,3 +398,37 @@ def test_the_models_own_template_draws_the_image_markup():
     out = vlm_apply_chat_template(Proc(string_only), Cfg(), [{"role": "user", "content": "x"}],
                                   num_images=1, enable_thinking=False)
     assert out == "<user><|image_pad|> x<assistant>"
+
+
+def test_images_reach_the_model_in_the_order_they_were_sent(monkeypatch):
+    # The first image finishes loading last; the list must still line up
+    # with the markers (it once came back in completion order).
+    import time
+    from types import SimpleNamespace
+
+    from heylook_llm.providers.common import batch_vision
+
+    delay = {"first": 0.15, "second": 0.0, "third": 0.05}
+
+    def slow_load(url):
+        time.sleep(delay[url])
+        return SimpleNamespace(tag=url, width=1, height=1, size=(1, 1))
+
+    monkeypatch.setattr(batch_vision, "load_image", slow_load)
+    got = batch_vision.BatchVisionProcessor(max_workers=3).load_images_parallel(
+        ["first", "second", "third"])
+    assert [g.tag for g in got] == ["first", "second", "third"]
+
+
+def test_an_unreadable_image_fails_the_request_instead_of_becoming_a_red_square():
+    import pytest
+
+    from heylook_llm.providers.base import InvalidGenerationRequest
+    from heylook_llm.providers.common.batch_vision import BatchVisionProcessor
+    from heylook_llm.providers.common.vlm_inputs import prepare_vlm_inputs_parallel
+
+    msg = FakeMessage("user", [FakeContentPart("image_url", image_url=FakeImageUrl(
+        "data:image/png;base64,bm90IGFuIGltYWdl")), FakeContentPart("text", text="what is this?")])
+    with pytest.raises(InvalidGenerationRequest, match="could not be read"):
+        prepare_vlm_inputs_parallel([msg], MagicMock(), {"model_type": "qwen3_5"},
+                                    BatchVisionProcessor(max_workers=2), MagicMock())

@@ -204,8 +204,13 @@ def _cache_static() -> dict:
                             source="decided at load with the reuse mode"),
         "checkpoint_interval": Fact(value=vlm_engine.APC_CHECKPOINT_INTERVAL_TOKENS, provenance="derived",
                                     source="vlm_engine.APC_CHECKPOINT_INTERVAL_TOKENS"),
+        "checkpoint_captures": Fact(value=vlm_engine.APC_CHECKPOINT_CAPTURES, provenance="derived",
+                                    source=("vlm_engine.APC_CHECKPOINT_CAPTURES: snapshots per request "
+                                            "near the prompt end, plus one where a leading system "
+                                            "prompt ends, found from the template in force")),
         "checkpoint_entries": Fact(value=vlm_engine.APC_CHECKPOINT_ENTRIES, provenance="derived",
-                                   source="vlm_engine.APC_CHECKPOINT_ENTRIES"),
+                                   source=("vlm_engine.APC_CHECKPOINT_ENTRIES: snapshots kept across "
+                                           "requests; the byte budget evicts before this count")),
         "memory_budget_bytes": Fact(provenance="unknown",
                                     source="mlx-vlm's automatic budget, sized from the Metal working set at load"),
         "disk": Fact(value=False, provenance="derived",

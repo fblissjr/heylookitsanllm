@@ -1703,45 +1703,59 @@ class LlamaServerProvider(BaseProvider):
         # queue, took its turn, and FORWARDED to llama-server -- paying the
         # prefill for a client that was gone -- before _stream_chunks saw the
         # flag on the first frame. Same shape as the MLX chat path.
+        wait_started = time.perf_counter()
         try:
             self._gen_gate.acquire(
                 cancel_check=abort_event.is_set if abort_event is not None else None)
         except GenerationCancelled:
             return
-        try:
+        queue_wait_ms = (time.perf_counter() - wait_started) * 1000.0
+        # Active from the moment this request holds the gate, so the router
+        # sees the model as busy and refuses to SIGTERM llama-server out from
+        # under it. That window includes the urlopen below: llama-server sends
+        # its response headers only once it has a first result, so the whole
+        # prefill (and any image encode) happens inside urlopen. Until
+        # 2026-09-24 the count started after it returned, so loading another
+        # model during a long gguf prefill could evict this one mid-request.
+        # (Before that, nothing counted at all: the base returned None for
+        # generation_queue_stats, which made every gguf model look idle.)
+        with self.generation_active():
             try:
-                response = urllib.request.urlopen(http_request, timeout=self._request_timeout())
-            except urllib.error.HTTPError as e:
-                detail = self._error_detail(e)
-                if e.code == 400:
-                    raise InvalidGenerationRequest(detail)
-                raise GenerationFailed(detail)
-            except (urllib.error.URLError, OSError) as e:
-                raise GenerationFailed(
-                    f"llama-server for '{self.model_id}' unreachable: {e}"
-                )
-        except BaseException:
-            self._gen_gate.release()
-            raise
-        try:
-            # generation_active spans the YIELDING, so the router can see this
-            # model as busy and refuse to SIGTERM llama-server out from under
-            # an open stream. Nothing counted here before: the base returned
-            # None for generation_queue_stats (llama-server queues its own
-            # requests, so there is no MLX-style gate to report), which made
-            # every gguf model look permanently idle to a teardown guard.
-            with self.generation_active():
-                yield from self._explained(self._stream_chunks(
-                    response, abort_event,
-                    echo_chars=echo_chars, echo_thinking_chars=echo_thinking_chars),
-                    payload)
-        finally:
-            # Closing the connection frees the llama-server slot on abort.
+                try:
+                    response = urllib.request.urlopen(http_request, timeout=self._request_timeout())
+                except urllib.error.HTTPError as e:
+                    detail = self._error_detail(e)
+                    if e.code == 400:
+                        raise InvalidGenerationRequest(detail)
+                    raise GenerationFailed(detail)
+                except (urllib.error.URLError, OSError) as e:
+                    raise GenerationFailed(
+                        f"llama-server for '{self.model_id}' unreachable: {e}"
+                    )
+            except BaseException:
+                self._gen_gate.release()
+                raise
+            inner = self._explained(self._stream_chunks(
+                response, abort_event,
+                echo_chars=echo_chars, echo_thinking_chars=echo_thinking_chars),
+                payload)
             try:
-                response.close()
-            except Exception:
-                pass
-            self._gen_gate.release()
+                # The gate wait rides the first chunk, as on MLX, so
+                # build_performance nets it out of the generation span.
+                tagged = False
+                for chunk in inner:
+                    if not tagged:
+                        chunk.queue_wait_ms = queue_wait_ms
+                        tagged = True
+                    yield chunk
+            finally:
+                inner.close()
+                # Closing the connection frees the llama-server slot on abort.
+                try:
+                    response.close()
+                except Exception:
+                    pass
+                self._gen_gate.release()
 
     def _explained(self, chunks, payload: dict) -> Generator:
         """Attach the cache witness's why to the request's CacheReport, and

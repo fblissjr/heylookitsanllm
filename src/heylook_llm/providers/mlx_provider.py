@@ -406,6 +406,7 @@ class UnifiedTextStrategy:
         # ModelTemplateInfo (or None): names the thinking opener a mid-thought
         # resume has to re-open -- see _thinking_resume_opener.
         self.template_info = template_info
+        self._system_prefixes: dict = {}  # _system_prefixes' per-model cache
 
     def build_prompt(self, request: ChatRequest, effective_request: dict, model, processor):
         """The templated prompt for ``request``: a string, or (defensively)
@@ -460,10 +461,15 @@ class UnifiedTextStrategy:
             input_ids = input_ids[None, :]
             raw = {**raw, "input_ids": input_ids}
         sampler, processors = build_sampler(tokenizer, effective_request)
+        shared = _system_prefixes(
+            self._system_prefixes, request,
+            (_resolve_enable_thinking(effective_request), effective_request.get("reasoning_effort")),
+            lambda msgs: self._render_template(msgs, tokenizer, processor, model, effective_request),
+            processor)
         yield from vlm_engine.generate(
             model=model, processor=processor,
             apc_manager=getattr(self.owner, "_apc", None),
-            input_ids=input_ids, raw_inputs=raw,
+            input_ids=input_ids, raw_inputs=raw, shared_prefixes=shared,
             sampler=sampler, processors=processors,
             stop_tokens=getattr(self.owner, "_stop_tokens", ()),
             max_tokens=effective_request['max_tokens'],
@@ -548,6 +554,41 @@ class UnifiedTextStrategy:
             prompt = _append_thinking_resume(prompt, resume_thinking, self.template_info)
         return prompt
 
+def _system_prefixes(cache: dict, request: ChatRequest, key: tuple, render, processor) -> list[list[int]]:
+    """``[tokens]`` a new conversation opening with this request's system
+    message would share (``vlm_inputs.system_prefix_tokens``), or ``[]``.
+    ``cache`` maps (system text, ``key``) to the answer: the template and
+    tokenizer are fixed per loaded model, so each system prompt is derived
+    once per thinking setting, not per request."""
+    messages = request.messages
+    if not messages or messages[0].role != "system":
+        return []
+    content = messages[0].content
+    text = content if isinstance(content, str) else " ".join(
+        getattr(p, "text", "") for p in content if getattr(p, "type", None) == "text")
+    ck = (text, key)
+    if ck not in cache:
+        from .common.vlm_inputs import system_prefix_tokens
+
+        def tokenize(prompt):
+            if not isinstance(prompt, str):
+                return list(prompt)
+            ids = vlm_prepare_inputs(processor, prompts=prompt)["input_ids"]
+            return ids.reshape(-1).tolist()
+
+        try:
+            cache[ck] = system_prefix_tokens(text, render, tokenize)
+        except Exception as e:  # noqa: BLE001 - a template that refuses the probe shape
+            # A reuse hint, not the request: the prompt renders on its own
+            # path. Logged once per system prompt (the None is cached), and the
+            # cost is visible per request as a miss in the CacheReport.
+            logging.info(f"System-prompt checkpoint not derived: {e}")
+            cache[ck] = None
+        while len(cache) > 16:
+            cache.pop(next(iter(cache)))
+    return [cache[ck]] if cache[ck] else []
+
+
 def _has_audio_parts(messages) -> bool:
     """True if any message carries an input_audio content part.
 
@@ -620,6 +661,7 @@ class VLMVisionStrategy:
         self.context_length = context_length  # the provider's, for the over-length guard
         self._batch_vision_processor = None
         self._vision_cache = VisionFeatureCache(max_entries=20)
+        self._system_prefixes: dict = {}  # _system_prefixes' per-model cache
 
     def generate(self, request: ChatRequest, effective_request: dict, model, processor, abort_event: AbortEvent | None = None) -> Generator:
         tokenizer = getattr(processor, "tokenizer", processor)
@@ -724,10 +766,19 @@ class VLMVisionStrategy:
         if "cached_image_features" in extras:
             embed_extras["cached_image_features"] = extras["cached_image_features"]
         raw = {**inputs, "input_ids": input_ids}
+        enable_thinking = _resolve_enable_thinking(effective_request)
+        reasoning_effort = effective_request.get("reasoning_effort")
+        shared = _system_prefixes(
+            self._system_prefixes, request, (enable_thinking, reasoning_effort),
+            lambda msgs: vlm_apply_chat_template(
+                processor, model.config, msgs, num_images=0,
+                enable_thinking=enable_thinking, reasoning_effort=reasoning_effort),
+            processor)
         yield from vlm_engine.generate(
             model=model, processor=processor,
             apc_manager=getattr(self.owner, "_apc", None),
             input_ids=input_ids, raw_inputs=raw, embed_extras=embed_extras,
+            shared_prefixes=shared,
             sampler=sampler, processors=processors,
             stop_tokens=getattr(self.owner, "_stop_tokens", ()),
             max_tokens=effective_request['max_tokens'],
@@ -1640,10 +1691,16 @@ class MLXProvider(BaseProvider):
             )
 
     def clear_cache(self) -> bool:
-        """Clear this model's prefix cache (a fresh, empty APC store)."""
+        """Clear this model's prompt reuse: a fresh, empty APC store and an
+        empty vision feature cache. (Until 2026-09-24 the vision features
+        survived a clear, so a "cold" image check after one still skipped the
+        vision tower.)"""
         try:
             if self._apc is not None:
                 self._apc = vlm_engine.make_apc_manager()
+            vision = self._strategies.get("vision")
+            if vision is not None:
+                vision._vision_cache.clear()
             logging.info(f"Cleared prompt cache for {self.model_id}")
             return True
         except Exception as e:

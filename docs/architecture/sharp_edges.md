@@ -1149,6 +1149,20 @@ gguf, whose server rewrites an image part into a positional media marker at
 any role. Owner decision 2026-09-07: not forking mlx-vlm for this.
 Assistant-turn media is gguf-only, and that is the answer, not a backlog item.
 
+The images themselves had to arrive in that same order, and until 2026-09-24
+they did not: `BatchVisionProcessor.load_images_parallel` sorted its results by
+`enumerate(as_completed(...))`, which is completion order, so a request whose
+first image decoded slowest handed the model its images shuffled against the
+markers (found by the improvement loop's request-path review; [measured] live,
+a large red image followed by a small blue one read as two reds at
+temperature 0: internal/claude/improve/harness/probe_image_order.py).
+Results are now collected in submission order. In the same path every
+unreadable image used to become a small red image and the request succeeded;
+`utils.load_image` now raises and `prepare_vlm_inputs_parallel` turns it into
+a 400 naming the problem. The unit tests had mocked the loader, which is why
+neither was ever seen; `test_images_reach_the_model_in_the_order_they_were_sent`
+runs the real one with staggered load times.
+
 ### The template draws the image markup
 
 (v2.0.100) Since March 2026 heylook flattened mlx-vlm's structured message
@@ -1323,7 +1337,28 @@ found, each silent:
 - **Checkpoint settings.** At mlx-vlm's defaults a checkpoint model keeps only
   its prompt end and one far boundary, so a follow-up (which diverges at the
   previous reply) restores nothing. `APC_CHECKPOINT_INTERVAL_TOKENS` and
-  `APC_CHECKPOINT_ENTRIES` are the spike's measured settings.
+  `APC_CHECKPOINT_CAPTURES` are the spike's measured settings.
+- **One number was both the checkpoints per request and the store size.**
+  mlx-vlm's `checkpoint_lengths` spends the store's entry cap on one
+  request's captures, so at the spike's setting every request evicted every other
+  conversation, and a request snapshotted only its last stretch: a new chat
+  with the same system prompt and a first message longer than the snapshot
+  spacing reused nothing, and going back to a chat after another reused
+  nothing, while gguf reused both ([measured] 2026-09-24 by the improvement
+  loop, internal/claude/improve scoreboard pairs final2-vision and final2-27b;
+  its smoke probe used a short question and passed by coincidence).
+  heylook now installs its own capture rule per generator
+  (`install_capture_policy`: mlx-vlm's rule with its own count, plus the end
+  of the system prompt), and `APC_CHECKPOINT_ENTRIES` is the store size alone,
+  bounded first by the byte budget. `test_our_capture_rule_is_upstreams_with_its_own_count`
+  pins the copy to mlx-vlm's rule. The system-prompt snapshot is stored first
+  and later turns restore from newer ones, so without `refresh_snapshots` it
+  aged out of the LRU after a few turns of one chat (found by the run's
+  review; [measured] live the same day, internal/claude/improve scoreboard pair
+  aging-check). Retention also broke an instrument's
+  premise: `chain_probe.py` made its "fresh" run fresh by sending one
+  unrelated request, which no longer evicts anything, so it clears the cache
+  instead and fails if a fresh run reports reuse.
 - **The detokenizer.** mlx-vlm's BPE streaming detokenizer flushes only on a
   token that starts with a space, so a count, code or CJK text arrived in one
   lump at the end; the engine streams through mlx-lm's (vendored in stage 3

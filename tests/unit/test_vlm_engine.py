@@ -169,3 +169,69 @@ def test_memory_pressure_reads_evictions_since_last_request_and_low_headroom():
     mgr._memory_headroom = lambda: 1 << 30
     assert "stores nothing" in apc_memory_pressure(mgr)      # empty and no room: evicts nothing
     assert apc_memory_pressure(SimpleNamespace()) is None    # never raises
+
+
+@pytest.mark.unit
+def test_a_checkpoint_request_also_snapshots_where_other_conversations_share_it():
+    from heylook_llm.providers.common import vlm_engine
+
+    mgr = SimpleNamespace(checkpoint_interval_tokens=64, block_size=16, exact_cache_min_tokens=16)
+    # upstream's own final length (guard tokens, media), not len - 1: the
+    # policy must ask the coordinator for it
+    coord = SimpleNamespace(enabled=True, is_checkpoint=True, manager=mgr,
+                            checkpoint_len=lambda ids, media: len(ids) - 7)
+    vlm_engine.install_capture_policy(SimpleNamespace(apc=coord), [700])
+    got = coord.checkpoint_lengths(list(range(1000)), set())
+    # the prompt end, the near-end grid (APC_CHECKPOINT_CAPTURES in all),
+    # and the shared boundary far before them
+    assert got == [700, 896, 960, 993]
+    assert len(got) - 1 == vlm_engine.APC_CHECKPOINT_CAPTURES
+
+    block = SimpleNamespace(enabled=True, is_checkpoint=False, manager=mgr)
+    vlm_engine.install_capture_policy(SimpleNamespace(apc=block), [700])
+    assert not hasattr(block, "checkpoint_lengths")   # block caches share by hash already
+
+
+@pytest.mark.unit
+def test_the_system_prefix_is_where_two_renders_part():
+    from heylook_llm.providers.common.vlm_inputs import system_prefix_tokens
+
+    def render(msgs):   # a template whose user header follows the system turn
+        return f"<s>{msgs[0]['content']}</s><u>{msgs[1]['content']}</u><a>"
+    got = system_prefix_tokens("be brief", render, list)
+    assert "".join(got) == "<s>be brief</s><u>"
+    assert system_prefix_tokens("x", lambda m: m[1]["content"], list) is None
+
+
+@pytest.mark.unit
+def test_cold_means_both_stores_are_empty():
+    from heylook_llm.providers.common.vlm_engine import apc_is_empty
+
+    assert apc_is_empty(SimpleNamespace(_exact_cache={}, hash_table={})) is True
+    assert apc_is_empty(SimpleNamespace(_exact_cache={1: 0}, hash_table={})) is False
+    assert apc_is_empty(SimpleNamespace(_exact_cache={}, hash_table={1: 0})) is False
+    assert apc_is_empty(SimpleNamespace()) is False    # unknown stores never read as cold
+    assert apc_is_empty(None) is False
+
+
+@pytest.mark.unit
+def test_a_shared_snapshot_is_refreshed_while_its_prefix_is_in_use():
+    # The system-prompt snapshot is stored first and never restored from once
+    # a conversation has later snapshots, so without a refresh it is the
+    # store's oldest entry and ages out. The key is mlx-vlm's own.
+    import threading
+    from collections import OrderedDict
+
+    from mlx_vlm.apc import _sequence_hash
+
+    from heylook_llm.providers.common.vlm_engine import refresh_snapshots
+
+    prompt = list(range(500))
+    shared = _sequence_hash(tuple(prompt[:120]), 7, 16)
+    mgr = SimpleNamespace(block_size=16, lock=threading.RLock(),
+                          _exact_cache=OrderedDict([(shared, "sys"), ("later", "turn")]))
+    refresh_snapshots(mgr, prompt, [120], 7)
+    assert list(mgr._exact_cache) == ["later", shared]
+    refresh_snapshots(mgr, prompt, [120], 8)            # another salt: not this snapshot
+    refresh_snapshots(mgr, prompt, [64], 7)             # not stored: left alone
+    assert list(mgr._exact_cache) == ["later", shared]

@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.119]
+
+### Performance
+
+- **The MLX prefix cache keeps more than the last request on checkpoint models** (qwen3_5, gemma-4, gpt-oss). mlx-vlm spent one number on both the snapshots one request captures and the store size, so every request evicted every other conversation: a new chat with the same system prompt and a normal first message reused nothing, and returning to a chat after another reused nothing. heylook installs its own capture rule per generator (`vlm_engine.install_capture_policy`, mlx-vlm's rule with its own count) plus a snapshot at the end of a leading system prompt, found from the template in force (`vlm_inputs.system_prefix_tokens`); `APC_CHECKPOINT_ENTRIES` is now the store size alone, and a system-prompt snapshot stays fresh while in use (`refresh_snapshots`). `engine.cache` reports `checkpoint_captures`. Retained snapshots are live memory, so MLX's per-request peak memory rises, bounded by mlx-vlm's own APC byte budget.
+- The per-request "cache was empty" check reads the two APC stores instead of re-counting every retained array (`vlm_engine.apc_is_empty`).
+
+### Fixed
+
+- MLX multi-image requests handed the model their images in load-completion order (`load_images_parallel` sorted by `enumerate(as_completed())`); they now arrive in the order sent.
+- An unreadable image fails the request (400, or an in-band `invalid_request_error` when streaming) instead of silently becoming a small red image.
+- A gguf request counts as busy from the moment it holds the generation gate, not from llama-server's first byte, so the router cannot evict or unload the model while its prefill starts; gguf's queue wait is now measured and netted out of the generation span, as on MLX.
+- `POST /v1/cache/clear` also empties the MLX vision feature cache.
+
+### Instruments
+
+- `scripts/chain_probe.py`: the fresh arm clears the model's cache (an unrelated request no longer evicts anything) and a fresh run that reports reuse fails the probe.
+- `tests/smoke`: the system-prompt reuse check uses user turns long enough that only a system-prompt snapshot satisfies it, and a new A, B, back-to-A check; both fail against the base commit.
+
+### Known issue (upstream)
+
+- On qwen3_5 models (including Qwen3.8-27B), a request restored from the prefix cache decodes slower than the same request run cold, and more so as the context grows: mlx-vlm merges a lone restored row into batch caches. Filed as Blaizzy/mlx-vlm#2356; heylook picks the fix up when the mlx-vlm pin moves past it. More restores now happen, so a long reply after a restore can take as long as before this release even though its first token comes sooner.
+
+Merged from the improvement-loop branch `improve/2026-09-24` (session record `internal/claude/improve/runs/2026-09-24/`). Verification per the release standard: unit + contract green on the merge; `tests/smoke/` green on all three arms on the branch (mlx-text Qwen3-0.6B, mlx-vision Qwen3.5-0.8B, gguf Qwen3.8-27B); audio and thinking depth uncovered on the arms picked; the new-image turn is the named MLX known gap; `vendor_frontend.py --check` not run (no frontend change). Not included: the branch's qwen3_5 vision-feature change (9573911, reverted on the branch as 86349db for a speed-tolerance breach on the small model; ref `improve/2026-09-24-vision-cache`), pending the owner.
+
 ## [2.0.118]
 
 ### Removed

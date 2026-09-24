@@ -7,8 +7,10 @@ stayed green through every live cache failure in this repo, and the eval bank
 never hits a restore.
 
 For each hop, the same request runs twice at temperature 0:
-  fresh    -- after an unrelated request, so nothing of this chain is fresh
-             in the model's cache to restore from the last hop
+  fresh    -- after the model's prefix cache is cleared, so nothing of this
+             chain is in it (the store keeps many conversations, so an
+             unrelated request no longer evicts it); a fresh run that
+             reports reuse fails the probe
   restored -- right after the previous hop, so its prefix is cached
 The texts must match.
 Hops: extends (multi-turn), then one edit (diverges mid-history).
@@ -74,7 +76,14 @@ def http_asker():
         b = json.loads(urllib.request.urlopen(r, timeout=900).read())
         text = "".join(x.get("text") or "" for x in b["content"] if x.get("type") == "text")
         return text, (b.get("performance") or {}).get("cache"), None
-    return ask, None
+
+    def clear():
+        r = urllib.request.Request(a.server + "/v1/cache/clear", method="POST",
+                                   data=json.dumps({"model": a.model}).encode(),
+                                   headers={"Content-Type": "application/json"})
+        if json.loads(urllib.request.urlopen(r, timeout=60).read()).get("deleted_count") != 1:
+            sys.exit(f"could not clear {a.model}'s prefix cache; a fresh run would not be fresh")
+    return ask, None, clear
 
 
 def inproc_asker():
@@ -110,21 +119,22 @@ def inproc_asker():
         return near_tie_verdict(provider, on_worker, request(messages),
                                 fresh_tokens, restored_tokens)
 
-    return ask, judge
+    def clear():
+        if not on_worker(provider.clear_cache):
+            sys.exit(f"could not clear {a.model}'s prefix cache; a fresh run would not be fresh")
+
+    return ask, judge, clear
 
 
-ask, judge = http_asker() if a.server else inproc_asker()
-
-
-def evict():
-    ask([{"role": "user", "content": "Unrelated: name a prime number."}])
+ask, judge, evict = http_asker() if a.server else inproc_asker()
 
 
 def run_hop(label, msgs, prime):
     evict()
     fresh, fcache, ftoks = ask(msgs)
     if prime is not None:
-        ask(prime)                      # prime the slot with the previous hop
+        evict()                         # or the restore is of this same prompt
+        ask(prime)                      # prime the cache with the previous hop
     restored, rcache, rtoks = ask(msgs)
     hop = {"hop": label, "match": fresh == restored, "fresh_cache": fcache,
            "restored_cache": rcache, "fresh": fresh, "restored": restored}
@@ -176,11 +186,14 @@ missed = [h["hop"] for h in hops
           if h["hop"].startswith("extend") and h["hop"] not in restored]
 ties = [h["hop"] for h in hops if h.get("verdict") == "NEAR-TIE"]
 mismatch = [h["hop"] for h in hops if h.get("verdict") == "MISMATCH"]
+not_fresh = [h["hop"] for h in hops if (h["fresh_cache"] or {}).get("outcome") == "reused"]
+if not_fresh:
+    print("FRESH RUN REUSED A PREFIX:", ", ".join(not_fresh))
 if missed:
     print("REQUIRED RESTORE MISSED:", ", ".join(missed))
 if ties:
     print("NEAR-TIE (not a failure; not compared past the tie):", ", ".join(ties))
 if mismatch:
     print("MISMATCH:", ", ".join(mismatch))
-if missed or mismatch:
+if missed or mismatch or not_fresh:
     raise SystemExit(1)

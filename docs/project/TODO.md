@@ -11,6 +11,35 @@ backlog pass; MLX vision prefill follow-ups added 2026-09-21 without a full
 backlog pass; runtime-visibility plan pointer added 2026-09-23 without a full
 backlog pass*
 
+## From the 2026-09-24 improvement loop (merged as v2.0.119)
+
+Record: `internal/claude/improve/runs/2026-09-24/` (report.html has the evidence).
+
+- [ ] **qwen3_5 vision features (owner decision).** heylook's vision feature
+  cache runs only for models with `encode_image()`; qwen3_5 has none, so every
+  turn of an image conversation re-runs the vision tower. Passing the cache as
+  mlx-vlm's `vision_cache`/`_image_key` kwargs (as mlx-vlm's server does)
+  fixes it: commit 9573911 on ref `improve/2026-09-24-vision-cache`. It was
+  reverted because the image-adding turn on Qwen3.5-0.8B breached the loop's
+  speed tolerance; the 27B showed no cost. Re-apply with
+  `git cherry-pick -e 9573911`, correcting its evidence line, then run
+  `scripts/vlm_parity_probe.py`.
+- [ ] **Move the mlx-vlm pin** past upstream #2328 (a KV-retention fix heylook
+  hits through `remove()`), and past Blaizzy/mlx-vlm#2356 once it merges
+  (restored qwen3_5 decode). Usual suite, chain probe and smoke.
+- [ ] **Security findings (owner decision).** CORS `*` with no Host check
+  (`api.py`), so any web page can drive the unauthenticated API; admin PATCH
+  accepts `server_binary`, `extra_args` and `chat_template_path` over HTTP
+  (argv injection, and reading any file through the chat-template route);
+  RLM takes `sandbox: false` as a request field; `HEYLOOK_API_KEY` does not
+  gate the conversation, notebook, preset or generate routers; MLX image
+  sources may be http URLs or local paths. Details in the run's report.
+- [ ] **Upstream PR to separate APC captures from store size** and let a
+  caller name boundaries; it would delete heylook's local capture rule
+  (`vlm_engine.install_capture_policy`). Drafted in the run's ledger.
+- [ ] **Hook: refuse `git add -A`/`-u`/`.`** (AGENTS.md's staging rule is
+  reminded, not enforced); proposed by the loop, not installed.
+
 ## Runtime visibility + one behaviour across engines (2026-09-23) — APPROVED
 
 Plan: [`plan_runtime_visibility.md`](./plan_runtime_visibility.md). Evidence:
@@ -108,7 +137,7 @@ part of AGENTS.md.
   `internal/claude/improve/harness/` into `scripts/` once it has tracked real
   use over several runs; `scripts/perf_ab.py` is the provider-level half.
 - [ ] **Clear the pre-plugin run record** `internal/claude/improve/runs/2026-09-24/`
-  once that run is finished: since improvement-loops 0.4.3 a run folder
+  (the run finished and merged as v2.0.119; clear it once its open items above are settled): since improvement-loops 0.4.3 a run folder
   without `record.json` blocks tidying, so it stays in the way until cleared.
 
 ## e2e: audit for clicks or seeds before an async list lands (2026-09-23)

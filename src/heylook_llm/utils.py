@@ -19,56 +19,39 @@ except ImportError:
     psutil = None
 
 def load_image(source_str: str) -> Image.Image:
-    """Load an image from various sources: file path, URL, or base64 data."""
+    """Load an image from a data URL, an http(s) URL or a file path.
+
+    Raises on anything it cannot read. Until 2026-09-24 every failure became
+    a small red image (a 1x1 for bad base64, a 64x64 otherwise), so a model
+    answered confidently about a red square and the request succeeded; the
+    caller turns the error into a 400 that names the image."""
     start_time = time.time()
-    try:
-        if source_str.startswith("data:image"):
-            try:
-                _, encoded = source_str.split(",", 1)
-                if len(encoded) < 10: raise ValueError("Base64 data too short")
-                base64_size = len(encoded)
-                image_data = base64.b64decode(encoded)
-                if len(image_data) < 10: raise ValueError("Decoded image data too short")
-                image = Image.open(io.BytesIO(image_data)).convert("RGB")
-                load_time = time.time() - start_time
-                
-                # Log detailed image loading info
-                logging.info(f"[IMAGE LOAD] Base64 image loaded | Size: {image.size} | "
-                           f"Base64: {_format_bytes((base64_size * 3) // 4)} | "
-                           f"Load time: {load_time*1000:.1f}ms")
-                return image
-            except Exception as e:
-                logging.error(f"Failed to decode base64 image: {e}", exc_info=True)
-                return Image.new('RGB', (1, 1), color='red')
-        elif source_str.startswith("http"):
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15'
-            }
-            response = requests.get(source_str, headers=headers, stream=True, timeout=10)
-            response.raise_for_status()
-            content_size = len(response.content)
-            image = Image.open(io.BytesIO(response.content)).convert("RGB")
-            load_time = time.time() - start_time
-            
-            # Log detailed image loading info
-            logging.info(f"[IMAGE LOAD] URL image loaded | Size: {image.size} | "
-                       f"Download: {_format_bytes(content_size)} | "
-                       f"Load time: {load_time*1000:.1f}ms | "
-                       f"URL: {source_str[:100]}...")
-            return image
-        else:
-            image = ImageOps.exif_transpose(Image.open(source_str)).convert("RGB")
-            load_time = time.time() - start_time
-            
-            # Log detailed image loading info
-            logging.info(f"[IMAGE LOAD] File image loaded | Size: {image.size} | "
-                       f"Load time: {load_time*1000:.1f}ms | "
-                       f"Path: {source_str}")
-            return image
-    except Exception as e:
-        logging.error(f"Failed to load image from {source_str[:100]}...: {e}", exc_info=True)
-        # Return a small red image to indicate failure
-        return Image.new('RGB', (64, 64), color='red')
+    if source_str.startswith("data:image"):
+        _, encoded = source_str.split(",", 1)
+        base64_size = len(encoded)
+        image = Image.open(io.BytesIO(base64.b64decode(encoded))).convert("RGB")
+        logging.info(f"[IMAGE LOAD] Base64 image loaded | Size: {image.size} | "
+                     f"Base64: {_format_bytes((base64_size * 3) // 4)} | "
+                     f"Load time: {(time.time() - start_time)*1000:.1f}ms")
+        return image
+    if source_str.startswith("http"):
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15'
+        }
+        response = requests.get(source_str, headers=headers, stream=True, timeout=10)
+        response.raise_for_status()
+        content_size = len(response.content)
+        image = Image.open(io.BytesIO(response.content)).convert("RGB")
+        logging.info(f"[IMAGE LOAD] URL image loaded | Size: {image.size} | "
+                     f"Download: {_format_bytes(content_size)} | "
+                     f"Load time: {(time.time() - start_time)*1000:.1f}ms | "
+                     f"URL: {source_str[:100]}...")
+        return image
+    image = ImageOps.exif_transpose(Image.open(source_str)).convert("RGB")
+    logging.info(f"[IMAGE LOAD] File image loaded | Size: {image.size} | "
+                 f"Load time: {(time.time() - start_time)*1000:.1f}ms | "
+                 f"Path: {source_str}")
+    return image
 
 def sanitize_request_for_debug(chat_request) -> str:
     """
