@@ -24,9 +24,10 @@ Rules the W10 spike established (internal/claude/w10/spike_results.md):
   request's media only. Left to the generator, the salt folds in the whole
   prompt's embeddings and no two different prompts can share anything.
 - Checkpoint models need a short checkpoint interval and at least three
-  entries, or a follow-up finds nothing to restore
-  (``APC_CHECKPOINT_INTERVAL_TOKENS`` / ``APC_CHECKPOINT_ENTRIES``, measured
-  in the spike).
+  captures near the prompt end, or a follow-up finds nothing to restore
+  (``APC_CHECKPOINT_INTERVAL_TOKENS`` / ``APC_CHECKPOINT_CAPTURES``, measured
+  in the spike). The store size is a separate constant
+  (``APC_CHECKPOINT_ENTRIES``; see ``install_capture_policy``).
 - The APC disk tier stays off: it would write prompt- and image-derived cache
   state to disk.
 - A generator is closed on the thread that created it (its stream is
@@ -51,10 +52,11 @@ from ..base import CacheReport, GenerationChunk, InvalidGenerationRequest
 APC_CHECKPOINT_INTERVAL_TOKENS = 64
 APC_CHECKPOINT_CAPTURES = 3
 # How many snapshots the store keeps across requests. mlx-vlm spends one
-# number on both (its checkpoint_entries), so at 3 every request evicted the
-# last conversation's states and a new chat never found its system prompt.
-# The store's byte budget (APCManager.memory_max_bytes) evicts snapshots
-# before this count does on any long context. Measured 2026-09-24 (sweep in
+# number on both (its checkpoint_entries), so at the spike's setting every
+# request evicted the last conversation's states and a new chat never found
+# its system prompt. The store's byte budget (APCManager.memory_max_bytes)
+# also bounds it; that it binds before this count on long contexts is
+# reasoned from snapshot sizes, not measured. Measured 2026-09-24 (sweep in
 # internal/claude/improve/runs/2026-09-24): mlx-vlm re-counts every retained
 # snapshot's bytes several times per request, so each entry costs every
 # request a little CPU; this keeps a few conversations' snapshots.
@@ -268,8 +270,8 @@ def generate(
     engine snapshots where each agrees with this prompt, so the next
     conversation restores it (``install_capture_policy``).
     ``embed_extras`` reach ``get_input_embeddings`` only, never the
-    generator's prompt kwargs (heylook's ``cached_image_features``; mlx-vlm's
-    server strips its own vision-cache kwargs the same way).
+    generator's prompt kwargs (the vision cache as ``vision_cache`` and
+    ``_image_key``; mlx-vlm's server strips the same kwargs the same way).
     Runs entirely on the calling thread (the pinned MLX executor).
     """
     from mlx_vlm.generate.ar import BatchGenerator
