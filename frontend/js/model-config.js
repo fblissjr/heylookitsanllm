@@ -13,7 +13,7 @@
 //   load_time_only                           -> disabled, with the reason
 //   identity                                 -> never sent by the endpoint
 //
-// Value contract: an ABSENT models.toml key means "inherit the default", so
+// Value contract: an ABSENT key in model.heylook.toml means "inherit the default", so
 // every control has an explicit unset state (empty input / "default" option)
 // and clearing one PATCHes null, which removes the key server-side. The saved
 // state lives in model.config; unsaved edits live in the caller's `draft`
@@ -51,7 +51,7 @@ export function configSummary(config, fields) {
   return shown.join(' · ');
 }
 
-// models.toml stores toml values; the wire carries JSON. Both are typed, so
+// model.heylook.toml stores toml values; the wire carries JSON. Both are typed, so
 // the only stringly parsing here is what the <input> element forces on us.
 function parseControlValue(field, raw) {
   if (raw === '' || raw == null) return { value: null };
@@ -207,7 +207,7 @@ const gib = (v) => `${v.toFixed(1)} GiB`;
 
 // The chat template in force, and an editor for overriding it.
 //
-// NOT a schema-driven field: this is a FILE BODY, not a models.toml value, so
+// NOT a schema-driven field: this is a FILE BODY, not a config value, so
 // it sits beside the fit meter rather than in the generated form. Saving
 // writes one file next to the weights and touches no config at all.
 //
@@ -822,8 +822,8 @@ export function createModelConfigEditor({ model, fields: allFields, draft, initi
     children.push(sectionEl(
       'Requires reload',
       model.loaded
-        ? 'Saved to models.toml now; the loaded model keeps running as-is until reloaded.'
-        : 'Saved to models.toml; applies when the model loads.',
+        ? "Saved to the model's model.heylook.toml now; the loaded model keeps running as-is until reloaded."
+        : "Saved to the model's model.heylook.toml; applies when the model loads.",
       rows(reload),
     ));
   }

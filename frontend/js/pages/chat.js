@@ -852,7 +852,7 @@ function currentProvider(ctx) {
 
 // Whether the next reply thinks: the panel's explicit value, else the
 // model's default as the server reports it. The same resolution the server
-// runs (request > models.toml > capability), read off its answer rather
+// runs (request > the model's config > capability), read off its answer rather
 // than re-derived.
 function effectiveThinking(ctx) {
   const explicit = getSetting('enable_thinking');

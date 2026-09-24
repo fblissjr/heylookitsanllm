@@ -59,7 +59,7 @@ export default createPage({
       })
       .catch(() => { s.optionsPromise = null; });
     // Non-fatal, like the option schema: the watch-folder editor is a
-    // convenience over models.toml, and the model list must render without it.
+    // convenience over heylook.toml's [scan], and the model list must render without it.
     loadWatchFolders(ctx);
     await fetchModels(ctx);
   },
@@ -99,13 +99,13 @@ function buildSkeleton(ctx) {
 }
 
 // Watch folders are the only way a model is served: everything under one is
-// served with no models.toml entry. The one-off scan + Import panel that sat
+// served, with its settings derived at load. The one-off scan + Import panel that sat
 // here was retired with `heylookllm import` (v2.0.72) -- every model lives in
 // a watch folder, so there was nothing left for it to add.
 function buildScanControls(ctx) {
   const s = ctx.state;
 
-  // WATCH FOLDERS -- server config ([scan].folders in models.toml), not a
+  // WATCH FOLDERS -- server config ([scan].folders in heylook.toml), not a
   // browser preference.
   s.foldersInput = createEl('textarea', {
     id: 'scan-folders',
@@ -225,7 +225,7 @@ function renderModelList(ctx) {
     s.listEl.replaceChildren(
       createEl('div', { class: 'empty-state' }, [
         'No models yet. Add a watch folder below — everything under one is '
-        + 'served without a models.toml entry.',
+        + 'served, with its settings detected at load.',
       ]),
     );
     return;
@@ -236,13 +236,14 @@ function renderModelList(ctx) {
     children.push(buildModelRow(ctx, m));
     if (s.configOpenId === m.id) {
       // Disclosure, not a confirm: saving a discovered model's first setting
-      // creates its models.toml entry. Nothing is lost by that -- it is how
-      // an override comes into existence -- so it gets stated, not gated.
+      // creates model.heylook.toml in its folder. Nothing is lost by that --
+      // it is how an override comes into existence -- so it gets stated, not
+      // gated.
       if (m.source === 'discovered') {
         children.push(createEl('div', { class: 'config-panel__note muted small' }, [
-          'Found by a watch folder, so it has no models.toml entry yet. '
-          + 'Saving a setting here creates one; everything else keeps being '
-          + 'detected at load.',
+          'Found by a watch folder, with every setting detected at load. '
+          + 'Saving a setting here writes it to model.heylook.toml in the '
+          + "model's folder; everything else keeps being detected.",
         ]));
       }
       const panel = buildConfigPanel(ctx, m);
@@ -343,7 +344,7 @@ function buildModelRow(ctx, model) {
 
 // The engine contract, rendered by the shared renderer (js/engine.js): what
 // runs this model, with what, and why -- every setting included, per-request
-// defaults too, since a default quietly set in models.toml is exactly what
+// defaults too, since a default quietly set in a model's model.heylook.toml is exactly what
 // this panel exists to show. Built only when opened (the list re-renders
 // often), and its open state outlives the re-render.
 function buildEnginePanel(ctx, model) {

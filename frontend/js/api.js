@@ -101,7 +101,7 @@ const ROUTES = {
   // the model unloaded if the tab died between the calls. Load's shape.
   // `ctxSize` (gguf only, v1.79.61): the context to load with, persisted as
   // the model's `ctx_size` config by the server -- ONE writer, the same
-  // models.toml write the models page's editor makes. 0 = Auto (unset). The
+  // model.heylook.toml write the models page's editor makes. 0 = Auto (unset). The
   // server makes the unchanged-and-resident case a plain load, so sending
   // the same choice again does not restart a warm process.
   adminReloadModel:  ['POST', (id, warm, ctxSize) => {
@@ -111,7 +111,7 @@ const ROUTES = {
     return `/v1/admin/models/${encodeURIComponent(id)}/reload${q.length ? '?' + q.join('&') : ''}`;
   }],
   // The [scan] watch folders -- what the server DISCOVERS models from. A model
-  // under one of these is served with no models.toml entry, and this list is
+  // under one of these is served with its settings derived at load, and this list is
   // the only way to add models (import was retired in v2.0.72). PUT reloads
   // the router and answers with models_served, the observable consequence of
   // the edit.
@@ -122,7 +122,7 @@ const ROUTES = {
   // /v1/admin/models -- that router's {model_id:path} would eat the path.
   adminModelOptions: ['GET', () => '/v1/admin/model-options'],
   // PATCH body {config:{key:value|null}}; null means "unset -- back to the
-  // default" (the key is removed from models.toml). Response carries
+  // default" (the key is removed from the model's model.heylook.toml). Response carries
   // reload_required_fields (+ warning when the post-save reload failed).
   adminUpdateModel:  ['PATCH', (id) => `/v1/admin/models/${encodeURIComponent(id)}`, true],
   // Server-computed memory fit for a model + candidate (unsaved) config
@@ -133,7 +133,7 @@ const ROUTES = {
   // files server-side, so it answers for models that are NOT loaded -- the
   // prompt format a model will load with is exactly what you want to see
   // before loading it. PUT writes an override file beside the weights (no
-  // models.toml write at all); DELETE removes it and the model falls back to
+  // config write at all); DELETE removes it and the model falls back to
   // its own template. Both bind at LOAD, so the response's `stale` is what
   // says a reload is owed.
   adminChatTemplate:    ['GET', (id) => `/v1/admin/models/${encodeURIComponent(id)}/chat-template`],

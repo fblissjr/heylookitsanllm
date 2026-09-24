@@ -570,9 +570,10 @@ stale_reload_fields,engine,thinking_default,sampler_defaults}], total}`.
 discovered model's `config` is not empty — it carries what the scanner assigned
 (`model_path`, `mmproj_path`, `modalities`, `supports_thinking`), so on the wire it looks
 exactly like a hand-written entry storing those keys. The difference is that those values
-are re-derived every load, and that the first save materialises an entry. v3 renders it as a `no entry` token on the row and a
-disclosure above the config editor, because the first save on a discovered model WRITES
-its entry. The list itself comes from the router's merged snapshot, so everything listed
+are re-derived every load. Since v2.0.115 a save writes only the changed fields into the
+model's own `model.heylook.toml` (no heylook.toml entry is materialised). v3 renders a
+discovered model with a `no entry` token on the row and a disclosure above the config
+editor saying a save writes that file. The list itself comes from the router's merged snapshot, so everything listed
 is loadable -- a rescan-per-request would advertise models the loaded router cannot
 serve.
 `config` is the model's STORED keys only (`exclude_unset`, 2026-08-11) — absent IS how a

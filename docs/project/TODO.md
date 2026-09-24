@@ -11,6 +11,16 @@ backlog pass; MLX vision prefill follow-ups added 2026-09-21 without a full
 backlog pass; runtime-visibility plan pointer added 2026-09-23 without a full
 backlog pass*
 
+## gguf: Save & Continue on an edited thought keeps a trailing newline (2026-09-24)
+
+- [ ] **Found by `E2E_ARMS=gguf bun run e2e:chat`** (test "edited thinking plus
+  a partial response"; the MLX arm passes): the kept thought comes back as the
+  edited text plus "\n". Ruled out: spec decode (same with it off). Not
+  touched today: the gguf continuation functions. Trace each hop (page ->
+  store -> `_wire_message` -> llama-server echo and reasoning split ->
+  `_continuation_echo_chars`) and fix at the first hop that differs. Owner:
+  "a shitty bug", handed to `mropt`.
+
 ## From the 2026-09-24 improvement loop (merged as v2.0.121)
 
 Record: `internal/claude/improve/archive/runs-2026-09-24/` (report.html has the evidence).

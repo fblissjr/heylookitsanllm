@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.130]
+
+### Fixed
+
+- The models page still described the retired storage: the config editor's
+  save note said "Saved to models.toml", the empty list and the discovered
+  model's note spoke of a "models.toml entry", and code comments named
+  models.toml. Since v2.0.115 a save writes the model's own
+  `model.heylook.toml` (watch folders live in heylook.toml's `[scan]`), and
+  the text says so. Spec §4's passage on saving a discovered model and
+  `tests/e2e/README.md` (`E2E_MODEL` "must exist in models.toml") follow.
+  No API or DB change: every `/v1` path the frontend calls exists in the
+  server's OpenAPI schema, and it references no retired field.
+
+### Verified (not a code change)
+
+- gguf smoke 37/37 on `JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`, with spec
+  decode in force through its built-in MTP head; `e2e:render` 99/99; chat
+  52/52 and pages 32/32 on the default MLX gemma. The gguf chat arm is 50/51:
+  Save & Continue on an edited thought keeps a trailing newline on gguf
+  (TODO; not spec decode, probably older than today).
+
 ## [2.0.129]
 
 ### Changed

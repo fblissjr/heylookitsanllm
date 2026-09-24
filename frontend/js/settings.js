@@ -1,5 +1,5 @@
 // Sampler settings. Every key defaults to null = "use backend cascade"
-// (global -> thinking -> models.toml -> request). samplerParams() copies
+// (global -> thinking -> the model's config -> request). samplerParams() copies
 // ONLY non-null keys so omitted params respect the cascade -- this is a
 // real integration contract, preserve it exactly.
 
@@ -532,7 +532,7 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
 
   // "Clear all overrides", not "Reset to defaults": this sets every value to
   // null, which hands each one back to the BACKEND cascade (global -> thinking
-  // -> models.toml). The behaviour was always right; "defaults" just read as
+  // -> the model's config). The behaviour was always right; "defaults" just read as
   // something global while the button in fact rewrites the open document's
   // params. No confirm -- sampler values are trivially recoverable, and a
   // confirm here would train click-through past the ones that protect work.

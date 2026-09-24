@@ -21,7 +21,7 @@ therefore refused unless you opt in — see `E2E_BASE_URL` below.
 - `bun install` (from this directory) — installs `puppeteer-core`.
 - Google Chrome at the default macOS path, or `E2E_CHROME=/path/to/chrome`.
 - A working `uv run heylookllm` (Metal-gated: run on the Mac, not in a sandbox).
-- The model in `E2E_MODEL` must exist in `models.toml`.
+- The model in `E2E_MODEL` must be served: under a `[scan].folders` watch folder (`GET /v1/models` lists the ids).
 
 ## Run
 
@@ -114,7 +114,7 @@ composer focus is worth building.
 
 | var                   | default                              | meaning |
 |-----------------------|--------------------------------------|---------|
-| `E2E_MODEL`           | `gemma-4-26b-a4b-it-8bit-mlx`            | model to preload + drive (must be in `models.toml`). Use a fast one — an A4B MoE decodes fast; the 31B dense gemma decodes ~10 tok/s and makes streaming look broken (and would false-fail the cadence guard). |
+| `E2E_MODEL`           | `gemma-4-26b-a4b-it-8bit-mlx`            | model to preload + drive (must be served; ids from `GET /v1/models`). Use a fast one — an A4B MoE decodes fast; the 31B dense gemma decodes ~10 tok/s and makes streaming look broken (and would false-fail the cadence guard). |
 | `E2E_PORT`            | `1264`                               | server port for the spawned instance -- deliberately NOT 8000, the daily server's port (the harness spawns its OWN server and must never collide with it) |
 | `E2E_MAX_TOKENS`      | `24`                                 | per-generation cap, seeded via `localStorage` so runs stay fast/deterministic |
 | `E2E_CHROME`          | `/Applications/Google Chrome.app/…`  | Chrome binary path |
