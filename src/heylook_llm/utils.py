@@ -29,7 +29,7 @@ def load_image(source_str: str) -> Image.Image:
     if source_str.startswith("data:image"):
         _, encoded = source_str.split(",", 1)
         base64_size = len(encoded)
-        image = Image.open(io.BytesIO(base64.b64decode(encoded, validate=True))).convert("RGB")
+        image = Image.open(io.BytesIO(base64.b64decode(encoded))).convert("RGB")
         logging.info(f"[IMAGE LOAD] Base64 image loaded | Size: {image.size} | "
                      f"Base64: {_format_bytes((base64_size * 3) // 4)} | "
                      f"Load time: {(time.time() - start_time)*1000:.1f}ms")
