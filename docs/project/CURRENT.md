@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-24, v2.0.127, `main`.
+Last updated: 2026-09-24, v2.0.129, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md), and what each release
@@ -15,7 +15,7 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
-| unit + contract | green (1618 passed) | v2.0.127 |
+| unit + contract | green (1619 passed) | v2.0.129 |
 | `tests/smoke/` on `improve/2026-09-24` | green on all three arms (mlx-text Qwen3-0.6B, mlx-vision Qwen3.5-0.8B, gguf Qwen3.8-27B); the new system-prompt and back-to-A reuse checks fail on the base commit | improve/2026-09-24, merged as v2.0.121 |
 | `bun run e2e:render` (model-free) | 98/98, including the thinking-depth control check | v2.0.95 |
 | `tests/smoke/` (arms `mlx-text` / `mlx-vision` / `gguf` since v2.0.88) | 82/82 at v2.0.95 on `gpt-oss-20b-MXFP4-Q8-mlx`, `Qwen3.5-0.8B-MLX-8bit` and `JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`: depth covered on mlx-text and gguf (an offered value accepted, an unoffered one a 400 on gguf); a turn that adds a new image is the named known gap; audio uncovered on the arms picked | v2.0.95 |
@@ -34,7 +34,10 @@ advertises `reasoning_effort`.
 
 ## Handoff -- start here (end of 2026-09-24)
 
-**Where things stand (latest first).** Evening, v2.0.124 - v2.0.127 (`mragents`):
+**Where things stand (latest first).** Evening, v2.0.124 - v2.0.129 (`mragents`):
+- v2.0.128: MLX image sources refuse local file paths (data URLs and http(s)
+  links only); v2.0.129: `uv.lock` upgraded (starlette 1.7, huggingface-hub
+  1.33, mlx-audio 0.5.6, small bumps; mlx and the mlx-vlm pin unchanged).
 - **mlx-vlm pin moved to upstream main** `ac737ef3` (0.7.3, includes #2328;
   owner: "the current latest commit"); `coderef/mlx-vlm` matches. Suite green,
   parity and chain probe ok on Qwen3.5-0.8B. **Smoke not run on it yet.**
