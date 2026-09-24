@@ -22,6 +22,7 @@ index, which is exactly the part worth not paying for here.
 from __future__ import annotations
 
 import logging
+import re
 import struct
 from pathlib import Path
 from typing import Any, Optional
@@ -205,19 +206,6 @@ def vision_projector_type(mmproj: Path) -> Optional[str]:
     return meta.get(_PROJ_TYPE_KEY) or meta.get(_VISION_PROJ_TYPE_KEY)
 
 
-# Drafter filename prefix -> llama-server --spec-type. The prefix is llama.cpp's
-# OWN sibling-resolution key (common/download.cpp find_best_sibling), which makes
-# it the authoritative signal; `general.architecture` corroborates but does not
-# discriminate -- both dflash- and dspark- sidecars carry arch "dflash", and only
-# the name says which one has the extra Markov head.
-_SPEC_TYPE_BY_PREFIX = (
-    ("dspark-", "draft-dspark"),
-    ("dflash-", "draft-dflash"),
-    ("eagle3-", "draft-eagle3"),
-    ("mtp-", "draft-mtp"),
-)
-
-
 _CHAT_TEMPLATE_KEY = "tokenizer.chat_template"
 
 
@@ -307,18 +295,110 @@ def supports_thinking(primary: Path) -> Optional[bool]:
     return bool(_ENABLE_THINKING_PATTERN.search(template))
 
 
-def infer_spec_type(drafter: Path) -> Optional[str]:
-    """The ``--spec-type`` this drafter REQUIRES, or None if unrecognised.
+def read_header(path: Path, keys: set[str]) -> tuple[dict[str, Any], list[str]]:
+    """The requested KV entries AND every tensor name in ``path``'s header.
 
-    A fact about the file, not a recommendation: whether speculative decoding
-    pays off is measured per model (draft-accept rates vary widely), so the
-    importer reports this rather than writing ``spec_type`` for you.
+    Walks the whole KV section (skipping what is not asked for), then the
+    tensor-info table, which follows it. No tensor data is read: a
+    multi-hundred-GB split costs one header per file.
     """
-    name = drafter.name.lower()
-    for prefix, spec_type in _SPEC_TYPE_BY_PREFIX:
-        if name.startswith(prefix):
-            return spec_type
-    return None
+    found: dict[str, Any] = {}
+    with open(path, "rb") as fp:
+        if _read_exact(fp, 4) != _MAGIC:
+            raise GGUFMetadataError(f"not a GGUF file: {path.name}")
+        version, = struct.unpack("<I", _read_exact(fp, 4))
+        if version not in (2, 3):
+            raise GGUFMetadataError(f"unsupported GGUF version {version} in {path.name}")
+        tensor_count, kv_count = struct.unpack("<QQ", _read_exact(fp, 16))
+        if kv_count > 1_000_000 or tensor_count > 10_000_000:
+            raise GGUFMetadataError(f"implausible GGUF counts in {path.name}")
+        for _ in range(kv_count):
+            key = _read_string(fp)
+            (vtype,) = struct.unpack("<I", _read_exact(fp, 4))
+            if key in keys:
+                found[key] = _read_value(fp, vtype)
+            else:
+                _skip_value(fp, vtype)
+        names = []
+        for _ in range(tensor_count):
+            names.append(_read_string(fp))
+            (n_dims,) = struct.unpack("<I", _read_exact(fp, 4))
+            fp.seek(8 * n_dims + 4 + 8, 1)  # dims, ggml type, data offset
+    return found, names
+
+
+# llama.cpp split naming: `<prefix>-00001-of-00005.gguf`.
+SPLIT_RE = re.compile(r"-(\d{5})-of-(\d{5})\.gguf$", re.IGNORECASE)
+
+
+def splits(first: Path) -> list[Path]:
+    """Every split of the model whose first split (or only file) is ``first``,
+    in order; ``[first]`` when it is not split."""
+    m = SPLIT_RE.search(first.name)
+    if m is None:
+        return [first]
+    prefix, total = first.name[: m.start()], m.group(2)
+    return [first.with_name(f"{prefix}-{i:05d}-of-{total}.gguf") for i in range(1, int(total) + 1)]
+
+
+# (resolved path, mtime_ns, size) per file -> spec type. A discovery scan asks
+# this for every gguf model on every rescan; the answer changes only with the
+# files.
+_spec_type_cache: dict[tuple, Optional[str]] = {}
+
+
+def spec_type_from_gguf(files: list[Path]) -> Optional[str]:
+    """The speculative type a GGUF offers, by llama.cpp's own rule, or None.
+
+    The rule is ``common_speculative_types_from_gguf`` in the build's
+    common/speculative.cpp (pinned by test_spec_rule_matches_the_build):
+    architecture ``dflash`` is draft-dspark when it carries
+    ``markov_w1.weight`` and draft-dflash otherwise; any other architecture is
+    draft-mtp when its LAST block has ``nextn.eh_proj.weight``. The same rule
+    answers for a drafter file and for a target whose MTP head is built into
+    its weights.
+
+    ``files`` is every split of one model, first split first. llama.cpp reads
+    only the first split (so a sharded drafter needs ``--spec-type``); this
+    reads every split's tensor table, because a built-in head can sit in the
+    last one. An unreadable file is None, never raised.
+    """
+    try:
+        key = tuple((str(f.resolve()), f.stat().st_mtime_ns, f.stat().st_size) for f in files)
+    except OSError:
+        return None
+    if key in _spec_type_cache:
+        return _spec_type_cache[key]
+    answer = None
+    try:
+        kv, names = read_header(files[0], {_ARCH_KEY})
+        arch = kv.get(_ARCH_KEY)
+        if arch == "dflash":
+            answer = "draft-dspark" if "markov_w1.weight" in names else "draft-dflash"
+        elif arch:
+            kv, _ = read_header(files[0], {f"{arch}.block_count"})
+            blocks = kv.get(f"{arch}.block_count")
+            for f in files[1:]:
+                names += read_header(f, set())[1]
+            if isinstance(blocks, int) and f"blk.{blocks - 1}.nextn.eh_proj.weight" in names:
+                answer = "draft-mtp"
+    except (GGUFMetadataError, OSError, struct.error, IndexError) as e:
+        logging.debug(f"[GGUF] could not read tensors from {files[0].name if files else '?'}: {e}")
+    _spec_type_cache[key] = answer
+    return answer
+
+
+def model_names(primary: Path) -> set[str]:
+    """The names a GGUF gives its own model, normalized for matching a drafter
+    to its target: ``general.name``, ``general.basename`` and
+    ``general.base_model.0.name``, lowercased with everything but letters and
+    digits removed (publishers differ on case and separators for one model)."""
+    keys = {"general.name", "general.basename", "general.base_model.0.name"}
+    out = set()
+    for v in safe_read_metadata(primary, keys).values():
+        if isinstance(v, str) and (n := re.sub(r"[^a-z0-9]", "", v.lower())):
+            out.add(n)
+    return out
 
 
 # ---------------------------------------------------------------------------

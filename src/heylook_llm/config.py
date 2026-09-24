@@ -728,12 +728,12 @@ class GGUFModelConfig(BaseModel):
             "TURNS SPECULATIVE DECODING ON, not `spec_type`: the provider "
             "emits -md on this field alone, and llama.cpp infers the draft "
             "type from the drafter's own header when --spec-type is absent. "
-            "Discovery pairs a sidecar automatically and leaves `spec_type` "
-            "unset on purpose, so a model can be running spec decode with no "
-            "models.toml entry at all. To keep it OFF, the drafter must not "
-            "be paired. Spec decode is meant to be on whenever a model ships a "
-            "drafter (owner decision 2026-09-24); see .claude/rules/gguf.md for "
-            "what discovery does and does not pair yet."),
+            "Spec decode is on whenever a model ships a drafter (owner "
+            "decision 2026-09-24): discovery pairs one from beside the "
+            "weights, an MTP/ subfolder, or a neighbouring folder whose header "
+            "names the same model, so a model can run spec decode with no "
+            "models.toml entry at all. To keep it OFF, store an entry without "
+            "this field and without `spec_type`."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-md"},
     )
     # llama-server --spec-type (e.g. "draft-mtp"). NB coupled to LoRA: a loaded

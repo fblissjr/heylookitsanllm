@@ -26,7 +26,8 @@ from heylook_llm.gguf_metadata import (
     architecture,
     context_length,
     detect_modalities,
-    infer_spec_type,
+    spec_type_from_gguf,
+    splits,
     read_metadata,
     safe_read_metadata,
     supports_thinking,
@@ -215,27 +216,37 @@ class TestSupportsThinking:
         assert supports_thinking(f) is bool(_ENABLE_THINKING_PATTERN.search(template))
 
 
+def _model(path, arch, tensors, blocks=4, **names):
+    kvs = [("general.architecture", STR, arch), (f"{arch}.block_count", U32, blocks)]
+    kvs += [(f"general.{k}", STR, v) for k, v in names.items()]
+    return write_gguf(path, kvs, tensors=tensors)
+
+
 @pytest.mark.unit
-class TestInferSpecType:
-    @pytest.mark.parametrize("name,expected", [
-        ("dspark-DeepSeek-V4-Flash-0731-Q8_0.gguf", "draft-dspark"),
-        ("dflash-something.gguf", "draft-dflash"),
-        ("eagle3-gpt-oss.gguf", "draft-eagle3"),
-        ("mtp-gemma-4-12B-it.gguf", "draft-mtp"),
-        ("MTP-Gemma-4-12B-it.gguf", "draft-mtp"),      # case-insensitive
+class TestSpecTypeFromGguf:
+    """llama.cpp's rule (common_speculative_types_from_gguf), from the header."""
+
+    @pytest.mark.parametrize("arch,tensors,expected", [
+        ("dflash", ["markov_w1.weight", "x"], "draft-dspark"),
+        ("dflash", ["x"], "draft-dflash"),
+        ("qwen35", ["blk.3.nextn.eh_proj.weight"], "draft-mtp"),   # last block
+        ("qwen35", ["blk.2.nextn.eh_proj.weight"], None),          # not the last
+        ("qwen35", ["blk.3.attn_q.weight"], None),
     ])
-    def test_prefix_maps_to_llama_server_spec_type(self, tmp_path, name, expected):
-        assert infer_spec_type(tmp_path / name) == expected
+    def test_the_rule(self, tmp_path, arch, tensors, expected):
+        assert spec_type_from_gguf([_model(tmp_path / "m.gguf", arch, tensors)]) == expected
 
-    def test_dspark_wins_over_dflash_despite_sharing_an_architecture(self, tmp_path):
-        # Both sidecar families report general.architecture == "dflash"; only
-        # the NAME says which carries the extra Markov head, which is why the
-        # prefix -- llama.cpp's own resolution key -- is the signal.
-        assert infer_spec_type(tmp_path / "dspark-x.gguf") == "draft-dspark"
-        assert infer_spec_type(tmp_path / "dflash-x.gguf") == "draft-dflash"
+    def test_a_head_in_a_later_split_is_found(self, tmp_path):
+        """llama.cpp reads only the first split; a target's built-in head can
+        sit in the last, so every split's tensor table is read."""
+        first = _model(tmp_path / "m-00001-of-00002.gguf", "qwen35", ["blk.0.attn_q.weight"])
+        write_gguf(tmp_path / "m-00002-of-00002.gguf", [], tensors=["blk.3.nextn.eh_proj.weight"])
+        assert splits(first) == [first, tmp_path / "m-00002-of-00002.gguf"]
+        assert spec_type_from_gguf(splits(first)) == "draft-mtp"
 
-    def test_unrecognised_drafter_returns_none(self, tmp_path):
-        assert infer_spec_type(tmp_path / "some-drafter.gguf") is None
+    def test_an_unreadable_file_is_none(self, tmp_path):
+        (tmp_path / "junk.gguf").write_bytes(b"not a gguf")
+        assert spec_type_from_gguf([tmp_path / "junk.gguf"]) is None
 
 
 @pytest.mark.unit

@@ -43,18 +43,22 @@ def _value(vtype: int, value) -> bytes:
     raise AssertionError(f"unhandled type {vtype}")
 
 
-def write_gguf(path, kvs, *, version=3, tensor_count=0, magic=b"GGUF"):
-    """Write a GGUF file that is header-only: valid KV section, no tensors.
+def write_gguf(path, kvs, *, version=3, tensor_count=None, magic=b"GGUF", tensors=()):
+    """Write a GGUF file that is header-only: valid KV section, then tensor
+    INFOS for ``tensors`` (names; one F32 dim each) and no tensor data.
 
     kvs: list of (key, vtype, value). Order matters -- the reader walks
     sequentially, so tests can place a target key after a value it must skip.
     """
     out = bytearray(magic)
     out += struct.pack("<I", version)
-    out += struct.pack("<QQ", tensor_count, len(kvs))
+    count = len(tensors) if tensor_count is None else tensor_count
+    out += struct.pack("<QQ", count, len(kvs))
     for key, vtype, value in kvs:
         out += _str(key)
         out += struct.pack("<I", vtype)
         out += _value(vtype, value)
+    for k, name in enumerate(tensors):
+        out += _str(name) + struct.pack("<IQIQ", 1, 1, 0, 32 * k)
     path.write_bytes(bytes(out))
     return path

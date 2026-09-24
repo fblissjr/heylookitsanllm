@@ -302,6 +302,17 @@ way, and decide the wired-in API after Phase 2.
 
 ### Phase 1 — close the derivation gaps
 
+> **2026-09-24.** Both bullets below are settled. The `supports_thinking`
+> one is inert: `served_diff` shows the Muse-Glimmer entry differing from
+> discovery on it, but the field is read only when no template can be read,
+> and with or without the entry the served capabilities are identical. The
+> drafter one is superseded by the owner's decision that spec decode is on
+> wherever a model ships a drafter: discovery now pairs a drafter beside the
+> weights, in an immediate subfolder, built into the weights, or in a
+> neighbouring folder whose header names the same model
+> (`ModelImporter._pick_spec`, v2.0.110). The precision-variant policy is
+> "first by path, logged", not a ranking.
+
 Each one removes a reason an entry exists. Cheap, independent, and they shrink
 the migration.
 

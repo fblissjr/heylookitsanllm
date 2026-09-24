@@ -426,17 +426,15 @@ class ModelService:
             modalities = detect_modalities(p)
         vision = "vision" in modalities
 
-        # Which --spec-type a paired drafter needs: a fact about the file
-        # (llama.cpp resolves siblings by these prefixes), recomputed here
-        # rather than smuggled through the entry dict -- the entry is what
-        # gets written to models.toml, and spec_type stays deliberately
-        # unset there.
+        # Which speculative type this entry runs: the one it pins, else the
+        # one the drafter's own header offers (llama.cpp's rule).
         draft_path = config.get("draft_model_path")
-        draft_spec_type = None
-        if draft_path:
+        draft_spec_type = config.get("spec_type")
+        if draft_path and not draft_spec_type:
             from heylook_llm import gguf_metadata
 
-            draft_spec_type = gguf_metadata.infer_spec_type(Path(draft_path))
+            draft_spec_type = gguf_metadata.spec_type_from_gguf(
+                gguf_metadata.splits(Path(draft_path)))
 
         # Thinking support. Only the gguf entry builder writes this (read from
         # the GGUF's embedded template); MLXModelConfig actively REJECTS the

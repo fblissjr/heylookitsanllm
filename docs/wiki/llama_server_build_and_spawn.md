@@ -320,10 +320,10 @@ llama-server Speculative Flags:
 └── -ngld <int>                 # GPU layers offloaded for the draft model
 ```
 
-#### Why Speculative Decoding is Default OFF
-Speculative decoding is **per-model opt-in and defaults to OFF**, with one standing carve-out: the DeepSeek-V4-Flash entry keeps it on (`draft-dspark`), on the owner's judgement and community evidence.
+#### Default ON wherever a drafter ships
+Speculative decoding is **on by default whenever a model ships a drafter** (owner decision 2026-09-24; it was per-model opt-in before, with DeepSeek-V4-Flash as the one carve-out). Discovery finds the drafter; the off switch is per model. It never changes the output, only how fast it arrives, so a pairing that does not pay costs speed and memory, not correctness: a drafter whose vocabulary does not match the target is refused by llama-server at spawn, which then serves without it.
 
-Default OFF means *unproven here*, not *known harmful*. The reasoning is about measurement discipline, not about a number:
+Whether it pays on a given model is still unmeasured here, and the measurement discipline below is how to find out:
 
 - On the one case examined most carefully -- a dense gemma-4 MTP model at vendor sampling, realistic context, matched warm cache and a long generation -- spec on versus off was **a wash**, indistinguishable from noise. Every larger effect seen alongside it dissolved once one more variable was controlled: an apparent tuning win was a greedy artifact, an apparent cost was a short-generation artifact, an apparent context effect was a prompt-cache ordering mistake, and a "broken drafter" was refuted by the drafter's own output.
 - **The mechanism is not understood.** Draft volumes collapse as context grows, and no explanation for that has been established here. Attributing the wash to memory-bus contention would be a guess.
@@ -334,7 +334,7 @@ Default OFF means *unproven here*, not *known harmful*. The reasoning is about m
 Conditions, history and the underlying figures live in `internal/research/` and in `GGUFModelConfig`'s own field comments; they are deliberately not reproduced here, because every number that has been quoted for this subsystem later needed a condition attached to stay true.
 
 #### Drafter Packaging
-Read the GGUF rather than trusting vendor documentation -- publishers currently state the opposite of what their own files contain. gemma-4 12B ships a **sidecar** `mtp-gemma-4-12B-it.gguf` with no `nextn` tensors in the main file; Qwen3.6-27B has `blk.64.nextn.*` **embedded** and no sidecar. The importer auto-pairs sidecars into `draft_model_path`, because llama.cpp's own `-hf` sibling discovery does not work for local files.
+Read the GGUF rather than trusting vendor documentation -- publishers currently state the opposite of what their own files contain. gemma-4 12B ships a **sidecar** `mtp-gemma-4-12B-it.gguf` with no `nextn` tensors in the main file; Qwen3.6-27B has `blk.64.nextn.*` **embedded** and no sidecar. The importer finds both kinds itself (see 5.2), because llama.cpp's own `-hf` sibling discovery does not work for local files.
 
 ---
 
@@ -430,7 +430,7 @@ Defined in [`src/heylook_llm/config.py`](../../src/heylook_llm/config.py):
 When scanning directories (`model_importer.py`):
 1. **Primary Weight File**: Identifies `.gguf` files while ignoring shards and sidecars via [`_pick_primary_gguf()`](../../src/heylook_llm/model_importer.py).
 2. **Projector Pairing (`_pick_mmproj`)**: Automatically pairs multimodal projectors, checking the model directory and parent directory (for multi-quant variant structures).
-3. **Drafter Pairing (`_pick_draft`)**: Detects files matching draft prefixes (`mtp-`, `dspark-`, `dflash-`, `eagle3-`).
+3. **Drafter Pairing (`_pick_spec`)**: a ladder, first rung wins: a drafter-prefixed file (`mtp-`, `dspark-`, `dflash-`, `eagle3-`) beside the weights (or at the repo root for a quant-variant folder); one in an immediate subfolder such as `MTP/`; an MTP head built into the weights, found by llama.cpp's own rule (`gguf_metadata.spec_type_from_gguf`: the last block's `nextn.eh_proj.weight`, read across every split) and switched on with `spec_type = "draft-mtp"` alone; a drafter-prefixed file in a neighbouring folder whose header names the same model (`general.name`, `general.basename` or `general.base_model.0.name`, compared without case or separators). `spec_type` is pinned only where llama.cpp cannot infer it from the drafter's first split.
 4. **Header Probing (`gguf_metadata.py`)**: Uses a zero-dependency binary reader to parse the initial metadata KV pairs:
    - Modalities: Checks `clip.has_vision_encoder` and `clip.has_audio_encoder`.
    - Thinking: Scans embedded `tokenizer.chat_template` for `enable_thinking`.

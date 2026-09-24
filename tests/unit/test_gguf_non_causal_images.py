@@ -99,6 +99,20 @@ def test_non_causal_table_matches_the_build():
         assert re.search(rf"\b{field}\s*=\s*{value};", common), field
 
 
+
+@pytest.mark.unit
+def test_spec_rule_matches_the_build():
+    """gguf_metadata.spec_type_from_gguf is a copy of llama.cpp's
+    common_speculative_types_from_gguf; the pieces of that rule it copies must
+    still be in the build's function."""
+    src = (_build_tree() / "common/speculative.cpp").read_text()
+    m = re.search(r"common_speculative_types_from_gguf\(const std::string & path\) \{.*?\n\}\n", src, re.S)
+    assert m, "common_speculative_types_from_gguf not found"
+    body = re.sub(r"\s+", " ", m.group(0))
+    for piece in ('arch != "dflash"', '"markov_w1.weight"', "DRAFT_DSPARK", "DRAFT_DFLASH",
+                  '".block_count"', "block_count - 1", '".nextn.eh_proj.weight"', "DRAFT_MTP"):
+        assert piece in body, f"the build's drafter rule changed ({piece!r}); update spec_type_from_gguf"
+
 def _log_messages(tree: Path) -> list[str]:
     """Every server log message the build prints, rendered with sample
     arguments: the literal of each SRV_/SLT_ call, or its argument when the

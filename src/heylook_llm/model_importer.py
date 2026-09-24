@@ -13,7 +13,6 @@ defaults, and HF cache paths are defined in model_service.py.
 import glob
 import logging
 import os
-import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -265,7 +264,7 @@ class ModelImporter:
     # shard is loadable -- llama_model_loader hard-errors on any other
     # ("model must be loaded with the first split"), because it derives its
     # siblings from the given file's own split index.
-    _SHARD_RE = re.compile(r"-(\d{5})-of-(\d{5})\.gguf$", re.IGNORECASE)
+    _SHARD_RE = gguf_metadata.SPLIT_RE
 
     @classmethod
     def _shard_index(cls, f: Path) -> Optional[int]:
@@ -331,7 +330,7 @@ class ModelImporter:
         """Best mmproj sidecar by precision preference, else any mmproj* file.
 
         Searches the repo root one level up for a per-quant VARIANT folder,
-        exactly as :meth:`_pick_draft` does -- a multimodal model shipped as
+        exactly as :meth:`_pick_spec` does -- a multimodal model shipped as
         quant subdirectories keeps its projector beside them. Without this the
         projector is silently dropped, and a silently-dropped projector is
         worse than a loud failure: the model imports as text-only and its
@@ -350,27 +349,91 @@ class ModelImporter:
         # dict/iteration order.
         return sorted(candidates.values(), key=lambda f: f.name)[0]
 
-    def _pick_draft(self, path: Path, primary: Optional[Path] = None) -> Optional[Path]:
-        """Drafter sidecar (``_DRAFTER_PREFIXES``), if any.
+    def _pick_spec(self, path: Path, primary: Path) -> tuple[Optional[Path], Optional[str], Optional[str]]:
+        """``(drafter, spec_type to pin, why)`` for this model, or all None.
 
-        An MTP/ subdirectory may hold additional precision variants of the
-        same drafter -- those are alternates, never used here. A servable
-        pairing needs exactly one drafter path, and only a root-level file is
-        that path. A sharded drafter is picked at its first shard, same rule
-        as the primary.
+        Spec decode is on by default wherever a model ships a drafter (owner
+        decision 2026-09-24), so discovery looks for one in this order and
+        takes the first rung that answers:
 
-        When the weights sit in a per-quant VARIANT folder, the repo root one
-        level up is also searched: HF ships the drafter beside the quant
-        folders, not inside them, so DeepSeek-V4-Flash's ``dspark-*.gguf``
-        lives next to ``UD-IQ4_XS/`` rather than in it. Searching only the
-        model's own directory silently drops it.
+        1. A drafter file beside the weights (``_DRAFTER_PREFIXES``), or in
+           the repo folder one level up when the weights sit in a per-quant
+           variant folder; the largest wins.
+        2. A drafter file in an immediate subfolder (an ``MTP/`` folder) of
+           either place; the first by path wins when there are several.
+        3. An MTP head built into the weights: llama.cpp's own rule on the
+           target (``gguf_metadata.spec_type_from_gguf``), read across every
+           split. No file; ``spec_type = "draft-mtp"`` makes llama.cpp load
+           the head from the target.
+        4. A drafter file in a NEIGHBOURING folder (same parent) whose own
+           header names the same model as the target's
+           (``gguf_metadata.model_names``). Two quantizers of one model ship
+           as sibling folders, and the drafter often comes with only one.
+
+        ``spec_type`` is pinned only where llama.cpp cannot infer it from the
+        drafter's first split: a built-in head, a sharded drafter, and eagle3
+        (which llama.cpp does not infer at all). Everything found and not used
+        is logged with the reason.
         """
-        candidates = self._drafters_in(path)
-        if not candidates and primary is not None and self._is_variant_dir(path, primary):
-            candidates = self._drafters_in(path.parent)
-        if not candidates:
+        roots = [path]
+        if self._is_variant_dir(path, primary):
+            roots.append(path.parent)
+
+        # The model's own folder first; the repo root only when it has none.
+        own = next((c for c in map(self._drafters_in, roots) if c), [])
+        if own:
+            draft = max(own, key=self._servable_size)
+            return draft, self._pin_for(draft), f"drafter beside the weights: {draft.name}"
+
+        nested = sorted(
+            f for r in roots for sub in self._subdirs(r) if sub not in roots
+            for f in self._drafters_in(sub))
+        # A variant layout's sibling quant folders are subfolders of the repo
+        # root too, and hold full models, never drafters by name -- the
+        # prefix filter is what keeps them out.
+        if nested:
+            draft = nested[0]
+            extra = f" ({len(nested)} found; first by path)" if len(nested) > 1 else ""
+            return draft, self._pin_for(draft), f"drafter in subfolder {draft.parent.name}/: {draft.name}{extra}"
+
+        if gguf_metadata.spec_type_from_gguf(gguf_metadata.splits(primary)) == "draft-mtp":
+            return None, "draft-mtp", "MTP head built into the weights"
+
+        names = gguf_metadata.model_names(primary)
+        parent = roots[-1].parent
+        matched, unmatched = [], []
+        for sib in self._subdirs(parent):
+            if sib in roots:
+                continue
+            for f in self._drafters_in(sib):
+                (matched if names and names & gguf_metadata.model_names(f) else unmatched).append(f)
+        for f in unmatched:
+            logging.debug(f"[import] {path.name}: neighbouring drafter {f.parent.name}/{f.name} "
+                          f"names a different model; not paired")
+        if matched:
+            draft = sorted(matched)[0]
+            extra = f" ({len(matched)} matched; first by path)" if len(matched) > 1 else ""
+            return draft, self._pin_for(draft), (
+                f"drafter from neighbouring folder {draft.parent.name}/: {draft.name}, "
+                f"matched on the model name in both headers{extra}")
+        return None, None, None
+
+    @staticmethod
+    def _subdirs(path: Path) -> list:
+        try:
+            return sorted(d for d in path.iterdir() if d.is_dir() and not d.name.startswith("."))
+        except OSError:
+            return []
+
+    @classmethod
+    def _pin_for(cls, draft: Path) -> Optional[str]:
+        """The ``--spec-type`` to pin for a drafter file, or None when llama.cpp
+        infers it itself from the file (its first split)."""
+        if draft.name.lower().startswith("eagle3-"):
+            return "draft-eagle3"  # llama.cpp infers no eagle3 from a header
+        if cls._shard_index(draft) is None:
             return None
-        return max(candidates, key=self._servable_size)
+        return gguf_metadata.spec_type_from_gguf(gguf_metadata.splits(draft))
 
     def _drafters_in(self, path: Path) -> list:
         return [
@@ -441,7 +504,7 @@ class ModelImporter:
         self.existing_ids.add(model_id)
 
         mmproj = self._pick_mmproj(path, primary)
-        draft = self._pick_draft(path, primary)
+        draft, spec_type, spec_why = self._pick_spec(path, primary)
 
         # Modality DESCRIPTION read from the projector's own header
         # (clip.has_vision_encoder / clip.has_audio_encoder) rather than
@@ -465,47 +528,18 @@ class ModelImporter:
             config["supports_thinking"] = thinking
         if mmproj is not None:
             config["mmproj_path"] = str(mmproj)
+        # Spec decode is on wherever a drafter is found (owner decision
+        # 2026-09-24): pairing the PATH turns it on (the provider emits
+        # `-md` on draft_model_path alone and llama.cpp infers the type from
+        # the drafter's header); spec_type is pinned only where llama.cpp
+        # cannot infer it, and alone it reaches a built-in head. The off
+        # switch is per model: a stored entry without these fields.
         if draft is not None:
             config["draft_model_path"] = str(draft)
-        # spec_type is left unset even when a draft sidecar is paired, and
-        # THAT DOES NOT MEAN SPECULATIVE DECODING IS OFF. This comment claimed
-        # it did until 2026-09-19, and the claim was wrong in both halves:
-        # the provider emits `-md <drafter>` on draft_model_path ALONE
-        # (llama_server_provider._build_args), and llama.cpp then infers the
-        # type from the drafter's own header when no --spec-type was passed
-        # (common/arg.cpp: common_speculative_types_from_gguf -- arch "dflash"
-        # plus a markov_w1.weight tensor reads as draft-dspark, a trailing
-        # blk.N.nextn.eh_proj.weight as draft-mtp). So pairing the PATH is
-        # what turns it on; spec_type only pins WHICH type, and pins it for
-        # the one case inference cannot reach -- a SHARDED drafter, whose
-        # header read sees only the first split.
-        #
-        # The consequence for a DISCOVERED model is the one to hold: it gets
-        # a drafter path with no models.toml entry anywhere, so it runs spec
-        # decode with llama.cpp's own spec_draft_* defaults and nothing on
-        # this side says so. The "default OFF for a new model" rule in
-        # .claude/rules/gguf.md is about not writing spec_type by hand; it is NOT a
-        # description of what a paired drafter does at spawn. To actually
-        # keep it off, the drafter must not be paired.
-        #
-        # WHICH spec type a drafter requires is a fact about the file, not a
-        # choice, and guessing it wrong is a load failure. Report it so the
-        # decision is "do I want this on", not "what is this drafter called".
-        if draft is not None:
-            spec_type = gguf_metadata.infer_spec_type(draft)
-            if spec_type:
-                logging.info(
-                    f"[import] {model_id}: paired drafter {draft.name} -- "
-                    f"llama.cpp will run {spec_type} speculative decoding from "
-                    f"the drafter's own header; set spec_type = \"{spec_type}\" "
-                    f"to pin it (required only for a sharded drafter)"
-                )
-            else:
-                logging.warning(
-                    f"[import] {model_id}: drafter {draft.name} has no recognised "
-                    f"spec-type prefix (mtp-/dspark-/dflash-/eagle3-); spec_type "
-                    f"must be set by hand"
-                )
+        if spec_type is not None:
+            config["spec_type"] = spec_type
+        if spec_why:
+            logging.info(f"[import] {model_id}: speculative decoding on -- {spec_why}")
 
         return {
             "id": model_id, "provider": "gguf", "enabled": True, "config": config,

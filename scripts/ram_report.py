@@ -146,7 +146,7 @@ def config_from_path(path: Path) -> dict:
         # `primary` matters: for a per-quant variant folder the drafter lives
         # at the repo root one level up, and the picker needs the primary to
         # know it is in one.
-        if (draft := importer._pick_draft(path, primary)) is not None:
+        if (draft := importer._pick_spec(path, primary)[0]) is not None:
             config["draft_model_path"] = str(draft)
         return config
     except Exception:

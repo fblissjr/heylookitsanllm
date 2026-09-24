@@ -153,10 +153,10 @@ class TestCreateGGUFEntry:
         assert "tags" not in entry
         assert "description" not in entry
 
-    def test_spec_type_deliberately_unset(self, importer, tmp_path):
-        # spec_type turns speculative decoding ON at request time; whether it
-        # actually helps is measured per-model, so import only pairs the
-        # drafter PATH -- it must never auto-enable spec decode.
+    def test_spec_type_is_not_pinned_where_llama_cpp_infers_it(self, importer, tmp_path):
+        # The drafter PATH turns spec decode on; llama.cpp infers the type
+        # from a single-file drafter's header, so pinning it would only add a
+        # second copy of that answer.
         d = _make_gguf_dir(tmp_path, mtp="mtp-my-gguf-model.gguf")
         entry = importer._create_gguf_entry(d)
         assert "spec_type" not in entry["config"]
@@ -168,7 +168,7 @@ class TestCreateGGUFEntry:
             mtp_subdir=["mtp-my-gguf-model-F16.gguf", "mtp-my-gguf-model-BF16.gguf"],
         )
         entry = importer._create_gguf_entry(d)
-        # Only the ROOT-level mtp file is used, never an MTP/ subdir variant.
+        # A drafter beside the weights outranks the MTP/ subfolder.
         assert entry["config"]["draft_model_path"] == str(d / "mtp-my-gguf-model.gguf")
 
     def test_no_draft_when_no_mtp_sidecar(self, importer, tmp_path):
@@ -375,15 +375,15 @@ class TestGGUFScanResultReporting:
         """Claim: a paired drafter and the `--spec-type` it REQUIRES both
         reach the client.
 
-        Import deliberately never sets `spec_type` (whether spec decode pays
-        off is a per-model measurement), but WHICH type a given drafter needs
-        is a fact about the file and getting it wrong is a load failure. That
-        fact was only ever written to the server log, so the one surface where
-        someone decides "do I want this on" could not see it.
+        WHICH type a given drafter runs is a fact about the file (its header,
+        by llama.cpp's rule), and it used to reach only the server log.
         """
+        from helpers.gguf import STR, write_gguf
         root = tmp_path / "scan-root"
         root.mkdir()
-        d = _make_gguf_dir(root, mtp="dspark-my-gguf-model.gguf")
+        d = _make_gguf_dir(root)
+        write_gguf(d / "dspark-my-gguf-model.gguf", [("general.architecture", STR, "dflash")],
+                   tensors=["markov_w1.weight"])
         result = _scan_one(tmp_path, root)
         assert result.draft_model_path == str(d / "dspark-my-gguf-model.gguf")
         assert result.draft_spec_type == "draft-dspark"
@@ -554,3 +554,53 @@ def test_mmproj_suffix_naming_detected(tmp_path):
     assert entry["config"]["model_path"].endswith("gemma-x-q4_0.gguf")
     assert entry["config"]["mmproj_path"].endswith("gemma-x-it-mmproj.gguf")
     assert "vision" in entry["config"]["modalities"]
+
+
+@pytest.mark.unit
+class TestSpecDecodeFoundWhereverItShips:
+    """Spec decode is on by default wherever a model ships a drafter (owner
+    decision 2026-09-24): each rung of _pick_spec, once."""
+
+    def test_a_lone_drafter_in_an_mtp_subfolder_is_paired(self, importer, tmp_path):
+        d = _make_gguf_dir(tmp_path, mtp_subdir=["mtp-my-gguf-model-Q8_0.gguf"])
+        entry = importer._create_gguf_entry(d)
+        assert entry["config"]["draft_model_path"] == str(d / "MTP" / "mtp-my-gguf-model-Q8_0.gguf")
+
+    def test_a_built_in_head_pins_draft_mtp_and_pairs_no_file(self, importer, tmp_path):
+        from helpers.gguf import STR, U32, write_gguf
+        d = tmp_path / "headed"
+        d.mkdir()
+        write_gguf(d / "headed.gguf", [("general.architecture", STR, "qwen35"),
+                                       ("qwen35.block_count", U32, 2)],
+                   tensors=["blk.0.attn_q.weight", "blk.1.nextn.eh_proj.weight"])
+        entry = importer._create_gguf_entry(d)
+        assert entry["config"]["spec_type"] == "draft-mtp"
+        assert "draft_model_path" not in entry["config"]
+
+    def test_a_neighbouring_drafter_pairs_only_on_the_same_model_name(self, importer, tmp_path):
+        """Two quantizers of one model ship as sibling folders, the drafter
+        with only one. The name in both headers decides (case and
+        separators differ between publishers); another model's drafter in a
+        neighbouring folder is never taken."""
+        from helpers.gguf import STR, write_gguf
+        zoo = tmp_path / "zoo"
+        target = zoo / "quantizer-a_Model-X"
+        target.mkdir(parents=True)
+        write_gguf(target / "Model-X-Q8.gguf", [("general.architecture", STR, "deepseek4"),
+                                                ("general.name", STR, "Deepseek-V4-Model-X")])
+        other = zoo / "quantizer-b_Model-X"
+        other.mkdir()
+        write_gguf(other / "dspark-Model-X.gguf", [("general.architecture", STR, "dflash"),
+                                                  ("general.name", STR, "DeepSeek-V4-Model-X")])
+        stranger = zoo / "quantizer-c_Model-Y"
+        stranger.mkdir()
+        write_gguf(stranger / "dspark-Model-Y.gguf", [("general.architecture", STR, "dflash"),
+                                                     ("general.name", STR, "Model-Y")])
+        entry = importer._create_gguf_entry(target)
+        assert entry["config"]["draft_model_path"] == str(other / "dspark-Model-X.gguf")
+
+        lonely = zoo / "quantizer-d_Model-Z"
+        lonely.mkdir()
+        write_gguf(lonely / "Model-Z.gguf", [("general.architecture", STR, "llama"),
+                                             ("general.name", STR, "Model-Z")])
+        assert "draft_model_path" not in importer._create_gguf_entry(lonely)["config"]

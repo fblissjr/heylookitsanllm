@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.110]
+
+### Added
+
+- **Discovery finds a model's drafter wherever it ships** (the owner decision recorded in v2.0.108; plan_registry_sidecars Phase 1). `ModelImporter._pick_spec` is a ladder, first rung wins:
+  - a drafter file beside the weights, or at the repo root for a quant-variant folder (as before);
+  - a drafter file in an immediate subfolder such as `MTP/` (Qwen3.8-Flash-Next);
+  - an MTP head built into the weights, switched on by `spec_type = "draft-mtp"` with no file (Qwen3.8-27B);
+  - a drafter file in a neighbouring folder whose header names the same model (DeepSeek-V4-Flash-Vision's Q8 and Q4 quants).
+
+  Each pairing is logged with its reason at scan. Models with an explicit models.toml entry still receive none of this until the registry sidecars land.
+- **`gguf_metadata.spec_type_from_gguf`** applies llama.cpp's own rule (`common_speculative_types_from_gguf`) to a GGUF header, reading every split's tensor table, because a built-in head can sit in the last split. `test_spec_rule_matches_the_build` pins the rule to the build's source. Also added: `read_header` (the KVs plus tensor names), `splits` and `model_names`.
+
+### Changed
+
+- The drafter type now comes from the file's header instead of its filename prefix (`infer_spec_type` and its prefix table are gone). `spec_type` is pinned only where llama.cpp cannot infer it: a built-in head, a sharded drafter, and eagle3. The admin scan row reports the type from the header.
+
 ## [2.0.109]
 
 ### Changed
