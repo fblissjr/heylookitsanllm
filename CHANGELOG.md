@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.129]
+
+### Changed
+
+- **uv.lock upgraded** (`uv lock --upgrade && uv sync`, owner): starlette
+  1.6.0 -> 1.7.0, huggingface-hub 1.32.0 -> 1.33.0, mlx-audio 0.5.4 -> 0.5.6,
+  networkx 3.6.1 -> 3.7, watchfiles 1.2.0 -> 1.3.0, filelock 4.0.1 -> 4.0.3,
+  cuda-bindings 13.4.2 -> 13.4.3. mlx and the mlx-vlm pin (`ac737ef3`) did
+  not move. Unit + contract green.
+
 ## [2.0.128]
 
 ### Security
