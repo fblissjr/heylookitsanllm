@@ -38,6 +38,10 @@ class ModelImporter:
         # Ids already produced by this instance, so one scan never yields the
         # same id twice. Discovery uses a fresh instance per call.
         self.existing_ids: set[str] = set()
+        # (path, reason) for each model a scan found and dropped because its
+        # entry would not validate. Dropped, not raised: one bad directory
+        # must not take its whole folder's models with it.
+        self.rejected: list[tuple[str, str]] = []
 
     def scan_directory(self, path: str) -> list[dict]:
         """Scan a directory recursively for models."""
@@ -139,12 +143,14 @@ class ModelImporter:
         return self._validate(models)
 
     def _validate(self, models: list[dict]) -> list[dict]:
-        """Reject entries that would not load, at scan time.
+        """Drop entries that would not load, at scan time, and record each in
+        ``self.rejected``.
 
         Every entry goes through ModelConfig, so the config CLASS decides what
         is valid (the same reasoning as the derived reload set: ask the
-        schema, never a second list of field names). It raises rather than
-        skipping; discovery isolates failures per folder.
+        schema, never a second list of field names). This used to RAISE,
+        which failed the whole folder: with one scan folder, one malformed
+        model directory unserved every discovered model.
         """
         from heylook_llm.config import (
             PROVIDER_CONFIG_CLASSES,
@@ -152,6 +158,7 @@ class ModelImporter:
             configurable_fields,
         )
 
+        kept = []
         for model in models:
             try:
                 ModelConfig(**model)
@@ -161,12 +168,14 @@ class ModelImporter:
                 valid = (
                     ", ".join(sorted(configurable_fields(cls))) if cls else "unknown provider"
                 )
-                raise ValueError(
-                    f"scan produced an invalid entry for "
-                    f"'{model.get('id', '?')}' (provider={provider}): {e}\n"
-                    f"Settable config keys for {provider}: {valid}"
-                ) from e
-        return models
+                path = str((model.get("config") or {}).get("model_path") or model.get("id", "?"))
+                reason = (f"invalid entry for '{model.get('id', '?')}' (provider={provider}): "
+                          f"{e}\nSettable config keys for {provider}: {valid}")
+                logging.warning("[scan] not served: %s", reason)
+                self.rejected.append((path, reason))
+                continue
+            kept.append(model)
+        return kept
 
     def _read_model_config(self, path: Path) -> Optional[dict]:
         """Delegates to the shared reader (modality_detect.py, 6a)."""

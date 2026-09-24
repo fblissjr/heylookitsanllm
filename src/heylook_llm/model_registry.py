@@ -33,8 +33,11 @@ than expected is recoverable; refusing to start is not.
 
 from __future__ import annotations
 
+import copy
 import logging
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NamedTuple
 
 
 def path_identity(path: str) -> str:
@@ -148,18 +151,36 @@ def derived_for_explicit(config_data: dict, discovered: list[dict]) -> dict[str,
     return out
 
 
+class Discovery(NamedTuple):
+    """What a scan found, and which sources it could not read.
+
+    ``failed`` is what makes a comparison over two scans honest: a source that
+    failed contributes no models, which is indistinguishable by count from
+    those models being gone.
+    """
+    entries: list[dict]
+    failed: list[str]
+
+
 def discover(config_data: dict) -> list[dict]:
+    """The models found under ``[scan].folders``; never raises. See :func:`scan`."""
+    return scan(config_data).entries
+
+
+def scan(config_data: dict) -> Discovery:
     """Scan the folders named by ``[scan].folders``; never raise.
 
-    Returns entry dicts ready for :func:`merge_discovered`. An empty list is
-    the correct answer for "no [scan] section", "scanning is off", and "the
-    scan failed" alike -- all three mean models.toml stands alone.
+    ``entries`` are entry dicts ready for :func:`merge_discovered`. They are
+    empty for "no [scan] section", "scanning is off" and "the scan failed"
+    alike -- all three mean models.toml stands alone -- and ``failed`` is what
+    tells the last apart: each folder that is missing or raised, each model
+    the importer rejected, and the importer itself if it would not construct.
     """
     scan_cfg = config_data.get("scan") or {}
     folders = [str(f) for f in (scan_cfg.get("folders") or [])]
     watch_hf = bool(scan_cfg.get("watch_hf_cache", False))
     if not folders and not watch_hf:
-        return []
+        return Discovery([], [])
     # scan_interval_seconds = 0 is the documented off switch ("0 disables
     # periodic rescans (no initial scan either)", ScanConfig) and
     # MemoryManager._maybe_rescan_models honors it. Load-time discovery has to
@@ -167,9 +188,8 @@ def discover(config_data: dict) -> list[dict]:
     # serving everything under the folders instead -- the opposite of what the
     # operator asked for.
     if int(scan_cfg.get("scan_interval_seconds", 900) or 0) <= 0:
-        return []
+        return Discovery([], [])
 
-    entries: list[dict] = []
     try:
         # ModelImporter, NOT ModelService.scan_paths: the latter projects each
         # hit into a ScannedModel for the admin UI, and that projection drops
@@ -188,24 +208,122 @@ def discover(config_data: dict) -> list[dict]:
         logging.warning(
             "[registry] importer unavailable; serving models.toml alone",
             exc_info=True)
-        return []
+        return Discovery([], ["importer"])
 
-    # PER-SOURCE isolation: one unmounted volume, or one model whose entry
-    # fails ModelImporter._validate (which RAISES rather than skipping), must
-    # not discard every other folder's models. A single try around the whole
-    # loop turned one bad directory into "discovery returned nothing".
+    # PER-SOURCE isolation: one unmounted volume must not discard every other
+    # folder's models. A single try around the whole loop turned one bad
+    # directory into "discovery returned nothing".
+    entries: list[dict] = []
+    failed: list[str] = []
     for folder in folders:
+        # The importer answers [] for a missing folder, which reads as "no
+        # models here". An unmounted volume is a failure, so say so.
+        if not Path(folder).expanduser().is_dir():
+            logging.warning("[registry] scan folder %s is not a directory; skipping it", folder)
+            failed.append(folder)
+            continue
         try:
             entries.extend(importer.scan_directory(folder))
         except Exception:
             logging.warning(
                 "[registry] scan of %s failed; skipping that folder only",
                 folder, exc_info=True)
+            failed.append(folder)
     if watch_hf:
         try:
             entries.extend(importer.scan_hf_cache())
         except Exception:
             logging.warning(
                 "[registry] HF cache scan failed; skipping it", exc_info=True)
+            failed.append("hf-cache")
+    failed.extend(path for path, _ in importer.rejected)
 
-    return [e for e in entries if isinstance(e, dict) and e.get("config")]
+    return Discovery([e for e in entries if isinstance(e, dict) and e.get("config")], failed)
+
+
+def served(config_data: dict, discovered: list[dict]):
+    """The served config: the merge, validated. The router builds its
+    ``AppConfig`` here and nowhere else, so anything that asks "what would be
+    served" through this function cannot disagree with the server.
+
+    Deep-copied first: ``AppConfig`` validation replaces each entry's nested
+    ``config`` dict with a model instance IN PLACE, and ``merge_discovered``
+    hands back the caller's own entry dicts.
+    """
+    from heylook_llm.config import AppConfig
+
+    return AppConfig(**copy.deepcopy(merge_discovered(config_data, discovered)))
+
+
+@dataclass
+class ServedDiff:
+    """What an edit does to the served set, by id.
+
+    ``changed`` maps an id served on both sides to ``{field: [before, after]}``
+    over the whole validated entry (config fields by name, the rest as
+    ``entry.<name>``). ``renamed`` maps an old id to the new id serving the
+    same file (resolved ``model_path``); a renamed model's field changes are in
+    ``changed`` under its new id, and it is in neither ``lost`` nor
+    ``gained``. ``unreliable`` names the sources either scan failed to read: a
+    model under one of them can show as lost when it is only unread.
+    """
+    gained: list[str] = field(default_factory=list)
+    lost: list[str] = field(default_factory=list)
+    renamed: dict[str, str] = field(default_factory=dict)
+    changed: dict[str, dict[str, list]] = field(default_factory=dict)
+    unreliable: list[str] = field(default_factory=list)
+
+    @property
+    def empty(self) -> bool:
+        return not (self.gained or self.lost or self.renamed or self.changed)
+
+
+def _served_rows(app) -> dict[str, dict]:
+    rows = {}
+    for m in app.get_enabled_models():
+        dumped = m.model_dump(mode="json")
+        row = {k: v for k, v in (dumped.pop("config") or {}).items()}
+        row.update({f"entry.{k}": v for k, v in dumped.items() if k not in ("id", "enabled")})
+        rows[m.id] = row
+    return rows
+
+
+def served_diff(before: tuple[dict, Discovery], after: tuple[dict, Discovery]) -> ServedDiff:
+    """Compare what two configs serve, each side a ``(config_data, Discovery)``.
+
+    Pure over its arguments: discovery is passed in, because it is the only
+    part that touches the filesystem (the caller scans once, or twice for an
+    edit that moves a folder). Each side goes through :func:`served`, the
+    router's own merge and validation, never a second copy of the matching
+    rule. A side the server would refuse raises, which is the answer.
+    """
+    (cfg_a, disc_a), (cfg_b, disc_b) = before, after
+    rows_a = _served_rows(served(cfg_a, disc_a.entries))
+    rows_b = _served_rows(served(cfg_b, disc_b.entries))
+    lost = rows_a.keys() - rows_b.keys()
+    gained = rows_b.keys() - rows_a.keys()
+    # A lost id and a gained id serving one file (the merge's identity rule)
+    # are a rename, not a loss: deleting a hand-named entry hands the file
+    # back to discovery under its derived id.
+    gained_by_path: dict[str, list[str]] = {}
+    for mid in gained:
+        gained_by_path.setdefault(path_identity(rows_b[mid]["model_path"]), []).append(mid)
+    renamed = {}
+    for mid in sorted(lost):
+        heirs = gained_by_path.get(path_identity(rows_a[mid]["model_path"])) or []
+        if len(heirs) == 1:
+            renamed[mid] = heirs.pop()
+    pairs = [(m, m) for m in rows_a.keys() & rows_b.keys()] + list(renamed.items())
+    changed = {}
+    for old, new in pairs:
+        a, b = rows_a[old], rows_b[new]
+        delta = {k: [a.get(k), b.get(k)] for k in sorted(a.keys() | b.keys()) if a.get(k) != b.get(k)}
+        if delta:
+            changed[new] = delta
+    return ServedDiff(
+        gained=sorted(gained - set(renamed.values())),
+        lost=sorted(lost - renamed.keys()),
+        renamed=renamed,
+        changed=dict(sorted(changed.items())),
+        unreliable=sorted(set(disc_a.failed) | set(disc_b.failed)),
+    )

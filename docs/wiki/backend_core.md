@@ -151,7 +151,8 @@ Model availability is governed by [`model_registry.py`](../../src/heylook_llm/mo
 - Folders are not the only trigger: `[scan].watch_hf_cache` runs discovery over the HuggingFace cache with no folders configured at all.
 - Discovered models not listed in `models.toml` are served with automatically derived parameters. A new download needs no import, no symlink and no edit.
 - The merge **never writes `models.toml`**. A `[[models]]` entry is served exactly as written and always wins; discovery can only ADD.
-- Discovery is **best-effort**: a failing scan is logged and dropped, never fatal. An empty result is the correct answer for "no `[scan]` section", "scanning is off" and "the scan failed" alike -- all three mean `models.toml` stands alone.
+- Discovery is **best-effort**: a failing scan is logged and dropped, never fatal. An empty result is the correct answer for "no `[scan]` section", "scanning is off" and "the scan failed" alike -- all three mean `models.toml` stands alone. `scan()` tells the last apart: it returns the entries plus the sources that failed, where a missing or unmounted folder counts as failed (not as "no models here"), and one model the importer rejects is dropped alone and named, rather than failing its whole folder.
+- The router builds its `AppConfig` through `model_registry.served` (merge, then validate on a copy), and nothing else does, so any "what would be served" question asked through it cannot disagree with the server.
 - Admin edits **materialize** an entry on write (`update_config`, `toggle_enabled`), because editing *is* the override. Reads never do, or browsing the models page would grow the file. `remove_config` deliberately does not materialize: the next scan would serve the model back, and a "removed" model that reappears is worse than a clear refusal.
 
 ### 5.2. Resolved Path Matching (`path_identity`)
@@ -159,7 +160,7 @@ Models are deduplicated and merged based on **`path_identity(path)`**, which exe
 - Matching on model IDs is strictly forbidden: IDs derive from directory names, which break when directories are symlinked across vendor aliases in a model folder.
 - **The Explicit Entry Gotcha**: if an entry already names a model's resolved path, `merge_discovered()` **skips** that discovered model, so nothing re-derives for it ever again. **An explicit entry receives NONE of discovery's derived fields.** Adding one field means hand-writing every *other* field that model needs -- `mmproj_path`, `draft_model_path` and the rest. This has bitten in both directions: a thin materialized entry once cost a vision model its `mmproj_path`, so the next spawn had no `--mmproj` with the projector sitting unreferenced beside the weights; and enabling `spec_type` on a text model required writing `draft_model_path` longhand, because the drafter the importer would have auto-paired is not contributed to an entry that already exists.
 
-  Before adding a field to an entry, check what discovery *was* giving that model -- `merge_discovered(data, discover(data))` -- and carry it forward, or the edit is a silent capability removal.
+  Before adding a field to an entry, check what discovery *was* giving that model and carry it forward, or the edit is a silent capability removal. Ask the merge, not the rule: `scripts/served_diff.py --against <candidate.toml>` runs `served_diff` over the current config and a candidate and names every id gained, lost or renamed and every field that changes; `--prune` does it for each entry deleted alone (plan_registry_sidecars Phase 0). A scan that failed on either side is reported as unreliable rather than as a mass loss.
 
 ---
 

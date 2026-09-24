@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.107]
+
+### Added
+
+- **The served-set diff (plan_registry_sidecars Phase 0, the gate for W0).** `model_registry.served_diff(before, after)` says what a config edit does to the served set: ids gained, lost and renamed (a renamed id is matched to its new id by resolved `model_path`), and every changed field. Each side goes through `model_registry.served`, which is now the router's only way to build its `AppConfig`, so the diff cannot disagree with the server. `scripts/served_diff.py` is the read-only dry run: `--prune` reports each models.toml entry deleted alone, and `--against <toml>` compares against a candidate file.
+
+### Fixed
+
+- **Discovery says when it failed.** `model_registry.scan()` returns the sources it could not read along with the models it found. A scan folder that is missing or unmounted now counts as failed rather than reading as an empty folder, and the diff reports it as unreliable rather than as a mass loss.
+- **One malformed model no longer unserves its whole scan folder.** The importer's `_validate` used to raise, failing every model in the folder, which with one scan folder meant every discovered model. It now drops that entry alone, logs it, and records it in `ModelImporter.rejected`.
+
 ## [2.0.106]
 
 ### Removed

@@ -13,7 +13,7 @@ import textwrap
 
 import pytest
 
-from heylook_llm.model_registry import merge_discovered, discover
+from heylook_llm.model_registry import Discovery, discover, merge_discovered, scan, served_diff
 from heylook_llm.model_service import ModelService
 
 
@@ -114,31 +114,38 @@ class TestDiscoverIsBestEffort:
     def test_no_scan_section_discovers_nothing(self):
         assert discover({"models": []}) == []
 
-    def test_scan_failure_degrades_to_models_toml(self, monkeypatch, caplog):
-        """A broken scan must not stop the server coming up."""
-        import heylook_llm.model_importer as mi
-
-        def boom(self, path):
-            raise OSError("disk gone")
-
-        monkeypatch.setattr(mi.ModelImporter, "scan_directory", boom)
-        assert discover({"scan": {"folders": ["/nope"]}}) == []
-        assert "failed" in caplog.text
-
-    def test_one_bad_folder_does_not_discard_the_healthy_ones(
+    def test_one_bad_folder_costs_only_itself_and_is_named(
             self, tmp_path, monkeypatch):
-        """Per-source isolation: an unmounted volume must cost only itself."""
+        """Per-source isolation: a folder that raises and a folder that is not
+        there each cost only themselves, and each is named as failed -- a
+        missing folder must not read as "no models here"."""
         import heylook_llm.model_importer as mi
         good = entry("survivor", tmp_path / "ok.gguf")
+        for d in ("broken", "healthy"):
+            (tmp_path / d).mkdir()
 
         def selective(self, path):
             if "broken" in str(path):
-                raise OSError("unmounted")
+                raise OSError("disk gone")
             return [dict(good)]
 
         monkeypatch.setattr(mi.ModelImporter, "scan_directory", selective)
-        found = discover({"scan": {"folders": ["/broken", "/healthy"]}})
-        assert [e["id"] for e in found] == ["survivor"]
+        folders = [str(tmp_path / "broken"), str(tmp_path / "healthy"), str(tmp_path / "unmounted")]
+        found = scan({"scan": {"folders": folders}})
+        assert [e["id"] for e in found.entries] == ["survivor"]
+        assert found.failed == [folders[0], folders[2]]
+
+    def test_one_invalid_model_is_rejected_alone(self, tmp_path, monkeypatch):
+        """One malformed model directory must not unserve its whole folder,
+        which with a single scan folder is every discovered model."""
+        import heylook_llm.model_importer as mi
+        good = entry("good", tmp_path / "ok.gguf")
+        bad = entry("bad", tmp_path / "bad.gguf", not_a_field=1)
+        monkeypatch.setattr(mi.ModelImporter, "scan_directory",
+                            lambda self, path: self._validate([dict(good), dict(bad)]))
+        found = scan({"scan": {"folders": [str(tmp_path)]}})
+        assert [e["id"] for e in found.entries] == ["good"]
+        assert found.failed == [str(tmp_path / "bad.gguf")]
 
     def test_interval_zero_disables_discovery(self, monkeypatch):
         """The documented off switch must actually switch discovery off."""
@@ -429,3 +436,48 @@ class TestScanConfigAccessors:
             tmp_path, '\n# why this folder\n[scan]\nfolders = ["a"]\n')
         svc.set_scan_config(folders=["a", "b"])
         assert "# why this folder" not in cfg.read_text()
+
+
+@pytest.mark.unit
+class TestServedDiff:
+    """Phase 0 of plan_registry_sidecars: what an edit does to the served set,
+    answered by the router's own merge rather than predicted from the rule."""
+
+    def test_deleting_an_entry_that_reads_redundant_can_lose_the_model(self, store):
+        """The twin: two entries claim one file. The plain one matches what
+        discovery derives, so it reads as safe to delete -- and deleting it
+        unserves that id, because the twin still claims the path and
+        discovery therefore adds nothing back."""
+        blob = store / "a.gguf"
+        found = Discovery([entry("a", blob)], [])
+        before = {"models": [entry("a", blob), entry("a-twin", blob)]}
+        after = {"models": [entry("a-twin", blob)]}
+        d = served_diff((before, found), (after, found))
+        assert d.lost == ["a"] and d.gained == [] and d.changed == {}
+
+    def test_an_edit_is_named_field_by_field(self, store):
+        blob = store / "a.gguf"
+        found = Discovery([entry("a", blob)], [])
+        d = served_diff(({"models": []}, found),
+                        ({"models": [entry("a", blob, ctx_size=8192)]}, found))
+        assert d.changed == {"a": {"ctx_size": [None, 8192]}}
+        assert not d.lost and not d.gained
+
+    def test_a_degraded_scan_is_named_not_trusted(self, store):
+        """A scan that failed and a mass deletion look identical by count, so
+        the diff reports the failed source instead of guessing by magnitude."""
+        found = Discovery([entry("a", store / "a.gguf"), entry("b", store / "b.gguf")], [])
+        degraded = Discovery([], [str(store)])
+        d = served_diff(({"models": []}, found), ({"models": []}, degraded))
+        assert d.lost == ["a", "b"] and d.unreliable == [str(store)]
+
+    def test_a_hand_named_entry_deleted_is_a_rename_with_its_fields(self, store):
+        """Deleting a hand-named entry hands its file back to discovery under
+        the derived id: that is a rename, and what the entry held shows as a
+        field change rather than hiding behind lost-and-gained."""
+        blob = store / "a.gguf"
+        found = Discovery([entry("a", blob)], [])
+        d = served_diff(({"models": [entry("my-name", blob, ctx_size=4096)]}, found),
+                        ({"models": []}, found))
+        assert d.renamed == {"my-name": "a"} and not d.lost and not d.gained
+        assert d.changed == {"a": {"ctx_size": [4096, None]}}

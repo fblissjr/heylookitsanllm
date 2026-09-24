@@ -1,6 +1,6 @@
 # Plan: retire per-model entries from models.toml
 
-last updated: 2026-09-08 (PROPOSED — nothing built; Phase 0 is the gate.)
+last updated: 2026-09-24 (Phase 0 built, v2.0.107: `model_registry.scan`/`served`/`served_diff` and `scripts/served_diff.py`; the rest is not built.)
 
 ## The decision
 
@@ -186,6 +186,20 @@ Ordered by dependency, not by appetite. **Every phase changes which models get
 served**, which is exactly what nobody can currently see before doing it.
 
 ### Phase 0 — the served-set diff (GATE)
+
+> **Built 2026-09-24 (v2.0.107).** `served_diff(before, after)` takes
+> `(config_data, Discovery)` sides and runs each through `served`, the one
+> function the router builds its `AppConfig` with. `scan()` reports failed
+> sources (a missing folder counts; the importer now rejects one invalid model
+> alone instead of failing its folder). Renames are matched by resolved path
+> and carry their field changes. Wired in as a library function plus the
+> dry-run script (`--prune`, `--against`), not into the admin mutations: the
+> writers it would wrap (`toggle_enabled`, materialization) retire in Phase 3,
+> and the wired-in API is still decided after Phase 2. The test is example
+> rows, not the property: with the diff calling the router's own merge, "every
+> id served before is served after or named in lost" holds by construction,
+> so the rows pin the cases that were mispredicted (twin, rename, degraded
+> scan).
 
 Nothing else starts until this exists.
 

@@ -44,8 +44,7 @@ class ModelRouter:
         self.config_path = config_path
 
         # Load config (TOML only)
-        config_data = self._load_config(config_path)
-        self.app_config = AppConfig(**config_data)
+        self.app_config = self._load_config(config_path)
 
         self.providers = OrderedDict()
         self.max_loaded_models = self.app_config.max_loaded_models
@@ -145,12 +144,14 @@ class ModelRouter:
                 logging.error(f"Failed to pre-warm initial model '{initial_model_to_load}': {e}")
                 logging.warning(f"Continuing without pre-warming. Model '{initial_model_to_load}' will be loaded on first request.")
 
-    def _load_config(self, config_path: str) -> dict:
-        """Load configuration from TOML, then fold in discovered models.
+    def _load_config(self, config_path: str) -> AppConfig:
+        """Load configuration from TOML, fold in discovered models, validate.
 
         Both AppConfig construction sites (__init__ and reload_config) come
         through here, so discovery applies to a reload as well -- dropping a
         model into a scan folder and hitting reload is enough to serve it.
+        The merge and validation are `model_registry.served`, the function
+        `served_diff` also calls, so a diff cannot disagree with the server.
 
         The merge is LOAD-time only: models.toml is never written. See
         model_registry for the rule (explicit entries win, matched by resolved
@@ -184,12 +185,12 @@ class ModelRouter:
     written_ids: frozenset = frozenset()
     derived_configs: dict = {}
 
-    def _with_discovered(self, config_data: dict) -> dict:
+    def _with_discovered(self, config_data: dict) -> AppConfig:
         """Fold `[scan].folders` discoveries into the parsed config."""
         from heylook_llm.model_registry import (
             derived_for_explicit,
             discover,
-            merge_discovered,
+            served,
         )
 
         ModelRouter._audit_configured_paths(config_data)
@@ -197,7 +198,7 @@ class ModelRouter:
         self.written_ids = frozenset(
             str(e["id"]) for e in config_data.get("models") or [] if e.get("id"))
         self.derived_configs = derived_for_explicit(config_data, discovered)
-        return merge_discovered(config_data, discovered)
+        return served(config_data, discovered)
 
     # Last audit report emitted, so a reload re-reports only on CHANGE.
     # `None` (never audited) is deliberately distinct from `""` (audited,
@@ -739,8 +740,7 @@ class ModelRouter:
         """Reload model configuration from file."""
         try:
             # Reload the configuration from stored path
-            config_data = self._load_config(self.config_path)
-            self.app_config = AppConfig(**config_data)
+            self.app_config = self._load_config(self.config_path)
             self.max_loaded_models = self.app_config.max_loaded_models
             self._refresh_per_request_defaults()
             if self.warm_model_facts_on_load:
