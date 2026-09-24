@@ -40,7 +40,7 @@ These replace the prompts' defaults here; overrides given at invocation still wi
 AGENTS.md's rules apply. Keep going when a step doesn't need the owner. Stop and ask only when you can't continue without the owner, or before you:
 
 - touch the owner's running server, conversations, settings, or the shared `.venv`;
-- download or delete a model, or delete anything under `adapters/` or `modelzoo/`;
+- download or delete a model, or delete anything under `adapters/` or in the model folders (`[scan].folders` in `models.toml`);
 - move a dependency pin or rebuild llama.cpp (propose it with its evidence);
 - bump `_SCHEMA_VERSION`, which drops the owner's conversations at their next server start;
 - merge, push, force-push, or rewrite history;

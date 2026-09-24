@@ -85,5 +85,4 @@ Each file below holds the mechanisms that bite in its area. Claude Code loads it
 - `ENV=x uv run ...` does not match the uv sandbox exemption, so it runs sandboxed with no Metal.
 - Sandboxed `curl` cannot reach localhost; probe with `uv run python` and urllib.
 - Never launch the server piped to `head` (SIGPIPE wedges it); redirect to a file.
-- Sandboxed `find` can silently return nothing under `modelzoo/`; use `ls` or a `uv run python` glob.
 - To verify a change is schema-neutral, export `app.openapi()` from a HEAD~1 worktree and byte-compare.

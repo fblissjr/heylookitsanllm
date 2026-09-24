@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.102]
+
+Documentation only.
+
+### Added
+
+- **`docs/loops.md`, the loop profile** (committed in `2e04699` without an
+  entry, while another session held the version). It carries the sections the
+  improvement-loops plugin's `/improve`, `/optimize` and `/design-scoreboard`
+  cite as "AGENTS.md's <section>" (North star, Where things live, How to work,
+  Other sessions, Measurement, Reporting, Loop state), plus heylook's loop
+  defaults, lenses and scope, taken from the two heylook loop prompts.
+  AGENTS.md points to it and says it counts as part of AGENTS.md, so the
+  sections load only when a loop reads them. Measurement's primary scenarios,
+  guardrails and counter-checks are marked pending `/design-scoreboard`.
+- `docs/README.md` lists it.
+
+### Changed
+
+- With `modelzoo/` removed (`b899f70`), the loop profile's stop rule names the
+  model folders (`[scan].folders`) instead, and AGENTS.md drops the sandbox
+  trap about `find` under `modelzoo/`: sandboxed and unsandboxed `find` return
+  the same files in the current model folder.
+
 ## [2.0.101]
 
 ### Added (plan W4, backend)
