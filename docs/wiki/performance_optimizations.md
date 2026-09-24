@@ -74,9 +74,9 @@ Lessons from the single-slot design this replaced (history: [sharp_edges.md](../
 
 ### 2.2. Vision Feature LRU Cache
 In multimodal VLM conversations, re-evaluating high-resolution images across multi-turn exchanges is computationally expensive.
-- [`vision_feature_cache.py`](../../src/heylook_llm/providers/common/vision_feature_cache.py) maintains an LRU cache of encoded vision features. The vision strategy hands it to the model the way mlx-vlm's own server does, as `vision_cache` plus the request's image list as `_image_key`, and the model looks up and stores its own tower output (qwen3_5, gemma4 and deepseek_v4 read these; a model that reads neither ignores them). Until 2026-09-24 heylook ran the tower itself and only for models exposing `encode_image`, which qwen3_5 does not, so qwen3_5 image conversations never used the cache.
+- [`vision_feature_cache.py`](../../src/heylook_llm/providers/common/vision_feature_cache.py) maintains an LRU cache of encoded vision features, used only for models that expose `encode_image`.
 - **The key is the request's whole image list**, every image URL in the conversation joined in order -- not one entry per image. A base64 upload is keyed by its data-URL string like any other; the pixel-hash fallback in that file is not reached from [the vision strategy](../../src/heylook_llm/providers/mlx_provider.py)'s call, since every entry in the list is a string.
-- So a turn whose image list is unchanged skips the vision tower, but a turn that **adds** an image misses and re-encodes every image in the history. A per-image cache is part of the plan's W10.
+- So a turn whose image list is unchanged passes `cached_image_features` to the language model and skips the vision tower, but a turn that **adds** an image misses and re-encodes every image in the history. A per-image cache is part of the plan's W10.
 
 ### 2.3. Streaming Detokenizer
 The engine streams through **mlx-lm's** streaming detokenizer, vendored as [`lm_detokenizer.py`](../../src/heylook_llm/providers/common/lm_detokenizer.py) (mlx-lm itself is not a dependency), not mlx-vlm's. mlx-vlm's BPE detokenizer flushes only when a token starts with a space, so an answer with no spaces -- a count, code, CJK text -- arrives in one lump at the end; mlx-lm's streams per token (checked on Qwen3.5's tokenizer, 2026-09-23; the smoke walk-away check caught it).

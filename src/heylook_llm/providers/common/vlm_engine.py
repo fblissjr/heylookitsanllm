@@ -308,8 +308,8 @@ def generate(
     engine snapshots where each agrees with this prompt, so the next
     conversation restores it (``install_capture_policy``).
     ``embed_extras`` reach ``get_input_embeddings`` only, never the
-    generator's prompt kwargs (the vision cache as ``vision_cache`` and
-    ``_image_key``; mlx-vlm's server strips the same kwargs the same way).
+    generator's prompt kwargs (heylook's ``cached_image_features``; mlx-vlm's
+    server strips its own vision-cache kwargs the same way).
     Runs entirely on the calling thread (the pinned MLX executor).
     """
     from mlx_vlm.generate.ar import BatchGenerator

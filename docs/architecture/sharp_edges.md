@@ -1278,12 +1278,7 @@ the cost was lost reuse, never a reply decoded from a wrong position.
 
 The vision feature cache is keyed by the request's whole image-URL list joined
 in order, so adding one image to a conversation re-encodes every image in it;
-the pixel-hash fallback in the module is never reached from that caller. It
-reaches the model as mlx-vlm's `vision_cache`/`_image_key` kwargs, the way
-mlx-vlm's server passes it; until 2026-09-24 heylook gated it on the model
-having `encode_image()`, which qwen3_5 lacks, so the owner's daily vision
-family re-ran the tower on every turn while every test of the cache stayed
-green on gemma4. A
+the pixel-hash fallback in the module is never reached from that caller. A
 per-image key is part of W10 of
 [plan_runtime_visibility.md](../project/plan_runtime_visibility.md).
 
