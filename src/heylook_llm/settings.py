@@ -43,11 +43,14 @@ class SettingsSchema(BaseModel):
     # admin UI) when you want telemetry/diagnostics captured.
     observability_level: Literal["off", "minimal", "standard", "debug"] = "off"
     observability_retention_days: int = Field(default=30, ge=0)
-    # Cap on MLX's buffer cache (GB). The allocator keeps freed buffers for
-    # reuse and never returns them to the OS, so server RSS pins at the
-    # prompt-spike high-water mark; a cap bounds idle RSS at the cost of
-    # re-allocation on the next spike. None = MLX's own default (uncapped in
-    # practice). Matters when other memory-hungry jobs share the box.
+    # Cap on MLX's buffer cache (GB) WITHIN a request. The allocator keeps
+    # freed buffers for reuse, but the cache is already cleared after every
+    # generation (MLXProvider.create_chat_completion's finally) and on every
+    # unload, so between requests the MLX process holds its weights and the
+    # prefix cache's snapshots (bounded by mlx-vlm's own APC budget), which a
+    # cap does not touch. A cap would only bound prefill and decode, at the
+    # likely cost of re-allocation there. None = MLX's own default; no default
+    # cap (unmeasured, and the idle case it would serve is already handled).
     mlx_cache_limit_gb: float | None = Field(default=None, gt=0)
 
 
