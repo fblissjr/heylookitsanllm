@@ -33,7 +33,7 @@ class BatchVisionProcessor:
         Load multiple images in parallel.
         
         Args:
-            image_urls: List of image URLs/paths/base64 strings
+            image_urls: data: URLs or http(s) URLs (local paths are refused by load_image)
             
         Returns:
             List of PIL Image objects

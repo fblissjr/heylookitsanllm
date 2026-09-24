@@ -6,7 +6,7 @@ import logging
 import requests
 import time
 import os
-from PIL import Image, ImageOps
+from PIL import Image
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
 
@@ -19,7 +19,12 @@ except ImportError:
     psutil = None
 
 def load_image(source_str: str) -> Image.Image:
-    """Load an image from a data URL, an http(s) URL or a file path.
+    """Load an image from a data URL or an http(s) URL.
+
+    A local file path is refused (owner decision 2026-09-24): any LAN client
+    could otherwise make the server open image files on this machine's disk
+    by naming them. Nothing heylook ships sends paths (the UI, the stored
+    conversations and batch-labeler all embed images as data URLs).
 
     Raises on anything it cannot read. Until 2026-09-24 every failure became
     a small red image (a 1x1 for bad base64, a 64x64 otherwise), so a model
@@ -34,7 +39,7 @@ def load_image(source_str: str) -> Image.Image:
                      f"Base64: {_format_bytes((base64_size * 3) // 4)} | "
                      f"Load time: {(time.time() - start_time)*1000:.1f}ms")
         return image
-    if source_str.startswith("http"):
+    if source_str.startswith(("http://", "https://")):
         headers = {
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15'
         }
@@ -47,11 +52,10 @@ def load_image(source_str: str) -> Image.Image:
                      f"Load time: {(time.time() - start_time)*1000:.1f}ms | "
                      f"URL: {source_str[:100]}...")
         return image
-    image = ImageOps.exif_transpose(Image.open(source_str)).convert("RGB")
-    logging.info(f"[IMAGE LOAD] File image loaded | Size: {image.size} | "
-                 f"Load time: {(time.time() - start_time)*1000:.1f}ms | "
-                 f"Path: {source_str}")
-    return image
+    raise ValueError(
+        f"image source {source_str[:40]!r} is neither embedded data (data:image/...) "
+        "nor an http(s) URL; local file paths are not accepted"
+    )
 
 def sanitize_request_for_debug(chat_request) -> str:
     """

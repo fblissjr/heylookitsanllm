@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.128]
+
+### Security
+
+- **An MLX image source that is a local file path is refused** (owner
+  decision). `utils.load_image` opened any string that was not a data URL or
+  a web link as a file on this machine, so a LAN client could make the server
+  read image files by naming them. It now accepts only `data:image/...` and
+  `http://` / `https://` (the web-link check was a bare `startswith("http")`)
+  and raises otherwise, which the MLX path already returns as a 400. The UI,
+  stored conversations and batch-labeler all send data URLs, so nothing heylook
+  ships changes. gguf needed nothing: llama-server refuses `file://` unless
+  started with `--media-path`, which heylook never passes. Web links stay, as
+  Anthropic's `url` image source.
+
 ## [2.0.127]
 
 ### Removed

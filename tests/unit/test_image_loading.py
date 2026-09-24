@@ -29,3 +29,12 @@ def test_base64_images_decode_wrapped_or_not(wrap):
 def test_an_unreadable_image_raises():
     with pytest.raises(Exception):
         load_image("data:image/png;base64,bm90IGFuIGltYWdl")
+
+
+@pytest.mark.unit
+def test_a_local_file_path_is_refused_even_when_readable(tmp_path):
+    # A LAN client must not be able to make the server open files on its disk.
+    path = tmp_path / "real.png"
+    Image.new("RGB", (8, 8)).save(path)
+    with pytest.raises(ValueError, match="local file paths are not accepted"):
+        load_image(str(path))
