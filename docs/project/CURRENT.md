@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-24, v2.0.101, `main`.
+Last updated: 2026-09-24, v2.0.115, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md), and what each release
@@ -15,7 +15,7 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
-| unit + contract | green | v2.0.95 |
+| unit + contract | green (1757 passed) | v2.0.115 |
 | `bun run e2e:render` (model-free) | 98/98, including the thinking-depth control check | v2.0.95 |
 | `tests/smoke/` (arms `mlx-text` / `mlx-vision` / `gguf` since v2.0.88) | 82/82 at v2.0.95 on `gpt-oss-20b-MXFP4-Q8-mlx`, `Qwen3.5-0.8B-MLX-8bit` and `JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`: depth covered on mlx-text and gguf (an offered value accepted, an unoffered one a 400 on gguf); a turn that adds a new image is the named known gap; audio uncovered on the arms picked | v2.0.95 |
 | `scripts/vlm_parity_probe.py` | MATCH on both cases, Qwen3.5-0.8B, against mlx-vlm's own loop. Earlier: Qwen-Image-2.1-PE-I21, Qwen3.5-27B-8bit, Qwen3-VL-32B at v2.0.55 | v2.0.88 (0.8B) |
@@ -33,9 +33,38 @@ advertises `reasoning_effort`.
 
 ## Handoff -- start here (end of 2026-09-24)
 
-**Where things stand (latest first).** Afternoon, v2.0.98 - v2.0.101. A
-peer session (`mropt`, the improvement loop) worked in parallel and shipped
-v2.0.96-97 (AGENTS.md split into `.claude/rules/`).
+**Where things stand (latest first).** Late afternoon, v2.0.102 - v2.0.115,
+two sessions on main (`mrblue`: the registry and spec decode; `mragents`:
+agent docs and the loop profile) while `mropt`, the improvement loop, worked
+on its own branch.
+- **models.toml holds no per-model entries** (plan_registry_sidecars Phases
+  0-4). A model's own settings live in `model.heylook.toml` in its folder
+  (v2.0.111); only the models with a real override carry one (their context sizes, MiniMax-M3's
+  `n_ubatch`, Qwen3.8-Flash-Next's `unset` of its drafter). The owner's
+  pre-migration file is backed up in `internal/backups/`. `served_diff`
+  (v2.0.107) showed nothing lost or gained; Muse-Glimmer's id is now its
+  folder name. An admin edit writes the model's own file; materialization
+  and the enable toggle are gone (v2.0.115). Only the daily server writes
+  model settings; every other launcher runs read-only (v2.0.112).
+- **Spec decode is on by default when a model ships a drafter** (owner
+  decision; v2.0.108-109 docs). Discovery finds a drafter beside the
+  weights, in an immediate subfolder, built into the weights, or in a
+  neighbouring folder whose header names the same model (v2.0.110). At spawn
+  a drafter gives way when the model fits live free memory only without it,
+  logged as "short by N GiB" (v2.0.112); a drafter the build cannot load
+  costs one retry, never the model (v2.0.113). Live, in-process: both
+  Qwen3.8-27B builds run their built-in MTP head with drafting active.
+  Qwen3.8-Flash-Next's `MTP/` drafter is a split-out head the build cannot
+  load, so it serves without spec decode. The DeepSeek checks are item 0.
+- DeepSeek-V4-Flash-Vision (Q8, Q4, ggml-org) runs at 384K context (owner:
+  Think Max needs at least 384K), set in each model's own file.
+- v2.0.102-106: `docs/loops.md`, the loop profile the improvement-loops
+  plugin reads as part of AGENTS.md; no `modelzoo/` left in live code
+  (`scripts/convert_gguf.py` needs `--dest`); the no-op model-path allowlist
+  is gone; `perf_ab.py` removes its worktrees.
+
+Afternoon, v2.0.98 - v2.0.101. The AGENTS.md split into `.claude/rules/`
+(v2.0.96-97) was a docs session's, not the improvement loop's.
 - v2.0.101 **W4 backend**: `POST /v1/models/{id}/image-plan` asks the
   resident engine what an image costs. Open: the frontend half, an owner
   call (see item 0).
@@ -94,7 +123,14 @@ one side left at f16.
 
 **Open items, first things first:**
 
-0. **Environment (owner):**
+0. **Registry and spec decode, what is left** (details in `TODO.md`):
+   - DeepSeek live checks (Vision Q8, Q4, ggml-org Vision, 0731) waiting on
+     free memory: at 384K, Q8 with its drafter needs more than is free with
+     the browser open, so expect it to load without the drafter;
+   - spec decode is not yet in the engine report (`engine.speculative`);
+   - models.toml becomes `heylook.toml` with the DuckDB settings folded in;
+     the `enabled` field and `watch_hf_cache` retire.
+   **Environment (owner):**
    - Resolved later on 2026-09-24: no `models.toml` entry points at `modelzoo/`
      any more (checked against the local file), and the repo no longer names it
      outside `.gitignore` and dated history (v2.0.104). Not yet re-run: E2E on

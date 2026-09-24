@@ -64,30 +64,50 @@ The eval bank speaks `/v1/messages` again (v2.0.71, an adapter in `run.py`;
 `/eval-ab` unblocked). Still open: whether the eval-gate reminder retired with
 hookify comes back as a native PostToolUse hook (logic in `scripts/hooks/`).
 
-## Retire per-model entries from models.toml (2026-09-08) — START HERE
+## Retire per-model entries from models.toml (2026-09-08)
 
-Owner decision, planned but NOT started. The plan is
-[`plan_registry_sidecars.md`](./plan_registry_sidecars.md); read it before
-touching `models.toml`, `model_registry.py`, `model_service.py` or the admin
-config editor, because the obvious edits in all four are the ones it warns
-about.
+Phases 0-4 of [`plan_registry_sidecars.md`](./plan_registry_sidecars.md) are
+done (v2.0.107-115): models.toml holds no per-model entries, a model's own
+settings live in its folder's `model.heylook.toml`, admin edits write that
+file, only the daily server writes, and discovery pairs drafters wherever
+they ship. Read the plan before touching `model_registry.py`,
+`model_importer.py`, `model_service.py` or the admin config editor.
 
-- [ ] **Phase 0: `served_diff`, and nothing else starts first.** A pure
-  function over two configs reporting gained / lost / effective-config-changed
-  per id. Two constraints are non-negotiable and both were verified the hard
-  way: it takes `AppConfig`, never raw dicts (an unvalidated config resolves
-  EVERY model to the text loader — now a hard error, `45a03d1`), and
-  validation MUTATES the structure it validates, so the two sides cannot share
-  one. Test shape is a property, not a table of cases. Fixtures synthetic, no
-  machine paths.
-- [ ] **Decide the two open questions before Phase 2.** Read-only model
-  directories (a model that cannot be configured at all — may be the reason
-  per-model entries survive), and the twin (one directory is one model, and
-  the smoke text arm has no other cheap source).
-- [ ] **Phase 1 is independent and worth doing regardless**: the
-  always-reasoning thinking probe, and sidecar pairing in subdirectories.
-- [ ] Three dead entries warn at every startup and are safe to remove once
-  Phase 0 can show what removing them does.
+- [ ] **DeepSeek live checks** on Vision Q8, Vision Q4, ggml-org Vision and
+  0731, when enough memory is free. Expect Q8 at 384K to load without its
+  drafter while the browser is open, logged as "short by N GiB".
+- [ ] **Spec decode in the engine report** (`engine.speculative`): whether a
+  drafter is available, whether it is in force, and why, with provenance, so
+  "available, not in use" shows on the models page.
+- [ ] **models.toml becomes `heylook.toml`** with the DuckDB settings
+  (`observability_level`, `observability_retention_days`,
+  `mlx_cache_limit_gb`) folded in (owner decision 2026-09-23). Rename the
+  references in `.worktreeinclude` and `docs/loops.md` in the same change.
+- [ ] **Retire the `enabled` field and `watch_hf_cache`** (owner: presence in
+  a scan folder is enabled).
+- [ ] **Qwen3.8-Flash-Next's `MTP/` drafter**: a split-out head (no
+  `token_embd.weight`) that the llama.cpp build cannot load. Its
+  `model.heylook.toml` unsets it; drop that `unset` once a build loads it.
+
+## Loop setup for the improvement-loops plugin (2026-09-24)
+
+`docs/loops.md` is the profile the plugin's `/improve` and `/optimize` read as
+part of AGENTS.md.
+
+- [ ] **Fill Measurement with `/design-scoreboard`** (user-invoked): primary
+  scenarios, guardrails and counter-checks for the reuse and
+  time-to-first-token goal; then `/claim-audit` on `docs/loops.md`.
+- [ ] **Delete the duplicate prompts** with `/dangling-refs`: the generic
+  loop prompts and template in `docs/prompts/optimizer_and_improvement_loops/`
+  are byte-identical to the plugin's (the template differs by one comment);
+  the two heylook prompts go once everything in them lives in `docs/loops.md`.
+- [ ] **Promote the loop's scenario runner** from
+  `internal/claude/improve/harness/` into `scripts/` once it has tracked real
+  use over several runs; `scripts/perf_ab.py` is the provider-level half.
+- [ ] **Plugin fix for old run records**: `loop_state.py` skips a run folder
+  without `record.json`, so a pre-plugin record still marked running can be
+  tidied over. Handoff: `internal/claude/handoff_loop_state_legacy_records_2026-09-24.md`
+  (for the fb-claude-skills session).
 
 ## e2e: audit for clicks or seeds before an async list lands (2026-09-23)
 
