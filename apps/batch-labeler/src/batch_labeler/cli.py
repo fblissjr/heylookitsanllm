@@ -31,6 +31,7 @@ from rich.table import Table
 
 from . import scanner, storage
 from .client import (
+    DEFAULT_MAX_EDGE,
     GenerationOptions,
     ServerError,
     fetch_models,
@@ -73,36 +74,27 @@ def _add_generation_args(p: argparse.ArgumentParser) -> None:
     g.add_argument("--user-prompt", help="Override the task's per-image user prompt")
 
     s = p.add_argument_group("generation")
-    s.add_argument(
-        "--sampler", "--preset", dest="sampler",
-        help="Server named sampler (overrides the task's; --preset is an alias)",
-    )
     s.add_argument("--max-tokens", type=int, help="Max tokens per response")
     s.add_argument("--temperature", type=float, help="Sampling temperature")
     s.add_argument("--top-p", type=float, help="Nucleus sampling threshold")
     s.add_argument("--seed", type=int, help="Sampling seed for reproducibility")
     think = s.add_mutually_exclusive_group()
     think.add_argument(
-        "--think", dest="enable_thinking", action="store_true", default=None,
+        "--think", dest="thinking", action="store_true", default=None,
         help="Enable thinking mode (thinking-capable models)",
     )
     think.add_argument(
-        "--no-think", dest="enable_thinking", action="store_false",
+        "--no-think", dest="thinking", action="store_false",
         help="Explicitly disable thinking mode",
     )
 
     v = p.add_argument_group("vision")
     v.add_argument(
-        "--vision-tokens", type=int,
-        help="Visual token budget per image (16-16384; snapped to the model's grid)",
-    )
-    v.add_argument(
-        "--resize-max", type=int,
-        help="Server-side resize to max dimension before encoding (e.g. 1024)",
-    )
-    v.add_argument(
-        "--image-quality", type=int,
-        help="JPEG quality for server-side resized images (1-100)",
+        "--max-edge", type=int, default=DEFAULT_MAX_EDGE,
+        help=(f"Downscale images client-side so the longest edge fits (default: "
+              f"{DEFAULT_MAX_EDGE}, the chat page's cap; 0 sends images as they "
+              "are). Vision cost grows much faster than pixel count, so an "
+              "uncapped camera photo is the slow case"),
     )
 
     p.add_argument(
@@ -118,7 +110,7 @@ def _add_generation_args(p: argparse.ArgumentParser) -> None:
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="batch-labeler",
-        description="Label images with a VLM served by heylookitsanllm (or any OpenAI-compatible server).",
+        description="Label images with a VLM served by heylookitsanllm (POST /v1/messages).",
     )
     sub = p.add_subparsers(dest="command", required=True)
 
@@ -190,11 +182,7 @@ def _resolve_options(args, task: Task) -> GenerationOptions:
         temperature=args.temperature,
         top_p=args.top_p,
         seed=args.seed,
-        sampler=args.sampler if args.sampler is not None else task.sampler,
-        enable_thinking=args.enable_thinking,
-        vision_tokens=args.vision_tokens,
-        resize_max=args.resize_max,
-        image_quality=args.image_quality,
+        thinking=args.thinking,
     )
 
 
@@ -232,13 +220,14 @@ def _resolve_model(args, http_client: httpx.Client, console: Console) -> str | N
     return None
 
 
-def _settings_echo(model_id: str, task: Task, options: GenerationOptions) -> dict:
-    """Compact non-None settings dict stored with each record for reproducibility."""
+def _settings_echo(model_id: str, task: Task, options: GenerationOptions,
+                   max_edge: int | None = None) -> dict:
+    """Compact non-None settings dict stored with each record for reproducibility.
+    ``max_edge`` rides along: the client-side resize changes what the model saw."""
     settings = {"model": model_id, "task": task.name}
-    for key in (
-        "sampler", "max_tokens", "temperature", "top_p", "seed",
-        "enable_thinking", "vision_tokens", "resize_max", "image_quality",
-    ):
+    if max_edge:
+        settings["max_edge"] = max_edge
+    for key in ("max_tokens", "temperature", "top_p", "seed", "thinking"):
         value = getattr(options, key)
         if value is not None:
             settings[key] = value
@@ -299,8 +288,6 @@ def cmd_tasks(args, console: Console) -> int:
         meta = f"expects_json={task.expects_json}"
         if task.required_keys:
             meta += f"  required_keys={list(task.required_keys)}"
-        if task.sampler:
-            meta += f"  sampler={task.sampler}"
         if task.max_tokens:
             meta += f"  max_tokens={task.max_tokens}"
         console.print(meta)
@@ -309,13 +296,13 @@ def cmd_tasks(args, console: Console) -> int:
     table = Table(box=None, pad_edge=False)
     table.add_column("task")
     table.add_column("output")
-    table.add_column("sampler")
+    table.add_column("max_tokens")
     table.add_column("description")
     for task in BUILTIN_TASKS.values():
         table.add_row(
             task.name,
             "json" if task.expects_json else "text",
-            task.sampler or "-",
+            str(task.max_tokens or "-"),
             task.description,
         )
     console.print(table)
@@ -343,7 +330,7 @@ def cmd_try(args, console: Console) -> int:
             try:
                 result = label_image(
                     hc, model_id, task.system_prompt, task.user_prompt,
-                    image, options, retries=args.retries,
+                    image, options, retries=args.retries, max_edge=args.max_edge,
                 )
             except Exception as e:
                 console.print(f"[red]Request failed: {escape(str(e))}[/red]")
@@ -370,8 +357,8 @@ def cmd_try(args, console: Console) -> int:
 
     stats = f"{result.request_ms} ms"
     usage = result.usage or {}
-    if usage.get("completion_tokens"):
-        stats += f"  ·  {usage.get('prompt_tokens', '?')} -> {usage['completion_tokens']} tokens"
+    if usage.get("output_tokens"):
+        stats += f"  ·  {usage.get('input_tokens', '?')} -> {usage['output_tokens']} tokens"
     if result.performance and result.performance.get("generation_tps"):
         stats += f"  ·  {result.performance['generation_tps']:.1f} tok/s"
     console.print(stats)
@@ -413,7 +400,7 @@ def cmd_run(args, console: Console) -> int:
         if model_id is None:
             return 1
         options = _resolve_options(args, task)
-        settings = _settings_echo(model_id, task, options)
+        settings = _settings_echo(model_id, task, options, args.max_edge)
 
         if args.dry_run:
             console.print(Panel(
@@ -446,6 +433,7 @@ def cmd_run(args, console: Console) -> int:
                         result = label_image(
                             hc, model_id, task.system_prompt, task.user_prompt,
                             image_path, options, retries=args.retries,
+                            max_edge=args.max_edge,
                         )
                     except httpx.HTTPStatusError as e:
                         console.print(

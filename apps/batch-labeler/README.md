@@ -1,28 +1,22 @@
 # batch-labeler
 
-Last updated: 2026-07-20
+Last updated: 2026-09-25
 
-> **PENDING PORT.** This app still targets `POST /v1/chat/completions`, which
-> the heylook server no longer serves as of v1.79.66 (the inference API is
-> `POST /v1/messages`). It needs porting to `/v1/messages` before it runs
-> against a current server; the server-side resize params it sends
-> (`resize_max`, `image_quality`) went with the route, so the port resizes
-> client-side. Owner call: small, port later. Nothing below has been updated
-> for this yet.
+Standalone CLI for batch VLM image labeling against heylookitsanllm's Messages
+API (`POST /v1/messages`). Ships rich built-in task templates (structured
+labels, captions, tags, OCR), supports the server's thinking switch, resizes
+images client-side before sending, and stores resumable results in JSONL.
 
-Standalone CLI for batch VLM image labeling against heylookitsanllm (or any
-OpenAI-compatible `/v1/chat/completions` server). Ships rich built-in task
-templates (structured labels, captions, tags, OCR), supports the server's
-thinking mode, visual token budget, server-side resizing, and named samplers,
-and stores resumable results in JSONL.
+## v0.3.0: the Messages port
 
-## Why a rebuild (v0.2.0)
-
-The v0.1 tool was a bare client: one hardcoded user prompt, no thinking
-control, no vision budget, no retries, and it required hand-writing a system
-prompt every run. v0.2 bundles curated prompts as tasks and exposes the
-server capabilities that landed after v0.1 (enable_thinking, vision_tokens,
-named samplers, performance telemetry).
+v0.2 spoke the OpenAI `/v1/chat/completions` route, which the server removed
+in v1.79.66. v0.3 speaks `/v1/messages`: the system prompt is top-level, the
+image is a base64 `image` block, and `--think`/`--no-think` send `thinking`.
+The server-side knobs v0.2 exposed are gone because the server no longer has
+them: named samplers (`--sampler`/`--preset`, removed v2.0.30),
+`--vision-tokens` (v2.0.64), and `--resize-max`/`--image-quality` (with the
+OpenAI route). Resizing is now client-side (`--max-edge`, below). A custom
+task TOML that still sets `sampler` is an unknown-key error.
 
 ## Install
 
@@ -43,10 +37,10 @@ uv run batch-labeler tasks           # built-in task templates
 uv run batch-labeler tasks label     # show a task's full prompts
 
 # 3. Test-drive one image before committing to a batch
-uv run batch-labeler try photo.jpg -m gemma-4-26b-a4b-it-8bit-mlx
+uv run batch-labeler try photo.jpg -m Qwen3.5-0.8B-MLX-8bit
 
 # 4. Run the batch
-uv run batch-labeler run path/to/dataset -m gemma-4-26b-a4b-it-8bit-mlx -o results.jsonl
+uv run batch-labeler run path/to/dataset -m Qwen3.5-0.8B-MLX-8bit -o results.jsonl
 ```
 
 If exactly one vision model is loaded on the server, `--model` can be omitted.
@@ -60,9 +54,10 @@ If exactly one vision model is loaded on the server, `--model` can be omitted.
 | `tags` | JSON | 5-20 flat keyword tags for search/filtering |
 | `ocr` | JSON | Verbatim text extraction with language + legibility |
 
-Each task carries its own system prompt, per-image user prompt, named sampler
-(`vlm-extract` / `vlm-describe` from the server's sampler registry), max_tokens,
-and -- for JSON tasks -- required keys that are validated per record.
+Each task carries its own system prompt, per-image user prompt, max_tokens,
+and -- for JSON tasks -- required keys that are validated per record. Sampling
+otherwise follows the model's own defaults on the server; pass
+`--temperature`/`--top-p` to override.
 
 ### Custom tasks
 
@@ -79,23 +74,19 @@ You identify birds in photos. Respond with EXACTLY one JSON object:
 user_prompt = "Identify the birds in this photo."
 expects_json = true
 required_keys = ["common_name", "id_confidence"]
-sampler = "vlm-extract"
 max_tokens = 512
 ```
 
 Unknown keys are rejected (catches typos). `--system-prompt`,
 `--system-prompt-file`, and `--user-prompt` override any task's prompts.
 
-## Server-feature flags
+## Request flags
 
 | Flag | Maps to | Notes |
 |------|---------|-------|
-| `--think` / `--no-think` | `enable_thinking` | Thinking-capable models (see `models` output); thinking text is stored in its own `thinking` field, never polluting the label |
-| `--vision-tokens N` | `vision_tokens` | Visual token budget per image (16-16384), snapped to the model's processor grid |
-| `--resize-max N` | `resize_max` | Server-side downscale before encoding; big win on phone-camera originals |
-| `--image-quality Q` | `image_quality` | JPEG quality for the resize path |
-| `--sampler NAME` | `sampler` | Server named sampler; overrides the task's default (`--preset` accepted as alias). Names are discoverable via `GET /v1/capabilities` (`samplers.available`) |
-| `--temperature/--top-p/--seed/--max-tokens` | same | Explicit values beat sampler and task defaults (server-side cascade) |
+| `--think` / `--no-think` | `thinking` | Thinking-capable models (see `models` output); thinking text is stored in its own `thinking` field, never polluting the label |
+| `--max-edge N` | client-side resize | Downscale so the longest edge fits N before sending (default 2048, the chat page's cap; 0 sends images as they are). A vision tower's cost grows much faster than the pixel count, so an uncapped camera photo is the slow case. Recorded in each record's `settings` |
+| `--temperature/--top-p/--seed/--max-tokens` | same | Explicit values beat task and model defaults (server-side cascade) |
 
 ## Run options
 
@@ -122,17 +113,17 @@ One JSON object per line:
   "file_path": "path/to/dataset/photo1.jpg",
   "file_hash": "abc123...",
   "file_name": "photo1.jpg",
-  "model_id": "gemma-4-26b-a4b-it-8bit-mlx",
+  "model_id": "Qwen3.5-0.8B-MLX-8bit",
   "task": "label",
   "label": {"category": "portrait", "...": "..."},
   "parse_ok": true,
   "raw_output": "...",
   "thinking": "only present when the model produced thinking",
-  "usage": {"prompt_tokens": 1, "completion_tokens": 236, "total_tokens": 237},
+  "usage": {"input_tokens": 1, "output_tokens": 236},
   "performance": {"prompt_tps": 21.9, "generation_tps": 56.3, "peak_memory_gb": 28.5},
   "generation_time_ms": 13323,
   "timestamp": "2026-07-20T12:00:00",
-  "settings": {"model": "...", "task": "label", "sampler": "vlm-extract", "max_tokens": 1024}
+  "settings": {"model": "...", "task": "label", "max_edge": 2048, "max_tokens": 1024}
 }
 ```
 

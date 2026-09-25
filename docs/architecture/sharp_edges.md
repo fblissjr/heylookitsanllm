@@ -765,7 +765,7 @@ model-level test passes whether or not any route binds the model it tests.
 `data`; that is a shape, not a wire. Still targeting the removed route and
 pending port (owner: small potatoes, port later): `scripts/benchmark.py`'s
 OpenAI arms and one measurement script in the owner's other project
-(`tests/eval` was ported in v2.0.71, `apps/batch-labeler` in v2.0.153; the
+(`tests/eval` was ported in v2.0.71, `apps/batch-labeler` in v2.0.154; the
 labeler's own suite had stayed green against the dead route for months, which
 is why `tests/contract/test_batch_labeler_wire.py` now checks its payload and
 parser against the server's own classes).

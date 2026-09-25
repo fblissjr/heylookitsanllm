@@ -26,26 +26,22 @@ class TestParser:
         assert args.task == "label"
         assert args.output == "results.jsonl"
         assert args.recursive is True
-        assert args.enable_thinking is None
+        assert args.thinking is None
         assert args.retries == 2
+        assert args.max_edge == 2048
 
     def test_think_flags(self):
-        assert parse(["run", "imgs", "--think"]).enable_thinking is True
-        assert parse(["run", "imgs", "--no-think"]).enable_thinking is False
+        assert parse(["run", "imgs", "--think"]).thinking is True
+        assert parse(["run", "imgs", "--no-think"]).thinking is False
 
     def test_try_takes_single_image(self):
         args = parse(["try", "photo.jpg", "--model", "m"])
         assert args.image == "photo.jpg"
         assert args.model == "m"
 
-    def test_vision_knobs(self):
-        args = parse([
-            "run", "imgs", "--vision-tokens", "1024",
-            "--resize-max", "768", "--image-quality", "90",
-        ])
-        assert args.vision_tokens == 1024
-        assert args.resize_max == 768
-        assert args.image_quality == 90
+    def test_max_edge(self):
+        assert parse(["run", "imgs", "--max-edge", "768"]).max_edge == 768
+        assert parse(["run", "imgs", "--max-edge", "0"]).max_edge == 0
 
 
 class TestResolveTask:
@@ -87,17 +83,14 @@ class TestResolveOptions:
         args = parse(["run", "imgs"])
         task = get_task("label")
         opts = _resolve_options(args, task)
-        assert opts.sampler == task.sampler
         assert opts.max_tokens == task.max_tokens
         assert opts.temperature is None
 
     def test_cli_overrides_task(self):
         args = parse([
-            "run", "imgs", "--sampler", "thinking", "--max-tokens", "99",
-            "--temperature", "0.5",
+            "run", "imgs", "--max-tokens", "99", "--temperature", "0.5",
         ])
         opts = _resolve_options(args, get_task("label"))
-        assert opts.sampler == "thinking"
         assert opts.max_tokens == 99
         assert opts.temperature == 0.5
 
@@ -105,9 +98,9 @@ class TestResolveOptions:
         args = parse(["run", "imgs", "--seed", "7"])
         task = get_task("caption")
         opts = _resolve_options(args, task)
-        settings = _settings_echo("m", task, opts)
+        settings = _settings_echo("m", task, opts, args.max_edge)
         assert settings["model"] == "m"
         assert settings["task"] == "caption"
         assert settings["seed"] == 7
+        assert settings["max_edge"] == 2048
         assert "temperature" not in settings
-        assert "vision_tokens" not in settings

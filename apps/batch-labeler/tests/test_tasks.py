@@ -71,14 +71,12 @@ class TestLoadTaskFile:
             'user_prompt = "usr"\n'
             "expects_json = false\n"
             'required_keys = ["a", "b"]\n'
-            'sampler = "vlm-extract"\n'
             "max_tokens = 512\n"
         )
         task = load_task_file(f)
         assert task.user_prompt == "usr"
         assert not task.expects_json
         assert task.required_keys == ("a", "b")
-        assert task.sampler == "vlm-extract"
         assert task.max_tokens == 512
 
     def test_missing_required_field_raises(self, tmp_path):

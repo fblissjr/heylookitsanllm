@@ -1,9 +1,11 @@
 """Task templates: built-in labeling tasks and custom task TOML loading.
 
 A task bundles a system prompt, a user prompt, output expectations
-(freeform vs JSON + required keys), and generation defaults (server-side
-sampler preset, max_tokens). CLI flags override task defaults; task
-defaults override server/model defaults via the server's cascade.
+(freeform vs JSON + required keys), and a max_tokens default. CLI flags
+override task defaults; task defaults override the model's own defaults via
+the server's cascade. (Tasks named a server sampler preset until the server
+removed named samplers in v2.0.30; a custom task TOML with `sampler` is now
+an unknown-key error.)
 """
 
 import tomllib
@@ -21,9 +23,7 @@ class Task:
     user_prompt: str = DEFAULT_USER_PROMPT
     expects_json: bool = True
     required_keys: tuple[str, ...] = ()
-    # Generation defaults (overridable from the CLI). sampler refers to the
-    # server's named-sampler registry (discoverable via /v1/capabilities).
-    sampler: str | None = None
+    # Generation default (overridable from the CLI).
     max_tokens: int | None = None
 
 
@@ -126,7 +126,6 @@ BUILTIN_TASKS: dict[str, Task] = {
         user_prompt="Label this image following the schema.",
         expects_json=True,
         required_keys=("category", "subcategory", "description", "objects", "confidence"),
-        sampler="vlm-extract",
         max_tokens=1024,
     ),
     "caption": Task(
@@ -135,7 +134,6 @@ BUILTIN_TASKS: dict[str, Task] = {
         system_prompt=_CAPTION_SYSTEM_PROMPT,
         user_prompt="Caption this image.",
         expects_json=False,
-        sampler="vlm-describe",
         max_tokens=512,
     ),
     "tags": Task(
@@ -145,7 +143,6 @@ BUILTIN_TASKS: dict[str, Task] = {
         user_prompt="Tag this image.",
         expects_json=True,
         required_keys=("tags",),
-        sampler="vlm-extract",
         max_tokens=512,
     ),
     "ocr": Task(
@@ -155,7 +152,6 @@ BUILTIN_TASKS: dict[str, Task] = {
         user_prompt="Extract all text from this image.",
         expects_json=True,
         required_keys=("text", "legibility"),
-        sampler="vlm-extract",
         max_tokens=2048,
     ),
 }

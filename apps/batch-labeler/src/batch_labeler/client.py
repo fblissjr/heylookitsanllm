@@ -1,11 +1,14 @@
-"""HTTP client for VLM image labeling via the heylookitsanllm OpenAI-compatible API.
+"""HTTP client for VLM image labeling via heylookitsanllm's Messages API
+(``POST /v1/messages``, Anthropic-shaped).
 
-Also works against any OpenAI-compatible server; the heylook-specific fields
-(sampler, enable_thinking, vision_tokens, resize_max, image_quality,
-include_performance) are simply ignored elsewhere.
+Images are resized CLIENT-side before they are sent: the server's resize
+parameters went with its OpenAI route (v1.79.66), and a vision tower's cost
+grows much faster than the pixel count, so an uncapped camera photo is the
+expensive case. ``max_edge`` caps the longest edge, like the chat page's cap.
 """
 
 import base64
+import io
 import mimetypes
 import time
 from dataclasses import dataclass
@@ -15,20 +18,19 @@ import httpx
 
 from .scanner import MIME_TYPES
 
+# The chat page's own cap (frontend/js/image-prep.js MAX_EDGE_PX).
+DEFAULT_MAX_EDGE = 2048
+
 
 @dataclass(frozen=True)
 class GenerationOptions:
     """Request knobs beyond the prompts. None means 'omit from the payload'
-    so the server's preset/model-default cascade decides."""
+    so the server's model-default cascade decides."""
     max_tokens: int | None = None
     temperature: float | None = None
     top_p: float | None = None
     seed: int | None = None
-    sampler: str | None = None
-    enable_thinking: bool | None = None
-    vision_tokens: int | None = None
-    resize_max: int | None = None
-    image_quality: int | None = None
+    thinking: bool | None = None
 
 
 @dataclass
@@ -52,56 +54,73 @@ def _detect_mime(path: Path) -> str:
     )
 
 
-def image_data_url(image_path: Path) -> str:
-    b64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
-    return f"data:{_detect_mime(image_path)};base64,{b64}"
+def image_block(image_path: Path, max_edge: int | None = DEFAULT_MAX_EDGE) -> dict:
+    """A Messages image block (base64 source) for ``image_path``.
+
+    The file is sent as-is when it already fits ``max_edge`` (or when
+    ``max_edge`` is None or 0); otherwise it is downscaled to fit and
+    re-encoded (JPEG for photos, PNG where the original was PNG).
+    """
+    raw = image_path.read_bytes()
+    media_type = _detect_mime(image_path)
+    if max_edge:
+        from PIL import Image, ImageOps
+
+        with Image.open(io.BytesIO(raw)) as im:
+            if max(im.size) > max_edge:
+                im = ImageOps.exif_transpose(im)
+                im.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
+                buf = io.BytesIO()
+                if media_type == "image/png":
+                    im.save(buf, format="PNG")
+                else:
+                    im.convert("RGB").save(buf, format="JPEG", quality=90)
+                    media_type = "image/jpeg"
+                raw = buf.getvalue()
+    return {"type": "image", "source": {
+        "type": "base64", "media_type": media_type,
+        "data": base64.b64encode(raw).decode("ascii")}}
 
 
 def build_payload(
     model_id: str,
     system_prompt: str,
     user_prompt: str,
-    image_data_url: str,
+    image: dict,
     options: GenerationOptions,
 ) -> dict:
-    """Build a /v1/chat/completions payload. Optional fields set to None are
-    omitted entirely so server-side defaults (model config + preset) apply."""
+    """Build a /v1/messages payload. Optional fields set to None are omitted
+    entirely so server-side defaults (the model's config) apply."""
     payload: dict = {
         "model": model_id,
+        "system": system_prompt,
         "messages": [
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image_url", "image_url": {"url": image_data_url}},
-                    {"type": "text", "text": user_prompt},
-                ],
-            },
+            {"role": "user", "content": [image, {"type": "text", "text": user_prompt}]},
         ],
         "stream": False,
-        "include_performance": True,
     }
-    for key in (
-        "max_tokens", "temperature", "top_p", "seed", "sampler",
-        "enable_thinking", "vision_tokens", "resize_max", "image_quality",
-    ):
+    for key in ("max_tokens", "temperature", "top_p", "seed", "thinking"):
         value = getattr(options, key)
         if value is not None:
             payload[key] = value
     return payload
 
 
-def parse_chat_response(data: dict) -> LabelResponse:
-    choices = data.get("choices") or []
-    if not choices:
-        raise ValueError(f"response has no choices: {str(data)[:200]}")
-    message = choices[0].get("message") or {}
-    content = message.get("content")
-    if content is None:
-        raise ValueError(f"response message has no content: {str(data)[:200]}")
+def parse_message_response(data: dict) -> LabelResponse:
+    """The reply's text and thinking from a Messages response's content
+    blocks. A thinking block carries its text as ``thinking`` (heylook's
+    older ``text`` spelling is read too)."""
+    blocks = data.get("content")
+    if not isinstance(blocks, list):
+        raise ValueError(f"response has no content blocks: {str(data)[:200]}")
+    text = "".join(b.get("text") or "" for b in blocks if b.get("type") == "text")
+    thinking = "".join(b.get("thinking") or b.get("text") or ""
+                       for b in blocks if b.get("type") == "thinking")
+    if not text and not thinking:
+        raise ValueError(f"response carries no text: {str(data)[:200]}")
     return LabelResponse(
-        content=content,
-        thinking=message.get("thinking"),
+        content=text,
+        thinking=thinking or None,
         usage=data.get("usage") or {},
         performance=data.get("performance"),
         model=data.get("model", ""),
@@ -116,6 +135,7 @@ def label_image(
     image_path: Path,
     options: GenerationOptions,
     retries: int = 2,
+    max_edge: int | None = DEFAULT_MAX_EDGE,
 ) -> LabelResponse:
     """Send one image for labeling. Retries transient failures (timeouts,
     connection errors, 5xx) with linear backoff; 4xx errors raise immediately.
@@ -124,7 +144,7 @@ def label_image(
         model_id=model_id,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
-        image_data_url=image_data_url(image_path),
+        image=image_block(image_path, max_edge),
         options=options,
     )
 
@@ -134,9 +154,9 @@ def label_image(
             time.sleep(2.0 * attempt)
         start = time.time()
         try:
-            response = client.post("/v1/chat/completions", json=payload)
+            response = client.post("/v1/messages", json=payload)
             response.raise_for_status()
-            result = parse_chat_response(response.json())
+            result = parse_message_response(response.json())
             result.request_ms = int((time.time() - start) * 1000)
             return result
         except httpx.HTTPStatusError as e:

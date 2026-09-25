@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.154]
+
+### Changed
+
+- **`apps/batch-labeler` speaks `POST /v1/messages`** (v0.3.0). It had
+  targeted the OpenAI `/v1/chat/completions` route the server removed in
+  v1.79.66 while its own suite stayed green. The system prompt is top-level,
+  the image a base64 `image` block, `--think`/`--no-think` send `thinking`,
+  and the response is read from the content blocks. The options the server
+  no longer has are gone (named samplers, `--vision-tokens`,
+  `--resize-max`/`--image-quality`, `include_performance`); images are
+  resized client-side instead (`--max-edge`, default 2048 like the chat
+  page, recorded in each record's settings). Adds Pillow to the app.
+- `tests/contract/test_batch_labeler_wire.py`: the app's payload validates as
+  the server's `MessageCreateRequest`, and it parses a response built from
+  the server's `MessageResponse`, so a wire change that breaks the app fails
+  the main suite. The app's own suite: 64 passed. Not run live (no server).
+
 ## [2.0.153]
 
 ### Changed
