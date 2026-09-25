@@ -3,7 +3,8 @@
 Last updated: 2026-09-25, v2.0.152, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
-live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md), and what each release
+live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md) (triaged 2026-09-25;
+its closed sections are in the local, unversioned `internal/archive/todo_closed_2026-09-25.md`), and what each release
 did in `CHANGELOG.md` -- which is the only narrative for the span between the
 history sections below (they stop at v1.79.78) and today. That span was never
 written up here and is not reconstructed.

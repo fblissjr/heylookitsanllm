@@ -535,9 +535,11 @@ probes the template file precisely, gguf rides `supports_thinking` because the
 template is inside GGUF metadata.
 
 The accepted set is per model (Qwen3.8: xhigh|medium|low, and it raises
-otherwise; harmony: low|medium|high), so the schema Literal is their union and
-a wrong-for-this-model value reaches the template, where llama-server turns a
-raised jinja exception into a 500. Absent = send nothing, leaving the template
+otherwise; harmony: low|medium|high). Until v2.0.95 a wrong-for-this-model
+value reached the template, where llama-server turned the raised jinja
+exception into a 500; since then `thinking_controls.check_depth` refuses a
+value the in-force template does not offer with a 400 naming its values,
+before any engine sees it. Absent = send nothing, leaving the template
 default (xhigh on Qwen3.8, which is why the field exists).
 
 In MLX it must not ride `base_kwargs`: the TypeError retry re-passes those
@@ -813,6 +815,27 @@ MessageResponse exists at all. Deliberate remaining differences are enumerated
 in `docs/api_integration.md`; that list is hand-maintained and has been wrong.
 Asymmetry: the `/v1/conversations` store accepts only the nested `source`, so
 nested is the spelling that works on every surface.
+
+### Constrained decoding (owner ruling, 2026-08-30)
+
+A consuming client asked for grammar-constrained decoding, with a table of
+shape failures. The owner decided against it as a general feature:
+constrained decoding makes output quality worse in general, so this is not a
+feature the server wants ("not 'not yet', and not a sizing question"). The
+reporter withdrew the ask the same day, and their reasoning is why this is
+recorded rather than deleted: they had optimised for schema conformance
+because it was the axis they had numbers for, while their app's first
+invariant was prose quality, and most of the shape failures were fixed in the
+prompt (an unstated precondition let the model invent a citation).
+
+The one form both sides left open was opt-in, per request and per model
+capability, for jobs where prose quality does not matter (extraction,
+classification), with ordinary generation left unconstrained. That is the
+shape `response_format` on `/v1/messages` was built in (2026-09-25, on the
+owner's list): a request that does not ask is never constrained. Keep it that
+way; a server-wide or default grammar reopens this ruling. (The full original
+entry, with the reporter's words, is in the local archive of the 2026-09-25
+TODO triage.)
 
 ### Cancellation
 

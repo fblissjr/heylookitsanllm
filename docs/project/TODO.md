@@ -2,24 +2,11 @@
 
 Cross-session task backlog organized by priority.
 
-*Last reviewed: 2026-08-30 (caught up through v1.79.43 on frontend branch);
-docs-twins entry added 2026-08-31 without a full backlog pass; iOS keyboard
-entry added 2026-09-05 and corrected 2026-09-08 to match the harness's own
-header; frontend/backend state-boundary section and the E2E chat-suite failure
-added 2026-09-08; chat-template-version entry added 2026-09-20 without a full
-backlog pass; MLX vision prefill follow-ups added 2026-09-21 without a full
-backlog pass; runtime-visibility plan pointer added 2026-09-23 without a full
-backlog pass*
-
-## gguf: Save & Continue on an edited thought keeps a trailing newline (2026-09-24)
-
-- [x] **Fixed in v2.0.131** (`mropt`, 160f505). With content prefilled the
-  thought is closed, and llama-server's reasoning echo for it keeps the
-  template's framing newline before `</think>`; `_continuation_echo_chars`
-  stripped exactly the thought's length, so the "\n" arrived as new thinking.
-  Whitespace-only reasoning right after the echo is now dropped when both
-  channels were prefilled (an open thought is untouched). gguf e2e:chat 51/51.
-  Trace: `internal/claude/gguf_continue/`.
+*Last reviewed: 2026-09-25, a full triage (through v2.0.154). Every section
+was classed done, obsolete, open or mixed with evidence
+(internal/claude/todo_triage.md); the done and obsolete ones moved verbatim
+to internal/archive/todo_closed_2026-09-25.md. Mixed sections stay whole: their
+checked-off items are history kept beside the open ones.*
 
 ## From the 2026-09-24 improvement loop (merged as v2.0.121)
 
@@ -89,8 +76,8 @@ Sequencing section carries the reasons):
   build (reopened; the biggest daily win);
 - W2+W3 thinking detection + templates, with W7 thinking budget;
 - W4 image geometry;
-- W0 from Phase 0, then W1 load panel (both shipped; W1 v2.0.136, a live
-  gguf check of the observed flash-attention auto still owed);
+- W0 from Phase 0, then W1 load panel (both shipped; W1 v2.0.136, and the
+  observed flash-attention auto confirmed on a live gguf load in v2.0.144);
 - W6 only if W5 shows budget skips;
 - W11 upstream llama.cpp PRs, optional.
 - W12 profiling (decode overhead + image preprocessing): DONE 2026-09-25,
@@ -380,107 +367,6 @@ wrapper in `utils.js`. Backend suite green; `bun run e2e:render` green.
   MemoryManager construction regresses silently. Needs a contract test that
   seeds the settings DB before app startup.
 
-## Schema-vs-payload gaps on message_stop (2026-08-31)
-
-- [x] **`MessageStopEvent.performance` was wrong in BOTH directions** --
-  RESOLVED v1.79.54 by unifying rather than by picking one of the three
-  entangled fixes. `PerformanceInfo` now declares all nine fields with NONE
-  required; `message_stop` emits the two rates it always had in scope; the
-  non-streaming builder emits the three telemetry keys it was omitting. So
-  both payloads are subsets of one declared model and a generated client
-  compiles against either mode.
-  The third sub-decision -- constraining the payload rather than trusting a
-  test -- was TAKEN in v1.79.55 after the substitute turned out to be
-  decorative. The .54 test could not fail: drift enters at the call site via
-  the `timing` dict, and any test supplies its own, so it asserted "given
-  declared keys, the output is declared". `message_stop_event` now filters to
-  the model's declared fields, dropping and LOGGING anything else. It degrades
-  rather than raising, because it fires at the end of a long generation and
-  telemetry must not break inference. Not a full model round-trip: keys are
-  the guarantee, types were never enforced on that path.
-
-## MODEL_BUSY reaches six routes that do not speak the 503 (2026-08-31)
-
-- [x] **CLOSED v1.79.57.** `get_provider` call sites across six routes
-  answered backpressure with the wrong status, enumerated below. `busy_response.py` exists so this answer has one speller; v1.79.53
-  found the fourth caller and rewrote its census to say "four". The census is
-  still an undercount of the OBLIGATION. Enumerated by AST over
-  `router.get_provider(...)` reachable from a route, with enclosing-handler
-  resolution:
-  - `/v1/embeddings` (`embeddings.py:216` -> `api.py:1826`): **500**
-  - `/v1/hidden_states` (`hidden_states.py:633` -> `api.py:1928`): **500**
-  - `/v1/hidden_states/structured` (`hidden_states.py:713` -> `api.py:2026`): **500**
-  - `/v1/jspace/analyze` (`jspace_api.py:80-82`, both REMOVED v1.79.75): **400** -- the worst of the
-    set, because it tells a client its REQUEST is malformed for a transient
-    self-clearing condition
-  - `/v1/rlm/completions` non-streaming (`rlm.py:909` -> `:1052`): 503 with the
-    right status but a bare `{"detail": ...}` -- no `Retry-After`, no
-    `model_overloaded` envelope
-  - `/v1/rlm/completions` streaming (`rlm.py:945` -> `:1023`): 200 with an
-    in-band `rlm_error` event
-  - `/v1/chat/completions` with `processing_mode != "conversation"`
-    (`batch_processor.py:172`, `:499`): **500** -- the batch branch at
-    `api.py:668-712` sits OUTSIDE the try whose MODEL_BUSY handler is at
-    `:795`. Sequential mode (`batch_processor.py:254`) is worse still: its own
-    `except Exception` stringifies the busy message into `group.error` and
-    returns **200**.
-  FIXED for all (rlm by its removal in v2.0.123), and not by a longer census: `api.py`
-  registers an app-level `exception_handler(ModelBusyError)`, so a route that
-  does nothing answers 503 for free and the only way to get it wrong is to
-  actively swallow.
-  THE DURABLE FIX IS NOT A LONGER CENSUS. Anchor on the TRIGGER, not the
-  helper: "every `get_provider` call reachable from a route answers MODEL_BUSY
-  through `busy_response`" has an enumerable population, so a test can hold it
-  and a new route cannot join silently. That is also the general answer to the
-  question the .53 postmortem recorded as unanswerable -- absence is
-  mechanically checkable once you name the thing that CREATES the obligation.
-
-## `/v1/admin/{id}/fit` still waves through an unsizeable model (2026-08-31)
-
-- [x] **CLOSED v1.79.56.** The zero-size hole was open because the route
-  hand-rolled a narrower copy of a predicate that already existed.
-  `scripts/ram_report.py:159` defines `unsizeable_reason(report)`, the general
-  form: `weights_gb > 0` or it is a non-answer, whatever the notes say. Its
-  docstring states the stakes exactly ("Zero GiB clears every ceiling, so
-  without this check the gate that exists to refuse a load waves the
-  unreadable case through as OK"). `admin_api.py:331` does not call it. It
-  hand-writes `report.weights_gb == 0.0 and "model_path does not exist" in
-  report.sizing_notes` -- which needs BOTH a zero AND that exact note string.
-  `size_config_gb` only emits that note from the `else` branch (path missing
-  entirely). A directory that EXISTS but holds no `*.safetensors`/`*.gguf` --
-  an interrupted download, a path one level too high, a checkpoint in another
-  format -- returns `(0.0, [])`, so the guard does not fire.
-  Measured, not reasoned: a temp dir containing only `config.json` gives
-  `weights_gb: 0.0`, `sizing_notes: []`, `verdict: "pass"`, `fits: True`; the
-  route guard evaluates False and the CLI's `unsizeable_reason` returns
-  "no weight files found". The gate answers PASS for a model it could not
-  size.
-  FIXED exactly that way: `unsizeable_reason` lives in `ram_fit.py` beside
-  the `FitReport` it reads, both callers ask it, and the 422 carries the
-  reason rather than a fixed sentence.
-
-## `prompt_tps` is zeroed, not omitted, when unmeasured (2026-08-31)
-
-- [x] **CLOSED v1.79.58** (with three sibling defects — see the changelog).
-  The non-streaming Messages builder emitted `prompt_tps: 0.0` for a rate the
-  engine never reported. `messages_api.py:568` assigns
-  `telemetry.prompt_tps` RAW — no `headline_tps`, no `or None`, unlike
-  `generation_tps` on the line below it and unlike both rates on the streaming
-  side. `ChunkTelemetry.prompt_tps` defaults to `0.0` and latches only on a
-  truthy value (`perf_collector.py:65`, `71-79`), so an engine reporting no
-  prefill rate produces a wire `0.0` that a client cannot distinguish from a
-  measured zero — it reads as an infinitely slow prefill.
-  This is the trap v1.79.54 fixed in the converter (`.get(key, 0)` →
-  `.get(key)`), which is why .54 LOOKS like it closed it: the builder hands
-  the converter a real `0.0`, so the absent-key path is never reached. Both
-  the guide and the consuming twin had recorded it as fixed from .54 and have
-  been corrected.
-  Fixed by the second candidate (absent, not synthesized) and generalised:
-  one builder, `perf_collector.build_performance`, spells every field for both
-  modes and both routes under one rule. `generation_tps` stopped being
-  synthesized, `queue_wait_ms` stopped hiding a measured zero, and
-  `total_duration_ms` was retired for having two origins.
-
 ## A checkout's bundled chat template is a VERSION (2026-09-20)
 
 Found while tracing "the system prompt is being ignored". Not urgent -- the
@@ -565,77 +451,6 @@ Verified by token parity against `mlx_vlm.generate.ar.generate_step`
   Documented in `docs/api_integration.md`; nothing to build unless upstream
   grows a generated-only switch.
 
-## Batch + rlm MODEL_BUSY (2026-08-31) -- all closed by deletion; kept as record
-
-The two batch items below CLOSED in v1.79.66 by deletion: the OpenAI route,
-its batch sibling and `batch_processor.py`'s processing modes are gone. Only
-the rlm item closed by deletion in v2.0.123; the text is kept as record. (v2.0.57 then
-removed the batch INTERNALS too -- `mlx_batch_text.py`, `schema/batch.py`,
-`create_batch_chat_completion` -- so RLM's `llm_query_batched` is a plain
-sequential loop and there is no server-side batch inference of any kind.)
-
-- [x] **`processing_mode: "parallel"` still returns 200 with the busy sentence
-  in a per-group `error` field** (P2): `batch_processor.py:413`'s broad handler
-  catches `ModelBusyError` from `_process_single_request_sync`. This is
-  verbatim the shape v1.79.57's changelog calls "the hardest shape of all to
-  classify" -- .57 fixed sequential mode and never traced who calls the third
-  `get_provider` site. Found by a code review and an independent trace, not by
-  either of .57's own tests: the static one's predicate is "a `try` whose OWN
-  body calls get_provider" and parallel's calls a helper a frame down, which
-  that file's docstring already names as its blind spot; the behavioural one
-  exercises `sequential` only and the word `parallel` appears nowhere in
-  `tests/contract/`.
-- [x] **Sequential mode's fix discards completed work** (P3): the `raise` added
-  in .57 exits before `BatchResponse` is built, so every group that already
-  succeeded is thrown away and the retry re-runs the whole batch. `completions`
-  is function-local and there is no streaming path. Correct reporting bought
-  with silent work loss, and no test covers it -- the contract case sends one
-  message, i.e. the zero-completed-groups case where the tradeoff is free.
-- [x] **rlm answers a bare 503 / an in-band `rlm_error`** (P3): CLOSED by
-  deletion, RLM removed in v2.0.123.
-- **(Record only: model pinning itself was removed in v2.0.126.) THE FIX FOR ALL THREE IS PROBABLY NOT A HANDLER.** `batch_processor` never
-  calls `pin_model`; `rlm.py:919/964` and `jspace_api.py:116` (removed v1.79.75) both pinned with
-  try/finally for exactly this multi-round-over-one-model shape, and batch is
-  the outlier. A pinned model cannot be evicted between groups, so the only
-  surviving MODEL_BUSY is the initial `get_provider`, where nothing has been
-  computed yet and raising costs nothing. That removes the trigger instead of
-  choosing how to report it, and fixes parallel and sequential together. The
-  cost to weigh: a long batch would block other clients' model switches for
-  its duration.
-
-## Non-streaming TTFT is an unmeasured zero (2026-08-31)
-
-- [x] **Closed by deletion (2026-09-22, found stale 2026-09-25):** the field left
-  the perf record (`perf_collector.py`), so nothing averages a fake zero. Was:
-  **`first_token_ms = 0.0` is a literal on the non-streaming path** (P3):
-  nothing measures it, so TTFT is genuinely unobservable there — and
-  `/v1/performance/profile`'s `_bottlenecks` averages that field across every
-  request in the window with no streaming filter, so the zeros drag the
-  reported figure toward zero on any mixed workload.
-  This is the same unmeasured-zero family as the `prompt_tps` defect closed in
-  v1.79.58, and the fix is one timestamp on the first chunk in the consume
-  loop that release already touched. Left out DELIBERATELY: it lands in the
-  perf records rather than the wire payload, which is a different consumer
-  with its own aggregate semantics, and bundling it would have made a wire
-  release also a telemetry release. Recorded so it is visible rather than
-  forgotten.
-
-## E2E pages suite: 42/43 (2026-08-31)
-
-- [ ] **`notebook preset bar: save, drift, armed apply` fails** (P2):
-  "drift line did not flip after a prompt edit", 15s timeout. Found by running
-  `bun run e2e:pages` live -- the suite was last RECORDED at 43/43, so that
-  number is now stale the same way the chat suite's 46/46 was. NOT diagnosed:
-  it was not investigated beyond establishing it is not from this session's
-  work (today's only frontend change was one URL string in `api.js`;
-  `preset-bar.js`, `prompt-section.js` and `pages.mjs` were untouched, last
-  moved in v1.79.42 and v1.79.30). A plausible-but-UNVERIFIED lead worth
-  checking first: the chat suite's rot was `tests/e2e/lib/browser.mjs` seeding
-  state into localStorage while pages hydrate from the DOCUMENT since
-  v1.65-66, and the notebook preset bar is the same shared factory, so drift
-  detection may be comparing against a seed the page already overwrote. Do not
-  treat that as the cause without confirming it.
-
 ## E2E chat suite: `send streams an assistant reply that persists` fails on a warm repeat run (2026-09-08)
 
 - [ ] **The suite's first generating check times out.** (P2) The failure line is
@@ -679,181 +494,6 @@ sequential loop and there is no server-side batch inference of any kind.)
   different things with nothing on screen distinguishing them. The check is
   aimed at a real contract; the fragility is that it samples a transient
   edge of it rather than that it reads a label.
-
-## The busy 503 does not echo X-Request-ID (2026-08-31)
-
-- [x] **Fixed v2.0.138** by the middleware route (`request_registry.RequestIdEchoMiddleware`):
-  every response without its own id echoes a valid client one. Was:
-  **`model_busy_response` never sets `X-Request-ID`** (P3): confirmed by
-  reading -- it builds its own `JSONResponse` with only `Retry-After` and the
-  `X-RateLimit-*` headers, so all FOUR routes that return a 503 omit the echo.
-  `docs/api_integration.md` §6 says the id "is echoed back" without
-  qualification, so the doc is wrong for this response. Reported by a
-  consuming client that measured it (harmless for them -- they know the id
-  they sent; the case it matters for is a proxy or log correlator that only
-  sees responses). NOT fixed on the spot deliberately: the change touches the
-  shared envelope every busy path returns, and it is worth checking whether
-  anything already correlates on its absence before altering what four routes
-  emit. Two honest fixes: pass the request id into `model_busy_response` at
-  all four call sites (each has one in scope), or set the header in a
-  middleware so every response carries it and the helper stays ignorant of
-  it. The second is probably right and is the larger change.
-
-## generation_tps means two different things (2026-08-31)
-
-- [x] **CLOSED v1.79.58**, by neither option it listed. The two Messages
-  modes computed the same field differently (P3):
-  non-streaming runs it through `headline_tps`, which falls back to
-  tokens-over-elapsed when the engine reported no rate; the streaming
-  `message_stop` passes the engine value through and omits it when there is
-  none. So one mode synthesizes a figure the other withholds, under one field
-  name. MEASURED against the contract server: `generation_tps` present
-  non-streaming, absent on the stream, same request shape. Not a wire bug --
-  both are defensible readings of "generation tps" -- but a client comparing
-  the two modes is comparing different quantities, and a client that only
-  streams sees the field vanish on runs where the engine is quiet.
-  BOTH LISTED OPTIONS WERE REJECTED. Giving the translator the same fallback
-  would have made BOTH numbers partly client-side arithmetic; documenting it
-  leaves a client holding a figure it cannot identify. This entry's own
-  framing is why -- "both are defensible readings" is the problem, not a
-  mitigation: a field name that admits two defensible readings has no
-  reading at all on the wire. It now carries the engine's measurement or
-  nothing, in both modes; `headline_tps` stays for the internal perf records,
-  where a best-effort number is right and its provenance is not published.
-  Found while checking a "streaming is a strict superset" claim that a
-  textual check had agreed with and a behavioural one refuted.
-
-## Docs twins (2026-08-31)
-
-- [x] **The `heylook-provider` skill has moved with the wire** -- CLOSED
-  2026-08-31, verified locally rather than on report. The marketplace clone on
-  this machine now reads `verified_against: "heylookitsanllm 1.79.50"` and
-  carries `DELETE /v1/requests` in `SKILL.md`, `wire_reference.md` and its
-  README; it read 1.79.42 with no such string while the work was unpushed. The
-  skill session had reported it shipped three times before this and each report
-  was unverifiable from here, which was the right call to hold -- the commits
-  were real but local, so nothing on this machine could distinguish "shipped"
-  from "not shipped" until the owner pushed. Standing note for next time: a
-  peer's "shipped" means shipped in a checkout you may not be able to read.
-
-## Test-harness + coverage gaps (2026-08-29, worked 2026-08-30)
-
-Carried here so they outlive the `CURRENT.md` handoff block, which is
-rewritten every session. Two of the three closed on 2026-08-30.
-
-- [x] **Rewrite `tests/e2e/suites/chat.mjs` around where chat state actually
-  lives** (P2) -- CLOSED 2026-09-04 without the rewrite: 48/48 on gemma-4-26B
-  MLX and Qwen3.8 gguf (`91725c0`, `10b1124`). The localStorage seed is fine
-  once `enable_thinking: false` rides in it; the rest were stale expectations
-  (decorated preset labels, drift wording, disconnect policy, row picking) and
-  one real defect (sidebar row buttons ate the title). Original text kept:
-  the suite was RUN on 2026-08-30 and is still 33/46, so the
-  v1.79.41 "the two selector rots were the whole static gap" claim is
-  refuted. The real cause is architectural: `tests/e2e/lib/browser.mjs` seeds
-  sampler settings into `localStorage` and expects the chat settings panel to
-  reflect them, but since v1.65-66 chat hydrates that panel from the DOCUMENT
-  (`hydrateDocParams` -> `applySettings(doc.params)`), so selecting a
-  conversation overwrites the seed before the first assertion. The preset and
-  system-prompt checks rest on the same stale model. This is a rewrite, not a
-  patch; until it lands the suite is not a gate. The app is NOT implicated --
-  `bun run e2e:render` drives the same real `/v3` page at 102/102 including
-  its uncaught-page-error check.
-- [x] **The gguf smoke arm -- COVERED 2026-08-30, no code fix needed.** The
-  `llama-server exited with code 1` failure was the model's architecture
-  (`qwen4exp`); the canonical build has since been rebuilt from a checkout
-  that supports it. 30/30 on each of two models -- the conformance rows split
-  across them because no single served model has both audio and a thinking
-  block. The handoff's own diagnosis recipe (raise `observability_level`,
-  reload, then load) was confirmed to produce the missing log.
-- [x] **`/v1/models` over-reporting `vision` -- FIXED v1.79.43.** The
-  capability now derives through `effective_loader_for_config`, the same
-  resolver `MLXProvider.__init__` calls, so the advertised capability and the
-  provider's image guard cannot disagree. Fails open on an unreadable
-  `config.json`, inheriting the loader router's "only positive non-support
-  degrades" rule rather than inventing a second policy.
-
-## gguf chat templates (2026-08-30)
-
-- [ ] **Re-check the `reasoning_effort` 500 claim** (P3): CLAUDE.md states
-  Qwen3.8 accepts `xhigh|medium|low` and RAISES otherwise, surfacing as a 500
-  from llama-server. A consuming session measured all four of
-  `low|medium|high|xhigh` accepted on `unsloth_Qwen3.8-27B-UD-Q8_K_XL` at
-  v1.79.42 with no 500 at any level, and has since WITHDRAWN it as a
-  correction -- four values on one model does not generalise to a claim about
-  the model or the server version when the variable is the chat TEMPLATE.
-  One unknown is now closed: they re-checked `/v1/capabilities` and their
-  server was still v1.79.42, so their arm ran against the EMBEDDED template,
-  pre-sidecar-precedence. That model has a sidecar, so on v1.79.43 the same
-  calls render through a different template.
-  What is left is a genuinely open question, not a contradiction: the existing
-  claim and their measurement can BOTH be true, about different templates.
-  `reasoning_effort` is a chat-template variable and the documented 500 is a
-  jinja exception raised inside the template, so "which values raise" is a
-  property of the template, never of the model or the server. Any re-check
-  must record which template was in force -- v1.79.43 logs it at every spawn
-  -- or it varies a control neither arm held.
-
-## API asks from a consuming client (2026-08-30, measured, UNDECIDED)
-
-A session integrating heylook as a second inference provider sent
-measurements against v1.79.42. Recorded, not accepted -- each is an owner
-call. Its numbers are specific and reproducible; the reasoning about what
-they imply is theirs, not a decision here.
-
-- [x] **Cancelling a NON-streaming request -- SHIPPED v1.79.44, closed
-  2026-08-31.** The second of the two candidate shapes below was chosen:
-  `DELETE /v1/requests/{request_id}`, keyed on the client's `X-Request-ID`,
-  which `/v1/messages` was also made to honour in the same release (it had
-  been generating its own id, so the id a client sent named nothing). NOT the
-  disconnect-polling shape -- owner call: an explicit endpoint cannot mistake
-  a proxy hiccup for a departed client and kill a live generation. Since
-  extended: .46 made the non-streaming response echo the id back, .52 answers
-  422 for a malformed one (it could never have been tracked) rather than
-  conflating it with "already finished". The reporting client has it wired
-  and measured it working.
-  Left in place rather than deleted because the ORIGINAL analysis is the
-  reason the fix took the shape it did, and because this entry was still
-  marked open and P2 five releases after it shipped -- a backlog claiming a
-  capability is missing is the same rotted-status defect this repo keeps
-  finding in prose, in the file that is supposed to be the status.
-  Original: `/v1/messages` non-streaming builds the whole response before
-  writing anything, so nothing polls `request.is_disconnected()` and an
-  abandoned client's generation ran to completion, blocking everything behind
-  it on a server that serialises generation. The client chose non-streaming
-  deliberately -- a late refusal arrives in-band as an `error` event after
-  headers flush -- so "just stream" was never a neutral answer for them.
-- [x] **Constrained decoding -- DECIDED AGAINST 2026-08-30, do not re-raise.**
-  OWNER RULING: grammar-constrained decoding makes output quality worse in
-  general, so this is not a feature this server wants -- not "not yet", and
-  not a sizing question. Recorded as a decision rather than deleted, because
-  it arrived with numbers attached and will otherwise be re-proposed by the
-  next person who reads them.
-  The reporter INDEPENDENTLY WITHDREW it the same day, and their reasoning is
-  the part worth keeping: they had framed it as "shape errors become
-  unrepresentable", which treats schema conformance as the only axis, and
-  their own app's first invariant is descriptive prose quality. In their
-  words, they "optimised for the checkable one because it was the one I had
-  numbers for". They also retracted the evidence: the shape-failure table is
-  still accurate as data but most of it was fixed prompt-side (an unstated
-  precondition -- with no reference slots attached their prompt said nothing
-  about references and the model invented a citation), so it was never demand
-  for a grammar feature.
-  The only residual either side would entertain, and NOBODY is asking for it:
-  an opt-in per-request, per-model-capability form, so a caller could pick
-  shape-safety for a job where prose quality is irrelevant (extraction,
-  classification) while leaving ordinary generation unconstrained. That is a
-  different, smaller feature and would have to earn its own case -- not
-  inherit this one's.
-- [x] **Fixed v2.0.140**: `/status` reports `requests_active` (the provider's own
-  in-flight count, every engine; it was null for EVERY model, MLX too) and
-  `requests_waiting` (the process-wide gate). Was:
-  **`requests_active` is null for gguf, so no client can tell busy from
-  idle** (P3): `GET /v1/admin/models/{id}/status` reports the MLX-side
-  generation gate, and llama-server queues its own requests, so the field is
-  genuinely null for that provider rather than accidentally unpopulated. The
-  client fell back to timing a trivial generation -- which queues, so the
-  probe changes what it measures. Exposing queue depth somewhere honest would
-  close it.
 
 ## Sidecar-template follow-ups (2026-08-30 code review, v1.79.43)
 
@@ -957,8 +597,8 @@ open; each names what would settle it.
 - [ ] **`max_loaded_models`: keep it or force 1?** (P3, raised 2026-09-20,
   priced and NOT done): the question was whether to remove the field so the
   server only ever holds one model. Removal deletes less than it looks --
-  eviction and pinning are fully LIVE at 1 (a second model's request calls
-  `_evict_lru_model`, and `_pinned` is the only thing that can refuse it), so
+  eviction is fully LIVE at 1 (a second model's request calls
+  `_evict_lru_model`; pinning, which could refuse it, was removed in v2.0.126), so
   what actually goes is the `AppConfig` field, the importer writes, the `>1`
   branch and a test helper default. Eviction gets more frequent, not less.
 
@@ -1086,8 +726,9 @@ open; each names what would settle it.
   powered-off disk). It does NOT protect against any live process running
   as the owner: the key must be readable at server start, and the running
   server serves decrypted conversations over the loopback API, whose
-  conversation routes carry no auth and whose opt-in API key exempts
-  loopback by default. "An agent with my shell can't read it" requires
+  conversation routes carry no auth (the partial inference API key was
+  removed in v2.0.127; the Host check, v2.0.137, refuses foreign host
+  names, not local processes). "An agent with my shell can't read it" requires
   harness-side sandbox deny rules + enforced API auth, not encryption.
 
 ## Upstream-borrow follow-ups (vllm-metal scan + delta review, 2026-07-20)
@@ -1257,165 +898,6 @@ ordering and the sole-user/minimal-custom-code posture.
   reset). Plus fix: DELETE on config keys now re-applies immediately.
   Borrowed shape from vllm-metal's measured-overhead cache cap; ours is a
   manual knob, their auto-measurement is overkill for one box.
-
-## J-space / jlens-mlx -- REMOVED 2026-09-06 (v1.79.75)
-
-The whole feature came out: the v3 page, the `/v1/jspace/*` router, the
-`jspace/` package, its tests and its lens-conversion script. `jlens-mlx` is out
-of scope. The three design docs moved to `docs/archive/` and are the revival
-record; fitted lenses under `adapters/jspace/` were left on disk.
-
-Everything below is the backlog as it stood at removal, kept as the record of
-what was planned rather than as work to do.
-
-- [x] **Refit the band lens on the fixed corpus** (DONE 2026-07-12): `band-n12`/`band-n12b` were
-  degenerate (mlx-lm's `TokenizerWrapper.apply_chat_template` silently injects
-  `enable_thinking=True` -> every on-policy completion collapsed into shared CoT-preamble
-  boilerplate, 62% of fitted positions). Both fits' results are DISCARDED (method stack unaffected).
-  jlens-mlx now has explicit `enable_thinking` control (default False) + a diversity gate
-  (`238826e`/`951dd76`/`232b98b`). REFIT COMPLETE: `out/band-n14-fixed` (11 items, band 16-47,
-  `identity_ok: true`, ~4.25h, zero SIGKILLs). Qualitative readout done -- L40-42 surface meaningful
-  tokens (Paris/city/France), L45-47 degenerate but that's the model's own degeneracy. See the
-  "Fidelity gate" item below for the metric caveat.
-- [x] **Abliteration diff -- DONE 2026-07-13** (P1): stock lens (`out/band-n14-stock`,
-  `identity_ok: true`, same corpus as `band-n14-fixed`, item 10 skipped in both) fit clean overnight;
-  `diff_lenses.py` run BOTH substrate directions (stock + heretic). FINDING (robust,
-  substrate-independent, layer-for-layer agreement): the abliterated transport surfaces safety/refusal
-  vocab MORE in the mid-late band (L32-42: `Safety`/`unsafe`/`unethical`/`dangerous`/`Cannot`/
-  `violations` + CJK `安全风险`/`违反` + Russian `безопасность`), and SUPPRESSES geography (China/Europe)
-  + retrieval verbs. Counterintuitive on purpose: abliteration edits the TRANSPORT, not the readout --
-  Heretic (confirmed by reading its source) orthogonalizes the residual-WRITING matrices (every
-  layer's `attn.o_proj`/`mlp.down_proj`) against `r = mean(harmful) - mean(harmless)`, tail blocks
-  INSIDE the fitted Jacobian (`model.norm` is untouched). **Interpretation RETRACTED 2026-07-13
-  (second correction, same day):** a per-prompt re-run (below) falsified the content-conditional
-  "disposition preserved" reading -- the diff is abliteration's STATIC WEIGHT-EDIT FINGERPRINT,
-  readable on any input, not a content-conditional internal state. Cross-validated by an independent weight-footprint analysis
-  (`scripts/abliteration_footprint.py`, jlens sibling repo; `out/abliteration_footprint.txt`): edit ~6x
-  concentrated in residual-writing matrices, vision tower bit-identical, weight-delta peak (L33/L36)
-  co-localizes with the transport-diff safety cluster (L32-42). Write-up + explainer live in the jlens
-  research repo: `docs/abliteration_diff.md` + `docs/abliteration_diff_explainer.html`. Two open caveats -> two
-  follow-ups below.
-- [x] **Abliteration diff -- per-prompt benign floor** (DONE 2026-07-13, P2): `scripts/per_prompt_diff.py`
-  (`out/per_prompt_diff.txt`, jlens sibling repo) re-ran `diff_lenses.py` one prompt at a time instead of
-  pooled. RESULT: FALSIFIED the benign floor. The benign weeknight-recipe prompt lights up the same
-  L32-42 safety band just as strongly as the safety-adjacent prompts (mean l2 596 vs 524-571) and
-  surfaces the same refusal vocab (Nothing/Impossible/cannot/unsafe). The effect is PROMPT-INDEPENDENT
-  -- this retracts the "disposition preserved" content-conditional reading above; see the interpretation
-  update. Converter-match now CLOSED 2026-07-13: self-converted the base (mlx-vlm 0.6.5) diffed vs the
-  mlx-community base is uniform ~0.003-0.004 drift, no tent, with `o_proj`/`down_proj` among the LOWEST
-  (~8x below the abliteration signal, structureless) -- converter asymmetry cannot manufacture the
-  finding (`scripts/abliteration_footprint.py`; `out/converter_drift_base_vs_mlxcommunity.txt`). Both
-  original caveats on this finding are now resolved.
-- [~] **A genuinely disposition-aware metric is STILL OPEN** (P2, updated 2026-07-12): the KL/top-k
-  identity tripwire ships. BUT the qualitative readout on `band-n14-fixed` proved the
-  `verify.legibility_report` metric ALSO MISLEADS -- it ranked the degenerate deep layers J_45/46/47
-  HIGHEST (0.91-0.93) while the meaningful J_40 scored 0.85, because the degenerate ' __'/' ____'
-  readouts "agree" with the model's own degenerate next-token output. This is the SAME failure mode
-  as the old final-logit fidelity gate, now reproduced with a clean corpus AND the new metric -- so
-  it is a metric problem, not a corpus problem. For now, judge readouts QUALITATIVELY (`readout.py`).
-  An actually-disposition-aware metric (penalize format/junk-token readouts) is unsolved.
-- [x] **Fit/apply capture parity -- numerical check** (DONE 2026-07-12: BIT-EXACT, rel_err 0.0 at 9 layers incl. band edges on the served 27B; gate script `check_capture_parity.py` in the jlens sibling repo, jlens commit 36d859b -- rerun it at the top of every refit session; 2026-07-11, re-affirmed 2026-07-12 as the
-  top open correctness IOU by an architecture review): fitting captures residuals cache-less; apply
-  uses a fresh cache (the hybrid served qwen3_5 crashes cache-less). Both are causal-from-scratch so
-  they SHOULD match, but it's asserted, never verified -- and it's the foundation of served-model
-  lens correctness. Cheap check: capture `h_l` both ways on one input, assert allclose. (Does not
-  invalidate current lenses; identity KL~0 is consistent.)
-- [~] **Post the PR comments** (P2, 2026-07-12; harness port DONE -- `bench/upstream_pr_eval/` on the pushed jlens `upstream-pr-eval` branch, links filled in the drafts): the
-  2026-07-12 upstream mlx-lm GDN differentiability eval (PRs #1389/#1217, both numerically correct,
-  see the plan doc) was run ad hoc; port it to a jlens-mlx `upstream-pr-eval` branch, then the owner
-  posts data-backed comments on #1217 (full dataset) and #1389 (the log-domain fp32 `dg`-gradient
-  finding -- not a bug, cancels at the parameter leaves). Draft comments live in jlens's internal
-  folder.
-- [ ] **Audit GDN cache-slice captures for the #1077 `mx.contiguous()` pattern** (P3, 2026-07-12):
-  upstream mlx-lm #1077 (merged) fixed a shared-buffer memory leak by adding `mx.contiguous()` on
-  GDN cache slices. Check our code (jspace capture path + any other raw GDN cache-slice reads) for
-  the same unguarded-shared-buffer pattern.
-- [ ] **Watch #1217 merge before any mlx-lm pin bump** (P2, 2026-07-12): #1217 adds a `training=`
-  kwarg passed unconditionally at every qwen3_5 call site upstream; jlens-mlx's `gdn_fit_patch`
-  already absorbs unknown future kwargs (`951dd76`) so a bump won't TypeError mid-fit, but confirm
-  before bumping the served-side pin too.
-- [ ] **Consider #1515/#1532, #1486/#1456, #1526 on the next serving-side mlx-lm bump** (P3,
-  2026-07-12): #1515+#1532 add anchor-stride prefix reuse for non-trimmable hybrid caches (large
-  TTFT claims, relevant to qwen3_5 serving); #1486/#1456 fix hybrid ArraysCache trimmability for
-  speculative decoding (issue #1446); #1526 fixes `max_kv_size` being silently dropped for models
-  with their own `make_cache` (qwen3_5 still needs the analogous one-line fix upstream). None of
-  these are fitting-path, all are serving-path -- triage on the next pin bump, not now.
-- [~] **Fit memory levers (de-brittle the fit; CORRECTED 2026-07-12 PM)** (P1): peak scales with
-  FITTED POSITIONS, not sequence length. The earlier "~1.7GB/token of sequence" slope was a corpus
-  confound (short items had both few positions AND short sequences). The real model: **~63GB base
-  + ~2.1GB per fitted position** (flat across seq 72-78 at 47 positions; validated live -- item 11
-  at 56 positions -> 174.6GB). The forward runs over the full sequence; the backward/Jacobian runs
-  only over the fitted positions, and that sets peak. On-policy items fit ~47 generated tokens
-  (capped by `on_policy_max_tokens=48`). Two distinct problems tonight:
-  - **(a) transition SIGKILLs (exit 137), DONE (real fix).** MLX's caching allocator never
-    returns freed buffers to the OS, pinning RSS at the run's max-item high-water (~161GB) for
-    the whole process lifetime, tripping the macOS jetsam killer at item transitions on the
-    192GB box. Fixed with `mx.clear_cache()` between items (jlens commit `e56fad6`) — drops RSS
-    between items, negligible cost. (`reset_peak_memory` resets the counter, not the pool.)
-  - **(b) item 10 dropped -- but LIKELY UNNECESSARY.** Item 10 (seq 126) was dropped via the new
-    `JLENS_MAX_FIT_SEQ` env (jlens commit `073cc04`), on the WRONG (sequence-slope) extrapolation
-    to ~245GB. Under the corrected positions model it has ~47 fitted positions -> ~163GB peak and
-    would have FIT. So `JLENS_MAX_FIT_SEQ` is the wrong knob (positions / `on_policy_max_tokens`
-    is the lever); `band-n14-fixed` is an 11-item lens that could be re-fit to 12. Not urgent.
-  The chunk 128->64 lever is FALSIFIED as a memory lever (measured 2.8% reduction — dim-batch
-  memory is chunk-independent).
-  NOT urgent (tonight's fit is unblocked), but a standing liability for longer-context transfer
-  experiments, the stock-model diff, and item-batching, all of which want headroom. Deeper
-  follow-ups (NOT done, parked for a future session, do M2 before M3; tracked in jlens
-  `docs/fit_metrics.md` §3):
-  - **M2 — instrument the memory.** Sample `mx.get_active_memory`/`get_cache_memory` around each
-    chain-sweep phase to find WHERE the per-token memory lives. First-principles estimates range
-    34-320GB depending on assumptions, none match the measured ~161GB, and chunk-independence
-    rules out the obvious dim-batch-cotangent hypothesis — the footprint is genuinely
-    unexplained. Cheap; the prerequisite for any real reduction and the honest end of guessing.
-  - **M3 — the checkpointing bench.** `feat/checkpoint` (built, equality-gated, unproven at real
-    scale) is the one lever that could reduce a SINGLE item's peak — the real headroom fix for
-    genuinely high-position items (long-context transfer experiments), the case `JLENS_MAX_FIT_SEQ`
-    only papers over. Bench it on the real 27B.
-  NB the T<=128 GDN kernel brittleness is a separate, unrelated issue (see the fit-speedup item
-  below) — it sunsets when mlx-lm PR #1389/#1217 merge (we delete the kernel + monkey-patch).
-  Memory-brittle: (a) fixed for real, (b) was an over-drop; deeper headroom fix (M2/M3) still open
-  for high-position items. Kernel-brittle: wait + adopt.
-- [ ] **Fit speedup: seq-tile the GDN scan** (P3, 2026-07-11): the chain fit is ~44min/item / a full
-  band ~7-8h; a designer+verifier pass found NO config-level 2-3x (`chunk` is a dead knob). The real
-  lever is the GDN kernel `MAX_T=128` cliff -- tile the recurrence across 128-tok blocks (EXACT) so
-  long items stay on the fast kernel. Delicate; must re-pass `check_chain_vs_direct` (cos 1.0). A
-  guardrail (warn + kernel-eligibility sidecar metadata) already stops the silent slow path.
-- [ ] **Engine coverage, phases 1-4** (P2): one shared engine classifier instead of the
-  copy now in `tests/smoke` + `tests/eval`; both harnesses REPORT which engines a run
-  spanned and refuse to call an absent one green; then the same-feature-two-mechanisms
-  checks (audio must 400 loudly on MLX, thinking capability, thinking depth, chat-template
-  source). Plan: `docs/project/plan_engine_coverage.md`. Phase 0 = `tests/smoke/` (done).
-- [ ] **Standing golden gate for `/v1/jspace/analyze`** (P3): freeze onset top-k + features,
-  tie-aware calibrated epsilon -- turns the one-time V1/V2 parity into a wired
-  regression gate.
-- [ ] **Visualizer track** (P3): gate cleared 2026-07-10 -- `frontend/DESIGN.md`
-  seeded (OKLCH strength/chip system formalized; paradigm = matrix-first, Neuronpedia-style
-  layer-range slider + aggregation sidebar as the growth path). SHIPPED so far
-  (v1.34.36-.37): item 1 click-to-pin readout (strip rows + heatmap cells, Esc/arrow
-  walk, echo highlight, onset marker), the per-cell top-N analyze extension
-  (`heatmap_top_k` -- every cell pins its full readout now), item 2 layer-range
-  slider + aggregation view, and a "provisional lens" badge off the sidecar
-  provenance (`/v1/jspace/models` meta). Remaining, in order: live streaming
-  (new SSE analyze endpoint) -> steer/swap/ablate interventions (last).
-  **Fold into the streaming rework** (both live in the analyze grid loop it
-  will rewrite; from the 2026-07-10 review): (a) unify the onset column's two
-  numeric paths -- onset_strip uses float64 np.argsort, the heatmap's last
-  column uses float32 argpartition, so near-tied logits can show different
-  top-1 tokens for the same position (breaks the echo highlight); one shared
-  per-position reduce fixes it. (b) batch the per-layer device-to-host syncs
-  (~4 x band_layers sequential np.asarray evals under the gen gate) into one
-  mx.eval, and memo tok.decode per request (~5k redundant single-id decodes).
-- [ ] **Confirm coverage for the deleted `verify_endpoint.py` / `probe_thread.py`** (P3,
-  updated 2026-07-12): they were git-rm'd from jlens (its `migrated_from_scratch/` is fully
-  dissolved; recoverable from jlens git history). This repo's `tests/contract/test_jspace_api.py`
-  + `tests/unit/test_jspace_analyze.py` likely cover the same ground -- diff the checks, recover
-  from history only if a gap shows.
-- [ ] **HF lens repo** (P3): publish OUR fitted lenses post-own-fit; gated -- don't
-  republish the converted third-party lenses (Gemma ToU).
-- [ ] **Stale docstrings** (P4): `tests/unit/test_jspace.py`, `test_jspace_features.py`,
-  `src/heylook_llm/jspace/capture.py` still name `coderef/jspace_scratch/` (dissolved into
-  `jlens-mlx/migrated_from_scratch/`) -- fix when next touching those files.
 
 ## Presets/system-prompt follow-ups (from the v1.34.22-.24 review passes)
 
@@ -1598,73 +1080,6 @@ derive from it. Design + decision recorded in `plan_2026-07.md` Phase 6
 See also the Phase 6 "per-model SIDECAR ARTIFACTS" note (draft model / j-space
 lens / future LoRA managed as a group on the admin CRUD surface).
 
-## Qwen3.5-27B thinking-path repetition collapse (found 2026-08-07, P1)
-
-**Observation.** `Qwen3.5-27B-8bit-mlx` degenerates into repetition on the
-thinking path at large budgets. Same prompt ("What is 12 times 13?"),
-`enable_thinking = true`, non-streaming:
-
-| max_tokens | result |
-| --- | --- |
-| 600  | `thinking=1349ch content=0ch`, coherent opening |
-| 2500 | `thinking=13070ch content=0ch`, opens `ejahterejahterejahter Consor...` |
-
-Reproduces with `sampler="thinking"` too (`thinking=48ch` then junk).
-`Qwen3.5-0.8B-MLX-8bit` shows the same shape (`门门门门...`, `款款款款...`), so it
-is not obviously size-specific.
-
-**Not caused by the v1.50.x work.** For an explicit `enable_thinking=true`
-request the resolution is byte-identical before and after (old:
-`effective_thinking_flag(True, provider)` -> True; new: cascade -> True), and
-the prompt side never changed. What DID change is visibility: the trace now
-lands in the `thinking` field instead of being mislabelled as `content`, so
-this was always happening and was simply harder to see.
-
-**Why it is worth real time.** This is the daily-driver-class model, the
-collapse is in the reasoning trace rather than the answer, and two of the
-project's own subsystems are plausible causes.
-
-**Hypotheses, roughly in order of suspicion.** Each is falsifiable:
-
-1. **The `thinking` sampler's anti-loop overlay is causing the loop.** The
-   overlay applies `presence_penalty = 1.5` (`src/heylook_llm/data/samplers/thinking.toml`,
-   slimmed to loop control in v1.45.0) and was tuned against a GEMMA repetition
-   loop, never against Qwen3.5. A penalty that pushes hard away from recent
-   tokens can drive a model into novel-token gibberish, which is what
-   `ejahter`/`Consor` look like. FALSIFIED IF collapse rate is unchanged at
-   `presence_penalty = 0.0`.
-2. **The vendor layer picks bad values for this checkpoint.** v1.45.0 reads
-   temp/top_p/top_k from the model's own `generation_config.json` above the
-   floor (`samplers.load_vendor_sampling`). Check what it actually reads for
-   this model dir and whether those values are sane for long generations.
-   FALSIFIED IF collapse persists with vendor values overridden by the floor.
-3. **Long-context degradation of the checkpoint/quant itself.** 8-bit Qwen3.5
-   at multi-thousand-token self-generated context. FALSIFIED IF a different
-   quant or `Qwen3.5-27B-8bit-ours` behaves differently under identical
-   sampling.
-4. **Radix/prompt-cache interaction.** Qwen3.5 is HYBRID (KVCache+ArraysCache)
-   and CLAUDE.md already records limited radix correctness there — ArraysCache
-   cannot trim to a prefix. FALSIFIED IF collapse reproduces with the radix
-   gate off (it should already be off: the gate requires `cache_type=standard`
-   with no `max_kv_size`, so CONFIRM that first rather than assuming).
-
-**Do this first, before any hypothesis.** Run thinking OFF at the same budgets
-(600/1200/2500). If it collapses there too, this is not a thinking-path bug at
-all and hypotheses 1-2 are dead on arrival — the name of the item is wrong and
-the search should start at 3-4. This is one server start and three requests.
-
-**Measurement discipline (learned the hard way twice on 2026-08-07).** Single
-unseeded runs on this stack are SAMPLES, not measurements: the DSpark A/B this
-morning came out 11.7 acceptance points apart on two nominally identical runs,
-and an E2E check turned out to fail 1 run in 6 from model nondeterminism alone.
-So: pin the seed, repeat each cell at >= 3 seeds, and report the SIGN before
-the magnitude. Report "collapsed / did not collapse" as a count out of N, not a
-character length from one run.
-
-**Related open thread:** `Qwen3.5-27B-8bit-ours` and the abliterated pair are
-the jlens study models. If the collapse is checkpoint-specific, that matters
-to the lens work too -- see `docs/jspace_integration_plan.md`.
-
 ## Observability + config redesign (2026-07-11)
 
 Full design + status: `internal/research/observability_and_config_redesign.md`
@@ -1781,68 +1196,9 @@ audit; design context `internal/research/expert_offload_design_frontend.md`
   same day under the owner's docs philosophy (code-inferable; the streams are
   self-describing JSONL + /v1/admin/config is the knob).
 
-## Recently Completed (Phase 2 -- 2026-03-13)
-
-- [x] Remove STT provider (`mlx_stt_provider.py`, `stt_api.py`, parakeet-mlx dep)
-- [x] Narrow provider type to `Literal["mlx", "mlx_embedding"]`
-- [x] Rename `embedding_gemma.py` → `embedding_model.py`, `EmbeddingGemmaModel` → `EmbeddingModel`
-- [x] Dynamic backbone loading via `load_backbone()` using `mlx_lm.utils._get_classes()`
-- [x] Pydantic V2 migration (`@field_validator`, `@model_validator`)
-- [x] Stop-token utility extracted to `providers/common/stop_tokens.py`
-- [x] Fix transformers 5.x VLM processor loading (4 patches in `_apply_transformers_patches()`)
-- [x] Fix `eos_token_ids` null safety in `mlx_batch_text.py`
-
-## P0 - Critical (blocks other work)
-
-None currently.
-
-## Slice 1 (in flight)
-
-- [x] S1.1 -- per-request peak memory + KV bytes (v1.28.0, `be0f15f`)
-- [x] S1.2 -- three-stream observability (v1.28.0, `2f9b03d`/`f28d52d`/`3641cf0`)
-- [x] S1.3 -- byte cap on VisionFeatureCache (v1.28.0, `312db4e`)
-- [x] S1.4 -- provider.warmup() + prefill_step_size (v1.28.0, `31e59a2`/`915dab6`)
-- [ ] S1.5 -- batched docs + cleanup (in progress: STT removal + test cleanup + cache_keys refactor done; docs-audit items landing next)
-- [x] S1.6 -- LAN hardening: Caddy reverse proxy guidance in server.py + optional `HEYLOOK_ADMIN_TOKEN` (extended to gate `/v1/admin/config` in v1.79.0)
-
-## Slice 1 gated work
-
-- [x] S1.2b -- preset + import redesign: SHIPPED (presets.py registry, default_preset cascade -- see "C1 of S1.2b" in presets.py docstring). Stale-gated entry closed 2026-07-06 during docs audit; the import-defaults follow-through landed in v1.31.3/v1.32.0.
-
-## P1 - High Priority (do soon)
-
-### TOML Migration Completion
-- [x] Integrate `--interactive` flag into model_importer.py (DONE v1.18.1)
-- [x] Wire up ConfigEditor in import workflow (DONE v1.18.1)
-- [x] Move profiles to TOML files, rename profiles, dynamic discovery (DONE v1.19.0)
-- [x] Fix `ModelProfile.apply()` precedence bug (DONE v1.19.0)
-- [x] ~~Manual test of `import --folder ... --interactive`~~ MOOT: `--interactive`
-  and the config TUI were retired in v1.47.0 (derive-at-load); import is
-  non-interactive now.
-
-### Dependency Cleanup
-- [x] Remove `mlx` optional extra (duplicated core deps) (DONE v1.19.0)
-- [x] Purge unused deps: torch, torchvision, opencv-python, scipy (DONE v1.19.0)
-- [x] Move `datasets` to `analytics` extra, `rich` to `scripts` extra (DONE v1.19.0)
-
-### Stale Code Removal
-- [x] Delete stale integration test `test_performance_monitoring` (DONE v1.19.0)
-- [x] Delete `/v1/performance` stub and `/v1/performance/profile/{time_range}` endpoint (DONE v1.19.0)
-
 ## P2 - Medium Priority (scheduled)
 
 ### Build v1.20.0: Models Config TUI + CI Foundation
-
-#### Models Config Command (Phase 4) -- RETIRED / MOOT
-- [x] ~~Create `src/heylook_llm/commands/models_config.py`~~ MOOT: config_tui.py
-  was retired in v1.47.0 (derive-at-load thin models.toml entries); superseded
-  by the v3 Web admin config editor (v1.54.0+).
-
-#### llama-server Provider -- SUPERSEDED 2026-07-26 (and then BUILT same day)
-Absorbed into `plan_2026-07.md` Phase 7 and executed v1.40.0-1.44.2 (7a-7e
-detection all DONE). Dossiers:
-`internal/research/gguf_provider_viability_2026-07.md` +
-`gguf_driving_models_2026-07.md`. Driving models at `modelzoo/gguf/`.
 
 #### gguf follow-ups (post-Phase-7 loose ends, 2026-07-26)
 - [ ] GGUF-metadata reading in the importer: auto-detect audio modality +
@@ -1874,19 +1230,3 @@ detection all DONE). Dossiers:
 ### Benchmark Script
 - [x] Create `scripts/benchmark.py` (DONE -- HTTP benchmark measuring TTFT, TPS, memory across OpenAI and Messages APIs; its chat/completions arm is dead since v1.79.66 and needs dropping or porting)
 - [x] Token throughput, TTFT, memory usage metrics (DONE in `scripts/benchmark.py`)
-
-### ~~Build v1.21.0: llama-server Provider + GGUF + Benchmark~~ RETIRED 2026-07-26
-Stale bucket (predates the v1.21.0 removal; the referenced commented
-pyproject extra no longer exists). Superseded by plan Phase 7.
-
-## Deferred (blocked on upstream)
-
-### MLX Engine Optimization (remaining)
-- [ ] Shape bucketing for prefill (needs attention mask correctness verification)
-- [ ] `mx.compile` on decode step (deprioritized -- marginal gains vs. complexity; revisit if mlx-lm adds native compile support)
-- [ ] Automatic draft model selection (vocabulary compatibility checking)
-- [x] Full vision path unification (DONE v1.18.0 -- pre-filled cache pattern, no `inputs_embeds` needed)
-- [ ] Vision + speculative decoding (pre-filled cache incompatible with speculative prefill)
-- [ ] Radix cache for vision (pre-filled cache bypasses radix tree)
-
-- [x] Error-chunk altitude: DONE in v1.33.0 -- provider raises typed GenerationFailed/InvalidGenerationRequest; batch/RLM now fail loudly; non-streaming client errors return 400. See docs/architecture/postmortems + CHANGELOG 1.33.0.
