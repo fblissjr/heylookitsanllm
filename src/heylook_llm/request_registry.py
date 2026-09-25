@@ -215,3 +215,35 @@ async def tracked_stream(agen, request_id: str, abort_event: AbortEvent):
             # opposite of the "the client learns it was too late" contract this
             # module documents.
             await agen.aclose()
+
+
+class RequestIdEchoMiddleware:
+    """Echo a valid client ``X-Request-ID`` on every response that does not
+    already carry one.
+
+    ``/v1/messages`` and the generate route set the header themselves (they
+    also mint one when the client sent none). Every other response -- the
+    busy 503 from any of its four call sites, a 4xx, a load -- used to omit
+    it, so a proxy or log correlator that only sees responses lost the
+    thread exactly on the errors. Pure ASGI, so streaming bodies pass
+    untouched; an id that fails ``is_valid_request_id`` is not reflected.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        sent = next((v for k, v in scope.get("headers") or () if k == b"x-request-id"), None)
+        if sent is None or not is_valid_request_id(sent.decode("latin-1")):
+            return await self.app(scope, receive, send)
+
+        async def send_with_id(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers") or ())
+                if not any(k.lower() == b"x-request-id" for k, _ in headers):
+                    message = {**message, "headers": headers + [(b"x-request-id", sent)]}
+            await send(message)
+
+        await self.app(scope, receive, send_with_id)

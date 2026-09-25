@@ -593,7 +593,9 @@ sequential loop and there is no server-side batch inference of any kind.)
 
 ## Non-streaming TTFT is an unmeasured zero (2026-08-31)
 
-- [ ] **`first_token_ms = 0.0` is a literal on the non-streaming path** (P3):
+- [x] **Closed by deletion (2026-09-22, found stale 2026-09-25):** the field left
+  the perf record (`perf_collector.py`), so nothing averages a fake zero. Was:
+  **`first_token_ms = 0.0` is a literal on the non-streaming path** (P3):
   nothing measures it, so TTFT is genuinely unobservable there — and
   `/v1/performance/profile`'s `_bottlenecks` averages that field across every
   request in the window with no streaming filter, so the zeros drag the
@@ -668,7 +670,9 @@ sequential loop and there is no server-side batch inference of any kind.)
 
 ## The busy 503 does not echo X-Request-ID (2026-08-31)
 
-- [ ] **`model_busy_response` never sets `X-Request-ID`** (P3): confirmed by
+- [x] **Fixed v2.0.138** by the middleware route (`request_registry.RequestIdEchoMiddleware`):
+  every response without its own id echoes a valid client one. Was:
+  **`model_busy_response` never sets `X-Request-ID`** (P3): confirmed by
   reading -- it builds its own `JSONResponse` with only `Retry-After` and the
   `X-RateLimit-*` headers, so all FOUR routes that return a 503 omit the echo.
   `docs/api_integration.md` §6 says the id "is echoed back" without

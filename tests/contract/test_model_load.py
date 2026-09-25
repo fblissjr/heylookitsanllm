@@ -118,6 +118,21 @@ class TestBusyIsBackpressureNotBreakage:
         assert resp.json()["error"]["code"] == "model_overloaded"
         assert resp.headers.get("Retry-After") == "1"
 
+    def test_busy_echoes_the_request_id(self, client, monkeypatch):
+        """A correlator that only sees responses must be able to match the
+        503 to its request (RequestIdEchoMiddleware); an id outside the
+        allowed alphabet is not reflected."""
+        router = client.app.state.router_instance
+
+        def boom(model_id):
+            raise ModelBusyError("MODEL_BUSY")
+
+        monkeypatch.setattr(router, "get_provider", boom)
+        resp = client.post("/v1/models/test-mlx-model/load", headers={"X-Request-ID": "corr-42"})
+        assert (resp.status_code, resp.headers.get("X-Request-ID")) == (503, "corr-42")
+        resp = client.post("/v1/models/test-mlx-model/load", headers={"X-Request-ID": "bad id!"})
+        assert "X-Request-ID" not in resp.headers
+
     def test_busy_keeps_the_reason_the_router_gave(self, client, monkeypatch):
         """The eviction-blocked cause names which model is busy and what to do
         about it; collapsing it to a generic queue-full sentence was the defect

@@ -218,6 +218,11 @@ async def _model_config_readonly_handler(request: Request, exc: ModelConfigReadO
 from heylook_llm.host_check import HostCheckMiddleware
 app.add_middleware(HostCheckMiddleware)
 
+# Every response echoes the client's X-Request-ID when it has none of its own
+# (the busy 503 and error responses used to drop it).
+from heylook_llm.request_registry import RequestIdEchoMiddleware
+app.add_middleware(RequestIdEchoMiddleware)
+
 # Import and include Messages API router
 from heylook_llm.messages_api import messages_router
 app.include_router(messages_router)
