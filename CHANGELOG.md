@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.149]
+
+### Fixed
+
+- The models page's engine panel says whether the running template matches
+  the file on disk (it showed the two hashes side by side and compared
+  nothing), and shows byte-count facts (MLX's prefix-cache
+  `memory_budget_bytes`) as sizes, not raw integers.
+- Checks for the frontend work in v2.0.143 - v2.0.149: `bun run e2e:pages`
+  32/32 and `bun run e2e:chat` 52/52 on Qwen3.5-0.8B-MLX-8bit,
+  `e2e:render` 100/100, unit + contract green. v2.0.147's `engine.decoding`
+  and `thinking.budget` were seen live on the same model (autoregressive,
+  observed; budget enforced) and on an unloaded gguf row (unknown).
+
 ## [2.0.148]
 
 ### Removed

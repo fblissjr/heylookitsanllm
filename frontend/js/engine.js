@@ -7,7 +7,7 @@
 // renderEngine so a slot a later workstream fills (cache, thinking, image,
 // steering) appears with no page-specific code.
 
-import { createEl, formatTokens } from './utils.js';
+import { createEl, formatBytes, formatTokens } from './utils.js';
 
 export function readFact(fact) {
   return fact?.value ?? null;
@@ -98,10 +98,15 @@ function isFact(node) {
 
 // A slot's facts, flattened one level: {length: Fact, running: Fact} ->
 // "length", "running". Works for any later slot shaped the same way.
+// A byte count reads as bytes, not as a twelve-digit integer.
+function factValue(key, value) {
+  return key.endsWith('_bytes') && typeof value === 'number' ? formatBytes(value) : value;
+}
+
 function slotRows(slot) {
   const rows = [];
   for (const [key, node] of Object.entries(slot)) {
-    if (isFact(node)) rows.push(factRow(key.replace(/_/g, ' '), node.value, node.provenance, node.source));
+    if (isFact(node)) rows.push(factRow(key.replace(/_/g, ' '), factValue(key, node.value), node.provenance, node.source));
     else if (node && typeof node === 'object') {
       for (const [sub, leaf] of Object.entries(node)) {
         if (isFact(leaf)) rows.push(factRow(`${key} ${sub}`.replace(/_/g, ' '), leaf.value, leaf.provenance, leaf.source));
@@ -188,7 +193,18 @@ export function renderEngine(engine, { fields = null } = {}) {
     factRow('runtime', engine.runtime?.value, engine.runtime?.provenance, engine.runtime?.source),
     ...slotRows({ context: engine.context || {} }),
   ]));
-  sections.push(factSection('Chat template', slotRows(engine.template || {})));
+  const templateRows = slotRows(engine.template || {});
+  // The file on disk against what the running process loaded: two hashes
+  // side by side say nothing until someone compares them.
+  const onDisk = readFact(engine.template?.sha256);
+  const running = readFact(engine.template?.running_sha256);
+  if (onDisk && running) {
+    templateRows.push(factRow('running template', onDisk === running ? 'matches the file' : 'differs from the file',
+      'observed', onDisk === running
+        ? 'the template this process loaded is the one on disk'
+        : 'the file changed after this model loaded; reload it to apply the file'));
+  }
+  sections.push(factSection('Chat template', templateRows));
   sections.push(factSection('Thinking', thinkingRows(engine.thinking)));
 
   // Later workstreams' slots (cache, thinking, image, steering): shown as
