@@ -36,6 +36,7 @@ Only two members are `@abstractmethod`; the rest are concrete base-class behavio
 **Declared on the base, but the base bodies are stubs -- the behaviour is in the overrides:**
 - **`render_prompt(request) -> str`**: the contract is "render the exact prompt the model sees, without taking an execution slot". The **base raises `NotImplementedError`**; MLX and llama-server implement it.
 - **`check_capacity()`**: the contract is "raise `ModelBusyError` (HTTP 503) when the queue is saturated". The **base is a no-op** -- no admission limit -- so a provider that does not override it has none.
+- **`get_metrics()`** feeds `/v1/system/metrics` and `/status`; both engines implement it, and a reading they cannot make is None, never 0. gguf reads its llama-server process's resident size (`process_memory.resident_mb`, one syscall, no call into the process; not physical footprint, which leaves out the weights llama-server maps from the file), the running context from `/props` at ready, and the last request's token total; MLX reports the whole server's Metal memory.
 - **`unload()`**, **`warmup()`**, **`get_metrics()`**, **`clear_cache()`**, **`get_tokenizer()`**, **`template_info()`**, **`thinking_capable`**, **`effective_thinking()`**, **`generation_queue_stats()`** are likewise declared here with defaults.
 
 Read a stub as a contract, not as inherited behaviour: a provider that inherits the no-op `check_capacity` is ungated.

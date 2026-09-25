@@ -916,19 +916,22 @@ class ModelRouter:
         if loaded:
             provider = self.providers.get(model_id)
             if provider:
-                # Try to get memory info
-                if hasattr(provider, 'get_memory_usage'):
-                    try:
-                        status["memory_mb"] = provider.get_memory_usage()
-                    except Exception:
-                        pass
-                # Busy vs idle, on every engine: the provider's own count of
-                # generations in flight (gguf included; the field was null
-                # for every model before 2026-09-25), and the generation
-                # gate's queue, which is process-wide.
+                # The same numbers /v1/system/metrics reports for this model,
+                # from the same call, so the two cannot disagree. Busy vs idle
+                # on every engine: the provider's own count of generations in
+                # flight, and the generation gate's queue (process-wide).
                 status["requests_active"] = provider.active_generations
-                queue = provider.generation_queue_stats() or {}
-                status["requests_waiting"] = queue.get("waiting")
+                status["requests_queued"] = (provider.generation_queue_stats() or {}).get("waiting")
+                try:
+                    metrics = provider.get_metrics()
+                except Exception as e:  # noqa: BLE001 - status must answer
+                    logging.warning(f"metrics for {model_id} failed: {e}")
+                    metrics = None
+                if metrics is not None:
+                    status.update(
+                        memory_mb=metrics.memory_mb, memory_source=metrics.memory_source,
+                        context_used=metrics.context_used,
+                        context_capacity=metrics.context_capacity)
 
         return status
 

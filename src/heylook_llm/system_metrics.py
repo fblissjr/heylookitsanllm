@@ -33,14 +33,9 @@ def _empty_system_metrics() -> SystemResourceMetrics:
 
 
 def _empty_model_metrics() -> ModelMetrics:
-    """Return zeroed model metrics for fallback cases."""
-    return ModelMetrics(
-        context_used=0,
-        context_capacity=0,
-        context_percent=0.0,
-        memory_mb=0.0,
-        requests_active=0,
-    )
+    """A model whose metrics call failed: every reading unknown (null), which
+    a client can tell from a measured zero."""
+    return ModelMetrics()
 
 
 class SystemMetricsCollector:

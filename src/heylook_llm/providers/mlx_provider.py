@@ -5,7 +5,7 @@ import json
 import threading
 import time
 from pathlib import Path
-from typing import Generator, Dict, List, Tuple
+from typing import Generator, Dict, List, Optional, Tuple
 
 import mlx.core as mx
 from PIL import Image
@@ -950,7 +950,7 @@ class MLXProvider(BaseProvider):
         self._apc = None
         self._apc_mode = None
         self._stop_tokens = frozenset()
-        self._context_used = 0
+        self._context_used = None  # the last request's context; None until one ran
         # Served with vision? Declared modalities + whether mlx-vlm registers
         # the model_type; the capability report reads the same resolver. A
         # vision model mlx-vlm can't run as a VLM is served as text rather
@@ -1541,8 +1541,9 @@ class MLXProvider(BaseProvider):
             return config.max_seq_len
         return 32768
 
-    def _get_context_used(self) -> int:
-        """The last request's context (prompt plus generated tokens)."""
+    def _get_context_used(self) -> Optional[int]:
+        """The last request's context (prompt plus generated tokens), or
+        None before the first request."""
         return self._context_used
 
     def warmup(self) -> None:
@@ -1645,30 +1646,24 @@ class MLXProvider(BaseProvider):
         logging.info(f"warmup: {self.model_id} primed (diffusion) in {(time.time() - t0) * 1000:.0f}ms")
 
     def get_metrics(self) -> ModelMetrics:
-        """Get current metrics for this model (context usage, memory, etc.)."""
+        """Get current metrics for this model (context usage, memory, etc.).
+        Unknown is None: no request served yet means no context in use."""
         try:
-            metal_memory_mb = mx.get_active_memory() / (1024 * 1024)
             context_used = self._get_context_used()
-            context_capacity = self._get_context_capacity()
-            context_percent = (context_used / context_capacity * 100) if context_capacity > 0 else 0.0
-
+            context_capacity = self._get_context_capacity() or None
             return ModelMetrics(
                 context_used=context_used,
                 context_capacity=context_capacity,
-                context_percent=round(context_percent, 1),
-                memory_mb=round(metal_memory_mb, 1),
-                requests_active=self._active_generations,
+                context_percent=(round(context_used / context_capacity * 100, 1)
+                                 if context_used is not None and context_capacity else None),
+                memory_mb=round(mx.get_active_memory() / (1024 * 1024), 1),
+                memory_source="MLX active memory of the whole server process",
+                requests_active=self.active_generations,
                 requests_queued=self._gen_gate.snapshot()["waiting"],
             )
         except Exception as e:
             logging.warning(f"Failed to get MLX metrics: {e}")
-            return ModelMetrics(
-                context_used=0,
-                context_capacity=0,
-                context_percent=0.0,
-                memory_mb=0.0,
-                requests_active=0
-            )
+            return ModelMetrics(requests_active=self.active_generations)
 
     def clear_cache(self) -> bool:
         """Clear this model's prompt reuse: a fresh, empty APC store and an

@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.146]
+
+gguf on the perf page and in `/status` (the mrblue half of the 2026-09-25
+parity follow-ups).
+
+### Fixed
+
+- **gguf models appear in `/v1/system/metrics`.** `LlamaServerProvider` had
+  no `get_metrics`, so a gguf model was missing from the metrics payload:
+  the perf page said "No models loaded right now" with one resident, and the
+  models page's "Resident now" line never showed. It now reports, without a
+  call into llama-server: memory as the llama-server process's resident size
+  (`process_memory.resident_mb`, one syscall), the context llama-server was
+  sized to, the last request's prompt plus reply, and the gate's counts.
+  Resident size, not physical footprint: llama-server maps its weights from
+  the file, and footprint left out all of them (measured live).
+- **Null means unknown in the metrics, never zero.** Every `ModelMetrics`
+  reading is nullable: context used is null until the model has served a
+  request (MLX reported 0), and a failed reading is null (it was all zeros).
+  The new `memory_source` says what `memory_mb` measures, which differs by
+  engine: gguf, its own process; MLX, the whole server's active Metal memory.
+  The perf page shows an unknown as "--" and the source on hover.
+- **`/status` fills every field it declares**, from the same `get_metrics`
+  call as `/v1/system/metrics`, so the two cannot disagree. `memory_mb`,
+  `context_used` and `context_capacity` were never set on either engine.
+  `requests_waiting` (v2.0.140) is renamed `requests_queued`, the metrics
+  name. The perf page keeps `/v1/system/metrics` as its one source. Spec §4
+  updated.
+
+### Verified
+
+- Unit and contract suites green. Live on
+  `JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`: the model is in
+  `/v1/system/metrics` with memory, context and gate counts, `/status`
+  matches it, and context used moves after a request.
+
 ## [2.0.145]
 
 Frontend and backend held against each other per engine (two read-only

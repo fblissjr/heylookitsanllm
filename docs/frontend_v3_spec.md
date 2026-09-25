@@ -739,10 +739,12 @@ gated its entire UI on them.
 `POST /v1/models/{id}/load?warm=true` is what v3's Load button sends, so "Loaded" means ready
 rather than merely resident; the page renders `warm_ms` as a note and surfaces
 `warm_error` without calling the load a failure (the model is loaded either way).
-(`GET /{id}/status` → `{loaded, memory_mb?, requests_active, requests_waiting}`:
-since v2.0.140 `requests_active` is the model's generations in flight on every engine,
-gguf included, and `requests_waiting` the process-wide gate's queue; both null when not
-loaded.) (Backend also exposes status/validate — `/discovered` retired v2.0.118; the sampler roster and
+(`GET /{id}/status` → `{loaded, memory_mb, memory_source, context_used, context_capacity,
+requests_active, requests_queued}`: one model's slice of the same `get_metrics` call that
+`/v1/system/metrics` makes (v2.0.146), on every engine, so the two cannot disagree; every
+field but `loaded` is null when not loaded or not known. The perf page reads
+`/v1/system/metrics`; `/status` is for a client that asks about one model.
+`requests_waiting` (v2.0.140) is now `requests_queued`, the metrics name.) (Backend also exposes status/validate — `/discovered` retired v2.0.118; the sampler roster and
 bulk-default-sampler routes were removed in v2.0.30; out of scope unless a
 trimmed feature needs them.)
 
@@ -880,8 +882,13 @@ planned `target` (a model that reports none gets no Fit).
 
 **Models list** `GET /v1/models` → `{data:[{id,provider?,capabilities?,modalities?,thinking_default?,sampler_defaults?,engine?}]}` (enabled models only; `engine` is the contract described under Admin models). `modalities` (v1.34.43) is the model's declared capability set (`["text","vision","audio","video"]`); `capabilities` stays gated to what the server actually serves (image input) -- description != served. Since v1.79.43 the MLX `vision` capability is DERIVED FROM THE LOADER ROUTER (`loader_routing.resolve_serves_vision`), the same answer `MLXProvider`'s image guard reads, so the advertised capability and the 400 cannot disagree. Before that it read the checkpoint's DECLARATION, and a hand-made text-only variant whose directory still carried vision blocks advertised `vision` and was then refused -- a client gating on `capabilities` exactly as this spec instructs got the refusal anyway. (The `loader` field that could force a dual-capable VLM to text was retired in v2.0.88.) NB `modalities` is UNCHANGED by this: the checkpoint still declares what it declares, which is why chat's history-media drop disclosure reads capabilities and not modalities. `thinking` (v1.34.60) is auto-detected from whether the model's chat template references `enable_thinking` (Qwen3 `<think>` blocks, gemma-4 thought channels) -- no `heylook.toml` flag needed; this is what shows/hides the drawer checkbox and composer icon.
 **Metrics** `GET /v1/system/metrics?force_refresh?` → `{system:{ram_used_gb,ram_available_gb,ram_total_gb,
-cpu_percent}, models:{[id]:{memory_mb,context_used,context_capacity,context_percent,requests_active,
-requests_queued}}}` (30s server cache).
+cpu_percent}, models:{[id]:{memory_mb,memory_source,context_used,context_capacity,context_percent,
+requests_active,requests_queued}}}` (30s server cache). Every loaded model on both engines
+(gguf since v2.0.146). Null means unknown, never zero: `context_used` is the last request's
+prompt plus reply and null before the first; `memory_mb` means what `memory_source` says,
+which differs by engine (gguf: its own llama-server process's resident memory, mapped weights included; MLX: the
+whole server process's active Metal memory, every resident MLX model together).
+`requests_queued` is the process-wide generation gate's queue.
 **Perf profile** `GET /v1/performance/profile/{1h|6h|24h|7d}` → `{timing_breakdown:[{operation,avg_time_ms,
 count,percentage}], trends:[{hour,response_time_ms,tokens_per_second,requests,errors,cache_share,
 draft_acceptance,draft_share}], cache:[{model,requests,prompt_tokens,cached_tokens,cache_share,

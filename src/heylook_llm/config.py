@@ -1466,13 +1466,27 @@ class SystemResourceMetrics(BaseModel):
 
 
 class ModelMetrics(BaseModel):
-    """Per-model metrics (context usage, memory)."""
-    context_used: int = Field(..., description="Tokens currently in context")
-    context_capacity: int = Field(..., description="Maximum context window size")
-    context_percent: float = Field(..., description="Context usage percentage")
-    memory_mb: float = Field(..., description="Model memory usage in MB")
-    requests_active: int = Field(default=0, description="Active requests for this model")
-    requests_queued: int = Field(default=0, description="Requests waiting in the FIFO generation queue behind the active one")
+    """Per-model metrics (context usage, memory). Null means unknown, never
+    zero: a model that has served no request has no context in use yet, and
+    a memory reading that failed is not 0 MB."""
+    context_used: Optional[int] = Field(
+        default=None, description="Tokens in the last request's context (prompt plus reply); "
+                                  "null until the model has served one")
+    context_capacity: Optional[int] = Field(
+        default=None, description="Context window: gguf, what the running llama-server was "
+                                  "sized to; MLX, the model's own limit")
+    context_percent: Optional[float] = Field(
+        default=None, description="context_used / context_capacity, or null if either is unknown")
+    memory_mb: Optional[float] = Field(
+        default=None, description="Memory in MiB, as memory_source says; null when unreadable")
+    memory_source: Optional[str] = Field(
+        default=None, description="What memory_mb measures. The engines differ: gguf reads its "
+                                  "own llama-server process's resident memory, MLX the whole server process's "
+                                  "active Metal memory (every resident MLX model together)")
+    requests_active: int = Field(default=0, description="Generations in flight on this model")
+    requests_queued: int = Field(
+        default=0, description="Requests waiting at the generation gate, which is process-wide: "
+                               "they may be for another resident model")
 
 
 class SystemMetricsResponse(BaseModel):
@@ -1584,9 +1598,11 @@ class ModelStatusResponse(BaseModel):
     memory_mb: Optional[float] = Field(default=None, description="Memory usage in MB (if loaded)")
     context_used: Optional[int] = Field(default=None, description="Tokens currently in context")
     context_capacity: Optional[int] = Field(default=None, description="Maximum context window")
+    memory_source: Optional[str] = Field(
+        default=None, description="What memory_mb measures (see ModelMetrics)")
     requests_active: Optional[int] = Field(
         default=None, description="Generations in flight on this model (null when not loaded)")
-    requests_waiting: Optional[int] = Field(
+    requests_queued: Optional[int] = Field(
         default=None,
         description="Requests queued at the generation gate, which is process-wide: "
                     "they may be for another loaded model (null when not loaded)")

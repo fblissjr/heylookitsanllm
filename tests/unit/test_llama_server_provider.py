@@ -1543,3 +1543,29 @@ def test_flash_attn_reports_what_auto_resolved_to():
     assert flash_attn_setting(None, None, loaded=False).value == "auto"
     chosen = flash_attn_setting("off", "on", loaded=True)
     assert (chosen.value, chosen.configured, chosen.provenance) == ("off", "off", "configured")
+
+
+def test_gguf_metrics_report_what_is_known_and_null_the_rest():
+    """gguf was absent from /v1/system/metrics (no get_metrics), so the perf
+    page said "No models loaded" with a gguf model resident. Memory is the
+    llama-server process's footprint (here: this test's own process stands
+    in for it); context used is null until a request ran, never 0."""
+    import os
+
+    from heylook_llm.providers.common.generation_gate import get_process_gate
+
+    provider = LlamaServerProvider.__new__(LlamaServerProvider)
+    provider._active_lock = __import__("threading").Lock()
+    provider._active_generations = 0
+    provider._gen_gate = get_process_gate(4)
+    provider.running_ctx = 8192
+    provider._context_used = None
+    provider._proc = type("P", (), {"pid": os.getpid(), "poll": lambda self: None})()
+
+    m = provider.get_metrics()
+    assert m.memory_mb and m.memory_mb > 0 and "llama-server" in m.memory_source
+    assert (m.context_capacity, m.context_used, m.context_percent) == (8192, None, None)
+    provider._context_used = 2048
+    assert provider.get_metrics().context_percent == 25.0
+    provider._proc = None  # not running: memory unknown, not 0
+    assert provider.get_metrics().memory_mb is None

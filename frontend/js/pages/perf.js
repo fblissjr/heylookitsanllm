@@ -192,11 +192,18 @@ function buildModelRow(id) {
   return { root, memEl, fillEl, ctxEl, reqsEl };
 }
 
+// Null means unknown (the server says so rather than sending 0): memory it
+// could not read, or a context no request has used yet. Shown as "--", never
+// as a measured zero. memory_source differs by engine (gguf: its own
+// llama-server process; MLX: the whole server's Metal memory), so it rides
+// the title.
 function applyModelData(row, m) {
-  row.memEl.textContent = formatBytes((m.memory_mb ?? 0) * 1024 * 1024);
-  const pct = Math.max(0, Math.min(100, m.context_percent ?? 0));
-  row.fillEl.style.width = `${pct}%`;
-  row.ctxEl.textContent = `ctx ${fmtInt(m.context_used)} / ${fmtInt(m.context_capacity)} (${pct.toFixed(1)}%)`;
+  row.memEl.textContent = m.memory_mb != null ? formatBytes(m.memory_mb * 1024 * 1024) : 'memory --';
+  row.memEl.title = m.memory_source ?? '';
+  const pct = m.context_percent != null ? Math.max(0, Math.min(100, m.context_percent)) : null;
+  row.fillEl.style.width = `${pct ?? 0}%`;
+  row.ctxEl.textContent = `ctx ${fmtInt(m.context_used)} / ${fmtInt(m.context_capacity)}`
+    + (pct != null ? ` (${pct.toFixed(1)}%)` : '');
   row.reqsEl.textContent = `${fmtInt(m.requests_active)} active · ${fmtInt(m.requests_queued)} queued`;
 }
 

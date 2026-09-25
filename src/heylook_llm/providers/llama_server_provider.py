@@ -258,6 +258,8 @@ class LlamaServerProvider(BaseProvider):
         # Per process: a respawn starts with empty caches, so a fresh witness.
         self._cache_witness: Optional[CacheWitness] = None
         self._spawn_log: Optional[SpawnLog] = None
+        # The last request's context (prompt plus reply), None until one ran.
+        self._context_used: Optional[int] = None
         self._base_url: Optional[str] = None
         # The model's own recommended decode settings, read from the GGUF
         # header once and cached. None = not read yet (the file cannot change
@@ -982,6 +984,26 @@ class LlamaServerProvider(BaseProvider):
                               provenance="observed"),
         }
 
+    def get_metrics(self):
+        """What the metrics endpoint and /status report for this model,
+        without a call into llama-server: nothing here may wait on a
+        generation. Memory is the llama-server process's resident size (one
+        syscall; its weights are mapped from the file, so physical footprint
+        would leave them out); context capacity is what /props said at ready; context
+        used is the last request's prompt plus reply. Unknown is None."""
+        from ..config import ModelMetrics
+        from ..process_memory import resident_mb
+
+        proc = getattr(self, "_proc", None)
+        memory = resident_mb(proc.pid) if proc is not None and proc.poll() is None else None
+        used, capacity = getattr(self, "_context_used", None), self.running_ctx
+        return ModelMetrics(
+            context_used=used, context_capacity=capacity,
+            context_percent=round(used / capacity * 100, 1) if used is not None and capacity else None,
+            memory_mb=memory, memory_source="the llama-server process's resident memory: mapped weights plus KV cache and buffers",
+            requests_active=self.active_generations,
+            requests_queued=self._gen_gate.snapshot()["waiting"])
+
     def describe_observed(self):
         """The engine contract's observed half: what this process was spawned
         with, read back from fields load_model recorded. No call to the
@@ -1375,6 +1397,7 @@ class LlamaServerProvider(BaseProvider):
         self._proc = None
         self._base_url = None
         self.running_ctx = None
+        self._context_used = None
         if proc is None or proc.poll() is not None:
             with _ACTIVE_PROCS_LOCK:
                 _ACTIVE_PROCS.discard(proc)
@@ -1818,6 +1841,8 @@ class LlamaServerProvider(BaseProvider):
                     if not tagged:
                         chunk.queue_wait_ms = queue_wait_ms
                         tagged = True
+                    if chunk.prompt_tokens:
+                        self._context_used = chunk.prompt_tokens + (chunk.generation_tokens or 0)
                     yield chunk
             finally:
                 inner.close()
