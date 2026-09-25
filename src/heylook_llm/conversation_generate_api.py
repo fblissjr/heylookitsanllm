@@ -496,11 +496,10 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
         if conv is None:
             raise HTTPException(status_code=404, detail="Conversation not found")
 
-        model_id = body.overrides.get("model") or conv.get("model_id") \
-            or getattr(router.app_config, "default_model", None)
+        model_id = body.overrides.get("model") or conv.get("model_id")
         if not model_id:
             raise HTTPException(status_code=400, detail=(
-                "Conversation has no model and the server has no default_model"))
+                "Conversation has no model; pick one"))
         model_config = router.app_config.get_model_config(model_id)
         if model_config is None:
             raise HTTPException(status_code=400, detail=f"Unknown or disabled model: {model_id}")
@@ -679,11 +678,10 @@ async def preview_prompt(conv_id: str, request: Request, body: PromptPreviewRequ
     conv = await db.get_conversation(conn, conv_id)
     if conv is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    model_id = body.overrides.get("model") or conv.get("model_id") \
-        or getattr(router.app_config, "default_model", None)
+    model_id = body.overrides.get("model") or conv.get("model_id")
     if not model_id:
         raise HTTPException(status_code=400, detail=(
-            "Conversation has no model and the server has no default_model"))
+            "Conversation has no model; pick one"))
     model_config = router.app_config.get_model_config(model_id)
     if model_config is None:
         raise HTTPException(status_code=400, detail=f"Unknown or disabled model: {model_id}")

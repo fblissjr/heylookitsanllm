@@ -254,13 +254,12 @@ documented on that route that are about the ENGINES rather than the wire still h
   Non-streaming requests get HTTP 500 with the message in `detail`.
   `streaming.js` converts the payload to a thrown error routed to `onError`. Clients must never render
   `error.message` as assistant content.
-- **Model routing failure = 400 (v1.44.5)**: an unknown/disabled `model`, or omitting `model` when the
-  server has no `default_model` configured, returns HTTP 400 with the reason + the available ids in
-  `detail` — on `/v1/messages` (and on the removed OpenAI route). It was a 500 through v1.44.4. A failed
+- **Model routing failure = 400 (v1.44.5)**: an unknown/disabled `model`, or omitting `model`, returns
+  HTTP 400 with the reason + the available ids in `detail`. There is no default model (v2.0.150): no
+  config fallback and no "whatever is loaded" fallback, so a request naming no model is always a 400 — on `/v1/messages` (and on the removed OpenAI route). It was a 500 through v1.44.4. A failed
   model *load* (corrupt weights, unsupported architecture) is still a 500: 400 means "pick a different
   model", 500 means "this model is broken".
-- **Startup loads nothing (v1.44.4)**: the server no longer pre-warms `default_model` at boot (only an
-  explicit `--model-id` does), so the first request to any model pays the load. v3 must not assume a
+- **Startup loads nothing (v1.44.4)**: only an explicit `--model-id` pre-warms a model at boot, so the first request to any model pays the load. v3 must not assume a
   model is resident — the models page reflects real state.
 - **Server-side defaults**: when the request and the model config are both silent, the cascade
   answers with the model's OWN published settings (generation_config.json on MLX, the GGUF header's

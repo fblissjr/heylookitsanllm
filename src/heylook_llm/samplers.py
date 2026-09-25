@@ -67,7 +67,7 @@ VENDOR_SAMPLING_KEYS = ('temperature', 'top_p', 'top_k')
 
 
 # Model-config / request keys the cascade resolves. Providers whose config
-# class lacks a key (GGUFModelConfig carries fewer of them than MLX's)
+# class lacks a key (neither config carries repetition_context_size)
 # simply never contribute it; unknown keys in the result are ignored by the
 # consumer (gguf's payload map picks only what llama-server understands).
 EFFECTIVE_SAMPLER_KEYS = (

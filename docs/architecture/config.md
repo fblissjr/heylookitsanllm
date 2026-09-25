@@ -41,9 +41,8 @@ Supports hot-reloading without server restart via `POST /v1/admin/reload`.
 ### Basic Structure
 
 ```toml
-default_model = "model-id"    # ROUTING fallback for requests naming no model.
-                              # Does NOT preload -- startup pre-warm is opt-in
-                              # via `--model-id` only.
+# No default_model (removed v2.0.150): every request names its model, and
+# startup loads nothing unless `--model-id` asks for it.
 max_loaded_models = 2
 
 # THIN by design (derive-at-load, v1.47+): id + provider + model_path is a
@@ -343,7 +342,6 @@ class ModelConfig(BaseModel):
 
 class AppConfig(BaseModel):
     models: List[ModelConfig]
-    default_model: Optional[str]
     max_loaded_models: int = 2
 ```
 

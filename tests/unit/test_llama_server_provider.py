@@ -657,6 +657,30 @@ class TestPayload:
         p = make_provider(presence_penalty=1.5)
         assert p._build_payload(req(enable_thinking=True))["presence_penalty"] == 1.5
 
+    def test_per_model_sampling_matches_mlx_and_reaches_the_payload(self):
+        """Owner call 2026-09-25: a gguf model's own file tunes sampling as
+        an MLX model's does. Every per-request sampler field MLX's config
+        has, gguf's has; a validated value reaches llama-server, and a
+        request field still beats it."""
+        from heylook_llm.config import (EFFECT_PER_REQUEST, GGUFModelConfig,
+                                        MLXModelConfig)
+        from heylook_llm.samplers import EFFECTIVE_SAMPLER_KEYS
+
+        def per_request(cls):
+            return {name for name, f in cls.model_fields.items()
+                    if name in EFFECTIVE_SAMPLER_KEYS
+                    and (f.json_schema_extra or {}).get("effect") == EFFECT_PER_REQUEST}
+
+        assert per_request(MLXModelConfig) <= per_request(GGUFModelConfig)
+        cfg = GGUFModelConfig(model_path="/fake/model.gguf", temperature=0.3,
+                              top_p=0.8, top_k=12, min_p=0.05,
+                              repetition_penalty=1.1).model_dump()
+        p = LlamaServerProvider("test-gguf", cfg, False)
+        payload = p._build_payload(req())
+        assert (payload["temperature"], payload["top_p"], payload["top_k"],
+                payload["min_p"], payload["repeat_penalty"]) == (0.3, 0.8, 12, 0.05, 1.1)
+        assert p._build_payload(req(temperature=0.9))["temperature"] == 0.9
+
     def test_request_thinking_off_no_penalty(self):
         p = make_provider()
         payload = p._build_payload(req(enable_thinking=False))

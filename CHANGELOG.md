@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.150]
+
+### Removed
+
+- **No default model (owner call).** `default_model` is gone from the
+  config, the router and both generation routes, along with the implicit
+  fallback that sent a request naming no model to whatever model was
+  loaded. **Breaking:** a `/v1/messages` request, or a conversation, with no
+  model is now always a 400 listing the ids, even with a model resident. A
+  `default_model` key left in heylook.toml is ignored. Startup still loads
+  nothing unless `--model-id` asks. `model_service` no longer writes the key.
+
+### Added
+
+- **Per-model sampler defaults on gguf** (owner call): temperature, top_p,
+  top_k, min_p and repetition_penalty in a model's own `model.heylook.toml`,
+  matching MLX. They sit above the GGUF header's vendor values and below a
+  request field (a preset, the chat panel). The models page's editor offers
+  them from the schema. A test pins that gguf carries every per-request
+  sampler field MLX does and that a validated value reaches llama-server's
+  payload.
+
 ## [2.0.149]
 
 ### Fixed

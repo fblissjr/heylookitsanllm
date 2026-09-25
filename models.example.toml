@@ -12,7 +12,6 @@
 #   - cache defaults    <- actual weight bytes vs this machine's RAM
 # Any field you write here is an explicit OVERRIDE and always wins.
 
-default_model = "my-model-4bit"
 max_loaded_models = 1
 
 # --- MLX: the minimal entry (this is all a typical model needs) ---

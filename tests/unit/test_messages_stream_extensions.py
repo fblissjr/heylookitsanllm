@@ -31,7 +31,6 @@ TEST_MODELS = {
             "config": {"model_path": "/fake/model", "vision": False},
         },
     ],
-    "default_model": "fake-model",
     "max_loaded_models": 1,
 }
 

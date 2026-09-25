@@ -66,7 +66,6 @@ TEST_MODELS_DATA = {
             "config": {"model_path": "/fake/model.gguf"},
         },
     ],
-    "default_model": "test-mlx-model",
     "max_loaded_models": 2,
     # TestClient's Host; the DNS-rebinding guard refuses a name it is not told
     # about, exactly as it would on a real deployment.

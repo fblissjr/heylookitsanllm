@@ -94,7 +94,6 @@ def admin_app(tmp_path, monkeypatch):
 
     cfg = tmp_path / "models.toml"
     cfg.write_text(tomli_w.dumps({
-        "default_model": "none",
         "models": [{
             "id": "written-off",
             "provider": "gguf",

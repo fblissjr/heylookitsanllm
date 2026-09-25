@@ -29,7 +29,6 @@ def service(tmp_path):
     """A ModelService over a throwaway models.toml with one gguf entry."""
     toml = tmp_path / "models.toml"
     toml.write_text(
-        'default_model = "m"\n'
         "max_loaded_models = 1\n\n"
         "[[models]]\n"
         'id = "m"\n'

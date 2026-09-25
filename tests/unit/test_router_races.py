@@ -170,7 +170,6 @@ class TestLoadCapacityTOCTOU(_RouterTestBase):
         t.start()
         time.sleep(0.05)  # mid-load
         seen["loaded_models"] = dict(router.get_loaded_models())
-        seen["current"] = router.get_current_model_id()
         seen["status_loaded"] = router.get_model_status("model-a")["loaded"]
         t.join(timeout=10)
         self.assertFalse(t.is_alive())

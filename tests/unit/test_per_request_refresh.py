@@ -44,7 +44,6 @@ class _ConfigDictProvider(BaseProvider):
 def _toml(temperature=None, context_length=None, model_id="m1", enabled=True,
           model_path="/fake/path/m1"):
     lines = [
-        f'default_model = "{model_id}"',
         "max_loaded_models = 1",
         "",
         "[[models]]",

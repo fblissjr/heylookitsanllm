@@ -55,7 +55,6 @@ TEST_MODELS = {
                        "enable_thinking": True},
         },
     ],
-    "default_model": "fake-model",
     "max_loaded_models": 1,
 }
 

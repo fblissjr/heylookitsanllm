@@ -92,7 +92,7 @@ class TestMergeDiscovered:
         """
         from heylook_llm.config import AppConfig
 
-        cfg = {"scan": {"folders": ["/nope"]}, "default_model": "none"}
+        cfg = {"scan": {"folders": ["/nope"]}}
         merged = merge_discovered(cfg, [])
         assert "models" in merged
         AppConfig(**merged)  # must not raise
@@ -163,7 +163,7 @@ class TestAnEditWritesTheModelsOwnFile:
 
     def _service(self, tmp_path, store):
         cfg = tmp_path / "models.toml"
-        cfg.write_text(f'default_model = "none"\n[scan]\nfolders = ["{store}"]\n')
+        cfg.write_text(f'[scan]\nfolders = ["{store}"]\n')
         return ModelService(str(cfg)), cfg
 
     def _stub_scan(self, monkeypatch, entries):
@@ -226,7 +226,6 @@ class TestAdminSurfaceSeesDiscovered:
     def _service(self, tmp_path, store):
         cfg = tmp_path / "models.toml"
         cfg.write_text(textwrap.dedent(f"""
-            default_model = "none"
 
             [scan]
             folders = ["{store}"]
@@ -270,7 +269,6 @@ class TestScanConfigAccessors:
     def _service(self, tmp_path, body=""):
         cfg = tmp_path / "models.toml"
         cfg.write_text(textwrap.dedent(f"""
-            default_model = "none"
             {body}
         """).strip())
         return ModelService(str(cfg)), cfg

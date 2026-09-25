@@ -114,7 +114,7 @@ class ModelService:
     def _read_toml(self) -> dict:
         """Read and parse the heylook.toml file."""
         if not self.config_path.exists():
-            return {"models": [], "default_model": "none", "max_loaded_models": 1}
+            return {"models": [], "max_loaded_models": 1}
         with open(self.config_path, "rb") as f:
             return tomllib.load(f)
 
@@ -472,12 +472,6 @@ class ModelService:
 
             if len(models) == original_len:
                 return False
-
-            # Update default_model if we removed it
-            if data.get("default_model") == model_id:
-                data["default_model"] = (
-                    "none" if not models else models[0]["id"]
-                )
 
             data["models"] = models
             self._write_toml(data)

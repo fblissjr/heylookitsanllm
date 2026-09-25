@@ -28,7 +28,6 @@ from _mock_provider import MockProvider as _MockProvider
 # Template has explicit unload_after_idle_seconds placeholders per model +
 # a global idle_unload_seconds at the top.
 _IDLE_TOML = textwrap.dedent("""
-    default_model = "model-fast"
     max_loaded_models = 3
     idle_unload_seconds = {global_idle}
 

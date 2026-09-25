@@ -53,7 +53,7 @@ class MessageCreateRequest(BaseModel):
     """
     model: Optional[str] = Field(
         default=None,
-        description="Model ID. If omitted, uses loaded model or default_model from config.",
+        description="Model ID. Required in practice: a request naming no model is a 400 listing the ids.",
     )
     messages: List[Message]
     system: Optional[str] = Field(

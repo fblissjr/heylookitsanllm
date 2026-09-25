@@ -1132,6 +1132,47 @@ class GGUFModelConfig(BaseModel):
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "hidden",
                            "file_only": True},
     )
+    # Sampler defaults, the MLX config's counterparts (owner call
+    # 2026-09-25: a gguf model's own file tunes sampling as an MLX model's
+    # does). Each sits ABOVE the vendor layer (the GGUF header's
+    # general.sampling.*) and BELOW a request field; the cascade reads them
+    # by name (samplers.EFFECTIVE_SAMPLER_KEYS), so a field here is the
+    # whole change.
+    temperature: Optional[float] = Field(
+        default=None,
+        description=(
+            "Per-model default sampling temperature. Unset = the GGUF "
+            "header's general.sampling.temp, else the global floor. A request "
+            "field (a preset, the chat panel) still wins over this."),
+        json_schema_extra={"effect": EFFECT_PER_REQUEST})
+    top_p: Optional[float] = Field(
+        default=None,
+        description=(
+            "Per-model default nucleus-sampling cutoff. Unset = the GGUF "
+            "header's general.sampling.top_p, else the global floor."),
+        json_schema_extra={"effect": EFFECT_PER_REQUEST})
+    top_k: Optional[int] = Field(
+        default=None,
+        description=(
+            "Per-model default top-k cutoff; 0 disables it. Unset = the GGUF "
+            "header's general.sampling.top_k, else off. Never llama.cpp's own "
+            "40: heylook always sends the resolved value."),
+        json_schema_extra={"effect": EFFECT_PER_REQUEST})
+    min_p: Optional[float] = Field(
+        default=None,
+        description=(
+            "Per-model default min-p cutoff. Not part of the vendor layer "
+            "(heylook reads only temperature, top_p and top_k from the "
+            "header), so unset means the global floor's off."),
+        json_schema_extra={"effect": EFFECT_PER_REQUEST})
+    repetition_penalty: Optional[float] = Field(
+        default=None,
+        description=(
+            "Per-model repetition penalty, sent as llama-server's "
+            "repeat_penalty. Off by default; reach for it on a model that "
+            "loops. llama.cpp's window counts the prompt's tail too, unlike "
+            "MLX's (see presence_penalty)."),
+        json_schema_extra={"effect": EFFECT_PER_REQUEST})
     # model-level default cap
     max_tokens: Optional[int] = Field(
         default=None, gt=0,
@@ -1408,22 +1449,10 @@ class ScanConfig(BaseModel):
 
 
 class AppConfig(BaseModel):
+    # No default model (owner call 2026-09-25): every request names its
+    # model, and a request that does not is a 400 listing the ids. A
+    # `default_model` key left in heylook.toml is ignored.
     models: List[ModelConfig]
-    default_model: Optional[str] = None
-
-    @field_validator('default_model', mode='before')
-    @classmethod
-    def _blank_default_model_is_unset(cls, v):
-        """Coerce the placeholder spellings of "no default" to None.
-
-        `model_importer`/`model_service` write the literal string ``"none"``
-        when a scan finds no models, and ``""`` shows up in hand-edited
-        configs. Both are TRUTHY, so without this they sail past every
-        ``if default_model:`` check and get routed to as a real model id.
-        """
-        if isinstance(v, str) and v.strip().lower() in ("", "none"):
-            return None
-        return v
     scan: Optional[ScanConfig] = None
     # Default is 1 (single-model) -- Apple Silicon is memory-bandwidth-bound,
     # so a second loaded-but-idle model doesn't help throughput. Field stays

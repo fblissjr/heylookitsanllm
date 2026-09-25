@@ -383,7 +383,7 @@ class TestGGUFTomlRoundTrip:
 class TestModelServiceGGUFNoCrash:
     def _service(self, tmp_path):
         config_path = tmp_path / "models.toml"
-        config_path.write_text('default_model = "none"\nmax_loaded_models = 1\n')
+        config_path.write_text('max_loaded_models = 1\n')
         return ModelService(str(config_path))
 
     def test_validate_config_accepts_gguf_provider(self, tmp_path):

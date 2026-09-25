@@ -104,10 +104,9 @@ class ModelRouter:
         # Observability (S1.2). Set by api.py lifespan after construction.
         self.memory_manager: Optional[Any] = None
 
-        # Startup pre-warm is OPT-IN and only ever explicit (`--model-id`).
-        # `default_model` is a ROUTING fallback for requests that name no model
-        # (see get_provider) -- it deliberately does NOT preload, so opening the
-        # server doesn't pin a multi-GB model into RAM nobody asked for.
+        # Startup pre-warm is OPT-IN and only ever explicit (`--model-id`):
+        # opening the server must not pin a multi-GB model into RAM nobody
+        # asked for.
         initial_model_to_load = initial_model_id or None
         enabled_models = self.app_config.models
         if not enabled_models:
@@ -123,19 +122,6 @@ class ModelRouter:
             elif model_config.provider == "mlx" and not HAS_MLX:
                 logging.warning(f"Initial model '{initial_model_to_load}' requires MLX provider which is not installed.")
                 initial_model_to_load = None
-
-        # Validate (never load) the routing default. Startup used to check it
-        # implicitly by pre-warming it; now that preload is opt-in, an
-        # unresolvable default would otherwise stay invisible until some
-        # model-less request failed at runtime.
-        if self.app_config.default_model and not self.app_config.get_model_config(
-            self.app_config.default_model
-        ):
-            logging.warning(
-                f"default_model '{self.app_config.default_model}' is not a known enabled model. "
-                f"Requests that name no model will fail. Available: "
-                f"{[m.id for m in enabled_models]}"
-            )
 
         if not initial_model_to_load:
             logging.info("No startup model requested. Models will be loaded on first request.")
@@ -490,13 +476,6 @@ class ModelRouter:
         finally:
             self.cache_lock.acquire()
 
-    def get_current_model_id(self) -> Optional[str]:
-        """Get the most recently used model ID from cache, or None if no models loaded."""
-        if self.providers:
-            # OrderedDict keeps insertion order; last item is most recently used
-            return next(reversed(self.providers))
-        return None
-
     def get_loaded_models(self) -> Dict[str, BaseProvider]:
         """
         Get all currently loaded models.
@@ -509,20 +488,12 @@ class ModelRouter:
             return dict(self.providers)
 
     def get_provider(self, model_id: str) -> BaseProvider:
-        # Fallback logic when no model specified:
-        # 1. Use currently loaded model (most recently used)
-        # 2. Use default_model from config
-        # 3. Raise error with available models
+        # Every request names its model (owner call 2026-09-25): no config
+        # default and no "whatever is loaded" fallback, so a request can
+        # never land on a model its sender did not pick.
         if not model_id:
-            model_id = self.get_current_model_id()
-            if model_id:
-                logging.debug(f"No model specified, using loaded model: {model_id}")
-            elif self.app_config.default_model:
-                model_id = self.app_config.default_model
-                logging.debug(f"No model specified, using default: {model_id}")
-            else:
-                available = [m.id for m in self.app_config.models]
-                raise ModelNotFound(f"No model specified and no default configured. Available: {available}")
+            available = [m.id for m in self.app_config.models]
+            raise ModelNotFound(f"No model specified; name one of: {available}")
 
         # Fast path: check cache first
         provider = self._check_cache(model_id)

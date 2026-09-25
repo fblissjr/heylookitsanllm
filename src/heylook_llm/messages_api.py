@@ -298,7 +298,7 @@ def _refuse_unoffered_depth(router, chat_request) -> None:
     again inside the cascade; this is the half that keeps it out of a 200.
     Detection reads files only, so it answers for unloaded models."""
     value = chat_request.reasoning_effort
-    model_id = chat_request.model or getattr(router.app_config, "default_model", None)
+    model_id = chat_request.model
     if value is None or not model_id:
         return
     model_config = router.app_config.get_model_config(model_id)
@@ -366,8 +366,8 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
             return model_busy_response(e, provider)
         raise HTTPException(status_code=500, detail=str(e))
     except ModelNotFound as e:
-        # Model ROUTING failed: unknown/disabled id, or no model named and no
-        # `default_model` configured -- the client's pick, so 400 not 500.
+        # Model ROUTING failed: unknown/disabled id, or no model named --
+        # the client's pick, so 400 not 500.
         # Deliberately NOT a bare `except ValueError`: get_provider re-raises
         # load failures too, and those keep their 500 and their traceback.
         logging.warning(f"[MESSAGES] Model not resolved: {e}")
