@@ -2,11 +2,59 @@
 
 Cross-session task backlog organized by priority.
 
-*Last reviewed: 2026-09-25, a full triage (through v2.0.154). Every section
+*Last reviewed: 2026-09-25, a full triage (through v2.0.154); the "Next
+session" section below added at v2.0.167. Every section
 was classed done, obsolete, open or mixed with evidence
 (internal/claude/todo_triage.md); the done and obsolete ones moved verbatim
 to internal/archive/todo_closed_2026-09-25.md. Mixed sections stay whole: their
 checked-off items are history kept beside the open ones.*
+
+## Next session: open owner calls and queued work (2026-09-25, mrpurple handoff)
+
+The three-phase plan is done (v2.0.150 - v2.0.167; CURRENT.md handoff). What
+is left, each with the recommendation the owner was given:
+
+- [ ] **Raw output view (owner asked 2026-09-25; recommendation given, awaiting
+  go).** Input side is DONE today on both engines: the prompt preview (composer
+  eye, editor "Preview prompt") shows the engine's own render with the model's
+  own markers highlighted (v2.0.163). Response side:
+  - MLX: fully buildable. Store the engine's text before the reasoning split
+    (every marker the model emitted) as a raw copy per reply, and append the
+    stop token that ended it (never decoded; the engine knows its id). A
+    per-message **Raw** toggle renders it with `highlightSpecials`. Replies
+    from before the change have no raw copy.
+  - gguf: llama-server hides control tokens and splits reasoning before heylook
+    sees the text. Recommended: the toggle shows disabled with that reason.
+    The one real option is per-request `reasoning_format: "none"` (reasoning
+    inline with `<think>` as text; control tokens still hidden) with heylook's
+    parser doing the split, which replaces llama-server's parser on the main
+    gguf path: a separate owner decision. `--special` at spawn is not
+    recommended (every request and llama-server's own parser see control
+    tokens). `__verbose` needs server verbosity > 9; `return_tokens` reaches
+    only the non-chat completion JSON (llama.cpp server-schema.cpp:34).
+- [ ] **Remove the static gzip cache (awaiting owner yes).** `frontend_static`
+  keeps each gzipped asset in memory; recompressing all of them costs the
+  server a few ms per cold page load, and the only test is a call-count pin
+  (a hit is byte-identical to a miss). Recommended: remove the cache, keep
+  gzip, delete `test_the_gzip_cache_survives_a_multi_asset_page_load`.
+- [ ] **The 3 live-only kept tests** (second pass, v2.0.165):
+  `TestVisionFeatureCachePatterns::test_our_call_site_hands_over_the_cache`
+  can be deleted now (vlm_parity_probe reports `feature_cache_hit`, green at
+  v2.0.166). `test_extension_sampler_fields_reach_the_provider` (presence
+  penalty) and `test_a_deliberate_unload_still_sweeps_the_engine` each need a
+  live replacement in `tests/smoke/` first (a fixed-seed A/B with and without
+  the penalty; Metal memory falls after an explicit unload), then delete.
+- [ ] **The 49 borderline tests** (`internal/claude/prune/second_pass.md`
+  "Borderline"). Recommended, mechanical (tests only, no GPU): delete the
+  tautological half of each (e.g. asserting a monkeypatch it just installed)
+  and keep the observable half. Owner calls recommended as KEEP: the ~5 spec
+  pins of deliberate owner defaults (`max_loaded_models == 1`), the 2
+  "derive, never hand-copy" lints, the MODEL_BUSY AST lint (2 tests), and the
+  destructor-branch check. Delete the 2 test-helper-fidelity tests with their
+  helper.
+- [ ] **Tools / function calling:** 422 until a client needs them (owner call).
+- [ ] **Notebook images:** later (owner call); audio waits for a model that
+  supports it.
 
 ## From the 2026-09-24 improvement loop (merged as v2.0.121)
 

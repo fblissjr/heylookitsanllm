@@ -50,10 +50,12 @@ panel names each default's source, Fit says Full res / Shrink. Pruning
 system-level replacements written first. Phase 3: a chat_template.jinja
 winner reaches the MLX vision processor (v2.0.164), the `--model-id`
 pre-warm is recorded (v2.0.166). All release checks green at v2.0.166
-(verification table). Still open, owner-gated: tools (when a client needs
-them), notebook images, a per-message raw-output view (only if the preview
-proves not enough), the 49 borderline and 7 kept tests in
-`internal/claude/prune/second_pass.md`.
+(verification table). **Start the next session from TODO.md's "Next
+session" section**: the raw-output view (MLX buildable, gguf limited;
+awaiting the owner's go), removing the static gzip cache (awaiting a yes),
+the 3 live-only kept tests (one deletable now, two need smoke replacements
+first), the 49 borderline tests (a mechanical trim plus a few owner keeps),
+then tools and notebook images when the owner calls them.
 
 **v2.0.143 / v2.0.145 (`mrpurple`).** Thinking levels come from the template
 in force, and `engine.thinking.template` says which copy that is (a jinja
