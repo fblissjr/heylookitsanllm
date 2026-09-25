@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.142]
+
+### Changed
+
+- **Vendored frontend libraries updated** (`scripts/vendor_frontend.py
+  --update`): marked 18.0.13 -> 18.0.14, DOMPurify 3.4.15 -> 3.4.16.
+  - marked: six parser fixes, two of which touch the URL-scheme guard's
+    ground: numeric character references now decode in text, and GFM
+    protocol autolinks (bare scheme text becomes a link). The render suite's
+    scheme property gains a bare-autolink vector for the second.
+  - DOMPurify: IN_PLACE fixes (heylook does not use IN_PLACE) and an ESM
+    export fix. It is now built with rolldown instead of rollup, so the file
+    diff is mostly a reformat plus inlined Babel helpers.
+  - `bun run e2e:render` 100/100 on both, including the scheme property.
+
 ## [2.0.141]
 
 Fixes from an independent review of v2.0.135 - v2.0.139.

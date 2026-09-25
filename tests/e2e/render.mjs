@@ -2540,6 +2540,9 @@ async function main() {
         ['vbscript',        '[x](vbscript:alert(1))'],
         ['data html',       '[x](data:text/html,<script>alert(1)</script>)'],
         ['autolink',        '<javascript:alert(1)>'],
+        // marked 18.0.14 added GFM protocol autolinks: bare scheme text in
+        // prose can now become a link without brackets.
+        ['bare autolink',   'go javascript:alert(1) now'],
         ['reference link',  '[x][r]\n\n[r]: javascript:alert(1)'],
         ['image',           '![x](javascript:alert(1))'],
         ['image data svg',  '![x](data:image/svg+xml,<svg onload=alert(1)>)'],
