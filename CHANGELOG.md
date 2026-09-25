@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.167]
+
+Release checks for v2.0.152 - v2.0.166 (no code change).
+
+- `tests/smoke/` on all three arms (gpt-oss-20b, Qwen3.5-0.8B, the unsloth
+  Qwen3.8-27B GGUF): 85/85. Uncovered: thinking and vision on mlx-text (gpt-oss
+  has neither), audio on gguf (no served model declares it), the known
+  new-image-turn cache gap on mlx-vision. Phase 3 precondition met: thinking
+  depth on both MLX arms (gpt-oss-20b; mlx-vision on Qwen3.8-27B-4bit, 39/39).
+- `scripts/vlm_parity_probe.py` on Qwen3.5-0.8B (the v2.0.164 MLX vision
+  change): ok; the image case a near-tie at upstream margin 0.0, as recorded
+  at v2.0.124.
+- Live probes (`internal/claude/release_2026-09-25/mrpurple/`): response_format
+  15/15 on the three supporting models, gpt-oss refused as designed; thinking
+  levels from every template source, vision with thinking on and off, and
+  stop_sequences on eight models, 51/52 -- the miss is Qwen3.5-0.8B getting
+  17*23 wrong with thinking off (no thinking block, a plain answer: the
+  model, not the path).
+- `bun run e2e:render` 100/100, `e2e:chat` 53/53, `e2e:pages` 32/32.
+- `scripts/vendor_frontend.py --check`: marked 18.0.14, DOMPurify 3.4.16,
+  both current.
+
 ## [2.0.166]
 
 ### Fixed

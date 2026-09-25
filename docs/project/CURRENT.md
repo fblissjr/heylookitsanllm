@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-25, v2.0.152, `main`.
+Last updated: 2026-09-25, v2.0.167, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md) (triaged 2026-09-25;
@@ -19,6 +19,7 @@ rather than carried forward as green.
 | unit + contract | green (1619 passed) | v2.0.129 |
 | 2026-09-24 evening, v2.0.129 | `tests/smoke/` gguf arm on Qwen3.8 | `tests/smoke/` on `improve/2026-09-24` | green on all three arms (mlx-text Qwen3-0.6B, mlx-vision Qwen3.5-0.8B, gguf Qwen3.8-27B); the new system-prompt and back-to-A reuse checks fail on the base commit | improve/2026-09-24, merged as v2.0.121 |
 | `bun run e2e:render` (model-free) | 98/98, including the thinking-depth control check | v2.0.95 |
+| v2.0.166 live pass (mrpurple) | smoke 85/85 on the same three arms plus 39/39 on mlx-vision with Qwen3.8-27B-4bit (depth); vlm_parity_probe ok on Qwen3.5-0.8B (image case a NEAR-TIE at margin 0.0, as at v2.0.124); response_format 15/15 on Qwen3.5-0.8B, Qwen3.8-27B MLX and the unsloth GGUF (gpt-oss refused by design); live probe 51/52 over eight models (the miss: Qwen3.5-0.8B's thinking-off arithmetic, a model answer, not the path); e2e render 100, chat 53, pages 32; vendor libs current. Record in `internal/claude/release_2026-09-25/mrpurple/` | v2.0.166 |
 | v2.0.151 live pass (mrpurple) | smoke 85/85 on gpt-oss-20b / Qwen3.5-0.8B / unsloth Qwen3.8-27B gguf, plus 39/39 on the mlx-vision arm with Qwen3.8-27B-4bit (depth); e2e chat 53/53 and pages 32/32; a live probe over eight models (every template source, every depth value, vision on and off thinking, image-plan, stop_sequences) all green. Record in `internal/claude/release_2026-09-25/mrpurple/results.md` | v2.0.151 |
 | `tests/smoke/` (arms `mlx-text` / `mlx-vision` / `gguf` since v2.0.88) | 82/82 at v2.0.95 on `gpt-oss-20b-MXFP4-Q8-mlx`, `Qwen3.5-0.8B-MLX-8bit` and Qwen3.8-27B: depth covered on mlx-text and gguf (an offered value accepted, an unoffered one a 400 on gguf); a turn that adds a new image is the named known gap; audio uncovered on the arms picked | v2.0.95 |
 | `scripts/vlm_parity_probe.py` | v2.0.124 (mlx-vlm 0.7.3, `ac737ef3`): ok on Qwen3.5-0.8B, the image case a near-tie at upstream margin 0.0. Before: MATCH on both cases, Qwen3.5-0.8B, against mlx-vlm's own loop. Earlier: Qwen-Image-2.1-PE-I21, Qwen3.5-27B-8bit, Qwen3-VL-32B at v2.0.55 | v2.0.124 / v2.0.88 (0.8B) |
@@ -34,6 +35,25 @@ Thinking DEPTH is covered by pinning depth-capable models:
 `--model mlx-vision=mlx-community_Qwen3.8-27B-4bit` (39/39 on the vision arm).
 
 ## Handoff -- start here (2026-09-25)
+
+**v2.0.150 - v2.0.167 (`mrpurple` lead, `mrblue`): the three-phase plan the
+owner approved is done.** Phase 1: one Messages-grammar streaming loop for
+`/v1/messages` and chat (v2.0.153), `stop_sequences` on both routes,
+`response_format` on both engines with thinking left free (v2.0.155; fits
+the 2026-08-30 constrained-decoding ruling's opt-in form, see sharp_edges),
+no default model (v2.0.150), gguf per-model sampler defaults. Phase 2: one
+thinking control (v2.0.159, `depth.off` detected by rendering), exact
+prompt-preview markers from the model's own tokenizer (v2.0.163; the
+store-unstripped special-tokens design was set aside, reasons in TODO), the
+panel names each default's source, Fit says Full res / Shrink. Pruning
+(mrblue, v2.0.157 - v2.0.165): dead code removed, tests 1,658 -> 1,450 with
+system-level replacements written first. Phase 3: a chat_template.jinja
+winner reaches the MLX vision processor (v2.0.164), the `--model-id`
+pre-warm is recorded (v2.0.166). All release checks green at v2.0.166
+(verification table). Still open, owner-gated: tools (when a client needs
+them), notebook images, a per-message raw-output view (only if the preview
+proves not enough), the 49 borderline and 7 kept tests in
+`internal/claude/prune/second_pass.md`.
 
 **v2.0.143 / v2.0.145 (`mrpurple`).** Thinking levels come from the template
 in force, and `engine.thinking.template` says which copy that is (a jinja
