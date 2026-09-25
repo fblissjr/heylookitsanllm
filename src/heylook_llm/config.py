@@ -106,7 +106,7 @@ class ChatRequest(BaseModel):
                     "A cap, not a quality-neutral setting. Absent = no cap.")
 
     # Additional sampler parameters
-    presence_penalty: Optional[float] = Field(default=None, ge=0.0, le=2.0, description="Reduce repetition (0-2, recommended 1.5 for Qwen3 thinking)")
+    presence_penalty: Optional[float] = Field(default=None, ge=0.0, le=2.0, description="Reduce repetition (0-2). Off unless a request or the model's own file sets it (the thinking overlay that applied 1.5 was removed in v2.0.32).")
 
     # Structured output: the JSON schema the REPLY must match (the Messages
     # wire's `response_format`, normalized). None = free text; {} = any JSON
@@ -622,7 +622,7 @@ class GGUFModelConfig(BaseModel):
 
     One entry = one servable model; MTP/draft artifacts are FIELDS here,
     never their own entries (embedded MTP -> just ``spec_type``; a sidecar
-    drafter -> ``draft_model_path``; the same field the MLX config uses).
+    drafter -> ``draft_model_path``; MLX serves without speculative decoding).
     llama-server owns tokenization, chat templating, and reasoning splitting
     -- the provider surfaces pre-split thinking via GenerationChunk.thinking
     and reports template_info() = None.

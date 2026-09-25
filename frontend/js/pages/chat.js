@@ -787,10 +787,8 @@ function commitModelSwitch(ctx, to) {
   // model stops generating the moment the user switches away. NB this is
   // an abort, not a settled handoff: the partial still persists (server
   // disconnect path) into this same conversation after model_id is
-  // rewritten, and messages carry no model column -- so a reader of
-  // conversation.model_id still misattributes it. True per-message
-  // attribution is G5 in the switching design (deferred until a
-  // _SCHEMA_VERSION bump adds messages.model_id).
+  // rewritten. Each message row carries its own model_id (v1.74.0), so the
+  // partial stays attributed to the model that wrote it.
   // A local, not page state: thinkingLossNote needs where we came FROM, and
   // committedModelId is about to become the destination. It was briefly an
   // `s.lastCommittedModelId`, which read as meaningful elsewhere while only
