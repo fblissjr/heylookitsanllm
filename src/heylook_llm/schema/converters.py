@@ -101,11 +101,6 @@ def to_chat_request(request: MessageCreateRequest) -> ChatRequest:
                 thinking=("".join(thinking_parts) or None) if msg.role == "assistant" else None,
             ))
 
-    # Map stream_options
-    stream_options = None
-    if request.stream_options:
-        stream_options = {"include_usage": request.stream_options.include_usage}
-
     return ChatRequest(
         model=request.model,
         messages=chat_messages,
@@ -122,7 +117,6 @@ def to_chat_request(request: MessageCreateRequest) -> ChatRequest:
         enable_thinking=thinking_switch(request.thinking),
         thinking_budget_tokens=getattr(request.thinking, "budget_tokens", None),
         reasoning_effort=request.reasoning_effort,
-        stream_options=stream_options,
     )
 
 

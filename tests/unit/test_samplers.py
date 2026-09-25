@@ -86,7 +86,7 @@ def test_knobs_off_build_no_processors():
     from heylook_llm.providers.common.samplers import build
     from heylook_llm.samplers import GLOBAL_SAMPLER_FLOOR
 
-    _, processors = build(None, dict(GLOBAL_SAMPLER_FLOOR))
+    _, processors = build(dict(GLOBAL_SAMPLER_FLOOR))
     assert processors == []
-    _, processors = build(None, {**GLOBAL_SAMPLER_FLOOR, "repetition_penalty": 1.1})
+    _, processors = build({**GLOBAL_SAMPLER_FLOOR, "repetition_penalty": 1.1})
     assert len(processors) == 1

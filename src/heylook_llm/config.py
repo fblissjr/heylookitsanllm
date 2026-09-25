@@ -109,7 +109,6 @@ class ChatRequest(BaseModel):
     presence_penalty: Optional[float] = Field(default=None, ge=0.0, le=2.0, description="Reduce repetition (0-2, recommended 1.5 for Qwen3 thinking)")
 
     # Streaming options (OpenAI-compatible)
-    stream_options: Optional[Dict] = Field(default=None, description="Options for streaming: {include_usage: true} to get usage stats")
 
     # Continuation ("prefill"): finish the FINAL message instead of opening a
     # new assistant turn. None = auto -- a trailing assistant message is

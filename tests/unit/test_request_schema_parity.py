@@ -62,7 +62,7 @@ MESSAGES_ONLY = {
 
 # Shared fields whose SHAPE legitimately differs -- the wire's own message and
 # option types. Everything else shared must agree exactly.
-STRUCTURAL_FIELDS = {"messages", "stream_options"}
+STRUCTURAL_FIELDS = {"messages"}
 
 
 @pytest.mark.unit

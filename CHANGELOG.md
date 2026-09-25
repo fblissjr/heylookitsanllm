@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.148]
+
+### Removed
+
+- **`stream_options` on `/v1/messages`**, and the `ChatRequest` field it was
+  copied into. No provider read it; a stream always carries usage in
+  `message_delta`, so a client that still sends `include_usage` gets what it
+  asked for and the field is ignored, not refused. gguf's own
+  `include_usage: true` to llama-server is unchanged.
+- **XTC and `logit_bias` in the MLX sampler builder**
+  (`providers/common/samplers.build`). No request field or cascade key could
+  set them; XTC's special tokens were still encoded on every request.
+  `build()` no longer takes the tokenizer.
+
+### Added
+
+- `tests/contract/test_depth_offered_parity.py`: the frontend's
+  `depthOffered` (settings.js) runs under node against the server's
+  `check_depth` over every fixture template's detected controls (offered
+  values, aliases, a foreign value, a made-up one, no depth, not judged).
+  Skips without node.
+
 ## [2.0.147]
 
 Second pass on frontend/backend parity per engine (the part of the

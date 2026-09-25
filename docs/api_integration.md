@@ -448,7 +448,9 @@ kwarg it mapped to).
 `max_tokens`, `temperature`, `top_p`, `top_k`, `min_p`, `repetition_penalty`,
 `repetition_context_size`, `presence_penalty`, `seed`,
 `thinking`, `reasoning_effort`,
-`stream`, `stream_options`, `metadata`.
+`stream`, `metadata`. (`stream_options` was removed in v2.0.148: a stream
+always carries usage in `message_delta`, so a client that still sends
+`include_usage` gets what it asked for and the field is ignored.)
 
 Every one is optional and **absent means the server's cascade decides**.
 
@@ -755,7 +757,7 @@ rather than a guarantee, for reasons the closing note gives:
 - **Extensions**: some request fields have no Anthropic equivalent —
   the sampling knobs (`min_p`, `repetition_penalty`,
   `repetition_context_size`, `presence_penalty`, `seed`), plus
-  `reasoning_effort`, `stream_options`. All are listed
+  `reasoning_effort`. All are listed
   under [Knobs](#knobs) and enumerated authoritatively in `/openapi.json`,
   which is the only list that cannot go stale — this bullet carried a COUNT
   and was wrong twice (v1.79.41, then v1.79.49 dropping

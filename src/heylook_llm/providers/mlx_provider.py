@@ -459,7 +459,7 @@ class UnifiedTextStrategy:
         if input_ids.ndim == 1:
             input_ids = input_ids[None, :]
             raw = {**raw, "input_ids": input_ids}
-        sampler, processors = build_sampler(tokenizer, effective_request)
+        sampler, processors = build_sampler(effective_request)
         shared = _system_prefixes(
             self._system_prefixes, request,
             (_resolve_enable_thinking(effective_request), effective_request.get("reasoning_effort")),
@@ -665,8 +665,7 @@ class VLMVisionStrategy:
         self._system_prefixes: dict = {}  # _system_prefixes' per-model cache
 
     def generate(self, request: ChatRequest, effective_request: dict, model, processor, abort_event: AbortEvent | None = None) -> Generator:
-        tokenizer = getattr(processor, "tokenizer", processor)
-        sampler, processors = build_sampler(tokenizer, effective_request)
+        sampler, processors = build_sampler(effective_request)
 
         # Per-request peak-memory scoping, and it has to start HERE: image
         # encoding is part of this request, so the engine is told not to
@@ -1601,7 +1600,7 @@ class MLXProvider(BaseProvider):
         t0 = time.time()
         try:
             ids = mx.array([prompt_tokens])
-            sampler, processors = build_sampler(tok, {"temperature": 0.0})
+            sampler, processors = build_sampler({"temperature": 0.0})
             for _ in vlm_engine.generate(
                 model=self.model, processor=self.processor, apc_manager=None,
                 input_ids=ids, raw_inputs={"input_ids": ids},

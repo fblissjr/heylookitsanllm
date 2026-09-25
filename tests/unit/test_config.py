@@ -89,15 +89,6 @@ class TestChatRequest:
         assert req.top_k == 40
         assert req.seed == 42
 
-    def test_stream_options(self):
-        req = ChatRequest(
-            messages=[ChatMessage(role="user", content="hi")],
-            stream=True,
-            stream_options={"include_usage": True},
-        )
-        assert req.stream is True
-        assert req.stream_options["include_usage"] is True
-
     def test_enable_thinking(self):
         req = ChatRequest(
             messages=[ChatMessage(role="user", content="hi")],

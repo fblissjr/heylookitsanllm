@@ -16,10 +16,8 @@ from __future__ import annotations
 
 import mlx.core as mx
 from mlx_vlm.sample_utils import make_sampler, make_logits_processors
-from transformers import PreTrainedTokenizer
 
 from ...samplers import GLOBAL_SAMPLER_FLOOR
-from .stop_tokens import resolve_stop_tokens
 
 
 def _apply_presence_penalty(logits: mx.array, tokens: mx.array, penalty: float) -> mx.array:
@@ -74,24 +72,15 @@ def make_presence_penalty_processor(penalty: float):
     return processor
 
 
-def _xtc_special_tokens(tokenizer: PreTrainedTokenizer | None) -> list[int]:
-    """Return the newline token + all EOS ids."""
-    if tokenizer is None:
-        return []
-    try:
-        newline_token = tokenizer.encode("\n")
-        return newline_token + list(resolve_stop_tokens(tokenizer))
-    except Exception:
-        return []
-
-
-def build(tokenizer: PreTrainedTokenizer | None, params: dict) -> tuple[callable, list[callable]]:
+def build(params: dict) -> tuple[callable, list[callable]]:
     """
     Builds and returns a sampler function and a list of logits processors.
 
     Args:
-        tokenizer: The tokenizer, used to encode special tokens for XTC sampling.
         params: A dictionary of user-provided or default generation parameters.
+            Only the knobs a request or the cascade can set reach here; XTC
+            and logit_bias were passed through until 2026-09-25 although no
+            request field or cascade key could ever set them.
 
     Returns:
         A tuple containing the configured sampler function and list of logits processors.
@@ -105,9 +94,6 @@ def build(tokenizer: PreTrainedTokenizer | None, params: dict) -> tuple[callable
         top_p=params.get("top_p", GLOBAL_SAMPLER_FLOOR["top_p"]),
         min_p=params.get("min_p", GLOBAL_SAMPLER_FLOOR["min_p"]),
         top_k=params.get("top_k", GLOBAL_SAMPLER_FLOOR["top_k"]),
-        xtc_probability=params.get("xtc_probability", 0.0),
-        xtc_threshold=params.get("xtc_threshold", 0.0),
-        xtc_special_tokens=_xtc_special_tokens(tokenizer),
     )
 
     # An OFF knob builds NO processor. mlx-vlm's make_logits_processors adds a
@@ -119,7 +105,6 @@ def build(tokenizer: PreTrainedTokenizer | None, params: dict) -> tuple[callable
     # (measured: internal/claude/perf/throughput_2026-09-24/).
     repetition_penalty = params.get("repetition_penalty", GLOBAL_SAMPLER_FLOOR["repetition_penalty"])
     processors = make_logits_processors(
-        logit_bias=params.get("logit_bias"),
         repetition_penalty=None if repetition_penalty == 1.0 else repetition_penalty,
         repetition_context_size=params.get("repetition_context_size", 20),
     )

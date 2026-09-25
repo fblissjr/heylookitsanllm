@@ -186,7 +186,6 @@ async function measureStreamCadence(page, model, maxTokens) {
         messages: [{ role: 'user', content: 'Write several full sentences about the sea and the sky.' }],
         max_tokens: maxTokens,
         stream: true,
-        stream_options: { include_usage: true },
       }),
     });
     if (!res.ok) return { ok: false, status: res.status };

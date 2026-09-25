@@ -40,13 +40,6 @@ class ThinkingConfig(BaseModel):
     budget_tokens: Optional[int] = Field(default=None, ge=1)
 
 
-class StreamOptions(BaseModel):
-    """Options that control streaming behavior."""
-    include_usage: bool = Field(
-        default=False, description="Include token usage statistics in the final stream event"
-    )
-
-
 class MessageCreateRequest(BaseModel):
     """Request body for POST /v1/messages.
 
@@ -81,7 +74,10 @@ class MessageCreateRequest(BaseModel):
     presence_penalty: Optional[float] = Field(default=None, ge=0.0, le=2.0)
     seed: Optional[int] = None
     stream: bool = False
-    stream_options: Optional[StreamOptions] = None
+    # No stream_options (removed 2026-09-25): include_usage was copied onto
+    # the provider request and read by nothing, and a stream always carries
+    # usage in message_delta. A client that still sends it gets exactly
+    # that, so it is ignored rather than refused.
 
     # Thinking: heylook's bool, or Anthropic's object form, which also carries
     # the hard budget (plan W7). Both mean the same switch; the converter
