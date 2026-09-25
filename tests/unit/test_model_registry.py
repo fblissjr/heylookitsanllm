@@ -433,14 +433,48 @@ class TestSpeculativeReport:
         assert off["drafter"].value is None and "turned off" in off["drafter"].source
         assert off["drafter"].provenance == "configured"
 
-    def test_observed_half_says_why_a_found_drafter_is_not_in_force(self):
-        from heylook_llm.providers.llama_server_provider import LlamaServerProvider
-        p = LlamaServerProvider("m", {"model_path": "/fake/m.gguf"}, False)
-        assert p._spec_in_force().provenance == "unknown"             # not loaded
-        p._proc = object()
-        p.drafter_skipped = "short by 7.4 GiB"
-        fact = p._spec_in_force()
-        assert fact.value is False and fact.source == "short by 7.4 GiB"
-        p.config["spec_type"] = "draft-mtp"
-        assert p._spec_in_force().value is True
-        p._proc = None
+    @pytest.mark.parametrize("cfg, in_force, why", [
+        pytest.param({"draft_model_path": "/fake/mtp-shared.gguf", "spec_type": "draft-mtp"},
+                     False, "retried without it", id="drafter_that_failed_to_load"),
+        pytest.param({"spec_type": "draft-mtp"}, True, "built-in head", id="built_in_head"),
+    ])
+    def test_observed_half_says_why_a_found_drafter_is_not_in_force(
+            self, monkeypatch, cfg, in_force, why):
+        """Through the engine contract a listing reads (contract.describe over
+        a loaded provider): before a load nothing is claimed; after a load
+        that had to drop its drafter, in_force is false and says why. The
+        spawn is the only fake: a drafter spawn exits, a plain one serves."""
+        from pathlib import Path
+        from types import SimpleNamespace
+
+        from heylook_llm.config import ModelConfig
+        from heylook_llm.providers import contract
+        from heylook_llm.providers import llama_server_provider as lsp
+
+        LSP = lsp.LlamaServerProvider
+        monkeypatch.setattr(lsp, "_UNLOADABLE_DRAFTERS", set())
+        monkeypatch.setattr(LSP, "_resolve_binary", lambda self: Path("/fake/llama-server"))
+
+        def spawn(self):
+            if self.config.get("draft_model_path"):
+                raise lsp.LlamaServerLoadExit("llama-server exited with code 1 while loading")
+            self._proc = object()  # what a served spawn leaves behind
+        monkeypatch.setattr(LSP, "_load_once", spawn)
+
+        mc = ModelConfig.model_validate({
+            "id": "spec-report-m", "provider": "gguf",
+            "config": {"model_path": "/fake/m.gguf", **cfg}})
+        provider = LSP(mc.id, mc.config.model_dump(), False)
+        router = SimpleNamespace(get_loaded_models=lambda: {mc.id: provider})
+
+        def reported():
+            speculative = contract.describe(mc, router).speculative
+            assert speculative is not None
+            return speculative["in_force"]
+
+        assert reported().provenance == "unknown"             # not loaded
+        provider.load_model()
+        fact = reported()
+        provider._proc = None  # nothing real to stop at teardown: the spawn was fake
+        assert (fact.value, fact.provenance) == (in_force, "observed")
+        assert why in fact.source

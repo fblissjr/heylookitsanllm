@@ -272,47 +272,99 @@ class TestValidation:
 
 
 class TestStampCoversEveryFileTheProbeReads:
-    """The capability cache key must stamp every file `read_template_info` opens.
+    """The capability cache must be keyed on every file the template probe reads.
 
-    A comment did not hold this: `_TEMPLATE_SOURCE_FILES` was hand-written as
-    the four TEMPLATE sources and omitted `tokenizer.json`, which the stop-token
-    check reads -- and a template rendering none of the model's stop tokens is
+    A comment did not hold this: the stamped list was hand-written as the four
+    TEMPLATE sources and omitted `tokenizer.json`, which the stop-token check
+    reads -- and a template rendering none of the model's stop tokens is
     REFUSED, sending the resolver down the ladder to a different template with
     possibly different capabilities. Replacing that file therefore left the
     stamp identical and `/v1/models` publishing a stale answer until restart.
 
-    This asserts the DERIVATION rather than a list, so it cannot be satisfied by
-    updating a second copy: adding a read to template_info without adding it to
-    TEMPLATE_INPUT_FILES is what has to fail, and it does, here.
+    Both checks go through the public probe on a populated model dir: the
+    first is that incident as a capability answer; the second watches which
+    files the probe really opens (however the read is spelled) and requires a
+    change to each one to be seen. A read of a file this fixture does not
+    carry is outside what it can see.
     """
 
-    def test_the_stamp_is_template_infos_own_list(self):
-        from heylook_llm.capabilities import _TEMPLATE_SOURCE_FILES
-        from heylook_llm.providers.common.template_info import TEMPLATE_INPUT_FILES
+    _EOS_ID = 7
 
-        assert _TEMPLATE_SOURCE_FILES is TEMPLATE_INPUT_FILES, (
-            "capabilities re-listed the stamped files instead of deriving them; "
-            "that copy has already drifted once"
-        )
+    def _model_dir(self, tmp_path, eos):
+        import json
 
-    def test_every_filename_template_info_opens_is_declared(self):
-        """Read the module's SOURCE for `model_dir / "<name>"` and require each.
+        d = tmp_path / "model"
+        d.mkdir()
+        # The override thinks and can stop only while the stop token is
+        # <|im_end|>; every rung below it but the last is stop-less, and the
+        # last stops on <|endoftext|> without thinking.
+        (d / HEYLOOK_TEMPLATE_FILENAME).write_text(
+            "{% if enable_thinking %}<think></think>{% endif %}{{ messages }}<|im_end|>")
+        (d / "chat_template.jinja").write_text("{{ messages }}")
+        (d / "tokenizer_config.json").write_text(json.dumps(
+            {"eos_token_id": self._EOS_ID, "chat_template": "{{ messages }}"}))
+        (d / "chat_template.json").write_text(json.dumps(
+            {"chat_template": "{{ messages }}<|endoftext|>"}))
+        (d / "generation_config.json").write_text(json.dumps({"eos_token_id": self._EOS_ID}))
+        self._write_tokenizer(d, eos)
+        # What else a checkpoint carries, so a new read of any of these shows.
+        for name in ("config.json", "special_tokens_map.json", "added_tokens.json",
+                     "preprocessor_config.json", "processor_config.json", "vocab.json"):
+            (d / name).write_text("{}")
+        (d / "merges.txt").write_text("")
+        (d / "tokenizer.model").write_bytes(b"")
+        return d
 
-        Deliberately a source scan and not a list of examples: the failure being
-        guarded is someone adding a read, and only something that looks at all
-        the reads can see that.
-        """
-        import re
-        from pathlib import Path
-        import heylook_llm.providers.common.template_info as ti
+    def _write_tokenizer(self, d, eos):
+        import json
 
-        src = Path(ti.__file__).read_text()
-        opened = set(re.findall(r'model_dir\s*/\s*"([^"]+)"', src))
-        # The override filename is referenced through its constant, not a literal.
-        opened.add(ti.HEYLOOK_TEMPLATE_FILENAME)
-        undeclared = sorted(opened - set(ti.TEMPLATE_INPUT_FILES))
-        assert not undeclared, (
-            f"template_info opens {undeclared} but does not declare them in "
-            "TEMPLATE_INPUT_FILES, so capabilities' cache will not notice them "
-            "changing"
-        )
+        (d / "tokenizer.json").write_text(json.dumps(
+            {"added_tokens": [{"id": self._EOS_ID, "content": eos, "special": True}]}))
+
+    def test_rewriting_tokenizer_json_moves_the_capability(self, tmp_path):
+        from heylook_llm.capabilities import template_supports_thinking
+
+        d = self._model_dir(tmp_path, eos="<|im_end|>")
+        assert template_supports_thinking(str(d)) is True
+        self._write_tokenizer(d, eos="<|endoftext|>")  # the override can no longer stop
+        assert template_supports_thinking(str(d)) is False, (
+            "tokenizer.json changed which template wins, and the capability "
+            "was served from the cache")
+
+    def test_a_change_to_any_file_the_probe_opens_is_seen(self, tmp_path):
+        from heylook_llm.capabilities import template_supports_thinking
+
+        d = self._model_dir(tmp_path, eos="<|endoftext|>")  # every rung is read
+        probe = lambda: template_supports_thinking(str(d))  # noqa: E731
+        opened = _opens_under(d, probe)
+        assert "tokenizer.json" in opened and HEYLOOK_TEMPLATE_FILENAME in opened
+        assert _opens_under(d, probe) == set(), "control: an unchanged dir is not re-read"
+        for name in sorted(opened):
+            with open(d / name, "a") as f:
+                f.write("\n")
+            assert _opens_under(d, probe), (
+                f"the probe reads {name}, but a change to it was served from the cache")
+
+
+_OPEN_LOG = None
+
+
+def _opens_under(root, fn):
+    """Names of the files under `root` that `fn` opens, seen at the OS edge
+    (the interpreter's "open" audit event), however the read is spelled."""
+    import sys
+
+    global _OPEN_LOG
+    if not getattr(_opens_under, "hooked", False):
+        def hook(event, args):
+            if event == "open" and _OPEN_LOG is not None and args and isinstance(args[0], (str, bytes)):
+                _OPEN_LOG.append(args[0] if isinstance(args[0], str) else args[0].decode())
+        sys.addaudithook(hook)
+        _opens_under.hooked = True
+    _OPEN_LOG = []
+    try:
+        fn()
+        prefix = str(root) + "/"
+        return {p[len(prefix):] for p in _OPEN_LOG if p.startswith(prefix)}
+    finally:
+        _OPEN_LOG = None

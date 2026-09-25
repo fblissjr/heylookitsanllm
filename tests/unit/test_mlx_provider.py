@@ -16,103 +16,80 @@ from heylook_llm.config import ChatMessage, ChatRequest
 from helpers.mlx_mock import create_mock_model, create_mock_processor
 
 
-def _fixture(name):
-    """A row builder that returns the named conftest fixture's value."""
-    return lambda request: request.getfixturevalue(name)
+def _engine_module(provider):
+    """The module the PROVIDER'S CLASS came from (a test elsewhere may have
+    re-imported the module, and the patch must land where the provider reads)."""
+    return sys.modules[type(provider).__module__]
 
 
-def _custom_provider(request):
-    request.getfixturevalue("mock_mlx")
-    from heylook_llm.providers.mlx_provider import MLXProvider
-
-    return MLXProvider(
-        model_id="custom",
-        config={
-            "model_path": "/my/model",
-            "vision": True,
-            "enable_thinking": True,
-            "max_tokens": 2048,
-        },
-        verbose=True,
-    )
+class _Chunk:
+    def __init__(self, text):
+        self.text = text
 
 
-def _read(provider, path):
-    """``attr`` or ``config.key`` off a provider."""
-    if path.startswith("config."):
-        return provider.config[path.split(".", 1)[1]]
-    return getattr(provider, path)
+def _stand_in_engines(monkeypatch, provider, **generate):
+    """Replace the engine behind each named path ("text", "vision",
+    "diffusion") with a generator function, give the provider a model and a
+    processor, and compile its paths the way load does. Unnamed paths answer
+    with their own name, so a test can see which engine served a request."""
+    mod = _engine_module(provider)
+    classes = {"text": mod.UnifiedTextStrategy, "vision": mod.VLMVisionStrategy,
+               "diffusion": mod.DiffusionStrategy}
+    for name, cls in classes.items():
+        fn = generate.get(name)
+        if fn is None:
+            def fn(self, *a, _name=name, **k):
+                yield _Chunk(_name)
+        monkeypatch.setattr(cls, "generate", fn)
+    provider.model = create_mock_model()
+    provider.processor = create_mock_processor()
+    provider._compile_strategies()
 
 
-@pytest.mark.unit
-class TestMLXProviderInit:
-    # One row per constructor fact. bool/None expectations are identity checks.
-    @pytest.mark.parametrize("build, expected", [
-        (_fixture("mock_mlx_provider"), {"model_id": "test-model"}),
-        (_fixture("mock_mlx_provider"),
-         {"_active_generations": 0, "model": None, "processor": None}),
-        (_fixture("mock_mlx_provider"), {"is_vlm": False}),
-        (_fixture("mock_vlm_provider"), {"is_vlm": True}),
-        (_fixture("mock_mlx_provider"), {"_strategies": {}}),
-        (_custom_provider, {"model_id": "custom", "is_vlm": True, "verbose": True,
-                            "config.enable_thinking": True}),
-    ], ids=["init_sets_model_id", "init_defaults", "init_text_only_not_vlm",
-            "init_vlm_flag", "init_strategies_empty_before_load",
-            "init_with_config_values"])
-    def test_constructor_state(self, request, build, expected):
-        provider = build(request)
-        for path, want in expected.items():
-            got = _read(provider, path)
-            if want is None or isinstance(want, bool):
-                assert got is want, path
-            else:
-                assert got == want, path
+def _until(cond, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while not cond():
+        assert time.monotonic() < deadline, "setup never reached its state"
+        time.sleep(0.005)
 
 
 @pytest.mark.unit
-class TestStrategyCompilation:
-    """Which strategies _compile_strategies registers, by is_vlm x is_diffusion.
+class TestRequestRouting:
+    """Each request reaches the engine that can serve it, through
+    create_chat_completion: text on any model -> the text engine, an image on
+    a vision model -> the vision engine, and anything on a masked-diffusion
+    checkpoint -> the denoising engine (images included: it takes them
+    inline, so it must win over the vision split).
 
-    Diffusion rows guard a silent empty-response bug, not a crash: a
-    masked-diffusion checkpoint driven by mlx-lm's autoregressive
-    stream_generate emits ZERO tokens (it samples one meaningless token from
-    the last prompt position, which lands on EOS).
+    The diffusion rows guard a silent empty-response bug, not a crash: a
+    masked-diffusion checkpoint driven by the autoregressive loop emits ZERO
+    tokens (it samples one meaningless token from the last prompt position,
+    which lands on EOS). An image on a text-only model is a 400
+    (TestCreateChatCompletion::test_text_model_rejects_images); the
+    advertised vision capability matching ``is_vlm`` is
+    test_vision_capability.py.
     """
 
-    @pytest.mark.parametrize("provider_fixture, diffusion, compile_, check", [
-        # text-only provider has a 'text' strategy
-        ("mock_mlx_provider", None, True, lambda s, p: "text" in s),
-        # VLM provider has 'text' and 'vision'
-        ("mock_vlm_provider", None, True, lambda s, p: "text" in s and "vision" in s),
-        ("mock_mlx_provider", None, True, lambda s, p: "vision" not in s),
-        # VLM provider's text strategy carries is_vlm=True ...
-        ("mock_vlm_provider", None, True, lambda s, p: s["text"].is_vlm is True),
-        # ... and a text-only provider's is_vlm=False
-        ("mock_mlx_provider", None, True, lambda s, p: s["text"].is_vlm is False),
-        # an ordinary VLM must not get the denoising path
-        ("mock_vlm_provider", None, True, lambda s, p: "diffusion" not in s),
-        # a diffusion checkpoint registers 'diffusion' alongside 'text'; 'text'
-        # stays because warmup resolves its generation model through
-        # UnifiedTextStrategy._get_generation_model
-        ("mock_vlm_provider", True, True, lambda s, p: "diffusion" in s and "text" in s),
-        # detection defaults to the autoregressive path
-        ("mock_mlx_provider", None, False, lambda s, p: p.is_diffusion is False),
-        # diffusion takes images inline: the route picks 'diffusion' before the
-        # is_vlm/has_images branch, so it must never fall through to 'vision'
-        ("mock_vlm_provider", True, True,
-         lambda s, p: s["diffusion"] is not s.get("vision")),
-    ], ids=["text_only_strategy_compiled", "vlm_strategies_compiled",
-            "text_only_no_vision_strategy", "text_strategy_is_vlm_flag",
-            "text_only_strategy_not_vlm", "no_diffusion_strategy_by_default",
-            "diffusion_strategy_compiled_when_detected", "defaults_to_autoregressive",
-            "diffusion_wins_over_vision_routing"])
-    def test_compiled_strategies(self, request, provider_fixture, diffusion, compile_, check):
+    @pytest.mark.parametrize("provider_fixture, diffusion, with_image, served_by", [
+        ("mock_mlx_provider", False, False, "text"),
+        ("mock_vlm_provider", False, False, "text"),
+        ("mock_vlm_provider", False, True, "vision"),
+        ("mock_vlm_provider", True, True, "diffusion"),
+        ("mock_vlm_provider", True, False, "diffusion"),
+    ], ids=["text_model_text_request", "vision_model_text_request",
+            "vision_model_image_request", "diffusion_wins_over_vision_routing",
+            "diffusion_serves_text_too"])
+    def test_the_request_reaches_its_engine(self, request, monkeypatch, provider_fixture,
+                                            diffusion, with_image, served_by):
         provider = request.getfixturevalue(provider_fixture)
-        if diffusion is not None:
-            provider.is_diffusion = diffusion
-        if compile_:
-            provider._compile_strategies()
-        assert check(provider._strategies, provider)
+        if diffusion:
+            provider.is_diffusion = True   # what load decides from the checkpoint
+        _stand_in_engines(monkeypatch, provider)
+        req = (request.getfixturevalue("sample_multimodal_request") if with_image
+               else ChatRequest(messages=[ChatMessage(role="user", content="hi")]))
+
+        chunks = list(provider.create_chat_completion(req))
+        assert [c.text for c in chunks] == [served_by]
 
 
 @pytest.mark.unit
@@ -297,20 +274,6 @@ class TestContinuationTemplate:
     # Rows: (keywords the wrapper rejects, effective request, continuing,
     # the ONE successful call's exact kwargs | "refuses" | TypeError).
     @pytest.mark.parametrize("reject, request_, continuing, expected", [
-        ((), {"enable_thinking": False}, True,
-         {"enable_thinking": False, "tokenize": False,
-          "add_generation_prompt": False, "continue_final_message": True}),
-        # continuing=False is the resolved EXPLICIT opt-out
-        # (continue_final_message=false): the trailing assistant turn renders
-        # closed and a FRESH generation prompt opens -- "reply to it", the only
-        # meaning "never continue" can coherently have. (Auto mode never reaches
-        # this branch with a trailing assistant message.)
-        ((), {"enable_thinking": False}, False,
-         {"enable_thinking": False, "tokenize": False, "add_generation_prompt": True}),
-        # a wrapper that rejects enable_thinking must retry WITHOUT it but WITH
-        # continue_final_message -- dropping both silently renders a closed turn
-        (("enable_thinking",), {"enable_thinking": False}, True,
-         {"tokenize": False, "add_generation_prompt": False, "continue_final_message": True}),
         # a stack that cannot continue refuses loudly
         (("continue_final_message",), {"enable_thinking": False}, True, "refuses"),
         # a wrapper that rejects the depth variable still renders after the
@@ -323,9 +286,7 @@ class TestContinuationTemplate:
         (("continue_final_message",), {"enable_thinking": True}, True, "refuses"),
         # ...but without a continuation the second TypeError is not a refusal
         (("tokenize",), {"enable_thinking": True}, False, TypeError),
-    ], ids=["continuing_leaves_the_turn_open", "not_continuing_never_passes_the_kwarg",
-            "enable_thinking_fallback_keeps_continuation",
-            "unsupported_continuation_refuses_loudly",
+    ], ids=["unsupported_continuation_refuses_loudly",
             "a_narrow_wrapper_still_renders_after_the_retry",
             "a_stack_that_cannot_continue_is_refused_not_restarted",
             "a_retry_failure_without_continuation_stays_a_type_error"])
@@ -346,6 +307,72 @@ class TestContinuationTemplate:
         assert kwargs == expected
         # == alone would accept 0 for False
         assert all(kwargs[k] is v for k, v in expected.items() if isinstance(v, bool))
+
+
+def _qwen_tokenizer():
+    """A real transformers tokenizer (no weights) carrying the Qwen3.5 chat
+    template fixture: transformers itself implements continue_final_message,
+    so the continuation shape is the one a real model is fed."""
+    from pathlib import Path
+
+    from tokenizers import Tokenizer, models
+    from transformers import PreTrainedTokenizerFast
+
+    tok = PreTrainedTokenizerFast(
+        tokenizer_object=Tokenizer(models.WordLevel({"<unk>": 0}, unk_token="<unk>")))
+    tok.chat_template = (Path(__file__).resolve().parents[1] / "fixtures"
+                         / "chat_templates" / "qwen3_5.jinja").read_text()
+    return tok
+
+
+class _NarrowWrapper:
+    """A tokenizer wrapper whose signature cannot take template variables
+    (it raises TypeError on enable_thinking), over the real tokenizer."""
+
+    def __init__(self, tok):
+        self.tok = tok
+        self.chat_template = tok.chat_template
+
+    def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True,
+                            continue_final_message=False):
+        return self.tok.apply_chat_template(
+            messages, tokenize=tokenize, add_generation_prompt=add_generation_prompt,
+            continue_final_message=continue_final_message)
+
+
+@pytest.mark.unit
+class TestContinuationRender:
+    """The prompt a continuation renders to, through the real template.
+
+    Continuing leaves the assistant turn OPEN: the prompt ends with the
+    partial reply, so the model's next token extends it. Suppressing the
+    generation prompt alone was NOT continuation -- the turn still rendered
+    CLOSED, so the model saw a finished message and nothing to continue.
+    An explicit opt-out (continue_final_message=false) closes the turn and
+    opens a FRESH one -- "reply to it". A wrapper that cannot take template
+    variables must still continue: dropping continue_final_message along
+    with them silently renders a closed turn."""
+
+    @pytest.mark.parametrize("flag, narrow, leaves_open", [
+        (None, False, True),
+        (False, False, False),
+        (None, True, True),
+    ], ids=["continuing_leaves_the_turn_open", "not_continuing_opens_a_fresh_turn",
+            "enable_thinking_fallback_keeps_continuation"])
+    def test_the_turn_is_open_or_closed(self, flag, narrow, leaves_open):
+        from heylook_llm.providers.mlx_provider import UnifiedTextStrategy
+
+        tok = _qwen_tokenizer()
+        req = ChatRequest(messages=[ChatMessage(role="user", content="hi"),
+                                    ChatMessage(role="assistant", content="The answer is")],
+                          continue_final_message=flag)
+        prompt = UnifiedTextStrategy(model_id="m").render_prompt(
+            req, {"enable_thinking": False}, None, _NarrowWrapper(tok) if narrow else tok)
+        if leaves_open:
+            assert prompt.endswith("The answer is"), prompt
+        else:
+            assert "The answer is<|im_end|>" in prompt, prompt
+            assert prompt.endswith("<|im_start|>assistant\n<think>\n\n</think>\n\n"), prompt
 
 
 @pytest.mark.unit
@@ -391,62 +418,12 @@ class TestCollectionDoesNotBlock:
 
     WHAT THESE CANNOT SAY: they call `__del__()` as a method while the
     fixture, the local name and pytest's frame all still hold references, so
-    they pin the BRANCH, not collection. In particular they no longer assert
-    the provider keeps its model. v2.0.28 claimed the branch "leaves it
-    loaded" and this class asserted it via `hasattr` -- which is true by
-    construction here and false in the only case that matters: a destructor
-    that returns early retains NOTHING, because `__del__` runs during
-    deallocation. Corrected in v2.0.34.
-
-    The two assertions in the first check pin DIFFERENT claims, and neither
-    covers the other: `time.sleep` going uncalled pins that `__del__` still
-    passes `drain=False` (mutate it to call `unload()` and the poll spins),
-    while the warning pins that the branch fires at all (the poll is guarded
-    by `while drain:`, so no drain=False call can reach it whatever the branch
-    above does). Both also pass against 2.0.28 -- they guard the fix that
-    release made, and their green says nothing about the work in v2.0.34.
+    they pin the BRANCH, not collection. A real collection with generations
+    in flight cannot be staged: a running generation holds a reference to its
+    provider, so the destructor never runs while one is live. A destructor
+    that drains again (the ~29s stall) makes the engine call the first check
+    below forbids.
     """
-
-    def test_collection_with_traffic_never_enters_the_drain_poll(
-        self, mock_mlx_provider, monkeypatch, caplog
-    ):
-        """The invariant is "the polling loop was not entered", so that is
-        what is observed. The wall-clock form this replaces (`elapsed < 1.0`)
-        passes for any implementation that happens to be fast and reds on a
-        loaded machine with no behaviour change at all."""
-        import logging as _logging
-
-        import heylook_llm.providers.mlx_provider as _mod
-
-        slept: list = []
-        monkeypatch.setattr(_mod.time, "sleep", lambda s: slept.append(s))
-        mock_mlx_provider.model = create_mock_model()
-        mock_mlx_provider._active_generations = 3
-        try:
-            with caplog.at_level(_logging.WARNING):
-                mock_mlx_provider.__del__()
-            assert slept == [], (
-                f"__del__ entered the drain poll ({len(slept)} sleeps) with "
-                "generations in flight -- the loop is running in a destructor again"
-            )
-            # The branch's whole remaining value is this warning. The weights
-            # go regardless, so what the branch buys a reader is the name of
-            # the model whose reference was dropped.
-            said = [r.getMessage() for r in caplog.records]
-            assert any("test-model" in m and "3 active" in m for m in said), (
-                f"no warning naming the model and its active count: {said}"
-            )
-        finally:
-            mock_mlx_provider._active_generations = 0
-
-    def test_a_quiet_provider_still_unloads_on_collection(self, mock_mlx_provider):
-        """The skip is conditional. With nothing in flight -- the normal
-        case -- collection must still release the model, or the change trades
-        a stall for a leak."""
-        mock_mlx_provider.model = create_mock_model()
-        mock_mlx_provider._active_generations = 0
-        mock_mlx_provider.__del__()
-        assert not hasattr(mock_mlx_provider, "model")
 
     def test_the_destructor_makes_no_engine_calls(self, mock_mlx_provider, monkeypatch):
         """`drain=False` means "no wait AND no engine calls", and the second
@@ -502,7 +479,7 @@ class TestCollectionDoesNotBlock:
 
         assert swept, "a deliberate unload stopped clearing the Metal buffer cache"
 
-    def test_another_models_gate_waiters_do_not_suppress_teardown(self, mock_mlx_provider):
+    def test_another_models_gate_waiters_do_not_suppress_teardown(self, mock_mlx_provider, caplog):
         """The generation gate is a PROCESS-GLOBAL singleton, so its `waiting`
         count can be entirely another model's traffic.
 
@@ -510,72 +487,53 @@ class TestCollectionDoesNotBlock:
         had queue waiters skipped A's cleanup and logged a warning naming A,
         telling the reader to go find A's leaked counter or dropped reference.
         Both halves were wrong, and `max_loaded_models=1` bounding it in
-        practice is a default, not an invariant.
+        practice is a default, not an invariant. Staged with REAL waiters on
+        the real process gate.
         """
-        asked = []
-        mock_mlx_provider.model = create_mock_model()
-        mock_mlx_provider._active_generations = 0
+        import logging as _logging
 
-        def _stats():
-            asked.append(True)
-            return {"active": 0, "waiting": 4}
+        from heylook_llm.providers.common.generation_gate import get_process_gate
 
-        mock_mlx_provider.generation_queue_stats = _stats
-        mock_mlx_provider.__del__()
-        # The claim is that the destructor does not CONSULT the shared gate --
-        # asserted directly. A stub returning waiters is inert once the read is
-        # gone, so a test that only checked the outcome would pass identically
-        # with the stub deleted, and say nothing the quiet-provider test above
-        # does not already say.
-        assert asked == [], (
-            "the destructor consulted the PROCESS-GLOBAL generation gate; its "
-            "waiters can belong to another model entirely"
-        )
+        gate = get_process_gate(8)
+        gate.acquire()                     # another model's generation
+        waiter = threading.Thread(target=lambda: (gate.acquire(), gate.release()),
+                                  daemon=True)
+        waiter.start()                     # ...and a request queued behind it
+        try:
+            _until(lambda: mock_mlx_provider.generation_queue_stats()["waiting"] == 1)
+            mock_mlx_provider.model = create_mock_model()
+            with caplog.at_level(_logging.WARNING):
+                mock_mlx_provider.__del__()
+        finally:
+            gate.release()
+            waiter.join(5)
         assert not hasattr(mock_mlx_provider, "model"), (
             "another model's gate waiters suppressed this provider's teardown"
         )
-
-
+        assert not any("test-model" in r.getMessage() for r in caplog.records)
 
 
 @pytest.mark.unit
 class TestUnload:
-    def test_unload_clears_state(self, mock_mlx_provider):
-        mock_mlx_provider.model = create_mock_model()
-        mock_mlx_provider.processor = create_mock_processor()
+    def test_unload_releases_the_weights_while_the_provider_lives(self, mock_mlx_provider):
+        """After unload() the provider no longer keeps its model or processor
+        alive, even while something (the router mid-evict, a stale handle)
+        still holds the provider object. That the wait before it covers
+        actives and gate waiters is test_unload_waiter_safety.py."""
+        import gc
+        import weakref
+
+        model, processor = create_mock_model(), create_mock_processor()
+        refs = [weakref.ref(model), weakref.ref(processor)]
+        mock_mlx_provider.model, mock_mlx_provider.processor = model, processor
         mock_mlx_provider._compile_strategies()
+        del model, processor
 
         mock_mlx_provider.unload()
+        gc.collect()
 
-        assert not hasattr(mock_mlx_provider, "model")
-        assert not hasattr(mock_mlx_provider, "processor")
-        assert mock_mlx_provider._strategies == {}
-
-    def test_unload_waits_for_active_generations(self, mock_mlx_provider):
-        """unload() should wait for active generations to finish."""
-        mock_mlx_provider.model = create_mock_model()
-        mock_mlx_provider.processor = create_mock_processor()
-
-        # Simulate an active generation
-        gen_started = threading.Event()
-
-        def hold_generation():
-            with mock_mlx_provider._active_lock:
-                mock_mlx_provider._active_generations += 1
-            gen_started.set()
-            time.sleep(0.3)
-            with mock_mlx_provider._active_lock:
-                mock_mlx_provider._active_generations -= 1
-
-        t = threading.Thread(target=hold_generation)
-        t.start()
-        gen_started.wait()
-
-        # Unload should wait for generation to complete
-        mock_mlx_provider.unload()
-        t.join()
-
-        assert not hasattr(mock_mlx_provider, "model")
+        assert [r() is None for r in refs] == [True, True], (
+            "unload() left the weights reachable from a live provider")
 
 
 @pytest.mark.unit
@@ -625,12 +583,8 @@ class TestCreateChatCompletion:
         assert provider._gen_gate.busy is False
         provider.check_capacity()  # no raise
 
-    def _check_counter_zero(provider):
-        assert provider._active_generations == 0
-
-    @pytest.mark.parametrize("check", [_check_gate_free, _check_counter_zero],
-                             ids=["generation_gate_released_after_error",
-                                  "active_generation_counter_decremented"])
+    @pytest.mark.parametrize("check", [_check_gate_free],
+                             ids=["generation_gate_released_after_error"])
     def test_state_is_released_after_the_generation(self, mock_mlx_provider, check):
         """Whether the mocked generation completes or raises, the generator's
         finally must run: gate released and the active counter back to 0."""
@@ -708,60 +662,48 @@ class TestQueueWaitTagging:
 class TestPerRequestAbortEvent:
     """Each request must use its OWN abort event, not a shared provider-level
     one -- otherwise one client's disconnect aborts a different client's
-    in-flight generation (the FIFO concurrency cross-contamination bug)."""
+    in-flight generation (the FIFO concurrency cross-contamination bug).
 
-    class _Chunk:
-        def __init__(self, text):
-            self.text = text
+    Two real requests through create_chat_completion, queued behind each
+    other at the real gate: A carries the event the route would set on
+    disconnect, B carries none (an internal caller). Setting A's stops A and
+    leaves B to finish in full."""
 
-    def _inject_capturing_strategy(self, provider, sink):
-        provider.processor = create_mock_processor()
-        provider.is_vlm = False
+    STREAM = 40
 
-        class _FakeStrategy:
-            def generate(self, *a, abort_event=None, **k):
-                sink.append(abort_event)
-                yield TestPerRequestAbortEvent._Chunk("hi")
-
-        provider._strategies = {"text": _FakeStrategy()}
-
-    def _check_passed_through(provider, passed, seen):
-        assert seen == passed
-
-    def _check_distinct_defaults(provider, passed, seen):
-        assert seen[0] is not None and seen[1] is not None
-        assert seen[0] is not seen[1]  # per-request, not one shared event
-        # the shared provider-level abort event must be gone
-        assert not hasattr(provider, "_abort_event")
-
-    def _check_isolated(provider, passed, seen):
-        # A's event being set must not be visible through B's event
-        seen[1].set()  # B aborts
-        assert seen[0].is_set() is False  # A unaffected
-
-    # own_events: per call, pass a fresh AbortEvent (True) or none (False)
-    @pytest.mark.parametrize("own_events, check", [
-        ((True,), _check_passed_through),
-        ((False, False), _check_distinct_defaults),
-        ((True, True), _check_isolated),
-    ], ids=["strategy_receives_the_passed_abort_event",
-            "each_call_gets_a_distinct_default_event_no_shared_state",
-            "disconnect_of_one_request_does_not_abort_another"])
-    def test_abort_event_is_per_request(self, mock_mlx_provider, own_events, check):
+    def test_one_requests_abort_stops_it_and_not_the_other(self, mock_mlx_provider, monkeypatch):
         from heylook_llm.providers.abort import AbortEvent
 
-        seen = []
-        self._inject_capturing_strategy(mock_mlx_provider, seen)
+        n = self.STREAM
+
+        def engine(self, request, effective_request, model, processor, abort_event=None):
+            for i in range(n):
+                if abort_event is not None and abort_event.is_set():
+                    return
+                yield _Chunk(str(i))
+                time.sleep(0.005)
+
+        _stand_in_engines(monkeypatch, mock_mlx_provider, text=engine)
         req = ChatRequest(messages=[ChatMessage(role="user", content="hi")])
-        passed = []
-        for own in own_events:
-            if own:
-                ev = AbortEvent()
-                passed.append(ev)
-                list(mock_mlx_provider.create_chat_completion(req, abort_event=ev))
-            else:
-                list(mock_mlx_provider.create_chat_completion(req))
-        check(mock_mlx_provider, passed, seen)
+        got = {"a": [], "b": []}
+        ev_a = AbortEvent()
+
+        def run(key, **kw):
+            for chunk in mock_mlx_provider.create_chat_completion(req, **kw):
+                got[key].append(chunk)
+
+        a = threading.Thread(target=run, args=("a",), kwargs={"abort_event": ev_a}, daemon=True)
+        a.start()
+        _until(lambda: len(got["a"]) >= 3)
+        b = threading.Thread(target=run, args=("b",), daemon=True)
+        b.start()
+        _until(lambda: mock_mlx_provider.generation_queue_stats()["waiting"] == 1)
+        ev_a.set()                          # A's client goes away
+        a.join(5)
+        b.join(5)
+
+        assert len(got["a"]) < n, "setting A's abort event did not stop A"
+        assert len(got["b"]) == n, "A's abort reached B"
 
 
 @pytest.mark.unit
@@ -791,18 +733,38 @@ class TestCheckCapacity:
             mock_mlx_provider._gen_gate.release()
 
     def test_config_sets_queue_depth(self, mock_mlx):  # noqa: ARG002
+        """max_queue_depth = 3 admits three waiters behind the running
+        generation and refuses the next, counted on the real gate."""
         import heylook_llm.providers.mlx_provider as mp
+        from heylook_llm.providers.common.generation_gate import (
+            ModelBusyError, get_process_gate, reset_process_gate,
+        )
 
         # The gate is a process-global singleton: max_queue_depth is read from
         # the FIRST provider created. Reset it so this provider is that first one.
-        from heylook_llm.providers.common.generation_gate import reset_process_gate
         reset_process_gate()
         provider = mp.MLXProvider(
             model_id="d",
             config={"model_path": "/fake", "vision": False, "max_queue_depth": 3},
             verbose=False,
         )
-        assert provider._gen_gate.max_waiting == 3
+        gate = get_process_gate(8)
+        gate.acquire()                      # the running generation
+        waiters = []
+        try:
+            for queued in (1, 2, 3):
+                provider.check_capacity()   # room for this one
+                t = threading.Thread(target=lambda: (gate.acquire(), gate.release()),
+                                     daemon=True)
+                t.start()
+                waiters.append(t)
+                _until(lambda: provider.generation_queue_stats()["waiting"] == queued)
+            with pytest.raises(ModelBusyError):
+                provider.check_capacity()
+        finally:
+            gate.release()
+            for t in waiters:
+                t.join(5)
 
 
 @pytest.mark.unit

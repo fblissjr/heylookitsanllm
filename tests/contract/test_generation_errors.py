@@ -189,8 +189,3 @@ def test_unresolvable_model_returns_400(client):
     })
     assert resp.status_code == 400
     assert "no-such-model" in resp.json()["detail"]
-
-
-def test_exception_hierarchy():
-    # Consumers may catch GenerationFailed alone and still see client errors.
-    assert issubclass(InvalidGenerationRequest, GenerationFailed)

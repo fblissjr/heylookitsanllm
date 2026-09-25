@@ -195,20 +195,15 @@ class TestSamplerDefaultsReporting:
     @pytest.mark.parametrize(
         "cases",
         [
-            [({"temperature": 0.42}, True, {"top_k": 64, "top_p": 0.9}, {})],
             [({}, False, {"top_k": 64}, {"top_k": 64}),
              ({}, False, None, {"top_k": GLOBAL_SAMPLER_FLOOR["top_k"]})],
             [({"temperature": 0.6}, False, {"temperature": 0.7}, {"temperature": 0.6})],
-            [({}, True, None, {}), ({}, False, None, {}),
-             ({"enable_thinking": False}, True, None, {})],
             [({}, True, None, {"enable_thinking": True}),
              ({"enable_thinking": False}, True, None, {"enable_thinking": False})],
-            [({}, True, None, {})],
         ],
         ids=[
-            "it-is-the-cascade", "vendor-layer-reaches-the-report",
-            "models-toml-beats-vendor", "thinking-value-is-thinking-defaults-answer",
-            "thinking-default-reports-the-same-answer", "keys-are-request-sampler-fields",
+            "vendor-layer-reaches-the-report", "models-toml-beats-vendor",
+            "thinking-default-reports-the-same-answer",
         ],
     )
     def test_it_is_the_cascade_not_a_re_derivation(self, cases):

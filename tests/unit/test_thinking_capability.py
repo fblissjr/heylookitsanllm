@@ -217,11 +217,11 @@ class TestThinkingFlagAgreesAcrossSurfaces:
 
 
 class TestTemplateProbeCaching:
-    """Both template probes MUST be memoized, and MUST still see a write.
-
-    Cached: the reasoning_effort probe shipped uncached (v1.71.0) while its
-    sibling was cached, so every /v1/models call re-read and re-parsed every
-    MLX model's template files, delaying every page's first paint.
+    """The template probes are memoized (the reasoning_effort probe shipped
+    uncached in v1.71.0, so every /v1/models call re-read and re-parsed every
+    MLX model's template files, delaying every page's first paint), and MUST
+    still see a write. Only the second half is pinned: the first is a cost,
+    not an answer.
 
     Invalidated: the caches were keyed on the PATH alone, each justified by a
     comment saying templates only change with a restart. The operator override
@@ -232,41 +232,9 @@ class TestTemplateProbeCaching:
     think, until the process restarted. Nothing invalidated them; a model
     reload did not either.
 
-    Both halves are pinned here because they pull against each other: the
-    obvious fix for one breaks the other.
+    The two pull against each other: the obvious fix for staleness is to drop
+    the cache.
     """
-
-    def _probe_read_count(self, probe, tmp_path, times=3):
-        """How many template reads `times` calls to the PUBLIC probe cost.
-
-        Cleared through the private memoized function, since the public name
-        is the stamping wrapper -- but CALLED through the public one, which is
-        the only thing production uses. A test that called the inner function
-        directly would pass with the stamp wired to nothing.
-        """
-        from unittest.mock import patch as mock_patch
-
-        import heylook_llm.capabilities as caps
-        import heylook_llm.providers.common.template_info as ti
-
-        caps._template_supports_thinking.cache_clear()
-        real = ti.read_template_info
-        calls = {"n": 0}
-
-        def counting(*args, **kwargs):
-            calls["n"] += 1
-            return real(*args, **kwargs)
-
-        with mock_patch.object(ti, "read_template_info", counting):
-            for _ in range(times):
-                probe(str(tmp_path))
-        return calls["n"]
-
-    def test_thinking_probe_is_cached(self, tmp_path):
-        from heylook_llm.capabilities import template_supports_thinking
-
-        (tmp_path / "chat_template.jinja").write_text(_GEMMA_JINJA)
-        assert self._probe_read_count(template_supports_thinking, tmp_path) == 1
 
     def test_an_override_written_at_runtime_is_seen(self, tmp_path):
         """The admin route's write must change the answer without a restart.

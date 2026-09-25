@@ -16,10 +16,8 @@ averages are success-only. Both /v1/messages modes are driven; the OpenAI
 streaming path that was pinned beside them went in v1.79.66.
 """
 
-import asyncio
 import time
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 
@@ -28,8 +26,6 @@ from heylook_llm.perf_collector import (
     RequestEvent,
     headline_tps,
 )
-
-from _fake_chunk import fake_chunk as _chunk
 
 
 # ---------------------------------------------------------------------------
@@ -103,74 +99,79 @@ def test_trends_average_success_only(events, expected):
 
 
 # ---------------------------------------------------------------------------
-# Both /v1/messages modes record the engine's native numbers
+# Both /v1/messages modes report and record the engine's native numbers
 # ---------------------------------------------------------------------------
 
-def _msg_request():
-    from heylook_llm.schema.messages import MessageCreateRequest
-    return MessageCreateRequest(model="test-model", messages=[{"role": "user", "content": "x"}])
+def _app_serving(chunk):
+    """/v1/messages and the perf profile, over a provider that yields one
+    engine chunk. The app's own routes, a stand-in only for the model."""
+    from fastapi import FastAPI
+
+    from heylook_llm.config import AppConfig
+    from heylook_llm.messages_api import messages_router
+    from heylook_llm.monitoring_api import monitoring_router
+    from heylook_llm.providers.base import BaseProvider
+
+    class Provider(BaseProvider):
+        provider_name = "mlx"
+
+        def load_model(self):
+            pass
+
+        def template_info(self):
+            return None  # pass-through parser
+
+        def create_chat_completion(self, request, abort_event=None):
+            yield chunk
+
+    provider = Provider("m", {"model_path": "/fake/m", "vision": False}, False)
+
+    class Router:
+        app_config = AppConfig(models=[{"id": "m", "provider": "mlx", "enabled": True,
+                                        "config": {"model_path": "/fake/m", "vision": False}}])
+
+        def get_provider(self, model_id):
+            return provider
+
+    app = FastAPI()
+    app.include_router(messages_router)
+    app.include_router(monitoring_router)
+    app.state.router_instance = Router()
+    return app
 
 
-def _run_non_stream(chunks):
-    from heylook_llm.messages_api import _non_stream_messages
+def _stop_performance(text):
+    import json
 
-    perf_ctx = {"provider_get_ms": 5.0, "had_images": False}
-    collector = PerfCollector()
-
-    def gen():
-        yield from chunks
-
-    with patch("heylook_llm.messages_api.get_perf_collector", return_value=collector):
-        response = asyncio.run(_non_stream_messages(
-            gen(), _msg_request(), "req-test-456",
-            request_start_time=time.time() - 10.0,  # 10s elapsed
-            perf_ctx=perf_ctx,
-        ))
-    assert len(collector._events) == 1
-    return response, collector._events[0]
+    for block in text.split("\n\n"):
+        if "event: message_stop" in block:
+            data = next(line for line in block.split("\n") if line.startswith("data: "))
+            return json.loads(data[len("data: "):])["performance"]
+    raise AssertionError("no message_stop event")
 
 
-def _run_stream(chunks):
-    from heylook_llm.messages_api import _stream_messages
+# What the client is told (the response's `performance`, message_stop's on a
+# stream) and the rate the perf page trends are the chunk's own
+# prompt_tps/generation_tps. Old bug on the non-stream path: prompt_tps =
+# prompt tokens / whole-request elapsed. A wall-clock rate over this
+# near-instant request would be far from either number.
+@pytest.mark.parametrize("stream", [False, True], ids=["non_stream", "stream"])
+def test_messages_report_and_record_native_rates(stream, monkeypatch):
+    from fastapi.testclient import TestClient
 
-    perf_ctx = {
-        "request_start_time": time.time(),
-        "provider_get_ms": 5.0,
-        "had_images": False,
-    }
-    collector = PerfCollector()
+    from heylook_llm import perf_collector
+    from heylook_llm.providers.base import GenerationChunk
 
-    def gen():
-        yield from chunks
+    monkeypatch.setattr(perf_collector, "_collector", PerfCollector())  # this test's events only
+    chunk = GenerationChunk(text="hi", token=0, finish_reason="stop", prompt_tokens=10,
+                            generation_tokens=1, prompt_tps=123.4, generation_tps=87.6)
+    client = TestClient(_app_serving(chunk))
+    res = client.post("/v1/messages", json={
+        "model": "m", "stream": stream, "max_tokens": 16,
+        "messages": [{"role": "user", "content": "x"}]})
+    assert res.status_code == 200, res.text
+    perf = _stop_performance(res.text) if stream else res.json()["performance"]
+    assert (perf["prompt_tps"], perf["generation_tps"]) == (123.4, 87.6)
 
-    async def drain():
-        return [part async for part in _stream_messages(
-            gen(), _msg_request(), "req-test-789",
-            http_request=None, provider=None, perf_ctx=perf_ctx,
-            abort_event=None,
-        )]
-
-    with patch("heylook_llm.messages_api.get_perf_collector", return_value=collector):
-        asyncio.run(drain())
-    assert len(collector._events) == 1
-    return None, collector._events[0]
-
-
-# The recorded event (and the non-stream response's `performance`) carry the
-# chunk's own prompt_tps/generation_tps. Old bug on the non-stream path:
-# prompt_tps = prompt_tokens / whole-request elapsed (10 tokens / 10s = 1.0).
-@pytest.mark.parametrize("run, chunk, event_expected, perf_expected", [
-    (_run_non_stream, dict(prompt_tokens=10, prompt_tps=123.4),
-     {"prompt_tps": 123.4}, {"prompt_tps": 123.4}),
-    (_run_non_stream, dict(generation_tps=87.6),
-     {"tokens_per_second": 87.6}, {"generation_tps": 87.6}),
-    (_run_stream, dict(generation_tps=87.6, prompt_tps=123.4),
-     {"tokens_per_second": 87.6, "prompt_tps": 123.4}, None),
-], ids=["non_stream_prompt_tps_native_not_elapsed_division",
-        "non_stream_generation_tps_native", "stream_records_native_rates"])
-def test_messages_record_native_rates(run, chunk, event_expected, perf_expected):
-    response, event = run([_chunk(**chunk)])
-    assert {k: getattr(event, k) for k in event_expected} == event_expected
-    if perf_expected is not None:
-        assert response.performance is not None
-        assert {k: getattr(response.performance, k) for k in perf_expected} == perf_expected
+    (trend,) = client.get("/v1/performance/profile/1h").json()["trends"]
+    assert trend["tokens_per_second"] == 87.6

@@ -33,39 +33,6 @@ PROVIDERS = sorted(PROVIDER_CONFIG_CLASSES)
 
 @pytest.mark.unit
 @pytest.mark.parametrize("provider", PROVIDERS)
-def test_derived_reload_set_beats_the_hand_written_runtime_list(provider):
-    """A reload-required field must never be reported as "runtime".
-
-    `get_field_reload_info` fills one dict from two sources: the DERIVED
-    reload set and the hand-written `RUNTIME_CHANGEABLE_FIELDS`. Whichever
-    loop runs last wins. If the hand-written list wins, the entire point of
-    deriving the reload set is undone for any field named in both -- the UI is
-    told a spawn-time flag is a live knob, the user changes it, and the
-    process keeps the old value.
-
-    The two sets happen not to overlap today, so this cannot be caught by
-    inspecting current data; it is a latent trap for the next person who adds
-    a field to either side.
-    """
-    reload_fields = ms.reload_required_for(provider)
-    original = ms.RUNTIME_CHANGEABLE_FIELDS
-    # Force the collision that current data does not happen to contain.
-    collide = sorted(reload_fields)[0]
-    svc = ms.ModelService.__new__(ms.ModelService)
-    ms.RUNTIME_CHANGEABLE_FIELDS = frozenset(original | {collide})
-    try:
-        info = ms.ModelService.get_field_reload_info(svc, provider)
-        assert info[collide] == "reload_required", (
-            f"{provider}.{collide} is reload-required but was reported as "
-            f"{info[collide]!r} -- the hand-written RUNTIME_CHANGEABLE_FIELDS "
-            f"overrode the derived source of truth"
-        )
-    finally:
-        ms.RUNTIME_CHANGEABLE_FIELDS = original
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("provider", PROVIDERS)
 def test_no_field_is_both_reload_required_and_runtime_changeable(provider):
     """The two sets must stay disjoint, not merely resolve in a good order.
 

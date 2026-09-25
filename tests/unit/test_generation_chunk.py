@@ -1,10 +1,11 @@
 # tests/unit/test_generation_chunk.py
 #
-# Contract tests for the owned GenerationChunk provider-output type and the
-# BaseProvider capability surface (plan Phase 7a seam hardening).
+# Contract tests for the owned GenerationChunk provider-output type, the
+# telemetry latch over it, and the concrete providers as the router and the
+# routes drive them (plan Phase 7a seam hardening).
 #
 # Claims (what breaks if a test is deleted):
-# - slots/defaults tests: the chunk type regresses to a non-slotted attr-bag
+# - slots test: the chunk type regresses to a non-slotted attr-bag
 #   and silent runtime attr-patching (the old GenerationResponse mechanism)
 #   can return.
 # - from_engine test: the duck-conversion from engine chunk shapes (mlx-lm
@@ -13,17 +14,17 @@
 # - telemetry latch tests: ChunkTelemetry.absorb regresses to last-write-wins,
 #   zeroing first-chunk-only telemetry (the cache report /
 #   queue_wait_ms) now that every field exists on every chunk.
-# - capability-surface tests: neutral code goes back to reading private
-#   MLXProvider attrs (_template_info) or class-name sniffing.
-# - abort_event signature tests: concrete providers drift from the abstract
-#   contract again (the pre-7a state).
+# - concrete-provider tests: a provider's declared engine drifts from its
+#   config entry (loaded models read as stale, live config never reaches
+#   them), or a provider stops honouring the per-request abort signal the
+#   routes pass it.
 
-import inspect
 from types import SimpleNamespace
 
 import pytest
 
-from heylook_llm.providers.base import BaseProvider, CacheReport, GenerationChunk, SpecReport
+from heylook_llm.config import ChatRequest
+from heylook_llm.providers.base import CacheReport, GenerationChunk, SpecReport
 from heylook_llm.perf_collector import ChunkTelemetry
 
 from _fake_chunk import fake_chunk as _chunk
@@ -41,11 +42,6 @@ class TestGenerationChunkShape:
     @pytest.mark.parametrize(
         "build, expected",
         [
-            (GenerationChunk,
-             dict(text="", token=None, thinking=None, finish_reason=None,
-                  prompt_tokens=0, generation_tokens=0, prompt_tps=0.0,
-                  generation_tps=0.0, peak_memory=0.0, cache=None, spec=None,
-                  queue_wait_ms=0.0)),
             (lambda: GenerationChunk(text="hi"), dict(text="hi")),
             (lambda: GenerationChunk.from_engine(SimpleNamespace(
                 text="tok", token=42, finish_reason="stop", prompt_tokens=10,
@@ -57,7 +53,7 @@ class TestGenerationChunkShape:
             (lambda: GenerationChunk.from_engine(SimpleNamespace(text="x")),
              dict(text="x", token=None, prompt_tokens=0, finish_reason=None)),
         ],
-        ids=["defaults", "slotted-no-attr-patching", "from-engine-full", "from-engine-sparse"],
+        ids=["slotted-no-attr-patching", "from-engine-full", "from-engine-sparse"],
     )
     def test_shape(self, build, expected):
         c = build()
@@ -174,54 +170,107 @@ class TestTelemetryLatch:
 
 
 # ---------------------------------------------------------------------------
-# BaseProvider capability surface
+# The concrete providers, driven the way the router and the routes drive them
 # ---------------------------------------------------------------------------
 
-def _base_surface():
-    class P(BaseProvider):
-        def load_model(self):
-            pass
+def _mlx_class():
+    from heylook_llm import router as router_mod
 
-        def create_chat_completion(self, request, abort_event=None):
-            yield GenerationChunk()
-
-    return BaseProvider, P("m", {}, False)
+    if router_mod.MLXProvider is None:
+        pytest.skip("mlx not importable")
+    return router_mod.MLXProvider
 
 
-def _mlx_surface():
-    pytest.importorskip("mlx")  # import gate only
-    from heylook_llm.providers.mlx_provider import MLXProvider
-
-    # An instance needs a model on disk; the class surface is what neutral
-    # code reads.
-    return MLXProvider, None
-
-
-def _gguf_surface():
+def _gguf_class():
     from heylook_llm.providers.llama_server_provider import LlamaServerProvider
 
-    # llama-server owns templating/split, so template_info() is None.
-    return LlamaServerProvider, LlamaServerProvider(
-        "test-gguf", {"model_path": "/fake/model.gguf"}, False)
+    return LlamaServerProvider
 
 
-class TestProviderSurface:
-    # One row per provider class: provider_name, the class-level is_vlm
-    # default, abort_event in create_chat_completion's signature (the abstract
-    # one for the base row), and template_info() None where an instance can be
-    # built without a load.
-    @pytest.mark.parametrize("surface, name", [
-        pytest.param(_base_surface, "", id="base_defaults_and_abstract_signature"),
-        pytest.param(_mlx_surface, "mlx", id="mlx_name_and_abort_event"),
-        pytest.param(_gguf_surface, "gguf", id="gguf_name_and_template_info"),
-    ])
-    def test_provider_surface(self, surface, name):
-        cls, instance = surface()
-        assert cls.provider_name == name
-        assert cls.is_vlm is False
-        assert "abort_event" in inspect.signature(cls.create_chat_completion).parameters
-        if instance is not None:
-            assert instance.template_info() is None
+_ENGINES = [pytest.param("mlx", _mlx_class, id="mlx"),
+            pytest.param("gguf", _gguf_class, id="gguf")]
+
+
+def _toml(kind, temperature=None):
+    lines = ["max_loaded_models = 1", "", "[[models]]", 'id = "m1"',
+             f'provider = "{kind}"', "", "[models.config]",
+             f'model_path = "/fake/m1{".gguf" if kind == "gguf" else ""}"']
+    if temperature is not None:
+        lines.append(f"temperature = {temperature}")
+    return "\n".join(lines) + "\n"
+
+
+class TestConcreteProviders:
+    @pytest.mark.parametrize("kind, provider_class", _ENGINES)
+    def test_a_loaded_model_is_not_stale_and_takes_live_config(
+            self, kind, provider_class, tmp_path, monkeypatch):
+        """The router matches a resident provider to its config entry by the
+        class's declared engine: a mismatch reports a freshly loaded model as
+        needing a reload ("provider") and skips the per_request refresh, so a
+        PATCHed temperature never reaches the loaded model. Real provider
+        classes, loaded through the router with only the weights load
+        stubbed."""
+        import logging
+
+        from heylook_llm.router import ModelRouter
+
+        cls = provider_class()
+        monkeypatch.setattr(cls, "load_model", lambda self: None)
+        monkeypatch.setattr(cls, "warmup", lambda self: None)
+        monkeypatch.setattr(cls, "unload", lambda self, **kw: None)
+        path = tmp_path / "heylook.toml"
+        path.write_text(_toml(kind))
+        router = ModelRouter(config_path=str(path), log_level=logging.INFO,
+                             initial_model_id=None)
+        provider = router.get_provider("m1")
+        assert type(provider) is cls
+        assert router.stale_reload_fields("m1") == []
+
+        path.write_text(_toml(kind, temperature=0.9))
+        router.reload_config()
+        assert provider.config["temperature"] == 0.9
+
+    @pytest.mark.parametrize("kind, provider_class", _ENGINES)
+    def test_a_request_cancelled_while_queued_never_generates(
+            self, kind, provider_class, monkeypatch):
+        """The routes pass the per-request abort signal positionally
+        (``create_chat_completion(request, abort_event)``, messages_api.py).
+        A request whose client left while it queued behind another
+        generation must leave the queue and yield nothing. If a provider
+        stopped honouring the signal, it would take its turn once the other
+        run releases the gate and fail on the unloaded model (MLX) or forward
+        to llama-server (gguf)."""
+        import threading
+
+        from heylook_llm.providers.abort import AbortEvent
+        from heylook_llm.providers.common.generation_gate import reset_process_gate
+
+        reset_process_gate()
+        cls = provider_class()
+        path = "/fake/m1.gguf" if kind == "gguf" else "/fake/m1"
+        provider = cls("m1", {"model_path": path}, False)
+        if kind == "gguf":
+            from heylook_llm.providers import llama_server_provider as llama_mod
+
+            provider._base_url = "http://127.0.0.1:9"  # "loaded"
+            monkeypatch.setattr(
+                llama_mod.urllib.request, "urlopen",
+                lambda *a, **k: (_ for _ in ()).throw(AssertionError("forwarded a cancelled request")))
+        gate = provider._gen_gate
+        gate.acquire()  # another request is generating
+        releaser = threading.Timer(1.0, gate.release)
+        releaser.start()
+        try:
+            abort = AbortEvent()
+            abort.set()  # the client is already gone
+            request = ChatRequest.model_validate(
+                {"messages": [{"role": "user", "content": "hi"}]})
+            assert list(provider.create_chat_completion(request, abort)) == []
+            assert gate.snapshot()["waiting"] == 0
+        finally:
+            releaser.cancel()
+            releaser.join()
+            reset_process_gate()
 
 
 # ---------------------------------------------------------------------------

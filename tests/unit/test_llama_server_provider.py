@@ -27,7 +27,7 @@ import pytest
 
 from heylook_llm.providers import llama_server_provider as llama_mod
 
-from heylook_llm.config import ChatRequest, GGUFModelConfig, PROVIDER_CONFIG_CLASSES
+from heylook_llm.config import ChatRequest, GGUFModelConfig
 from heylook_llm.providers.base import GenerationChunk
 from heylook_llm.samplers import GLOBAL_SAMPLER_FLOOR
 from heylook_llm.providers.llama_server_provider import LlamaServerProvider
@@ -60,15 +60,11 @@ def _weights(tmp_path):
 # Config plumbing
 # ---------------------------------------------------------------------------
 
-class TestGGUFConfig:
-    def test_registry_has_gguf(self):
-        assert PROVIDER_CONFIG_CLASSES["gguf"] is GGUFModelConfig
-
-    # Construction through ModelConfig: test_config.py
-    # test_pydantic_construction_round_trip (row gguf_model_config_builds);
-    # extra="forbid": test_config.py test_extra_keys_are_forbidden (row
-    # gguf_extra_fields_forbidden); capabilities: test_audio_content.py
-    # TestCapability::test_inferred_capabilities (the gguf rows).
+# Construction through ModelConfig: test_config.py
+# test_pydantic_construction_round_trip (row gguf_model_config_builds);
+# extra="forbid": test_config.py test_extra_keys_are_forbidden (row
+# gguf_extra_fields_forbidden); capabilities: test_audio_content.py
+# TestCapability::test_inferred_capabilities (the gguf rows).
 
 
 # ---------------------------------------------------------------------------
@@ -76,8 +72,8 @@ class TestGGUFConfig:
 # ---------------------------------------------------------------------------
 
 class TestProviderSurface:
-    # provider_name and template_info(): test_generation_chunk.py
-    # TestProviderSurface (row gguf_name_and_template_info).
+    # The declared engine (provider_name), as the router reads it:
+    # test_generation_chunk.py TestConcreteProviders.
 
     # unload is safe before any load, and forgets the running context the
     # process reported.
@@ -1139,10 +1135,34 @@ class TestGenerationGate:
             p._gen_gate.release()
         assert p.generation_queue_stats()["active"] == 0
 
-    def test_two_providers_share_the_process_gate(self):
-        # One GPU. A gate per provider would let a gguf run and an MLX run
-        # overlap, which is the concurrency the gate exists to prevent.
-        assert make_provider()._gen_gate is make_provider()._gen_gate
+    def test_a_gguf_generation_makes_an_mlx_model_answer_busy(self, monkeypatch):
+        """One GPU, one queue across engines: while a gguf stream is in
+        flight, an MLX model's admission check answers busy (503), and
+        admits again once the stream ends. A gate per provider would let a
+        gguf run and an MLX run overlap, which is the concurrency the gate
+        exists to prevent."""
+        from heylook_llm import router as router_mod
+        from heylook_llm.providers.common.generation_gate import reset_process_gate
+
+        if router_mod.MLXProvider is None:
+            pytest.skip("mlx not importable")
+        reset_process_gate()
+        try:
+            gguf = make_provider(max_queue_depth=0)  # single-flight gate
+            gguf._base_url = "http://127.0.0.1:1"   # "loaded"
+            monkeypatch.setattr(llama_mod.urllib.request, "urlopen",
+                                lambda *a, **k: _stream_bytes(*CANNED))
+            mlx = router_mod.MLXProvider("m-mlx", {"model_path": "/fake/mlx"}, False)
+            mlx.check_capacity()  # idle: admitted
+            stream = gguf.create_chat_completion(req())
+            next(stream)  # the gguf generation is running
+            with pytest.raises(ModelBusyError):
+                mlx.check_capacity()
+            assert mlx.generation_queue_stats()["active"] == 1
+            stream.close()
+            mlx.check_capacity()  # released: admitted again
+        finally:
+            reset_process_gate()
 
 
 
@@ -1363,27 +1383,64 @@ def test_flash_attn_reports_what_auto_resolved_to():
     assert (chosen.value, chosen.configured, chosen.provenance) == ("off", "off", "configured")
 
 
-def test_gguf_metrics_report_what_is_known_and_null_the_rest():
+def test_gguf_metrics_report_what_is_known_and_null_the_rest(tmp_path, monkeypatch):
     """gguf was absent from /v1/system/metrics (no get_metrics), so the perf
-    page said "No models loaded" with a gguf model resident. Memory is the
-    llama-server process's footprint (here: this test's own process stands
-    in for it); context used is null until a request ran, never 0."""
+    page said "No models loaded" with a gguf model resident. Read through the
+    route, with the model loaded by the router and faked only at the process
+    edge (a live pid, /props, the chat stream). Memory is the llama-server
+    process's footprint (this test's own process stands in for it); context
+    used is null until a request ran, never 0; a process that exited reports
+    memory unknown, not 0."""
+    import logging
     import os
 
-    from heylook_llm.providers.common.generation_gate import get_process_gate
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
 
-    provider = LlamaServerProvider.__new__(LlamaServerProvider)
-    provider._active_lock = __import__("threading").Lock()
-    provider._active_generations = 0
-    provider._gen_gate = get_process_gate(4)
-    provider.running_ctx = 8192
-    provider._context_used = None
-    provider._proc = type("P", (), {"pid": os.getpid(), "poll": lambda self: None})()
+    from heylook_llm import monitoring_api
+    from heylook_llm.providers.common.generation_gate import reset_process_gate
+    from heylook_llm.router import ModelRouter
 
-    m = provider.get_metrics()
-    assert m.memory_mb and m.memory_mb > 0 and "llama-server" in m.memory_source
-    assert (m.context_capacity, m.context_used, m.context_percent) == (8192, None, None)
-    provider._context_used = 2048
-    assert provider.get_metrics().context_percent == 25.0
-    provider._proc = None  # not running: memory unknown, not 0
-    assert provider.get_metrics().memory_mb is None
+    proc = _FakeProc(pid=os.getpid())
+
+    def urlopen(target, *a, **k):
+        url = target if isinstance(target, str) else target.full_url
+        if url.endswith("/props"):
+            return _stream_bytes(json.dumps({"default_generation_settings": {"n_ctx": 8192}}))
+        return _stream_bytes(*CANNED)  # prompt_tokens 7 + completion 3
+
+    def load_model(self):  # the spawn, as far as the process edge goes
+        self._proc, self._base_url = proc, "http://127.0.0.1:1"
+        self.running_ctx = self._read_running_ctx()
+
+    monkeypatch.setattr(llama_mod.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(LlamaServerProvider, "load_model", load_model)
+    monkeypatch.setattr(LlamaServerProvider, "unload", lambda self, **kw: None)
+    monkeypatch.setattr(monitoring_api, "_metrics_collector", None)
+    reset_process_gate()
+    toml = tmp_path / "heylook.toml"
+    toml.write_text('max_loaded_models = 1\n\n[[models]]\nid = "g1"\nprovider = "gguf"\n\n'
+                    '[models.config]\nmodel_path = "/fake/g1.gguf"\n')
+    router = ModelRouter(config_path=str(toml), log_level=logging.INFO, initial_model_id=None)
+    app = FastAPI()
+    app.include_router(monitoring_api.monitoring_router)
+    app.state.router_instance = router
+    client = TestClient(app)
+
+    def row():
+        res = client.get("/v1/system/metrics", params={"force_refresh": "true"})
+        assert res.status_code == 200, res.text
+        return res.json()["models"]["g1"]
+
+    try:
+        provider = router.get_provider("g1")
+        m = row()
+        assert m["memory_mb"] and m["memory_mb"] > 0 and "llama-server" in m["memory_source"]
+        assert (m["context_capacity"], m["context_used"], m["context_percent"]) == (8192, None, None)
+        list(provider.create_chat_completion(req()))
+        m = row()
+        assert (m["context_used"], m["context_percent"]) == (10, round(10 / 8192 * 100, 1))
+        proc._rc = 0  # llama-server exited
+        assert row()["memory_mb"] is None
+    finally:
+        reset_process_gate()

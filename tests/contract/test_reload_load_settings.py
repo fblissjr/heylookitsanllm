@@ -38,6 +38,31 @@ def _stored(mock_service):
     return mock_service.get_config("test-gguf-model").config.model_dump(exclude_unset=True)
 
 
+@pytest.fixture
+def heylook_toml(app, tmp_path, monkeypatch):
+    """A REAL ModelService over a throwaway heylook.toml, standing in for the
+    session's mock service for one test: what the route wrote is then read
+    back from the file and through GET, not from a record of calls."""
+    from heylook_llm.model_service import ModelService
+
+    path = tmp_path / "heylook.toml"
+    path.write_text(
+        "# the owner's file\n"
+        "[[models]]\n"
+        'id = "test-gguf-model"\n'
+        'provider = "gguf"\n'
+        "enabled = true\n\n"
+        "[models.config]\n"
+        'model_path = "/fake/model.gguf"\n'
+    )
+    monkeypatch.setattr(app.state, "model_service", ModelService(str(path)))
+    return path
+
+
+def _row_config(client):
+    return client.get("/v1/admin/models/test-gguf-model").json()["config"]
+
+
 class TestReloadLoadSettings:
     def test_a_field_the_provider_does_not_offer_is_400(self, client, mock_service):
         resp = client.post("/v1/admin/models/test-mlx-model/reload", json={"ctx_size": 32768})
@@ -48,16 +73,19 @@ class TestReloadLoadSettings:
         assert "ctx_size" in resp.json()["detail"]  # names what it does take
         assert mock_service.update_calls == []
 
-    def test_persists_through_the_config_writer_then_loads(self, client, mock_service, mock_router):
+    def test_persists_through_the_config_writer_then_loads(self, client, heylook_toml, mock_router):
+        from heylook_llm.model_service import ModelService
+
         resp = client.post(GGUF + "?warm=true", json={"ctx_size": 32768, "flash_attn": "off"})
         assert resp.status_code == 200, resp.text
         assert resp.json()["status"] == "loaded"
         assert resp.json()["warmed"] is True
-        assert mock_service.update_calls == [
-            ("test-gguf-model", {"config": {"ctx_size": 32768, "flash_attn": "off"}}),
-        ]
-        stored = _stored(mock_service)
-        assert (stored["ctx_size"], stored["flash_attn"]) == (32768, "off")
+        row = _row_config(client)
+        assert (row["ctx_size"], row["flash_attn"]) == (32768, "off")
+        # In the file the one writer owns: a fresh service reads it back.
+        reread = ModelService(str(heylook_toml)).get_config("test-gguf-model")
+        assert reread is not None
+        assert (reread.config.ctx_size, reread.config.flash_attn) == (32768, "off")
         assert "test-gguf-model" in mock_router.providers
 
     def test_same_values_on_resident_model_do_not_restart(self, client, mock_service, mock_router):
@@ -76,18 +104,25 @@ class TestReloadLoadSettings:
         assert resp.status_code == 200
         assert mock_router.providers["test-gguf-model"] is not before
 
-    def test_null_means_auto_and_unsets(self, client, mock_service):
+    def test_null_means_auto_and_unsets(self, client, heylook_toml):
         client.post(GGUF, json={"ctx_size": 32768, "flash_attn": "on"})
+        assert "ctx_size" in heylook_toml.read_text()
         resp = client.post(GGUF, json={"ctx_size": None, "flash_attn": None})
         assert resp.status_code == 200
-        assert mock_service.update_calls[-1] == (
-            "test-gguf-model", {"config": {"ctx_size": None, "flash_attn": None}})
-        assert not {"ctx_size", "flash_attn"} & set(_stored(mock_service))
+        assert not {"ctx_size", "flash_attn"} & set(_row_config(client))
+        text = heylook_toml.read_text()
+        assert "ctx_size" not in text and "flash_attn" not in text
 
-    def test_null_when_already_auto_writes_nothing(self, client, mock_service):
-        resp = client.post(GGUF, json={"ctx_size": None})
+    @pytest.mark.parametrize("body", [
+        pytest.param({"ctx_size": None}, id="null_when_already_auto_writes_nothing"),
+        pytest.param(None, id="reload_without_a_body_writes_nothing"),
+    ])
+    def test_nothing_to_change_leaves_the_file_alone(self, client, heylook_toml, body):
+        before = (heylook_toml.read_bytes(), heylook_toml.stat().st_mtime_ns)
+        resp = client.post(GGUF, json=body) if body is not None else client.post(GGUF)
         assert resp.status_code == 200
-        assert mock_service.update_calls == []
+        assert (heylook_toml.read_bytes(), heylook_toml.stat().st_mtime_ns) == before
+        assert not heylook_toml.with_suffix(".toml.bak").exists()
 
     @pytest.mark.parametrize("body", [{"ctx_size": 100}, {"flash_attn": "auto"}])
     def test_the_config_class_is_the_authority_on_values(self, client, body):
@@ -96,11 +131,6 @@ class TestReloadLoadSettings:
         resp = client.post(GGUF, json=body)
         assert resp.status_code == 400
         assert next(iter(body)) in resp.json()["detail"]
-
-    def test_reload_without_a_body_is_unchanged(self, client, mock_service, mock_router):
-        resp = client.post(GGUF)
-        assert resp.status_code == 200
-        assert mock_service.update_calls == []
 
 
 class TestAdminRowContextFields:

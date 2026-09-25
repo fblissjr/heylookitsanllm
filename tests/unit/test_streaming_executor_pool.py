@@ -15,8 +15,6 @@
 
 import asyncio
 import threading
-from unittest.mock import MagicMock, patch
-
 import pytest
 
 from heylook_llm.streaming_utils import _executor_pool, async_generator_with_abort
@@ -80,47 +78,52 @@ def test_concurrent_leases_differ_and_a_released_one_is_reissued(released):
             _executor_pool.release(ex)
 
 
-class TestQuarantine:
-    """A close-timed-out executor must be held forever, never reused.
+def test_a_worker_whose_close_timed_out_is_kept_alive_and_never_reused(monkeypatch):
+    """A generation whose close() really blocks past the close timeout: its
+    worker must never serve another generation (it is wedged mid-close) and
+    must outlive every reference the stream held, through a gc.
 
     If it were simply dropped, GC would fire ThreadPoolExecutor's weakref
-    callback, enqueue the shutdown sentinel, and the wedged worker would
-    eventually EXIT its thread -- the exact TLS-teardown abort this pool
-    exists to prevent. Quarantine = strong ref for the process lifetime.
+    callback, enqueue the shutdown sentinel, and the wedged worker would EXIT
+    its thread once the close finished -- the TLS-teardown abort this pool
+    exists to prevent. The 30s close timeout is shortened, not faked: the
+    real wait_for runs, and really times out.
     """
+    import gc
+    import heylook_llm.streaming_utils as su
 
-    def test_quarantine_holds_strong_ref_and_never_reissues(self):
-        ex = _executor_pool.acquire()
-        _executor_pool.quarantine(ex)
-        assert ex in _executor_pool._quarantined
-        assert ex not in _executor_pool._free
-        # Subsequent leases never hand the quarantined executor back out.
-        others = [_executor_pool.acquire() for _ in range(3)]
+    real_wait_for = asyncio.wait_for
+    monkeypatch.setattr(su.asyncio, "wait_for",
+                        lambda fut, timeout: real_wait_for(fut, timeout=0.2))
+
+    unblock = threading.Event()
+    seen = []
+
+    def wedges_on_close():
         try:
-            assert ex not in others
+            seen.append(threading.current_thread())
+            yield "a"
+            yield "b"
         finally:
-            for o in others:
-                _executor_pool.release(o)
+            unblock.wait(10)
 
-    def test_close_timeout_routes_executor_to_quarantine(self):
-        leased = []
-        real_acquire = _executor_pool.acquire
+    async def first_chunk_then_leave():
+        agen = async_generator_with_abort(wedges_on_close(), None, None)
+        assert await agen.__anext__() == "a"
+        await agen.aclose()   # the close runs on the worker and blocks there
 
-        def tracking_acquire():
-            got = real_acquire()
-            leased.append(got)
-            return got
+    try:
+        asyncio.run(first_chunk_then_leave())
+        (wedged,) = seen
 
-        # Make the generator-close wait appear to time out. Only the close
-        # path awaits wait_for here (no http_request/abort_event given).
-        with patch.object(_executor_pool, "acquire", tracking_acquire), \
-             patch("heylook_llm.streaming_utils.asyncio.wait_for",
-                   MagicMock(side_effect=asyncio.TimeoutError)):
-            _drain(_thread_ident_gen(2))
+        # Later generations run -- promptly, and on other workers.
+        after = [_drain(_thread_ident_gen(1))[0] for _ in range(3)]
+        assert wedged.ident not in after, "a wedged worker was handed a new generation"
 
-        assert len(leased) == 1
-        assert leased[0] in _executor_pool._quarantined, (
-            "close-timed-out executor was dropped instead of quarantined -- "
-            "GC will fire the shutdown sentinel and kill an MLX thread"
-        )
-        assert leased[0] not in _executor_pool._free
+        gc.collect()
+    finally:
+        unblock.set()   # the close finishes; the worker goes idle
+    wedged.join(0.5)
+    assert wedged.is_alive(), (
+        "the close-timed-out worker's thread exited -- the executor was dropped "
+        "instead of quarantined, and GC shut it down")

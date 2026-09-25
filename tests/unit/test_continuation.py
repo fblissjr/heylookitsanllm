@@ -242,17 +242,6 @@ class TestContinuationKeepsTheSeamSpace:
         assert (first, second) == (" need", " the")
         assert type(wrapper._detokenizer) is NaiveStreamingDetokenizer
 
-    def test_only_a_settable_text_is_seeded(self):
-        """SPM and BPE assign `text` in reset; Naive computes it as a
-        property with no setter, and seeding it raised inside the first
-        next() of every continuation on the mlx-vlm path (v1.79.64)."""
-        from heylook_llm.providers.common.generation_core import _seedable
-        from heylook_llm.providers.common.lm_detokenizer import (
-            BPEStreamingDetokenizer, NaiveStreamingDetokenizer, SPMStreamingDetokenizer)
-        assert _seedable(SPMStreamingDetokenizer)
-        assert _seedable(BPEStreamingDetokenizer)
-        assert not _seedable(NaiveStreamingDetokenizer)
-
 
 _SPM_DECODER = {"type": "Sequence", "decoders": [
     {"type": "Replace", "pattern": {"String": "\u2581"}, "content": " "},
@@ -293,36 +282,81 @@ class _FakeHfForDetok:
         return ids
 
 
-class TestDetokenizerSourcePicksAStreamingDetokenizer:
-    """With a model_path the class comes from tokenizer.json's decoder (the
-    vendored mlx-lm predicates), built on the tokenizer already loaded; the
-    provider primes it at load and the per-request call hits the cache."""
+class _FakeTokenizer:
+    """A raw-HF-tokenizer stand-in every streaming detokenizer can build on:
+    a vocab for the SPM/BPE token maps, and `decode` (plus the encode round
+    trip the naive one probes at construction) giving the text a real
+    tokenizer's decode would."""
+    clean_up_tokenization_spaces = False
 
-    @pytest.mark.parametrize("decoder, expected", [
-        ({"type": "ByteLevel"}, "BPEStreamingDetokenizer"),
-        ({"type": "Sequence", "decoders": [
-            {"type": "Replace", "pattern": {"String": "\u2581"}, "content": " "},
-            {"type": "ByteFallback"}, {"type": "Fuse"},
-            {"type": "Strip", "content": " ", "start": 1, "stop": 0}]},
-         "SPMStreamingDetokenizer"),
-        ({"type": "WordPiece"}, "NaiveStreamingDetokenizer"),
-        (None, "NaiveStreamingDetokenizer"),
-    ])
-    def test_class_follows_the_decoder(self, tmp_path, decoder, expected):
+    def __init__(self, vocab, pieces):
+        self._vocab = list(vocab)
+        self._pieces = dict(pieces)
+
+    def __len__(self):
+        return len(self._vocab)
+
+    def convert_ids_to_tokens(self, ids):
+        return [self._vocab[i] for i in ids]
+
+    def decode(self, ids, **_kw):
+        return "".join(self._pieces.get(i, "") for i in ids)
+
+    def encode(self, text, **_kw):
+        ids = [k for k, v in self._pieces.items() if v == text]
+        if not ids:
+            ids = [1000 + len(self._pieces)]
+            self._pieces[ids[0]] = text
+        return ids
+
+
+_SPM_VOCAB = ["<unk>", "\u2581Hello", "\u2581wor", "ld", "<0x21>"]
+_NAIVE_VOCAB = ["<unk>", "need", "the"]  # what SPM/BPE maps would misread
+
+
+class TestDetokenizerSourceStreamsTheDecodedText:
+    """With a model_path the streaming detokenizer comes from tokenizer.json's
+    decoder (the vendored mlx-lm predicates), primed at load; the per-request
+    call streams with it. Whatever it picks, the streamed text is the
+    tokenizer's own decode of the ids -- leading space trimmed only where the
+    decoder strips it -- and an unreadable tokenizer.json still generates."""
+
+    @pytest.mark.parametrize("tokenizer_json, vocab, pieces, expected", [
+        ('{"decoder": {"type": "ByteLevel"}}',
+         ["<s>", "Hello", "\u0120world", "!", "\u010a", "\u0120how"],
+         {1: "Hello", 2: " world", 3: "!", 4: "\n", 5: " how"}, "Hello world!\n how"),
+        (None, _SPM_VOCAB, {1: "Hello", 2: " wor", 3: "ld", 4: "!"}, "Hello world!"),
+        ("no-strip", _SPM_VOCAB, {1: " Hello", 2: " wor", 3: "ld", 4: "!"}, " Hello world!"),
+        ('{"decoder": {"type": "WordPiece"}}', _NAIVE_VOCAB, {1: " need", 2: " the"}, " need the"),
+        ("absent", _NAIVE_VOCAB, {1: " need", 2: " the"}, " need the"),
+        ("{not json", _NAIVE_VOCAB, {1: " need", 2: " the"}, " need the"),
+    ], ids=["bpe", "spm", "spm-keeps-the-leading-space", "other-decoder",
+            "no-tokenizer-json", "unreadable-tokenizer-json"])
+    def test_streamed_text_is_the_decoded_text(self, tmp_path, tokenizer_json, vocab,
+                                               pieces, expected):
         import json
-        from heylook_llm.providers.common.lm_detokenizer import detokenizer_class_for
-        if decoder is not None:
-            (tmp_path / "tokenizer.json").write_text(json.dumps({"decoder": decoder}))
-        cls = detokenizer_class_for(tmp_path)
-        assert getattr(cls, "__name__", None) == expected
-
-    def test_primed_source_is_the_per_request_source(self, tmp_path):
         from heylook_llm.providers.common.generation_core import detokenizer_source
-        raw = _FakeHfForDetok()
-        (tmp_path / "tokenizer.json").write_text("{not json")
-        primed = detokenizer_source(raw, tmp_path)       # unreadable: falls back, loads anyway
-        assert type(primed._detokenizer).__name__ == "NaiveStreamingDetokenizer"
-        assert detokenizer_source(raw) is primed          # the per-request call: cache hit
+
+        if tokenizer_json is None:
+            tokenizer_json = json.dumps({"decoder": _SPM_DECODER})
+        elif tokenizer_json == "no-strip":
+            tokenizer_json = json.dumps({"decoder": {
+                "type": "Sequence", "decoders": _SPM_DECODER["decoders"][:3]}})
+        if tokenizer_json != "absent":
+            (tmp_path / "tokenizer.json").write_text(tokenizer_json)
+        tok = _FakeTokenizer(vocab, pieces)
+        ids = sorted(pieces)
+        assert tok.decode(ids) == expected  # the fixture's own consistency
+
+        detokenizer_source(tok, tmp_path)           # primed at load
+        d = detokenizer_source(tok).detokenizer     # the per-request call
+        segments = []
+        for i in ids:
+            d.add_token(i)
+            segments.append(d.last_segment)
+        d.finalize()
+        segments.append(d.last_segment)
+        assert "".join(segments) == expected
 
 
 @pytest.mark.unit

@@ -71,16 +71,28 @@ class TestReportFields:
         assert report.working_set_gb == 80.0
         assert report.kv_headroom_gb == pytest.approx(20.0)
 
-    def test_sysctl_hint_only_at_os_default(self, monkeypatch):
-        # Over the working set with sysctl=0 -> actionable hint. With the
-        # sysctl already raised, the ceiling is a deliberate choice: no hint.
-        _patch_ceilings(monkeypatch, usable=200.0, working_set=80.0, sysctl=0)
-        hinted = evaluate_fit(90.0, 8.0, hard_working_set=False)
-        # weights + THIN_HEADROOM_GB dominates weights + headroom here.
-        assert hinted.sysctl_suggest_mb == int((90.0 + ram_fit.THIN_HEADROOM_GB + 8) * 1024)
-        _patch_ceilings(monkeypatch, usable=200.0, working_set=80.0, sysctl=178176)
-        raised = evaluate_fit(90.0, 8.0, hard_working_set=False)
-        assert raised.sysctl_suggest_mb is None
+    def test_the_suggested_limit_is_enough_and_only_offered_at_os_default(self, monkeypatch):
+        # Property: raising the sysctl to what the report suggests gives the
+        # same model a working set it passes with headroom to spare, on both
+        # engines (hard = MLX). Over the working set with sysctl=0 -> a hint;
+        # applied -> pass, not thin, and no second hint. With the sysctl
+        # already raised, the ceiling is a deliberate choice: no hint.
+        for hard in (True, False):
+            for weights, headroom, working_set in ((90.0, 8.0, 80.0), (145.0, 8.0, 161.0),
+                                                   (30.0, 40.0, 60.0)):
+                _patch_ceilings(monkeypatch, usable=500.0, working_set=working_set,
+                                max_buffer=500.0, sysctl=0)
+                hinted = evaluate_fit(weights, headroom, hard_working_set=hard)
+                assert hinted.sysctl_suggest_mb is not None, (weights, working_set)
+                applied_gb = hinted.sysctl_suggest_mb / 1024
+                _patch_ceilings(monkeypatch, usable=500.0, working_set=applied_gb,
+                                max_buffer=500.0, sysctl=hinted.sysctl_suggest_mb)
+                after = evaluate_fit(weights, headroom, hard_working_set=hard)
+                assert after.verdict == "pass", (hard, weights, applied_gb)
+                assert after.headroom_thin is False, (hard, weights, applied_gb)
+                assert after.sysctl_suggest_mb is None
+            _patch_ceilings(monkeypatch, usable=200.0, working_set=80.0, sysctl=178176)
+            assert evaluate_fit(90.0, 8.0, hard_working_set=hard).sysctl_suggest_mb is None
 
     def test_thin_headroom_is_flagged_and_hinted(self, monkeypatch):
         # Under the working set, but with less than THIN_HEADROOM_GB left for
@@ -97,10 +109,22 @@ class TestReportFields:
         assert evaluate_fit(145.0, 8.0, hard_working_set=False).sysctl_suggest_mb is None
 
     def test_suggestion_never_crowds_the_os(self, monkeypatch):
-        _patch_ceilings(monkeypatch, usable=200.0, working_set=161.0, sysctl=0)
-        monkeypatch.setattr(ram_fit, "total_ram_gb", lambda: 192.0)
-        report = evaluate_fit(155.0, 8.0, hard_working_set=False)
-        assert report.sysctl_suggest_mb == int((192.0 - ram_fit.OS_RESERVE_GB) * 1024)
+        # Property: whatever the machine and the model, the suggested wired
+        # limit leaves at least OS_RESERVE_GB (the limit the module sets) of
+        # total RAM to everything that is not the model.
+        offered = 0
+        for total in (64.0, 96.0, 128.0, 192.0):
+            for weights in (total * 0.5, total * 0.8, total * 0.95):
+                _patch_ceilings(monkeypatch, usable=total, working_set=total * 0.75,
+                                sysctl=0)
+                monkeypatch.setattr(ram_fit, "total_ram_gb", lambda t=total: t)
+                report = evaluate_fit(weights, 8.0, hard_working_set=False)
+                if report.sysctl_suggest_mb is None:
+                    continue  # roomy: nothing suggested
+                offered += 1
+                assert report.sysctl_suggest_mb / 1024 <= total - ram_fit.OS_RESERVE_GB, (
+                    total, weights, report.sysctl_suggest_mb)
+        assert offered >= 8
 
     def test_max_buffer_compares_ONE_allocation_not_the_sum(self, monkeypatch):
         # The cap limits a single buffer, so the summed weight is the wrong

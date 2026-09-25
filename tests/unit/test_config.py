@@ -19,75 +19,18 @@ from heylook_llm.config import (
 )
 
 
-# Pydantic construction round-trip: ChatMessage / ChatRequest / ModelConfig /
-# AppConfig construct from every role and content shape, round-trip thinking,
-# and omit None on dump. Rows: (build the object, project what the row checks,
-# expected projection). Built inside the test so a constructor failure is a
-# failed row, not a collection error.
+# Pydantic construction: a models.toml-shaped entry picks its provider's config
+# class, AppConfig finds entries by id, and an unset thinking field stays off
+# the wire. Rows: (build the object, project what the row checks, expected
+# projection). Built inside the test so a constructor failure is a failed row,
+# not a collection error. Rows that only echoed a declared field back were
+# dropped (second prune pass, 2026-09-25).
 _CONSTRUCTION_ROWS = [
-    pytest.param(
-        lambda: ChatMessage(role="user", content="hello"),
-        lambda m: (m.role, m.content, m.thinking),
-        ("user", "hello", None),
-        id="simple_text_message",
-    ),
-    pytest.param(
-        lambda: ChatMessage(role="assistant", content="hi there"),
-        lambda m: m.role, "assistant", id="assistant_message",
-    ),
-    pytest.param(
-        lambda: ChatMessage(role="system", content="You are helpful."),
-        lambda m: m.role, "system", id="system_message",
-    ),
-    pytest.param(
-        lambda: ChatMessage(role="user", content=[
-            TextContentPart(type="text", text="What is this?"),
-            ImageContentPart(type="image_url",
-                             image_url=ImageUrl(url="https://example.com/img.png")),
-        ]),
-        lambda m: (isinstance(m.content, list), len(m.content)),
-        (True, 2),
-        id="multimodal_content",
-    ),
-    pytest.param(
-        lambda: ChatMessage(role="assistant", content="answer", thinking="reasoning"),
-        lambda m: (m.thinking, m.model_dump()["thinking"]),
-        ("reasoning", "reasoning"),
-        id="thinking_roundtrip",
-    ),
     pytest.param(
         lambda: ChatMessage(role="assistant", content="hi"),
         lambda m: "thinking" in m.model_dump(exclude_none=True),
         False,
         id="thinking_excluded_when_none",
-    ),
-    pytest.param(
-        lambda: ChatMessage(role="user", content="test"),
-        lambda m: (m.name, m.tool_call_id, m.tool_calls),
-        (None, None, None),
-        id="optional_fields_default_none",
-    ),
-    pytest.param(
-        lambda: ChatRequest(messages=[ChatMessage(role="user", content="hi")]),
-        lambda r: (r.model, r.stream, len(r.messages)),
-        (None, False, 1),
-        id="minimal_request",
-    ),
-    pytest.param(
-        lambda: ChatRequest(
-            model="test",
-            messages=[ChatMessage(role="user", content="hi")],
-            temperature=0.5, top_p=0.9, top_k=40, min_p=0.1,
-            repetition_penalty=1.1, max_tokens=256, seed=42,
-        ),
-        lambda r: (r.temperature, r.top_k, r.seed),
-        (0.5, 40, 42),
-        id="all_sampler_params",
-    ),
-    pytest.param(
-        lambda: ChatRequest(messages=[ChatMessage(role="user", content="hi")],
-                            enable_thinking=True),
-        lambda r: r.enable_thinking, True, id="enable_thinking",
     ),
     pytest.param(
         lambda: ModelConfig(id="test-mlx", provider="mlx",
@@ -113,11 +56,6 @@ _CONSTRUCTION_ROWS = [
         lambda mc: (isinstance(mc.config, GGUFModelConfig), mc.config.mmproj_path),
         (True, "/x/mmproj.gguf"),
         id="gguf_model_config_builds",
-    ),
-    pytest.param(
-        lambda: ModelConfig(id="test", provider="mlx", config={"model_path": "/fake"},
-                            capabilities=["chat", "thinking", "vision"]),
-        lambda mc: "thinking" in mc.capabilities, True, id="capabilities_list",
     ),
     pytest.param(
         lambda: AppConfig(models=[ModelConfig(id="m1", provider="mlx",
@@ -154,10 +92,19 @@ class TestModelConfig:
                 config={"bad_field_only": True},
             )
 
-    def test_mlx_config_defaults(self):
-        mc = MLXModelConfig(model_path="/fake")
-        assert mc.vision is False
-        assert mc.enable_thinking is None  # v1.79.62: unset = follow the thinking capability
+    def test_an_entry_that_leaves_thinking_unset_follows_the_capability(self):
+        """v1.79.62: an MLX entry that never mentions enable_thinking thinks
+        exactly when the model can. Built the way the router builds a
+        provider's config (validate the entry, dump its config) and answered
+        by the real cascade, so a field default that stops meaning "unset"
+        turns a thinking model off by default and fails here."""
+        from heylook_llm.samplers import thinking_default
+
+        entry = ModelConfig.model_validate(
+            {"id": "m", "provider": "mlx", "config": {"model_path": "/fake"}})
+        provider_config = entry.config.model_dump()
+        assert thinking_default(provider_config, thinking_capable=True) is True
+        assert thinking_default(provider_config, thinking_capable=False) is False
 
 
 @pytest.mark.unit
@@ -171,30 +118,14 @@ class TestAppConfig:
 
 @pytest.mark.unit
 class TestMLXRuntimeDefaultFields:
-    """Guardrail for the metadata-driven cache/speculative-decoding field set.
+    """MLX_RUNTIME_DEFAULT_FIELDS is derived from MLXModelConfig via
+    ``json_schema_extra={"is_runtime_default": True}``. A runtime default must
+    be omittable, so an entry that does not set it falls through to the
+    engine's own default instead of forcing every entry to name it."""
 
-    MLX_RUNTIME_DEFAULT_FIELDS is derived from MLXModelConfig via
-    ``json_schema_extra={"is_runtime_default": True}``. If someone adds a new
-    cache or speculative-decoding field and forgets to annotate it, the
-    hardcoded expectation below fails loudly -- which is the point. Update
-    this list in the same commit as the field addition.
-    """
-
-    # quantized_kv_start was removed 2026-07-06: stored and forwarded but
-    # never consumed by _build_cache_config/make_cache (dead config).
-    # The KV cache knobs and num_draft_tokens were retired with the mlx-vlm
-    # engine (plan W10 stage 3).
-    EXPECTED_RUNTIME_DEFAULTS = frozenset({
-        "prefill_step_size",
-    })
-
-    def test_derived_set_matches_expected_and_each_is_optional(self):
-        assert MLX_RUNTIME_DEFAULT_FIELDS == self.EXPECTED_RUNTIME_DEFAULTS
-        # Safety: runtime defaults must be omittable so models.toml entries
-        # that don't set them fall through to mlx-lm's own defaults.
+    def test_every_runtime_default_is_optional(self):
         for name in MLX_RUNTIME_DEFAULT_FIELDS:
             field = MLXModelConfig.model_fields[name]
-            # Either the default is explicit OR the field allows None.
             assert not field.is_required(), (
                 f"MLXModelConfig.{name} is marked is_runtime_default but is required; "
                 f"that forces every models.toml entry to set it. Add a default."
@@ -237,11 +168,48 @@ class TestMLXModelConfigValidation:
             with pytest.raises(ValidationError):
                 config_cls(**base, **kwargs)
 
-    def test_max_queue_depth_is_a_real_field(self):
-        # The provider reads config["max_queue_depth"]; without a field the
-        # value was silently dropped by pydantic and unreachable.
-        assert MLXModelConfig(**self.BASE).max_queue_depth == 8
-        assert MLXModelConfig(**self.BASE, max_queue_depth=2).max_queue_depth == 2
+    @pytest.mark.parametrize("depth, busy", [
+        pytest.param(None, False, id="default_depth_admits_a_second_waiter"),
+        pytest.param(1, True, id="depth_1_turns_the_second_waiter_away"),
+    ])
+    def test_max_queue_depth_reaches_the_busy_answer(self, mock_mlx, depth, busy):  # noqa: ARG002
+        """An entry's max_queue_depth decides when a request is turned away.
+        Before the field existed, pydantic dropped the key and the provider
+        ran at the default whatever the entry said. Entry -> config the router
+        hands the provider -> provider -> the gate every generation queues
+        in: one generation running and one queued, then a third request asks
+        for capacity."""
+        import threading
+
+        from heylook_llm.providers.common.generation_gate import (
+            ModelBusyError, get_process_gate,
+        )
+        from heylook_llm.providers.mlx_provider import MLXProvider
+
+        cfg: dict[str, Any] = dict(self.BASE)
+        if depth is not None:
+            cfg["max_queue_depth"] = depth
+        entry = ModelConfig.model_validate({"id": "q", "provider": "mlx", "config": cfg})
+        provider = MLXProvider(model_id="q", config=entry.config.model_dump(), verbose=False)
+
+        gate = get_process_gate(99)  # the gate the provider made; 99 is ignored
+        gate.acquire()  # a generation in flight
+        waiter = threading.Thread(target=lambda: (gate.acquire(), gate.release()))
+        waiter.start()
+        try:
+            for _ in range(200):
+                if gate.waiting == 1:
+                    break
+                threading.Event().wait(0.005)
+            assert gate.waiting == 1
+            if busy:
+                with pytest.raises(ModelBusyError):
+                    provider.check_capacity()
+            else:
+                provider.check_capacity()
+        finally:
+            gate.release()
+            waiter.join(timeout=5)
 
 
 

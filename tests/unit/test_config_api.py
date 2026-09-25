@@ -10,7 +10,7 @@ that a read-only instance holds its writes in memory instead.
 
 import tomllib
 from types import SimpleNamespace
-from unittest.mock import call, patch
+from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
@@ -113,21 +113,29 @@ class TestConfigEndpoints:
 @pytest.mark.unit
 class TestMlxCacheLimit:
     @pytest.mark.asyncio
-    async def test_put_applies_limit_in_bytes(self, client):
-        with patch("mlx.core.set_cache_limit", return_value=999) as set_limit:
-            res = await client.put("/v1/admin/config", json={"mlx_cache_limit_gb": 1.5})
-        assert res.status_code == 200
-        assert res.json()["effective"]["mlx_cache_limit_gb"] == 1.5
-        set_limit.assert_called_once_with(int(1.5 * 1024**3))
+    async def test_the_allocator_holds_the_cap_then_gets_its_own_default_back(
+            self, client, monkeypatch):
+        """The MLX allocator's limit is the observable: a fake allocator that
+        holds a limit and, like mx.set_cache_limit, answers with the previous
+        one. Two caps then a clear: the clear must give back the allocator's
+        own default, not the first cap."""
+        default = 7_000_000_000
+        state = {"limit": default}
 
-    @pytest.mark.asyncio
-    async def test_reset_restores_captured_mlx_default(self, client):
-        # first cap captures MLX's previous (default) limit from the return
-        # value; clearing the override restores exactly that value
-        with patch("mlx.core.set_cache_limit", return_value=999) as set_limit:
+        def set_cache_limit(n):
+            prev, state["limit"] = state["limit"], n
+            return prev
+
+        monkeypatch.setattr(config_api, "_mlx_default_cache_limit", None)
+        with patch("mlx.core.set_cache_limit", side_effect=set_cache_limit):
+            res = await client.put("/v1/admin/config", json={"mlx_cache_limit_gb": 1.5})
+            assert res.status_code == 200
+            assert res.json()["effective"]["mlx_cache_limit_gb"] == 1.5
+            assert state["limit"] == 1_610_612_736  # 1.5 GiB
             await client.put("/v1/admin/config", json={"mlx_cache_limit_gb": 2})
+            assert state["limit"] == 2_147_483_648  # 2 GiB
             await client.delete("/v1/admin/config/mlx_cache_limit_gb")
-        assert set_limit.call_args_list[-1] == call(999)
+        assert state["limit"] == default
 
     @pytest.mark.asyncio
     async def test_mlx_failure_does_not_break_config_api(self, client):

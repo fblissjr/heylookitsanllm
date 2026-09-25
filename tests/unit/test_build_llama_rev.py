@@ -106,13 +106,31 @@ class TestRebuildUsesTheRecordedSha:
     """--rebuild means "same source, new toolchain" -- not "resolve that name
     again". A manifest recording rev: "master" must not rebuild whatever
     upstream merged since."""
+    def test_rebuild_checks_out_the_recorded_sha_not_the_rev(self, clone, monkeypatch):
+        """main() --rebuild over a real clone whose manifest recorded
+        rev: "master" at an older sha, with HEAD parked on the newer
+        origin/master. The rebuild must land on the recorded sha. Stubbed:
+        the remote check (the clone's origin is a local repo, not GIT_URL)
+        and the cmake build, which stops the run right after the checkout."""
+        import json
 
+        import build_llama
 
+        class Stopped(Exception):
+            pass
 
-    def test_main_uses_sha_not_rev_on_rebuild(self):
-        """Pins the source line itself: the selection lives in main(), which is
-        not callable here without a real build, so assert on the code."""
-        from pathlib import Path as P
-        src = (P(__file__).resolve().parents[2] / "scripts" / "build_llama.py").read_text()
-        assert 'manifest.get("sha") or manifest.get("rev")' in src, \
-            "--rebuild must prefer the recorded sha over the symbolic rev"
+        old, new = sha(clone, "master"), sha(clone, "origin/master")
+        assert old != new
+        git(clone, "checkout", "-q", "--detach", "origin/master")
+        (clone / "build").mkdir()
+        (clone / "build" / "heylook-build.json").write_text(
+            json.dumps({"rev": "master", "sha": old}))
+
+        def stop(*_a, **_k):
+            raise Stopped
+        monkeypatch.setattr(build_llama, "ensure_checkout", lambda path: None)
+        monkeypatch.setattr(build_llama, "build", stop)
+        monkeypatch.setattr(sys, "argv", ["build_llama.py", "--rebuild", "--dir", str(clone)])
+        with pytest.raises(Stopped):
+            build_llama.main()
+        assert sha(clone, "HEAD") == old

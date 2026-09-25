@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import tempfile
 import textwrap
 import threading
@@ -36,52 +37,105 @@ from _mock_provider import MockProvider
 # 1. unload() waits for gate waiters, not just actives
 # ---------------------------------------------------------------------------
 
-def _bare_provider(gate_stats_fn):
-    """MLXProvider skeleton with just the attrs unload() touches.
+def _text_engine_blocking_until(provider, monkeypatch, release: threading.Event):
+    """Stand the text engine in with one that yields a chunk only once
+    ``release`` is set, and give the provider a processor, so a real
+    ``create_chat_completion`` holds the gate and the active count."""
+    from helpers.mlx_mock import create_mock_model, create_mock_processor
 
-    Avoids load_model()/Metal entirely; unload() must run on exactly this
-    surface: _active_lock, _active_generations, generation_queue_stats(),
-    _strategies, model_id.
-    """
-    from heylook_llm.providers.mlx_provider import MLXProvider
+    mod = sys.modules[type(provider).__module__]
 
-    p = object.__new__(MLXProvider)
-    p.model_id = "waiter-safety-test"
-    p._active_lock = threading.Lock()
-    p._active_generations = 0
-    p._strategies = {}
-    p.generation_queue_stats = gate_stats_fn
-    return p
+    class _Chunk:
+        text = "x"
 
+    def generate(self, *a, **k):
+        release.wait(5)
+        yield _Chunk()
 
-class TestUnloadWaitsForWaiters(unittest.TestCase):
-    def test_unload_waits_until_gate_has_no_waiters(self):
-        # Gate reports one waiter for the first 0.3s, then quiescent --
-        # models the decrement-before-release window where a queued request
-        # is about to start generating on these weights.
-        flip_at = time.monotonic() + 0.3
-
-        def stats():
-            waiting = 1 if time.monotonic() < flip_at else 0
-            return {"active": 0, "waiting": waiting, "max_waiting": 10, "capacity": 1}
-
-        p = _bare_provider(stats)
-        start = time.monotonic()
-        p.unload()
-        elapsed = time.monotonic() - start
-
-        self.assertGreaterEqual(
-            elapsed, 0.25,
-            "unload() returned while the generation gate still had a waiter "
-            "-- weights freed under a request about to run",
-        )
+    monkeypatch.setattr(mod.UnifiedTextStrategy, "generate", generate)
+    provider.model = create_mock_model()
+    provider.processor = create_mock_processor()
+    provider._compile_strategies()
 
 
+def _hold_a_waiter(provider, monkeypatch, release, events):
+    """Another caller holds the process-global gate's slot and one more
+    queues behind it: waiting=1, and nothing active on THIS provider -- the
+    decrement-before-release window, where an actives-only wait returns."""
+    from heylook_llm.providers.common.generation_gate import get_process_gate
 
-def _quiescent_bare_provider(request):
-    return _bare_provider(
-        lambda: {"active": 0, "waiting": 0, "max_waiting": 10, "capacity": 1}
-    )
+    gate = get_process_gate(8)
+    gate.acquire()
+
+    def waiter():
+        gate.acquire()
+        events["drained"] = time.monotonic()
+        gate.release()
+
+    t = threading.Thread(target=waiter, daemon=True)
+    t.start()
+    _until(lambda: provider.generation_queue_stats()["waiting"] == 1)
+
+    def finish():
+        gate.release()
+        t.join(5)
+    return finish
+
+
+def _hold_a_generation(provider, monkeypatch, release, events):
+    """A real generation on this provider, parked mid-decode."""
+    from heylook_llm.config import ChatMessage, ChatRequest
+
+    _text_engine_blocking_until(provider, monkeypatch, release)
+    req = ChatRequest(messages=[ChatMessage(role="user", content="hi")])
+
+    def run():
+        list(provider.create_chat_completion(req))
+        events["drained"] = time.monotonic()
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    _until(lambda: provider.active_generations == 1)
+
+    def finish():
+        release.set()
+        t.join(5)
+    return finish
+
+
+def _until(cond, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while not cond():
+        assert time.monotonic() < deadline, "setup never reached its state"
+        time.sleep(0.01)
+
+
+@pytest.mark.parametrize("hold", [_hold_a_waiter, _hold_a_generation],
+                         ids=["unload_waits_until_gate_has_no_waiters",
+                              "unload_waits_for_active_generations"])
+def test_unload_returns_only_after_the_traffic_drains(mock_mlx_provider, monkeypatch, hold):
+    """The real provider and the real process gate: unload() on its own
+    thread must still be waiting while the work is in flight, and return
+    only after it drained -- freeing weights under a request about to run
+    (or running) is the Metal fault."""
+    release = threading.Event()
+    events = {}
+    finish = hold(mock_mlx_provider, monkeypatch, release, events)
+
+    def unload():
+        mock_mlx_provider.unload()
+        events["unloaded"] = time.monotonic()
+
+    u = threading.Thread(target=unload, daemon=True)
+    u.start()
+    try:
+        u.join(0.4)
+        assert u.is_alive(), "unload() returned while the work was still in flight"
+    finally:
+        finish()
+    u.join(5)
+    assert not u.is_alive(), "unload() never returned after the work drained"
+    assert events["unloaded"] >= events["drained"]
 
 
 def _idle_loaded_mock_provider(request):
@@ -94,13 +148,10 @@ def _idle_loaded_mock_provider(request):
 
 
 # The control for the wait above: with nothing active or queued, unload()
-# returns at once. Two surfaces: the bare skeleton (gate reports quiescent) and
-# a mocked provider holding a model and processor (moved from
-# test_mlx_provider.py TestUnload).
+# returns at once (a mocked provider holding a model and processor).
 @pytest.mark.parametrize("build, bound_s", [
-    (_quiescent_bare_provider, 1.0),
     (_idle_loaded_mock_provider, 0.5),
-], ids=["unload_immediate_when_quiescent", "unload_immediate_when_idle"])
+], ids=["unload_immediate_when_idle"])
 def test_unload_returns_at_once_when_nothing_waits(request, build, bound_s):
     p = build(request)
     start = time.monotonic()
@@ -129,9 +180,19 @@ _TOML = textwrap.dedent("""
 """).strip()
 
 
-@patch("heylook_llm.router.MLXProvider", new=MockProvider)
+class _WedgedLoadProvider(MockProvider):
+    """A load that does not finish until the test lets it."""
+
+    release = threading.Event()
+
+    def load_model(self):
+        self.release.wait(10)
+
+
+@patch("heylook_llm.router.MLXProvider", new=_WedgedLoadProvider)
 class TestReservationWaitBounded(unittest.TestCase):
     def setUp(self):
+        _WedgedLoadProvider.release = threading.Event()
         self.tmp = tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".toml")
         self.tmp.write(_TOML)
         self.tmp.close()
@@ -145,23 +206,30 @@ class TestReservationWaitBounded(unittest.TestCase):
         )
 
     def test_wedged_inflight_load_times_out_instead_of_hanging(self):
+        """A real load of model-a wedges on its own thread; model-b, which
+        needs that slot (max_loaded_models=1), must get a RuntimeError naming
+        the wedged load within the bound instead of waiting forever."""
         router = self._router()
         router._reservation_wait_timeout = 0.2
-        # Simulate another thread's load that never publishes (wedged).
-        # `_loading` maps id -> PROVIDER KIND since v2.0.49 (engine exclusivity
-        # has to see in-flight loads too). Same kind as model-a on purpose:
-        # a FOREIGN wedged load takes the engine-switch wait path instead, and
-        # this check is about the capacity wait being bounded.
-        router._loading["ghost-model"] = "mlx"
+        loader = threading.Thread(
+            target=lambda: router.get_provider("model-a"), daemon=True)
+        loader.start()
+        try:
+            deadline = time.monotonic() + 5
+            while not router.is_loading("model-a"):
+                self.assertLess(time.monotonic(), deadline, "model-a never started loading")
+                time.sleep(0.01)
 
-        start = time.monotonic()
-        with self.assertRaises(RuntimeError) as ctx:
-            router.get_provider("model-a")
-        elapsed = time.monotonic() - start
+            start = time.monotonic()
+            with self.assertRaises(RuntimeError) as ctx:
+                router.get_provider("model-b")
+            elapsed = time.monotonic() - start
+        finally:
+            _WedgedLoadProvider.release.set()
+            loader.join(5)
 
         self.assertLess(elapsed, 5.0, "timeout did not bound the wait")
-        self.assertIn("ghost-model", str(ctx.exception))
-
+        self.assertIn("model-a", str(ctx.exception))
 
 if __name__ == "__main__":
     unittest.main()

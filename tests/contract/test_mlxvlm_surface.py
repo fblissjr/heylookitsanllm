@@ -28,9 +28,12 @@
 # if a later-collected contract test file's session-scoped mlx_mocks fixture patches
 # sys.modules afterward.
 #
-# heylook_llm.providers.mlx_provider itself is deliberately NOT imported here (or
-# anywhere unmocked in this suite); its consumption sites are pinned via plain
-# source-text reads instead.
+# heylook_llm.providers.mlx_provider is not imported at module level here. The
+# one test that renders through it imports heylook's provider modules FRESH
+# inside a sys.modules patch, so they bind the real libraries rather than the
+# session's MagicMock tree; one consumption site (the vision feature cache
+# handover) is still pinned by a source-text read, because its system check
+# needs a live model (scripts/vlm_parity_probe.py).
 
 import inspect
 import re
@@ -60,10 +63,6 @@ def _source(*parts: str) -> str:
 
 def _mlx_provider_source() -> str:
     return _source("providers", "mlx_provider.py")
-
-
-def _vlm_inputs_source() -> str:
-    return _source("providers", "common", "vlm_inputs.py")
 
 
 # ---------------------------------------------------------------------------
@@ -212,40 +211,74 @@ class TestApplyChatTemplate:
         assert "image" in item_types
         assert "text" in item_types
 
-    def test_our_call_site_still_passes_num_images_and_return_messages(self):
-        # Source-text pin for the exact call in mlx_provider.py (own-code
-        # traceability, not a library-compat check -- that's the test above).
-        src = _mlx_provider_source()
-        assert "num_images=num_images, return_messages=True" in src
+    def test_the_vision_path_renders_the_image_and_the_depth(self):
+        """vlm_inputs.py -> heylook's vlm_apply_chat_template -> mlx-vlm's
+        real message rebuild -> a template, with one image attached and a
+        thinking depth chosen: the rendered prompt carries the image markup
+        once and the depth's text. Replaces two source-text pins (the
+        num_images and depth kwargs at the vlm_inputs.py call), and covers the
+        case they left open: a depth that is passed but never reaches the
+        template. The only stand-in is the image loader.
 
-    def test_the_media_attribution_call_site_is_pinned_too(self):
-        """vlm_inputs.py is where per-message media attribution lives.
+        heylook's MLX modules are imported FRESH inside a sys.modules patch,
+        against the real mlx / mlx_vlm this file restores: other contract
+        files import them under the session's MagicMock tree, and a module
+        bound to that tree would render nothing real."""
+        from PIL import Image
 
-        OWN-CODE TRACEABILITY, like the test above it and NOT a library-compat
-        check -- stated plainly because the module around it is a library-
-        surface suite and the first version of this docstring read as one.
-        vlm_inputs.py does not call mlx-vlm: it calls heylook's own
-        `vlm_apply_chat_template` (mlx_provider.py), which is what reaches
-        `mlx_vlm.prompt_utils`. So this watches OUR call keeping its kwargs.
+        from heylook_llm.chat_template_files import _engine_environment
+        from heylook_llm.config import ChatMessage, ImageContentPart, ImageUrl, TextContentPart
 
-        WHAT IT STILL DOES NOT COVER: the depth kwarg reaches mlx-vlm only
-        through `**kwargs`, so the swallow case -- a library that quietly stops
-        forwarding it to the template -- remains unpinned by anything here.
-        """
-        src = _vlm_inputs_source()
-        # Plain substrings, matching the sibling pin above. A regex pass was
-        # tried and reverted: it tolerated only spacing a formatter would never
-        # emit for a kwarg, still failed the realistic reformat (a line wrap),
-        # and left two adjacent pins of the same shape written differently.
-        # Source-text pins ARE reformat-fragile; the message says so rather
-        # than the check pretending otherwise.
-        assert "num_images=len(images)" in src, (
-            "vlm_inputs.py no longer passes num_images to the chat-template call "
-            "as written -- a reformat here is a false alarm, a moved call is not"
-        )
-        assert "depth=depth" in src, (
-            "vlm_inputs.py stopped forwarding the thinking depth to the template"
-        )
+        env = _engine_environment()
+        body = ("{% for m in messages %}<{{ m['role'] }}>"
+                "{% if m['content'] is string %}{{ m['content'] }}{% else %}"
+                "{% for c in m['content'] %}{% if c['type'] == 'image' %}<IMG>"
+                "{% else %}{{ c['text'] }}{% endif %}{% endfor %}{% endif %}{% endfor %}"
+                "{% if add_generation_prompt %}"
+                "<assistant effort={{ reasoning_strength | default('unset') }}>{% endif %}")
+
+        class Tok:
+            def apply_chat_template(self, messages, tokenize=False,
+                                    add_generation_prompt=True, **kw):
+                return env.from_string(body).render(
+                    messages=messages, add_generation_prompt=add_generation_prompt, **kw)
+
+        class Proc:
+            image_token = "<IMG>"
+            tokenizer = Tok()
+
+        class Cfg(dict):
+            def __init__(self):
+                super().__init__(model_type="qwen3_5")
+                self.model_type = "qwen3_5"
+
+        class Loader:
+            def load_images_parallel(self, urls):
+                return [Image.new("RGB", (8, 8), "red") for _ in urls]
+
+        messages = [ChatMessage(role="user", content=[
+            ImageContentPart(type="image_url", image_url=ImageUrl(url="https://example.test/a.png")),
+            TextContentPart(type="text", text="what is this?")])]
+
+        import heylook_llm
+
+        # Both restored on exit: the module table, and the package attribute
+        # the fresh import rebinds (mock.patch resolves dotted targets through
+        # it, so a later patch would otherwise land on the fresh copy).
+        with patch.dict(sys.modules), patch.dict(heylook_llm.__dict__):
+            for name in [n for n in sys.modules if n.startswith("heylook_llm.providers")]:
+                del sys.modules[name]
+            from heylook_llm.providers.common.vlm_inputs import prepare_vlm_inputs_parallel
+            from heylook_llm.providers.mlx_provider import vlm_apply_chat_template
+
+            images, prompt, has_images, _ = prepare_vlm_inputs_parallel(
+                messages, Proc(), Cfg(), Loader(), vlm_apply_chat_template,
+                enable_thinking=True, depth={"reasoning_strength": "low"})
+
+        assert has_images and len(images) == 1
+        assert prompt.count("<IMG>") == 1, prompt
+        assert "what is this?" in prompt
+        assert "effort=low" in prompt, prompt
 
 
 # ---------------------------------------------------------------------------

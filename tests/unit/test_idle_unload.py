@@ -7,8 +7,9 @@ timestamp is further in the past than its threshold. ``MemoryManager.tick``
 drives this from the existing 60s resource-snapshot loop.
 
 Tests use a fake clock injected via a ``now_ts`` argument to
-``unload_idle_models`` and direct mutation of ``router._last_used_ts`` --
-no real sleep, no real MLX.
+``unload_idle_models`` (plus the router's clock for the stamps
+``get_provider`` writes, and direct setting of ``router._last_used_ts`` in the
+threshold table) -- no real sleep, no real MLX.
 """
 
 from __future__ import annotations
@@ -82,17 +83,36 @@ def make_router(tmp_path):
         yield _make
 
 
-# Every get_provider stamps last-used: a first load populates it, and a cache
-# hit refreshes it past an old stamp.
+class _Clock:
+    """The router's `time` module with a settable `time()`; everything else
+    passes through to the real module."""
+
+    def __init__(self, now: float):
+        self.now = now
+
+    def time(self) -> float:
+        return self.now
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+
+# Every get_provider counts as use, observed as the idle unload it defers
+# (model-fast's threshold is 60s): a first load starts the window, and a
+# cache hit after the window has passed starts it again.
 @pytest.mark.parametrize("cache_hit", [False, True], ids=["load_populates", "cache_hit_refreshes"])
 def test_get_provider_stamps_last_used(make_router, cache_hit):
     router = make_router()
-    if cache_hit:
+    clock = _Clock(1_000.0)
+    with patch("heylook_llm.router.time", new=clock):
         router.get_provider("model-fast")
-        router._last_used_ts["model-fast"] = 1_000.0
-    before = time.time()
-    router.get_provider("model-fast")
-    assert router._last_used_ts["model-fast"] >= before
+        if cache_hit:
+            clock.now = 1_100.0  # past the 60s window since the load
+            router.get_provider("model-fast")
+    used_at = clock.now
+    assert router.unload_idle_models(now_ts=used_at + 59) == []
+    assert "model-fast" in router.providers
+    assert router.unload_idle_models(now_ts=used_at + 61) == ["model-fast"]
 
 
 # Effective threshold = per-model override, else global; 0 disables at either

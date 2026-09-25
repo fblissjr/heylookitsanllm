@@ -9,8 +9,6 @@ from heylook_llm.perf_collector import (
     PerfCollector,
     RequestEvent,
     ResourceSnapshot,
-    _parse_time_range,
-    get_perf_collector,
 )
 
 
@@ -63,55 +61,32 @@ def _make_snapshot(
 
 
 # ---------------------------------------------------------------------------
-# Tests: _parse_time_range
-# ---------------------------------------------------------------------------
-
-class TestParseTimeRange:
-    # range string -> seconds; anything unknown (incl. empty) is 1h
-    @pytest.mark.parametrize(
-        "expected",
-        [
-            {"1h": 3600, "6h": 6 * 3600, "24h": 24 * 3600, "7d": 7 * 24 * 3600},
-            {"invalid": 3600, "": 3600},
-        ],
-        ids=["valid_ranges", "unknown_range_defaults_to_1h"],
-    )
-    def test_parse_time_range(self, expected):
-        for text, seconds in expected.items():
-            assert _parse_time_range(text) == seconds, text
-
-
-# ---------------------------------------------------------------------------
 # Tests: PerfCollector recording
 # ---------------------------------------------------------------------------
 
 class TestRecording:
-    # Recording lands in a bounded ring buffer. Each row: collector bounds,
-    # the recorder, how many items it gets (item i from make(i)), the buffer
-    # it lands in, its length after, and the oldest surviving total_ms
-    # (None = not checked).
+    # Recording lands in a bounded ring buffer: past the bound the profile
+    # shows only the newest items. Read through build_profile, for request
+    # events and resource snapshots alike. Each row: the collector bound, the
+    # recorder, make(i), and the profile projection that names which items
+    # survived (item i carries i).
     @pytest.mark.parametrize(
-        "bounds, recorder, make, n, buffer, expected_len, oldest_total_ms",
+        "bounds, recorder, make, project",
         [
-            ({"max_events": 100}, "record_request",
-             lambda i: _make_event(), 1, "_events", 1, None),
-            ({"max_snapshots": 100}, "record_resource_snapshot",
-             lambda i: _make_snapshot(), 1, "_resource_snapshots", 1, None),
-            # past the bound the oldest events are evicted (0 and 1 go)
             ({"max_events": 3}, "record_request",
-             lambda i: _make_event(total_ms=float(i)), 5, "_events", 3, 2.0),
+             lambda i: _make_event(model=f"m{i}"),
+             lambda p: sorted(int(b["model"][1:]) for b in p["bottlenecks"])),
+            ({"max_snapshots": 3}, "record_resource_snapshot",
+             lambda i: _make_snapshot(requests=i),
+             lambda p: [pt["requests"] for pt in p["resource_timeline"]]),
         ],
-        ids=["record_request", "record_resource_snapshot", "ring_buffer_eviction"],
+        ids=["events_keep_the_newest", "snapshots_keep_the_newest"],
     )
-    def test_recording(self, bounds, recorder, make, n, buffer, expected_len,
-                       oldest_total_ms):
+    def test_the_profile_shows_only_the_newest(self, bounds, recorder, make, project):
         c = PerfCollector(**bounds)
-        for i in range(n):
+        for i in range(5):
             getattr(c, recorder)(make(i))
-        items = getattr(c, buffer)
-        assert len(items) == expected_len
-        if oldest_total_ms is not None:
-            assert items[0].total_ms == oldest_total_ms
+        assert project(c.build_profile("1h")) == [2, 3, 4]
 
 
 # ---------------------------------------------------------------------------
@@ -280,6 +255,18 @@ class TestTimeRangeFiltering:
 
         assert project(c.build_profile("1h")) == expected
 
+    def test_each_window_keeps_what_falls_inside_it(self):
+        """What each range the perf page offers means, in hours: an event a
+        minute inside the window is shown, one a minute outside is not."""
+        hours = {"1h": 1, "6h": 6, "24h": 24, "7d": 7 * 24}
+        for time_range, h in hours.items():
+            c = PerfCollector()
+            edge = time.time() - h * 3600
+            c.record_request(_make_event(timestamp=edge + 60, model="inside"))
+            c.record_request(_make_event(timestamp=edge - 60, model="outside"))
+            models = [b["model"] for b in c.build_profile(time_range)["bottlenecks"]]
+            assert models == ["inside"], time_range
+
 
 # ---------------------------------------------------------------------------
 # Tests: resource_timeline format
@@ -299,14 +286,3 @@ class TestResourceTimeline:
         assert point["gpu_percent"] == 0.0
         assert point["tokens_per_second"] == 75.3
         assert point["requests"] == 10
-
-
-# ---------------------------------------------------------------------------
-# Tests: singleton
-# ---------------------------------------------------------------------------
-
-class TestSingleton:
-    def test_get_perf_collector_returns_same_instance(self):
-        a = get_perf_collector()
-        b = get_perf_collector()
-        assert a is b

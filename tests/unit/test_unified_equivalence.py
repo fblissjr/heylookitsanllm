@@ -3,9 +3,28 @@
 message naming the fix, and other template errors propagate."""
 
 import pytest
-from unittest.mock import MagicMock, patch, call
 
 from heylook_llm.config import ChatMessage, ChatRequest
+
+
+def _real_tokenizer(chat_template=None):
+    """A real transformers tokenizer (no weights, no files), so the error
+    comes from transformers itself rather than from a stub spelling it."""
+    from tokenizers import Tokenizer, models
+    from transformers import PreTrainedTokenizerFast
+
+    tok = PreTrainedTokenizerFast(
+        tokenizer_object=Tokenizer(models.WordLevel({"<unk>": 0}, unk_token="<unk>")))
+    tok.chat_template = chat_template
+    return tok
+
+
+def _render(model_id, tokenizer):
+    from heylook_llm.providers.mlx_provider import UnifiedTextStrategy
+
+    request = ChatRequest(messages=[ChatMessage(role="user", content="hi")])
+    return UnifiedTextStrategy(model_id=model_id, is_vlm=False).render_prompt(
+        request, {}, None, tokenizer)
 
 
 class TestApplyTemplateMissingTemplate:
@@ -17,49 +36,21 @@ class TestApplyTemplateMissingTemplate:
     rather than matching transformers' error prose -- the prose changes
     between versions and a string match silently reverts the fix."""
 
-    def _tokenizer(self, *, chat_template, error="boom"):
-        tokenizer = MagicMock()
-        tokenizer.chat_template = chat_template
-        tokenizer.apply_chat_template.side_effect = ValueError(error)
-        return tokenizer
-
-    def test_missing_template_error_is_actionable(self, mock_mlx):
-        from heylook_llm.providers.mlx_provider import UnifiedTextStrategy
-
-        strategy = UnifiedTextStrategy(
-            model_id="no-template-model", is_vlm=False,
-            model_config={},
-        )
-        # Deliberately NOT the current transformers message: the translation
-        # must not depend on upstream prose.
-        tokenizer = self._tokenizer(
-            chat_template=None, error="some future upstream wording",
-        )
-
+    def test_missing_template_error_is_actionable(self):
         with pytest.raises(ValueError) as exc_info:
-            strategy._render_template(
-                [{"role": "user", "content": "hi"}],
-                tokenizer, MagicMock(), MagicMock(), {},
-            )
+            _render("no-template-model", _real_tokenizer(chat_template=None))
 
         msg = str(exc_info.value)
         assert "no-template-model" in msg
         assert "chat_template" in msg
 
-    def test_other_value_errors_still_propagate(self, mock_mlx):
-        """Template-rendering ValueErrors from a PRESENT template (e.g. a
-        template raising on bad message shape) keep their message."""
-        from heylook_llm.providers.mlx_provider import UnifiedTextStrategy
+    def test_other_value_errors_still_propagate(self):
+        """A ValueError from a tokenizer that HAS templates (here: several
+        named ones and no default, which transformers refuses) keeps its own
+        message instead of being reported as a missing template."""
+        tok = _real_tokenizer(chat_template={"tool_use": "{{ messages[0]['content'] }}"})
 
-        strategy = UnifiedTextStrategy(
-            model_id="m", is_vlm=False, model_config={},
-        )
-        tokenizer = self._tokenizer(
-            chat_template="{{ messages }}", error="roles must alternate",
-        )
-
-        with pytest.raises(ValueError, match="roles must alternate"):
-            strategy._render_template(
-                [{"role": "user", "content": "hi"}],
-                tokenizer, MagicMock(), MagicMock(), {},
-            )
+        with pytest.raises(ValueError) as exc_info:
+            _render("m", tok)
+        assert "multiple chat templates" in str(exc_info.value)
+        assert "has no chat template" not in str(exc_info.value)

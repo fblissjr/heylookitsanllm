@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.165]
+
+Pruning pass, the owner-approved second pass: tests that mirrored the
+implementation instead of checking the system. Owner principle: "real tests
+that don't just test the code the same way the code was written is how we
+should be testing. as a system, not as a single thing, unless it can be
+broken down that way."
+
+### Changed
+
+- Of the 135 flagged tests, 44 were deleted (they echoed a pydantic field,
+  restated a function body, or asserted private structure no behaviour
+  depends on) and 84 were replaced by system-level checks written first:
+  through the real route (model options and reload with a real ModelService
+  on a temp heylook.toml, `/v1/system/metrics`), the real object (the real
+  MLXProvider and LlamaServerProvider classes behind a real router, a real
+  rebuild on a real git clone), or a property (ram_fit). Every replacement
+  was shown to fail when the behaviour it guards is broken (in memory; no
+  product file was edited). `test_abort.py` is removed; its behaviour is
+  checked through the real providers and the cancel route.
+- Kept (7): checks whose system alternative needs a live model or the GPU,
+  and the ones the list left to the owner (the destructor branch, the
+  MODEL_BUSY AST lint, the gzip cache's only check).
+- Collected 1,501 -> 1,450. Per-test records: the local
+  `internal/claude/prune/second/ledger_S{1,2,3}.md`.
+
 ## [2.0.164]
 
 ### Fixed

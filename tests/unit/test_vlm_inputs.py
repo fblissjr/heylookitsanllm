@@ -38,25 +38,6 @@ class FakeMessage:
 class TestPrepareVlmInputsParallel:
     """Core tests for prepare_vlm_inputs_parallel."""
 
-    def test_text_only_messages(self, mock_mlx):
-        from heylook_llm.providers.common.vlm_inputs import prepare_vlm_inputs_parallel
-
-        messages = [FakeMessage("user", "Hello world")]
-        mock_processor = MagicMock()
-        mock_config = MagicMock()
-        mock_batch = MagicMock()
-        mock_template_fn = MagicMock(return_value="formatted")
-
-        images, prompt, has_images, image_urls = prepare_vlm_inputs_parallel(
-            messages, mock_processor, mock_config, mock_batch, mock_template_fn
-        )
-
-        assert images == []
-        assert has_images is False
-        assert prompt == "formatted"
-        mock_batch.load_images_parallel.assert_not_called()
-
-
     def test_thinking_reconstruction(self, mock_mlx):
         from heylook_llm.providers.common.vlm_inputs import prepare_vlm_inputs_parallel
 

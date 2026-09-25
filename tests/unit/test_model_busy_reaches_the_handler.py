@@ -22,7 +22,7 @@ WHAT EACH CHECK HERE COVERS, AND WHAT IT DOES NOT
 Say this plainly, because a check whose reach is unstated gets read as
 covering more than it does -- which is the failure this whole file is about.
 
-* ``test_the_app_registers_a_model_busy_handler`` pins the MECHANISM. With the
+* ``test_a_route_that_lets_model_busy_out_answers_503`` pins the MECHANISM. With the
   handler registered, a route that does nothing answers 503 for free; the
   failure mode is inverted, so a new route must actively swallow to get this
   wrong instead of actively remembering to get it right. If the handler is
@@ -116,17 +116,41 @@ def _direct_get_provider_sites():
                 yield path.name, enclosing.get(id(node), "<module>"), node
 
 
-def test_the_app_registers_a_model_busy_handler():
-    """Without this, every route regresses at once and silently."""
+def test_a_route_that_lets_model_busy_out_answers_503(monkeypatch):
+    """Without the handler, every route regresses at once and silently.
+
+    Asserted through the real app: a probe route that lets ModelBusyError
+    out -- the shape any new route has by default -- must come back as the
+    busy envelope (503, ``model_overloaded``, ``Retry-After``), not a 500.
+    """
+    from types import SimpleNamespace
+
+    from starlette.testclient import TestClient
+
     from heylook_llm.api import app
     from heylook_llm.providers.common.generation_gate import ModelBusyError
 
-    assert ModelBusyError in app.exception_handlers, (
-        "api.py no longer registers an exception_handler for ModelBusyError. "
-        "That handler is what makes the correct answer the DEFAULT -- without "
-        "it every route reverts to needing to remember busy_response.py, "
-        "which is the arrangement that shipped six wrong statuses."
-    )
+    async def probe():
+        raise ModelBusyError("MODEL_BUSY: probe")
+
+    # The DNS-rebinding guard reads allowed_hosts through the router.
+    monkeypatch.setattr(app.state, "router_instance", SimpleNamespace(
+        app_config=SimpleNamespace(allowed_hosts=["testserver"])), raising=False)
+    path = "/__probe__/model-busy"
+    app.add_api_route(path, probe, methods=["GET"], include_in_schema=False)
+    try:
+        r = TestClient(app, raise_server_exceptions=False).get(path)
+    finally:
+        app.router.routes[:] = [rt for rt in app.router.routes
+                                if getattr(rt, "path", None) != path]
+
+    assert r.status_code == 503, (
+        "a route that lets ModelBusyError out no longer answers 503 -- api.py's "
+        "exception_handler for it is what makes the correct answer the DEFAULT; "
+        "without it every route reverts to needing to remember busy_response.py, "
+        "which is the arrangement that shipped six wrong statuses.")
+    assert r.json()["error"]["code"] == "model_overloaded"
+    assert r.headers["retry-after"] == "1"
 
 
 def test_no_direct_get_provider_site_swallows_model_busy():

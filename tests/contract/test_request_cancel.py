@@ -8,8 +8,6 @@ and a `cancelled` count rather than a bare boolean, because client-supplied
 ids are not assumed unique.
 """
 
-import pathlib
-
 import pytest
 
 from heylook_llm.providers.abort import AbortEvent
@@ -99,13 +97,3 @@ class TestMalformedIdIsNotAMiss:
         """The 422 must not swallow the case the endpoint mostly answers."""
         resp = client.delete("/v1/requests/msg-not-running-abc123")
         assert resp.status_code == 404
-
-    def test_the_charset_is_not_duplicated(self):
-        """The route must ask the resolver's predicate, not its own copy."""
-        import heylook_llm.requests_api as mod
-        src = pathlib.Path(mod.__file__).read_text()
-        assert "is_valid_request_id" in src
-        assert "A-Za-z0-9" not in src, (
-            "requests_api re-declares the id charset; it must come from "
-            "request_registry so the two ends cannot disagree")
-

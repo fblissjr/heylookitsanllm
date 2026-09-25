@@ -272,12 +272,16 @@ class TestIdleUnloadRespectsQueue(_RouterTestBase):
         """
         router, provider = self._idle_router_with(active=1)
         self.assertEqual(router.unload_idle_models(now_ts=2_000.0), [])
-        # The run ends. `_unload_idle` stamps with the wall clock rather than
-        # the injected one, so assert the STAMP MOVED rather than pinning a
-        # fake-clock value the production path never sees.
-        self.assertGreater(router._last_used_ts["model-a"], 1_000.0)
+        # The run ends. `_unload_idle` stamps with the wall clock, so the next
+        # ticks are measured from now: one just inside the idle window keeps
+        # the model, one just past it unloads it.
         provider.queue_stats = {"active": 0, "waiting": 0, "max_waiting": 10, "capacity": 1}
+        threshold = router.app_config.idle_unload_seconds
+        self.assertEqual(router.unload_idle_models(now_ts=time.time() + threshold - 1), [])
         self.assertIn("model-a", router.providers)
+        provider.unload.assert_not_called()
+        self.assertEqual(router.unload_idle_models(now_ts=time.time() + threshold + 1),
+                         ["model-a"])
 
 
 if __name__ == "__main__":

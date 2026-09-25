@@ -89,15 +89,6 @@ def _template(*, harmony=False, gemma=False, thinking=False, specials=()):
     )
 
 
-def _core(parser):
-    """The routing parser under the shared declared-specials filter.
-
-    ``select_reasoning_parser`` composes ``StripSpecials(inner, ...)`` when
-    the model declares specials; structural assertions target the inner
-    parser, behavioral ones target the composed object."""
-    return parser.inner if isinstance(parser, StripSpecials) else parser
-
-
 def _collect(parser, text_chunks):
     """Helper: feed chunks one-at-a-time + flush; return joined (content, thinking)."""
     content_parts = []
@@ -247,39 +238,40 @@ class TestImplicitThinkOpen:
 
 
 class TestReasoningParserFactory:
-    """Template flags (and whether the model declares specials) pick the
-    parser class and whether it is composed under ``StripSpecials``.
+    """Template flags pick how a stream is split, read off what the selected
+    parser outputs for a canonical stream of the template's family.
 
     Harmony is the most specific structure and wins over gemma channels and
-    over ``<think>`` markers (a template with both is unusual). No strip set
-    means no wrapper: the filter exists only for stripping. ``None`` template
-    info falls back to pass-through."""
+    over ``<think>`` markers (a template with both is unusual): a harmony
+    stream through a both-flags template must split as harmony. ``None``
+    template info and a template with no structure pass text through, markers
+    and all. The same families WITH declared specials (the composed filter)
+    are TestParserInvariants' corpus, which also goes through the factory."""
+
+    _HARMONY = (_HARMONY_REPRODUCER, _HARMONY_EXPECTED_CONTENT, _HARMONY_EXPECTED_THINKING)
+    _GEMMA = (_GEMMA_REPRODUCER, _GEMMA_EXPECTED_CONTENT, _GEMMA_EXPECTED_THINKING)
+    _THINK = "<think>plan</think>answer"
+    _PASSED_THROUGH = (_THINK, _THINK, "")
 
     @pytest.mark.parametrize(
-        "info, parser_cls, composed",
+        "info, stream",
         [
-            (_template(gemma=True), GemmaChannelParser, False),
-            (_template(harmony=True, gemma=True), HarmonyChannelParser, False),
-            (_template(harmony=True, specials=["<|channel|>", "<|message|>"]),
-             HarmonyChannelParser, True),
-            (_template(thinking=True, specials=["<think>", "</think>"]),
-             HybridThinkingParser, True),
-            (_template(), PassThroughParser, False),
-            (_template(harmony=True, thinking=True), HarmonyChannelParser, False),
-            (None, PassThroughParser, False),
-            (_template(harmony=True), HarmonyChannelParser, False),
+            (_template(gemma=True), _GEMMA),
+            (_template(harmony=True), _HARMONY),
+            (_template(harmony=True, gemma=True), _HARMONY),
+            (_template(harmony=True, thinking=True), _HARMONY),
+            (_template(thinking=True), (_THINK, "answer", "plan")),
+            (_template(), _PASSED_THROUGH),
+            (None, _PASSED_THROUGH),
         ],
         ids=[
-            "gemma-channels", "harmony-over-gemma", "harmony-with-specials",
-            "think-markers-with-specials", "nothing-matches",
-            "harmony-over-thinking", "no-template-info",
-            "no-specials-leaves-uncomposed",
+            "gemma-channels", "harmony", "harmony-over-gemma", "harmony-over-thinking",
+            "think-markers", "nothing-matches", "no-template-info",
         ],
     )
-    def test_template_flags_pick_the_parser(self, info, parser_cls, composed):
-        parser = select_reasoning_parser(template_info=info)
-        assert isinstance(_core(parser), parser_cls)
-        assert isinstance(parser, StripSpecials) is composed
+    def test_template_flags_pick_the_split(self, info, stream):
+        text, content, thinking = stream
+        assert _collect(select_reasoning_parser(template_info=info), [text]) == (content, thinking)
 
 
 class TestParseFullText:

@@ -391,11 +391,26 @@ class TestOneEngineFamilyResident(unittest.TestCase):
     def test_the_resident_kind_comes_from_the_LOADED_object_not_the_config(self):
         """A reload can change a model's provider in models.toml while it is
         resident. The rule must reason about what is IN MEMORY, so the kind is
-        stamped on the instance at construction."""
+        stamped on the instance at construction.
+
+        Driven through a real reload: after m-mlx-a is loaded, the config is
+        rewritten to call that id gguf. Loading m-mlx-b must keep both (the
+        resident object is MLX); a config-derived kind would read m-mlx-a as
+        gguf and evict it. Loading m-gguf still evicts it."""
         r = self._router()
         r.get_provider('m-mlx-a')
-        assert r._provider_kind('m-mlx-a') == 'mlx'
-        assert getattr(r.providers['m-mlx-a'], '_heylook_provider_kind') == 'mlx'
+        with open(self.f.name) as fh:
+            text = fh.read()
+        with open(self.f.name, 'w') as fh:
+            fh.write(text.replace('id = "m-mlx-a"\nprovider = "mlx"',
+                                  'id = "m-mlx-a"\nprovider = "gguf"', 1))
+        r.reload_config()
+        assert r.app_config.get_model_config('m-mlx-a').provider == 'gguf'
+
+        r.get_provider('m-mlx-b')
+        assert set(r.providers) == {'m-mlx-a', 'm-mlx-b'}
+        r.get_provider('m-gguf')
+        assert set(r.providers) == {'m-gguf'}
 
 
 # Loading one engine family evicts the other. The count has room (3), so only
