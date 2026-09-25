@@ -4,7 +4,7 @@
 # Inspired by Anthropic Messages API with extensions for heylookitsanllm
 # features (thinking).
 
-from typing import Annotated, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
 
@@ -41,6 +41,36 @@ class ThinkingConfig(BaseModel):
     budget_tokens: Optional[int] = Field(default=None, ge=1)
 
 
+class JsonSchemaSpec(BaseModel):
+    """OpenAI's `json_schema` wrapper; only `schema` is used."""
+    schema_: Dict[str, Any] = Field(alias="schema")
+    name: Optional[str] = None
+    strict: Optional[bool] = None
+    model_config = {"populate_by_name": True}
+
+
+class ResponseFormat(BaseModel):
+    type: Literal["text", "json_object", "json_schema"]
+    json_schema: Optional[JsonSchemaSpec] = None
+    schema_: Optional[Dict[str, Any]] = Field(default=None, alias="schema")
+    model_config = {"populate_by_name": True}
+
+    @model_validator(mode="after")
+    def _schema_where_named(self):
+        if self.type == "json_schema" and self.json_schema is None:
+            raise ValueError('response_format type "json_schema" needs json_schema.schema')
+        return self
+
+    def schema_dict(self) -> Optional[Dict[str, Any]]:
+        """The schema the reply must match: None for free text, {} for any
+        JSON object (llama-server's own reading of an empty schema)."""
+        if self.type == "text":
+            return None
+        if self.type == "json_schema":
+            return self.json_schema.schema_
+        return self.schema_ or {}
+
+
 class MessageCreateRequest(BaseModel):
     """Request body for POST /v1/messages.
 
@@ -60,6 +90,15 @@ class MessageCreateRequest(BaseModel):
     system: Optional[str] = Field(
         default=None, description="System prompt. Kept out of messages array for clarity."
     )
+    response_format: Optional[ResponseFormat] = Field(
+        default=None,
+        description=(
+            "Structured output, OpenAI's shape (which llama-server also takes): "
+            "{type: \"json_schema\", json_schema: {schema: {...}}} makes the reply "
+            "a JSON document matching the schema; {type: \"json_object\"} any "
+            "JSON object; {type: \"text\"} free text. Thinking is not "
+            "constrained. Refused (400) where the engine cannot tell where the "
+            "reply starts: harmony models, masked-diffusion models."))
     stop_sequences: Optional[List[Annotated[str, StringConstraints(
         min_length=1, max_length=MAX_STOP_SEQUENCE_CHARS)]]] = Field(
         default=None, max_length=MAX_STOP_SEQUENCES,
@@ -209,17 +248,15 @@ class MessageCreateRequest(BaseModel):
                 "`thinking` (bool) and/or `reasoning_effort` as top-level fields "
                 "instead (pydantic would otherwise DROP it silently and answer "
                 "with the default)")
-        # Not built yet (owner call 2026-09-25: response_format next, tools
-        # when a client needs them). Both engines could serve them, which is
-        # why they are refused loudly rather than dropped: a client asking
-        # for a schema-shaped reply must not get free text with a 200.
-        unbuilt = [k for k in ("tools", "tool_choice", "response_format") if k in data]
+        # Not built yet (owner call 2026-09-25: tools when a client needs
+        # them). Both engines could serve them, which is why they are refused
+        # loudly rather than dropped.
+        unbuilt = [k for k in ("tools", "tool_choice") if k in data]
         if unbuilt:
             raise ValueError(
                 f"{', '.join(unbuilt)} is not supported on this server yet: tool "
-                "use and structured output are not built. Send the request without "
-                "it (pydantic would otherwise DROP it silently and answer with "
-                "free text)")
+                "use is not built. Send the request without it (pydantic would "
+                "otherwise DROP it silently and answer as if no tools existed)")
         if "preset" in data or "sampler" in data:
             raise ValueError(
                 "named sampler bundles were removed in v2.0.30 -- send the "
@@ -228,6 +265,10 @@ class MessageCreateRequest(BaseModel):
                 "system, and the client expands one into those same fields"
             )
         return data
+
+    def response_schema(self) -> Optional[Dict[str, Any]]:
+        """The normalized schema ChatRequest carries (None = free text)."""
+        return self.response_format.schema_dict() if self.response_format else None
 
     @field_validator("messages")
     @classmethod

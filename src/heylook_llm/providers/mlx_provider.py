@@ -166,6 +166,44 @@ def _thinking_budget_criteria(request: ChatRequest, effective_request: dict,
             resumes_thinking=request.resumes_thinking()))
 
 
+def _structured_processors(request: ChatRequest, effective_request: dict,
+                           template_info, tokenizer) -> list:
+    """The logits processors that hold the REPLY to ``response_schema``, or []
+    (mlx-vlm's llguidance-backed JSON-schema processor).
+
+    Thinking stays free: with thinking on, the constraint is held back until
+    the format's closer (``thinking_budget_markers``, the same pair the
+    thinking budget forces) -- mlx-vlm's ThinkingAwareLogitsProcessor, as its
+    own server wires it. Refused where the start of the reply cannot be
+    found: harmony (a multi-token hop into the final channel) and a
+    continuation (the prompt may already sit past the closer, so a wrapper
+    waiting for it would never constrain anything).
+    """
+    schema = request.response_schema
+    if schema is None:
+        return []
+    if getattr(template_info, "has_harmony_structure", False):
+        raise InvalidGenerationRequest(
+            "response_format is not supported for this model: its reply starts "
+            "after a multi-token channel switch (harmony) the engine cannot "
+            "constrain from")
+    if request.is_continuation():
+        raise InvalidGenerationRequest(
+            "response_format cannot be combined with a continuation")
+    from mlx_vlm.structured import ThinkingAwareLogitsProcessor, build_json_schema_logits_processor
+
+    try:
+        processor = build_json_schema_logits_processor(tokenizer, schema or {"type": "object"})
+    except Exception as e:  # noqa: BLE001 -- a schema llguidance cannot compile is the client's
+        raise InvalidGenerationRequest(f"response_format schema was not accepted: {e}") from e
+    markers = thinking_budget_markers(template_info)
+    if markers is None or not _resolve_enable_thinking(effective_request):
+        return [processor]
+    opener, closer = markers
+    return [ThinkingAwareLogitsProcessor(processor, tokenizer, thinking_start_token=opener,
+                                         thinking_end_token=closer, enable_thinking=True)]
+
+
 def _thinking_resume(request: ChatRequest) -> str | None:
     """The partial thinking to RESUME, or None for every other request.
 
@@ -469,7 +507,9 @@ class UnifiedTextStrategy:
             model=model, processor=processor,
             apc_manager=getattr(self.owner, "_apc", None),
             input_ids=input_ids, raw_inputs=raw, shared_prefixes=shared,
-            sampler=sampler, processors=processors,
+            sampler=sampler,
+            processors=processors + _structured_processors(
+                request, effective_request, self.template_info, tokenizer),
             stop_tokens=getattr(self.owner, "_stop_tokens", ()),
             max_tokens=effective_request['max_tokens'],
             greedy=float(effective_request.get('temperature') or 0.0) == 0.0,
@@ -758,7 +798,10 @@ class VLMVisionStrategy:
             apc_manager=getattr(self.owner, "_apc", None),
             input_ids=input_ids, raw_inputs=raw, embed_extras=embed_extras,
             shared_prefixes=shared,
-            sampler=sampler, processors=processors,
+            sampler=sampler,
+            processors=processors + _structured_processors(
+                request, effective_request, self.template_info,
+                getattr(processor, "tokenizer", processor)),
             stop_tokens=getattr(self.owner, "_stop_tokens", ()),
             max_tokens=effective_request['max_tokens'],
             greedy=float(effective_request.get('temperature') or 0.0) == 0.0,
@@ -844,6 +887,11 @@ class DiffusionStrategy:
         self._batch_vision_processor = None
 
     def generate(self, request: ChatRequest, effective_request: dict, model, processor, abort_event: AbortEvent | None = None) -> Generator:
+        if request.response_schema is not None:
+            # The denoising loop fills a whole canvas at once; there is no
+            # token-by-token logits step to constrain.
+            raise InvalidGenerationRequest(
+                "response_format is not supported for masked-diffusion models")
         # Imported lazily and from the defining module: `is_diffusion_model`
         # and `stream_diffusion_generate` are not in mlx_vlm.generate.__all__
         # (only the buffering from_kwargs wrapper is reachable there).

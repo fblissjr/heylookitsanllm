@@ -51,6 +51,7 @@ INTERNAL_ONLY = {
         "continue mode sets it server-side, which is how v3's Save & Continue "
         "works."
     ),
+    "response_schema": "the normalized form of Messages' `response_format`",
 }
 
 MESSAGES_ONLY = {
@@ -58,6 +59,8 @@ MESSAGES_ONLY = {
     "thinking": "the Messages spelling of enable_thinking and thinking_budget_tokens "
                 "(see WIRE_ALIASES)",
     "metadata": "Anthropic passthrough; the provider request has no use for it",
+    "response_format": "the wire's OpenAI-shaped spelling; ChatRequest carries "
+                       "the normalized `response_schema`",
     "stop_sequences": "applied to the reply text at the Messages boundary "
                       "(stop_sequences.py), the same on every engine; no provider "
                       "sees it",

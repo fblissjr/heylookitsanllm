@@ -117,6 +117,7 @@ def to_chat_request(request: MessageCreateRequest) -> ChatRequest:
         enable_thinking=thinking_switch(request.thinking),
         thinking_budget_tokens=getattr(request.thinking, "budget_tokens", None),
         reasoning_effort=request.reasoning_effort,
+        response_schema=request.response_schema(),
     )
 
 

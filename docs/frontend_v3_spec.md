@@ -315,9 +315,16 @@ Phase 3b; chat uses its conversation-scoped sibling below; the OpenAI-compatible
   request still sending `sampler` (or `preset`) gets a 422 naming the v2.0.30
   removal rather than a silent drop, one sending `chat_template_kwargs` (llama-server's
   spelling) gets a 422 naming `thinking` and `reasoning_effort` (v2.0.86), and one sending `show_special_tokens`
-  gets the same treatment for the v2.0.38 removal (below). `tools`, `tool_choice` and
-  `response_format` are a 422 too (v2.0.151): not built yet, and a client asking for a
-  schema-shaped reply must not get free text with a 200. `stop_sequences` (v2.0.151,
+  gets the same treatment for the v2.0.38 removal (below). `tools` and `tool_choice` are a 422
+  too (v2.0.151): not built yet. `response_format` (v2.0.155) is OpenAI's shape, which
+  llama-server also takes: `{type:"json_schema", json_schema:{schema}}` makes the reply a
+  JSON document matching the schema, `{type:"json_object"}` any JSON object, `{type:"text"}`
+  free text. Thinking is not constrained: llama-server's chat parser admits the reasoning
+  block first; MLX holds mlx-vlm's llguidance constraint back until the thinking closer.
+  It is a 400 (or an in-band `invalid_request_error` once streaming) where the engine
+  cannot find the start of the reply: harmony (gpt-oss), masked-diffusion models, a
+  continuation. `json_schema` with named properties is the reliable form; a bare
+  `json_object` on MLX can come back with odd keys. `stop_sequences` (v2.0.151,
   up to 16 strings of 1-256 chars) cuts the REPLY before the first match, never the
   thinking, the same on every engine (applied at the Messages boundary,
   `stop_sequences.py`, not handed to llama-server, whose `stop` also matches reasoning):

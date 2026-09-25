@@ -106,7 +106,7 @@ def test_non_streaming_cuts_the_reply_and_names_the_sequence():
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("field", ["tools", "tool_choice", "response_format"])
+@pytest.mark.parametrize("field", ["tools", "tool_choice"])
 def test_unbuilt_fields_are_refused_not_dropped(field):
     with pytest.raises(ValueError, match="not supported"):
         _request(**{field: {}})

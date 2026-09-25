@@ -1560,6 +1560,11 @@ class LlamaServerProvider(BaseProvider):
             template_kwargs[depth_variable(self.thinking_controls)] = str(reasoning_effort)
         if template_kwargs:
             payload["chat_template_kwargs"] = template_kwargs
+        if request.response_schema is not None:
+            # llama-server's own spelling (an empty schema = any object). Its
+            # chat parser admits the reasoning block first and constrains the
+            # reply after it, and returns only the JSON as content.
+            payload["json_schema"] = request.response_schema
         return payload
 
     def _is_sleeping(self) -> bool:

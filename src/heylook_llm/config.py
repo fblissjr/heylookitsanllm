@@ -108,6 +108,13 @@ class ChatRequest(BaseModel):
     # Additional sampler parameters
     presence_penalty: Optional[float] = Field(default=None, ge=0.0, le=2.0, description="Reduce repetition (0-2, recommended 1.5 for Qwen3 thinking)")
 
+    # Structured output: the JSON schema the REPLY must match (the Messages
+    # wire's `response_format`, normalized). None = free text; {} = any JSON
+    # object. Thinking stays unconstrained on both engines: llama-server's
+    # chat parser admits the reasoning block before the schema, MLX delays
+    # the constraint until the thinking closer (mlx_provider).
+    response_schema: Optional[Dict[str, Any]] = None
+
     # Streaming options (OpenAI-compatible)
 
     # Continuation ("prefill"): finish the FINAL message instead of opening a

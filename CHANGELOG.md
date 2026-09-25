@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.155]
+
+### Added
+
+- **`response_format` on `/v1/messages`** (owner call): OpenAI's shape,
+  which llama-server also takes. `{type: "json_schema", json_schema:
+  {schema}}` holds the reply to a JSON schema, `{type: "json_object"}` to
+  any JSON object, `{type: "text"}` is free text. Thinking stays
+  unconstrained on both engines: gguf sends llama-server its own
+  `json_schema` field (its chat parser admits the reasoning first); MLX adds
+  mlx-vlm's llguidance processor, held back until the thinking closer when
+  thinking is on. Refused where the start of the reply cannot be found:
+  harmony (gpt-oss), masked-diffusion models, a continuation. `tools` and
+  `tool_choice` are still a 422.
+- Checks: unit + contract green. Live (`internal/claude/release_2026-09-25/
+  mrpurple/rf_probe.log`): Qwen3.5-0.8B and Qwen3.8-27B on MLX and the
+  unsloth Qwen3.8-27B GGUF return JSON that parses against the schema with
+  thinking on and off, streaming included; gpt-oss-20b is refused. A bare
+  `json_object` on MLX can produce odd keys; a schema with named properties
+  is the reliable form.
+
 ## [2.0.154]
 
 ### Changed
