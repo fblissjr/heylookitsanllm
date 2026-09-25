@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-25, v2.0.141, `main`.
+Last updated: 2026-09-25, v2.0.144, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md), and what each release
@@ -56,9 +56,12 @@ v2.0.141, owner away, no server up (all live checks in-process):
   for three of the four models with one). gemma-4 vision diverges from
   mlx-vlm's own loop, and did before this session (TODO, gemma-4 item).
 - **W12 done: both small, stay Python** (`internal/claude/w12/`).
-- Owed: smoke on all three arms and the gguf/chat e2e for v2.0.135 - .141
-  (release standard); a live gguf load to see `engine.settings.flash_attn`
-  go `observed`.
+- v2.0.142: vendored marked / DOMPurify current. v2.0.144: llama-server
+  spawns at trace verbosity so flash attention's auto is `observed` (live
+  load confirmed). Release checks run (owner-approved) and green: smoke on
+  all three arms, browser e2e on the MLX default and the gguf arm; details
+  in the v2.0.144 changelog entry. The E2E default model is now
+  `Qwen3.5-0.8B-MLX-8bit` (owner): MLX gemma is parked until new weights.
 
 ## Handoff (end of 2026-09-24)
 
