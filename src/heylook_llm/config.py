@@ -1440,6 +1440,14 @@ class AppConfig(BaseModel):
         description="Seconds of inactivity before a loaded model is unloaded. "
                     "0 disables idle unload globally.",
     )
+    # The DNS-rebinding guard's extra names (host_check.py). Read from the
+    # file only; no route writes it.
+    allowed_hosts: List[str] = Field(
+        default_factory=list,
+        description="Host names this server answers to beyond IP addresses, "
+                    "localhost and the machine's own names: a LAN DNS or VPN "
+                    "name it is reached by. [\"*\"] turns the Host check off.",
+    )
 
     def get_model_config(self, model_id: str) -> Optional[ModelConfig]:
         return next((m for m in self.models if m.id == model_id), None)

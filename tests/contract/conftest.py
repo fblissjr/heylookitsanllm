@@ -68,6 +68,9 @@ TEST_MODELS_DATA = {
     ],
     "default_model": "test-mlx-model",
     "max_loaded_models": 2,
+    # TestClient's Host; the DNS-rebinding guard refuses a name it is not told
+    # about, exactly as it would on a real deployment.
+    "allowed_hosts": ["testserver"],
 }
 
 # Derived so a roster change updates every count and id assertion at once. The

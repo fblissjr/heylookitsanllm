@@ -701,6 +701,19 @@ in `request_guards.py` until v2.0.30 removed it with the named-sampler
 system; what remains of that concern is a wire-model validator on
 `MessageCreateRequest`.
 
+**The Host check (v2.0.137).** Removing the CORS wildcard stopped other sites
+reading answers cross-origin, but not DNS rebinding: a page on another site
+points its own hostname at this machine's LAN address and reads everything as
+its own origin, from a browser already inside the LAN, which "LAN-only" does
+not cover. The Host header is the only thing that shows it, so
+`host_check.HostCheckMiddleware` answers only an IP address (rebinding always
+arrives with a name), `localhost`, the machine's own names, or a name in
+heylook.toml's `allowed_hosts`. Allowing every IP address is what keeps a LAN
+client that uses the address from being locked out; a client that uses a
+LAN DNS or VPN name needs that name listed, and the refusal says so in its
+body and once in the log. `["*"]` turns the check off. Owner-agreed
+2026-09-24 in the improvement loop's security findings.
+
 The OpenAPI drift guard (`generated-api.ts`, `scripts/check_openapi_sync.sh`,
 the pre-commit block, `/openapi-regen`) was retired 2026-07-09 with the legacy
 React app that consumed the generated TS types; v3 hand-writes `api.js`.

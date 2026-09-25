@@ -58,7 +58,9 @@ Record: `internal/claude/improve/archive/runs-2026-09-24/` (report.html has the 
   already refuses `file://` without `--media-path`, which heylook never passes).
   Web links stay (Anthropic's `url` image source); keying the vision feature
   cache by content rather than by URL comes with the qwen3_5 re-apply above.
-- [ ] **Host check (owner agreed, not built).** No Host check, so DNS rebinding
+- [x] **Host check built (v2.0.137)**: `host_check.py`; IP addresses, localhost, the
+  machine's own names and heylook.toml's `allowed_hosts` pass. **Owner: if a client
+  reaches the server by a LAN DNS or VPN name, list it in `allowed_hosts`.** Was: No Host check, so DNS rebinding
   can reach the API through a browser already inside the LAN (LAN-only does
   not cover this one). The allowed hosts come from local config (heylook.toml),
   never from a tracked file.

@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.137]
+
+### Security
+
+- **The Host check** (`host_check.py`, owner-agreed 2026-09-24): a request
+  whose Host header is not an IP address, `localhost`, one of this machine's
+  own names, or a name in heylook.toml's new top-level `allowed_hosts` gets a
+  403 naming the fix, logged once per name. This closes DNS rebinding, which
+  let a page on another site read the unauthenticated API from a browser
+  inside the LAN. Every IP address passes, so a client that uses the
+  machine's address is unaffected. **A client that uses a LAN DNS or VPN
+  name for the machine needs that name in `allowed_hosts`** (a top-level key,
+  above the first `[table]`); `["*"]` turns the check off. No route writes
+  the list.
+
+### Verified
+
+- Unit and contract suites green; `tests/contract/test_host_check.py` drives
+  the real app (a foreign Host refused on the API and on `/`; addresses,
+  localhost, the machine's name and a configured name pass; the list is read
+  live). Not checked against the owner's own clients: no server was up.
+
 ## [2.0.136]
 
 Plan W1: load settings.

@@ -212,6 +212,11 @@ async def _model_config_readonly_handler(request: Request, exc: ModelConfigReadO
 # other clients are not browsers, so a cross-origin grant only let any web page
 # the owner opened drive this unauthenticated API. Without it, a browser
 # refuses a cross-origin JSON request at the preflight.
+#
+# The same page could still reach it as ITS OWN origin by DNS rebinding;
+# the Host check refuses that (host_check.py, v2.0.137).
+from heylook_llm.host_check import HostCheckMiddleware
+app.add_middleware(HostCheckMiddleware)
 
 # Import and include Messages API router
 from heylook_llm.messages_api import messages_router

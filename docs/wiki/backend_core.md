@@ -10,6 +10,8 @@ The entry point [`api.py`](../../src/heylook_llm/api.py) is intended as the **ap
 
 **The codebase has one live exception**, worth knowing before you trust the rule: `api.py` declares `POST /v1/data/clear` inline on the app -- a destructive route that deletes all conversations, messages and notebooks. It is the only inline route in the file. `api.py`'s module docstring names this exception, along with the asset routes `frontend_static.py` registers, so the docstring and the file agree.
 
+**One middleware, and no CORS.** Every request, the static frontend included, first passes the Host check ([`host_check.py`](../../src/heylook_llm/host_check.py)), the guard against DNS rebinding. It answers a Host that is an IP address, `localhost`, one of the machine's own names, or a name in heylook.toml's top-level `allowed_hosts`; anything else gets a 403 whose body names the fix. The list is read through the router's config, so a config reload changes it, and no route writes it.
+
 ```
 Route modules in src/heylook_llm/:
 ├── messages_api.py              # THE inference wire: POST /v1/messages
