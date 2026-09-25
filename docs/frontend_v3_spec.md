@@ -585,7 +585,9 @@ derived values must restore `__pydantic_fields_set__` or their fields leak back 
 this dump as "stored" (`_resolve_modalities` does; a test pins it).
 `stale_reload_fields` (2026-08-11) is SERVER-derived: the requires_reload keys whose
 saved value differs from what the loaded process was built with (always `[]` when not
-loaded). It's the truth behind v3's "config changed — reload to apply" row marker —
+loaded), plus `chat_template` (v2.0.139) when the template file a respawn would use
+differs from the one the process loaded -- a sidecar created, edited or deleted beside
+the weights moves no config field. It's the truth behind v3's "config changed — reload to apply" row marker —
 client-side bookkeeping of the same fact dies on remount and drifts on partial
 failures;
 `thinking_default` (v1.79.62, every provider, always a bool; also on every `/v1/models`

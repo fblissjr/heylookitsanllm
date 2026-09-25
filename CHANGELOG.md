@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.139]
+
+### Fixed
+
+- **A template file swap marks a loaded model stale.** The template binds at
+  load but lives in a file beside the weights, so creating, editing or
+  deleting a `chat_template.jinja` (or the heylook override) moved no config
+  field, and the models page showed the model in sync. `stale_reload_fields`
+  now carries `chat_template` when the file a respawn would use differs from
+  the one the process loaded (the template editor's own comparison), so the
+  row says "reload to apply" and `/reload`'s same-values shortcut restarts
+  instead of keeping the old template. Spec §4 updated.
+
 ## [2.0.138]
 
 ### Fixed

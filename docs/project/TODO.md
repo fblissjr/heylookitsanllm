@@ -845,7 +845,9 @@ they imply is theirs, not a decision here.
 Acted-on findings are in the changelog. These three were judged real and left
 open; each names what would settle it.
 
-- [ ] **A sidecar swap is invisible to `stale_reload_fields`** (P2): that
+- [x] **Fixed v2.0.139**: `stale_reload_fields` carries `chat_template` when the file a
+  respawn would use differs from the loaded template (the editor's own comparison). Was:
+  **A sidecar swap is invisible to `stale_reload_fields`** (P2): that
   field is the repo's own "saved value differs from what the running process
   has" truth, and it derives from models.toml. A `chat_template.jinja`
   created, edited or deleted next to a loaded model's weights changes what a

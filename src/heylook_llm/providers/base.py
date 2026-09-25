@@ -180,12 +180,11 @@ class BaseProvider(ABC):
     # The chat template body this provider actually LOADED WITH, set at load
     # and never after. Both engines bind the template at load (MLX installs it
     # on the tokenizer, gguf passes a file at spawn), so editing the file on
-    # disk changes nothing until a reload -- and the config-level
-    # `stale_reload_fields` cannot see it, because no config field moved.
-    # This is the file-backed equivalent of that signal, and it is what lets
-    # the template editor say "saved, reload to apply" instead of leaving the
-    # reader to wonder why nothing changed. None means "not known", which is
-    # every unloaded model.
+    # disk changes nothing until a reload, and no config field moves. The
+    # router compares it with the file a respawn would use and reports
+    # `chat_template` in `stale_reload_fields` (since 2026-09-25); the
+    # template editor's "saved, reload to apply" reads the same comparison.
+    # None means "not known", which is every unloaded model.
     loaded_chat_template: Optional[str] = None
 
     def __init_subclass__(cls, **kwargs):

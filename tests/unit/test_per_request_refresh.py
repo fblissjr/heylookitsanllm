@@ -41,7 +41,8 @@ class _ConfigDictProvider(BaseProvider):
         pass
 
 
-def _toml(temperature=None, context_length=None, model_id="m1", enabled=True):
+def _toml(temperature=None, context_length=None, model_id="m1", enabled=True,
+          model_path="/fake/path/m1"):
     lines = [
         f'default_model = "{model_id}"',
         "max_loaded_models = 1",
@@ -52,7 +53,7 @@ def _toml(temperature=None, context_length=None, model_id="m1", enabled=True):
         f"enabled = {str(enabled).lower()}",
         "",
         "[models.config]",
-        'model_path = "/fake/path/m1"',
+        f'model_path = "{model_path}"',
     ]
     if temperature is not None:
         lines.append(f"temperature = {temperature}")
@@ -146,6 +147,22 @@ class TestPerRequestRefresh(unittest.TestCase):
         self.assertEqual(router.stale_reload_fields("m1"), ["context_length"])
         # Unloaded models report nothing regardless of saved diffs.
         self.assertEqual(router.stale_reload_fields("m2"), [])
+
+    def test_a_template_file_swap_is_stale_though_no_field_moved(self):
+        """The template binds at load but lives in a file beside the
+        weights; editing it changes what a respawn uses with the config
+        untouched, and the row must say reload."""
+        with tempfile.TemporaryDirectory() as model_dir:
+            template = os.path.join(model_dir, "chat_template.jinja")
+            with open(template, "w") as f:
+                f.write("{{ messages }} A")
+            self._rewrite(model_path=model_dir)
+            router, provider = self._router_with_loaded_provider()
+            provider.loaded_chat_template = "{{ messages }} A"
+            self.assertEqual(router.stale_reload_fields("m1"), [])
+            with open(template, "w") as f:
+                f.write("{{ messages }} B")
+            self.assertEqual(router.stale_reload_fields("m1"), ["chat_template"])
 
 
 if __name__ == "__main__":

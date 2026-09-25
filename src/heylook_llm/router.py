@@ -827,10 +827,24 @@ class ModelRouter:
         if cls is None or not isinstance(snap, dict):
             return []
         fresh = model_config.config.model_dump()
-        return sorted(
+        stale = sorted(
             key for key in reload_required_fields(cls)
             if snap.get(key) != fresh.get(key)
         )
+        # The template binds at load too, but lives in a FILE (a sidecar
+        # created, edited or deleted beside the weights), so no config field
+        # moves when it changes. Same comparison the template editor's
+        # `stale` makes: what the process loaded vs what a respawn would use.
+        loaded = getattr(provider, "loaded_chat_template", None)
+        if loaded is not None:
+            from heylook_llm import chat_template_files
+            try:
+                if chat_template_files.view(model_id, model_config.provider,
+                                            fresh, loaded).stale:
+                    stale.append("chat_template")
+            except Exception as e:  # noqa: BLE001 - a listing must not fail on a file read
+                logging.debug(f"template staleness for {model_id} unknown: {e}")
+        return stale
 
     def unload_model(self, model_id: str, force: bool = False) -> bool:
         """Explicitly unload a specific model from cache.
