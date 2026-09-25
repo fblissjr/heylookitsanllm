@@ -29,7 +29,7 @@ EXPECTED = {
     # used earlier for something else (`enable_thinking != 'false'`) names no
     # depth; a default the template assigns itself is a level even where an
     # unknown word also falls to it.
-    "qwen3_8_uncensored_sidecar": ("enable_thinking", "reasoning_effort",
+    "qwen3_8_jcoletti_sidecar": ("enable_thinking", "reasoning_effort",
                                    ["medium", "none", "low", "xhigh"], "medium", "ignored"),
     "qwen3_8_unsloth_override": ("enable_thinking", "reasoning_effort",
                                  ["auto", "none", "xhigh", "high", "low"], "auto", "raises"),

@@ -310,7 +310,7 @@ set, grouped by output].**
 
 | Template (in force) | Thinking switch | Depth variable | Values that change the prompt | Default when absent | Unknown value |
 |---|---|---|---|---|---|
-| Qwen3.8 official (embedded, e.g. the uncensored 27B) | `enable_thinking` | `reasoning_effort` | low, medium, xhigh | xhigh | raises (llama-server returns 500); `high` raises too |
+| Qwen3.8 official (embedded, e.g. the JonathanColetti 27B) | `enable_thinking` | `reasoning_effort` | low, medium, xhigh | xhigh | raises (llama-server returns 500); `high` raises too |
 | Qwen3.8 unsloth-patched (embedded; Flash-Next) | `enable_thinking` | `reasoning_effort` | low, medium, high = xhigh | xhigh | raises |
 | Qwen3.8 hand-placed sidecar (unsloth 27B, **in force there**) | `enable_thinking`, or effort off/none | `reasoning_effort` | low, medium, high, xhigh, plus aliases | medium (no instruction line) | raises |
 | DeepSeek-V4-Flash, unsloth (text and vision) | `enable_thinking`, default off | `reasoning_effort`, applied only with thinking on | high, max | none | silently ignored; low, medium and xhigh do nothing |

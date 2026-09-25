@@ -159,7 +159,7 @@ parity follow-ups).
 ### Verified
 
 - Unit and contract suites green. Live on
-  `JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`: the model is in
+  the JonathanColetti Qwen3.8-27B GGUF: the model is in
   `/v1/system/metrics` with memory, context and gate counts, `/status`
   matches it, and context used moves after a request.
 
@@ -230,7 +230,7 @@ shows); the confirmed gaps are fixed here.
 
 - `tests/smoke/` green on all three arms: mlx-text
   (`gpt-oss-20b-MXFP4-Q8-mlx`, thinking depth covered), mlx-vision
-  (`Qwen3.5-0.8B-MLX-8bit`) and gguf (`JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`),
+  (`Qwen3.5-0.8B-MLX-8bit`) and gguf (the JonathanColetti Qwen3.8-27B GGUF),
   85/85; the gguf arm re-run with trace verbosity 37/37, cache reuse
   included. Uncovered, named: the on/off thinking switch and vision on the
   mlx-text model (harmony has no switch; text-only), thinking depth on
@@ -252,7 +252,7 @@ shows); the confirmed gaps are fixed here.
   (`set effort = 'low'`), else by its first use after the variable's first
   mention. The unsloth Qwen3.8 override listed `false` as a level (from an
   unrelated `enable_thinking != 'false'`); it now reads auto, none, xhigh,
-  high, low. The Qwen3.8-Uncensored sidecar's own default `medium` was
+  high, low. The JonathanColetti Qwen3.8-27B sidecar's own default `medium` was
   dropped as noise; it now reads medium (default), none, low, xhigh. Both
   templates are fixtures in `test_thinking_controls.py`; every earlier
   fixture reads as before.
@@ -466,7 +466,7 @@ Documentation only.
 - **The mlx-vlm pin move (v2.0.124, `ac737ef3`) meets the release standard**:
   `tests/smoke/` green on all three arms at v2.0.132. mlx-text
   (`gpt-oss-20b-MXFP4-Q8-mlx`, thinking depth covered) and mlx-vision
-  (`Qwen3.5-0.8B-MLX-8bit`) 59/59; gguf (`JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`)
+  (`Qwen3.5-0.8B-MLX-8bit`) 59/59; gguf (the JonathanColetti Qwen3.8-27B GGUF)
   37/37. Uncovered, named: audio (no arm model declares it), thinking on the
   mlx-text model and depth on the mlx-vision model (neither advertises it),
   and vision on the text arm. `scripts/vendor_frontend.py --check` not run (no
