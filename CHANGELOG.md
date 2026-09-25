@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.152]
+
+Release checks for v2.0.143 - v2.0.151 (the v2.0.143 - v2.0.151 frontend,
+thinking, sampling and API changes).
+
+### Added
+
+- E2E chat check "a staged photo is capped and priced by the engine": a
+  4032x3024 photo stages at the 2048px cap, and the thumbnail's cost badge
+  equals the engine's own image-plan answer for the staged size.
+
+### Checks
+
+- `tests/smoke/` on all three arms (gpt-oss-20b, Qwen3.5-0.8B, the unsloth
+  Qwen3.8-27B GGUF): 85/85. Uncovered: thinking and vision on mlx-text
+  (gpt-oss has neither), audio on gguf (no served model declares it), the
+  known new-image-turn cache gap on mlx-vision.
+- Phase 3 precondition met: thinking depth on the mlx-vision arm, pinned to
+  `mlx-community_Qwen3.8-27B-4bit`: 39/39. Depth on mlx-text is gpt-oss-20b.
+- `bun run e2e:chat` 53/53, `bun run e2e:pages` 32/32 (Qwen3.5-0.8B).
+- A live probe over eight models across all template sources (heylook
+  override, jinja beside the weights, tokenizer_config, embedded in the
+  GGUF): every offered depth value accepted and answered, an unoffered one
+  a 400, thinking off clean, vision correct with thinking on and off on
+  both engines, image-plan answered, stop_sequences cut on every model.
+- `scripts/vendor_frontend.py --check`: marked 18.0.14 and DOMPurify 3.4.16,
+  both current.
+- Not run: `tests/eval/` (its thinking tasks cap output below what a 27B
+  thinking model needs; the probe covered thinking and vision instead).
+
 ## [2.0.151]
 
 ### Added

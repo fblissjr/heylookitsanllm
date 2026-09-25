@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-25, v2.0.144, `main`.
+Last updated: 2026-09-25, v2.0.152, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md), and what each release
@@ -18,6 +18,7 @@ rather than carried forward as green.
 | unit + contract | green (1619 passed) | v2.0.129 |
 | 2026-09-24 evening, v2.0.129 | `tests/smoke/` gguf arm on Qwen3.8 | `tests/smoke/` on `improve/2026-09-24` | green on all three arms (mlx-text Qwen3-0.6B, mlx-vision Qwen3.5-0.8B, gguf Qwen3.8-27B); the new system-prompt and back-to-A reuse checks fail on the base commit | improve/2026-09-24, merged as v2.0.121 |
 | `bun run e2e:render` (model-free) | 98/98, including the thinking-depth control check | v2.0.95 |
+| v2.0.151 live pass (mrpurple) | smoke 85/85 on gpt-oss-20b / Qwen3.5-0.8B / unsloth Qwen3.8-27B gguf, plus 39/39 on the mlx-vision arm with Qwen3.8-27B-4bit (depth); e2e chat 53/53 and pages 32/32; a live probe over eight models (every template source, every depth value, vision on and off thinking, image-plan, stop_sequences) all green. Record in `internal/claude/release_2026-09-25/mrpurple/results.md` | v2.0.151 |
 | `tests/smoke/` (arms `mlx-text` / `mlx-vision` / `gguf` since v2.0.88) | 82/82 at v2.0.95 on `gpt-oss-20b-MXFP4-Q8-mlx`, `Qwen3.5-0.8B-MLX-8bit` and Qwen3.8-27B: depth covered on mlx-text and gguf (an offered value accepted, an unoffered one a 400 on gguf); a turn that adds a new image is the named known gap; audio uncovered on the arms picked | v2.0.95 |
 | `scripts/vlm_parity_probe.py` | v2.0.124 (mlx-vlm 0.7.3, `ac737ef3`): ok on Qwen3.5-0.8B, the image case a near-tie at upstream margin 0.0. Before: MATCH on both cases, Qwen3.5-0.8B, against mlx-vlm's own loop. Earlier: Qwen-Image-2.1-PE-I21, Qwen3.5-27B-8bit, Qwen3-VL-32B at v2.0.55 | v2.0.124 / v2.0.88 (0.8B) |
 | `tests/smoke/` gguf arm | green on `unsloth_Qwen3.8-27B-UD-Q8_K_XL`, all three reuse checks pass; audio UNCOVERED (the model declares none) | v2.0.84 |
@@ -27,10 +28,9 @@ rather than carried forward as green.
 | `tests/eval/` (behavioural bank) | full bank on `Qwen3.5-27B-8bit-mlx` matches the W10 baseline at v2.0.86 (NOT re-run at v2.0.88). v2.0.88, stop/thinking/text on the text models: Qwen3-0.6B 6/6; gpt-oss-20b 2/4, the two failures are thinking-off text tasks with 10- and 30-token budgets that harmony's analysis channel uses up. Records in `internal/claude/w10/`. v2.0.91, thinking tasks: `thinking_requested_split` (now under a 256-token budget) passes on Qwen3.5-0.8B and gemma-4-26B-A4B; the one failure is Qwen3.5-0.8B's known two-image colour flap (`internal/claude/w7/eval_w7.jsonl`) | v2.0.91 / v2.0.88 / v2.0.86 |
 | gguf runtime harness (`internal/claude/perf/harness/`) | Qwen3.8-27B, Muse-Glimmer-30B, DeepSeek-V4-Flash-Vision Q4: vision cost, system-prompt reuse, multi-turn cache reuse (correct on all three after the Qwen template fix), thinking levels, residency, flash attention, micro-batch. Findings in `docs/testing/gguf_runtime_audit_2026-09-23.md` | v2.0.64 build 11138 |
 
-Thinking DEPTH is covered only by pinning `gpt-oss-20b-MXFP4-Q8-mlx`
-(owner-cleared for smoke) as the text arm:
-`--arm mlx-text --model mlx-text=gpt-oss-20b-MXFP4-Q8-mlx`. No vision model
-advertises `reasoning_effort`.
+Thinking DEPTH is covered by pinning depth-capable models:
+`--model mlx-text=gpt-oss-20b-MXFP4-Q8-mlx` and, since v2.0.151,
+`--model mlx-vision=mlx-community_Qwen3.8-27B-4bit` (39/39 on the vision arm).
 
 ## Handoff -- start here (2026-09-25)
 

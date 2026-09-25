@@ -1588,6 +1588,45 @@ export async function runChatSuite({ suite, ctx, config }) {
       { message: 'staged pasted image did not clear' });
   });
 
+  await suite.check('a staged photo is capped and priced by the engine', async () => {
+    // image-prep caps the longest edge (MAX_EDGE_PX) at staging, and the
+    // thumbnail's cost badge is the resident engine's own image-plan answer
+    // for the STAGED size (plan W4). Both halves in one: a 4032x3024 photo
+    // must stage at 2048x1536 and show exactly what the engine says that
+    // costs. Needs the model resident (image-plan never loads one).
+    await requireCap(page, config.model, 'vision');
+    await page.select(MODEL_SELECT, config.model);
+    await page.evaluate(async () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 4032;
+      canvas.height = 3024;
+      const c2d = canvas.getContext('2d');
+      c2d.fillStyle = 'rgb(200,40,40)';
+      c2d.fillRect(0, 0, 4032, 3024);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+      const dt = new DataTransfer();
+      dt.items.add(new File([blob], 'photo.jpg', { type: 'image/jpeg' }));
+      const input = document.querySelector('.chat__composer input[type="file"]');
+      input.files = dt.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await waitFor(async () => /\d+t/.test((await textOf(page, '.attach-thumb__cost')) || ''),
+      { timeout: 30000, message: 'the staged photo never showed an engine cost' });
+    const badge = Number(((await textOf(page, '.attach-thumb__cost')) || '').match(/(\d+)t/)[1]);
+    const plan = await page.evaluate(async (model) => {
+      const res = await fetch(`/v1/models/${encodeURIComponent(model)}/image-plan`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sizes: [[2048, 1536]] }),
+      });
+      return res.json();
+    }, config.model);
+    assert(badge === plan.images[0].tokens,
+      `badge said ${badge} tokens; the engine prices a 2048x1536 image at ${plan.images[0].tokens}`);
+    await page.click('.attach-thumb__remove');
+    await waitFor(async () => (await count(page, '.attach-thumb')) === 0,
+      { message: 'staged photo did not clear' });
+  });
+
   await suite.check('an attached image round-trips: send, persist, render, survive reload', async () => {
     await requireCap(page, config.model, 'vision');
     await page.select(MODEL_SELECT, config.model);

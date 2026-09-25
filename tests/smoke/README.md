@@ -85,9 +85,10 @@ field set is derived from the provider config classes, so
 would show. Its failure mode is silence — setting the wrong key does nothing,
 and the publisher's embedded template goes on picking your prompt format.
 
-Where a row's precondition is unmet it reports **uncovered**, never green. The
-standing one: thinking depth on both MLX arms, because the only served MLX
-model advertising `reasoning_effort` is a 120B.
+Where a row's precondition is unmet it reports **uncovered**, never green.
+Thinking depth needs a model whose template offers one: on mlx-text pin
+`gpt-oss-20b-MXFP4-Q8-mlx`, on mlx-vision `mlx-community_Qwen3.8-27B-4bit`
+(both covered at v2.0.151).
 
 The gguf audio row's precondition is the `audio` capability, which is DERIVED
 from the entry's `modalities` -- not read out of the GGUF. So an entry that
