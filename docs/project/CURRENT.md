@@ -40,7 +40,12 @@ beside the weights, then the GGUF's embedded template or tokenizer_config).
 Level names now come from the template's own normalized words. v2.0.145 fixed
 the gaps that two frontend-vs-backend audits confirmed. Open items from those
 audits, not yet done, are in `internal/log/log_2026-09-25.md` (mrpurple
-section). Smoke and pages/chat E2E were not run for these two releases.
+section). v2.0.146 - v2.0.149 closed the rest of that list; mrpurple led and
+mrblue took the gguf metrics and the dead params. e2e:pages, e2e:chat and
+e2e:render are green on Qwen3.5-0.8B. Owed: `tests/smoke/` on all three arms
+for v2.0.143 - v2.0.149. Waiting on the owner: stop_sequences, tools and
+response_format on /v1/messages; the notebook's media and continuation;
+per-model gguf sampler fields; the never-set fit `estimated`.
 
 **Where things stand.** The runtime-visibility plan's workstreams are all
 shipped or closed except the gated ones (W6 waits on W5 showing budget skips,
