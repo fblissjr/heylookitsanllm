@@ -203,6 +203,8 @@ the publisher's embedded template goes on picking your prompt format. The
 settable set is derived from the provider config classes, so
 `/v1/admin/model-options` is exactly where a leak would show.
 
+**Closed 2026-09-25 (v2.0.167):** depth is covered on both MLX arms by pinning `gpt-oss-20b-MXFP4-Q8-mlx` (mlx-text) and `mlx-community_Qwen3.8-27B-4bit` (mlx-vision); see `tests/smoke/README.md`. The text below is the record.
+
 **Standing UNCOVERED gap:** thinking DEPTH on both MLX arms. The only served
 MLX model advertising `reasoning_effort` is `gpt-oss-120b-MXFP4-Q8-mlx`, so
 covering it costs a 120B load. Reported as uncovered on every run rather than

@@ -499,6 +499,8 @@ norm.
   >   entries.
   > - Thinking depth on MLX stays a NAMED uncovered gap (gpt-oss-120b remains
   >   the only MLX model with `reasoning_effort`); the cheap arm is kept.
+  >   (Closed 2026-09-25: gpt-oss-20b and mlx-community_Qwen3.8-27B-4bit now
+  >   cover depth on both MLX arms; tests/smoke/README.md.)
 - **Read-only or shared model directories are a FUNCTIONAL CLIFF**, and may be
   the reason models.toml keeps per-model entries after all. The asymmetry with
   the template case is the whole point: there, a read-only directory costs you
