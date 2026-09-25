@@ -27,9 +27,9 @@
 #     model is RAM someone paid for. NEVER kill a server you did not spawn
 #     (an already-running heylookllm on any port may be the owner's daily
 #     server).
-#   - Default model for behavior checks: the fast MoE gemma-4-26B-A4B variant
-#     (~90 tok/s, the discriminating model per AGENTS.md); ids from GET /v1/models
-#     carry quant suffixes, so list exact ids first.
+#   - Default model for behavior checks: Qwen3.5-0.8B-MLX-8bit (fast, vision and
+#     thinking; see AGENTS.md); ids from GET /v1/models carry quant suffixes,
+#     so list exact ids first.
 #   - Always `stop` a server you started; keep it up across a series of checks
 #     (model load is the expensive part), then stop once at the end.
 set -euo pipefail

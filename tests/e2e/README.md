@@ -114,7 +114,7 @@ composer focus is worth building.
 
 | var                   | default                              | meaning |
 |-----------------------|--------------------------------------|---------|
-| `E2E_MODEL`           | `gemma-4-26b-a4b-it-8bit-mlx`            | model to preload + drive (must be served; ids from `GET /v1/models`). Use a fast one — an A4B MoE decodes fast; the 31B dense gemma decodes ~10 tok/s and makes streaming look broken (and would false-fail the cadence guard). |
+| `E2E_MODEL`           | `Qwen3.5-0.8B-MLX-8bit`                  | model to preload + drive (must be served; ids from `GET /v1/models`). Needs vision and thinking for the capability checks, and must decode fast: a slow dense model makes streaming look broken and false-fails the cadence guard. Default since 2026-09-25 (owner): the MLX gemma weights were removed. |
 | `E2E_PORT`            | `1264`                               | server port for the spawned instance -- deliberately NOT 8000, the daily server's port (the harness spawns its OWN server and must never collide with it) |
 | `E2E_MAX_TOKENS`      | `24`                                 | per-generation cap, seeded via `localStorage` so runs stay fast/deterministic |
 | `E2E_CHROME`          | `/Applications/Google Chrome.app/…`  | Chrome binary path |

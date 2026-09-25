@@ -5,7 +5,7 @@
 
 import { assert, waitFor, sleep, skip } from '../lib/harness.mjs';
 
-// The E2E model is whatever E2E_MODEL names, and the default (a gemma-4 VLM)
+// The E2E model is whatever E2E_MODEL names, and the default (Qwen3.5-0.8B, a small VLM)
 // is not the only thing people run this against: a text-only MLX model or
 // a gguf without an mmproj has no `vision` capability, and a check that
 // assumes one then fails on the suite's assumption, not on the app -- and

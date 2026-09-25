@@ -27,7 +27,7 @@ The test discipline and which check to run for which change are in AGENTS.md's T
 ## Browser E2E (`tests/e2e/`)
 
 - puppeteer-core with system Chrome (claude-in-chrome refuses localhost). It spawns its own server with an isolated `HEYLOOK_DB_PATH`, and each suite clears its temp DB. It refuses to start if anything listens on `E2E_PORT`; keep that guard, and probe by connecting, never by binding. Load and warm readiness is the server-owned `POST /v1/models/{id}/load?warm=true`; never hand-roll poll/warm logic in a harness.
-- It must run unsandboxed and is not part of the backend run. Its client-side streaming-cadence guard is the only automated check for the streaming delivery fix and needs a fast `E2E_MODEL` (default MoE gemma-4-26B-A4B).
+- It must run unsandboxed and is not part of the backend run. Its client-side streaming-cadence guard is the only automated check for the streaming delivery fix and needs a fast `E2E_MODEL` (default `Qwen3.5-0.8B-MLX-8bit`, which also has the vision and thinking the capability checks need).
 - `bun run e2e:render` is model-free and server-free and is not part of `bun run e2e`: it guards that the chat message list is reconciled, not rebuilt. `E2E_V3_ROOT` points it at a copy of the frontend.
 - A check that reaches a legal early exit before its assertion calls `skip()` (harness.mjs) and is tallied as skipped, never as a pass.
 - `bun run e2e:ios` (`ios-sim.mjs`) drives real Mobile Safari in the iOS Simulator via `safaridriver` against an already-running server; Chrome emulation cannot see iOS keyboard behaviour. Its run status lives in `docs/project/TODO.md` and the file's header.

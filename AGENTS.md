@@ -68,7 +68,7 @@ Each file below holds the mechanisms that bite in its area. Claude Code loads it
   - any speed or memory claim: `scripts/perf_ab.py` (arms by git rev or config; a contaminated run gets no verdict);
   - the MLX vision path: `scripts/vlm_parity_probe.py`;
   - frontend: the E2E suites that cover the page, and `e2e:render` for the chat message list;
-  - streaming or latency, live: the MoE `gemma-4-26B-A4B` (the dense 31B is slow enough to look like a delivery bug).
+  - streaming or latency, live: a fast model, `Qwen3.5-0.8B-MLX-8bit` by default (a slow dense model looks like a delivery bug).
 - Release standard (not a CI gate): a release touching provider, loader, template or lifecycle code runs `tests/smoke/` green on all three arms (mlx-text, mlx-vision, gguf) and names any uncovered arm in the changelog. It also runs `scripts/vendor_frontend.py --check` and names the answer, and names any unmet Phase 3 precondition (the standing one is thinking depth on both MLX arms).
 
 ## Repo rules

@@ -26,7 +26,7 @@
 // the interactive shell's nvm lazy-load function.)
 //
 // Config via env:
-//   E2E_MODEL      model id to preload + drive        (default: gemma-4-26b-a4b-it-8bit-mlx)
+//   E2E_MODEL      model id to preload + drive        (default: Qwen3.5-0.8B-MLX-8bit)
 //   E2E_ARMS       engine arms to run, or "all"        (default: the single E2E_MODEL arm)
 //   E2E_PORT       server port                        (default: 1264 -- NOT 8000, the daily server; the harness spawns its own)
 //   E2E_MAX_TOKENS default per-generation token cap   (default: 24)
@@ -56,7 +56,7 @@ const REPO_ROOT = join(__dirname, '..', '..');
 const execFileAsync = promisify(execFile);
 
 const CONFIG = {
-  model: process.env.E2E_MODEL || 'gemma-4-26b-a4b-it-8bit-mlx',
+  model: process.env.E2E_MODEL || 'Qwen3.5-0.8B-MLX-8bit',
   arms: (process.env.E2E_ARMS || '').trim(),
   port: Number(process.env.E2E_PORT || 1264),
   maxTokens: Number(process.env.E2E_MAX_TOKENS || 24),
