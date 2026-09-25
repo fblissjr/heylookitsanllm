@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-25, v2.0.139, `main`.
+Last updated: 2026-09-25, v2.0.141, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md), and what each release
@@ -38,7 +38,7 @@ advertises `reasoning_effort`.
 shipped or closed except the gated ones (W6 waits on W5 showing budget skips,
 W14 on the steering research track, W11 is optional upstream work) and W10's
 per-image vision key (an accepted known gap). This session, v2.0.135 -
-v2.0.139, owner away, no server up (all live checks in-process):
+v2.0.141, owner away, no server up (all live checks in-process):
 - v2.0.135: qwen3_5 image conversations reuse vision features (the reworked
   form of the loop's reverted change); the cache keys by image content.
 - v2.0.136: **W1 shipped**: `flash_attn`, the `load_setting` tag, `/reload`
@@ -50,8 +50,13 @@ v2.0.139, owner away, no server up (all live checks in-process):
   top-level `allowed_hosts`** (IP addresses always pass).
 - v2.0.138: every response echoes a valid `X-Request-ID`.
 - v2.0.139: a template file swap marks a loaded model stale.
+- v2.0.140: `/status` reports generations in flight on every engine.
+- v2.0.141: fixes from an independent review. Every MLX vision model now
+  takes mlx-vlm's cache kwargs (heylook's own `encode_image` call was wrong
+  for three of the four models with one). gemma-4 vision diverges from
+  mlx-vlm's own loop, and did before this session (TODO, gemma-4 item).
 - **W12 done: both small, stay Python** (`internal/claude/w12/`).
-- Owed: smoke on all three arms and the gguf/chat e2e for v2.0.135 - .139
+- Owed: smoke on all three arms and the gguf/chat e2e for v2.0.135 - .141
   (release standard); a live gguf load to see `engine.settings.flash_attn`
   go `observed`.
 
