@@ -6,6 +6,12 @@ the UI (distinct from the bundled TOML sampler registry in presets.py, which
 is server-side and request-scoped via ``ChatRequest.preset``). Names are
 unique, enforced in code -- the store's single serialized writer makes the
 check race-free.
+
+The route tests in test_preset_api.py call these same functions through a
+thin pass-through (ValueError -> 400, None -> 404, PresetNameTaken -> 409), so
+the partial update, unknown id, no-fields, delete, duplicate name, rename
+collision and blank name cases live there. What stays here is what the routes
+do not assert.
 """
 
 import pytest
@@ -64,45 +70,8 @@ class TestPresetCrud:
         assert updated["params"] == {"top_k": 2}
         assert updated["updated_at"] >= p["updated_at"]
 
-    @pytest.mark.asyncio
-    async def test_update_partial_keeps_other_fields(self, conn):
-        p = await db.create_preset(conn, name="keep", system_prompt="sys", params={"top_k": 3})
-        updated = await db.update_preset(conn, p["id"], system_prompt="sys2")
-        assert updated["name"] == "keep"
-        assert updated["params"] == {"top_k": 3}
-
-    @pytest.mark.asyncio
-    async def test_update_unknown_id_returns_none(self, conn):
-        assert await db.update_preset(conn, "ghost", name="x") is None
-
-    @pytest.mark.asyncio
-    async def test_update_no_fields_raises(self, conn):
-        p = await db.create_preset(conn, name="nofields")
-        with pytest.raises(ValueError):
-            await db.update_preset(conn, p["id"])
-
-    @pytest.mark.asyncio
-    async def test_delete(self, conn):
-        p = await db.create_preset(conn, name="gone")
-        assert await db.delete_preset(conn, p["id"]) is True
-        assert await db.delete_preset(conn, p["id"]) is False
-        assert await db.list_presets(conn) == []
-
 
 class TestPresetNameUniqueness:
-    @pytest.mark.asyncio
-    async def test_duplicate_name_rejected(self, conn):
-        await db.create_preset(conn, name="dup")
-        with pytest.raises(db.PresetNameTaken):
-            await db.create_preset(conn, name="dup")
-
-    @pytest.mark.asyncio
-    async def test_rename_onto_existing_name_rejected(self, conn):
-        await db.create_preset(conn, name="a")
-        p = await db.create_preset(conn, name="b")
-        with pytest.raises(db.PresetNameTaken):
-            await db.update_preset(conn, p["id"], name="a")
-
     @pytest.mark.asyncio
     async def test_update_keeping_own_name_is_fine(self, conn):
         p = await db.create_preset(conn, name="self")
@@ -122,11 +91,6 @@ class TestPresetValidation:
     async def test_params_must_be_a_dict(self, conn):
         with pytest.raises(ValueError):
             await db.create_preset(conn, name="bad", params=["not", "a", "dict"])
-
-    @pytest.mark.asyncio
-    async def test_blank_name_rejected(self, conn):
-        with pytest.raises(ValueError):
-            await db.create_preset(conn, name="   ")
 
     @pytest.mark.asyncio
     async def test_unserializable_params_raise_value_error(self, conn):

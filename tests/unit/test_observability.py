@@ -64,24 +64,36 @@ class TestRecord:
 
 
 class TestLevelGating:
-    def test_off_writes_nothing(self, tmp_path):
-        obs.configure(level="off", log_dir=tmp_path)
-        obs.record_event("x", tier="metrics", min_level="minimal", fields={"a": 1})
-        assert not (tmp_path / "metrics.jsonl").exists()
-
-    def test_minimal_gates_out_higher_levels(self, tmp_path):
-        obs.configure(level="minimal", log_dir=tmp_path)
-        obs.record_event("counted", tier="metrics", min_level="minimal", fields={"a": 1})   # kept
-        obs.record_event("detailed", tier="events", min_level="standard", fields={"a": 2})  # dropped
-        obs.record_event("chunk", tier="events", min_level="debug", fields={"a": 3})        # dropped
-        assert len(_read(tmp_path / "metrics.jsonl")) == 1
-        assert not (tmp_path / "events.jsonl").exists()
-
-    def test_debug_keeps_everything(self, tmp_path):
-        obs.configure(level="debug", log_dir=tmp_path)
-        for lvl in ("minimal", "standard", "debug"):
-            obs.record_event("e", tier="events", min_level=lvl, fields={"lvl": lvl})
-        assert len(_read(tmp_path / "events.jsonl")) == 3
+    # Configured level x each event's min_level -> written or not. Each row:
+    # the spine level, the (tier, min_level) events recorded, and per stream
+    # the line count expected (None = the file is never created).
+    @pytest.mark.parametrize(
+        "level, emitted, expected",
+        [
+            # off writes nothing, not even a minimal event
+            ("off", [("metrics", "minimal")], {"metrics": None}),
+            # minimal keeps minimal; standard and debug events are dropped
+            ("minimal",
+             [("metrics", "minimal"), ("events", "standard"), ("events", "debug")],
+             {"metrics": 1, "events": None}),
+            # debug keeps every level
+            ("debug",
+             [("events", "minimal"), ("events", "standard"), ("events", "debug")],
+             {"events": 3}),
+        ],
+        ids=["off_writes_nothing", "minimal_gates_out_higher_levels",
+             "debug_keeps_everything"],
+    )
+    def test_level_gate(self, tmp_path, level, emitted, expected):
+        obs.configure(level=level, log_dir=tmp_path)
+        for i, (tier, min_level) in enumerate(emitted, start=1):
+            obs.record_event("e", tier=tier, min_level=min_level, fields={"a": i})
+        for stream, count in expected.items():
+            path = tmp_path / f"{stream}.jsonl"
+            if count is None:
+                assert not path.exists(), stream
+            else:
+                assert len(_read(path)) == count, stream
 
 
 class TestRotation:
@@ -134,12 +146,22 @@ class TestRotation:
 
 
 class TestNeverRaises:
-    def test_bad_log_dir_does_not_raise(self, tmp_path):
-        # point at a path that can't be created (a file where a dir is needed)
-        clash = tmp_path / "clash"
-        clash.write_text("i am a file")
-        obs.configure(level="debug", log_dir=clash / "sub")
-        obs.record_event("x", tier="metrics", min_level="minimal", fields={"a": 1})
-
-    def test_unknown_tier_does_not_raise(self, logs):
-        obs.record_event("x", tier="nonsense", min_level="minimal", fields={"a": 1})
+    # Observability must not break inference: neither row may raise.
+    @pytest.mark.parametrize(
+        "unwritable_dir, tier",
+        [
+            # a path that can't be created (a file where a dir is needed)
+            (True, "metrics"),
+            # a tier that names no stream
+            (False, "nonsense"),
+        ],
+        ids=["bad_log_dir_does_not_raise", "unknown_tier_does_not_raise"],
+    )
+    def test_never_raises(self, tmp_path, unwritable_dir, tier):
+        log_dir = tmp_path
+        if unwritable_dir:
+            clash = tmp_path / "clash"
+            clash.write_text("i am a file")
+            log_dir = clash / "sub"
+        obs.configure(level="debug", log_dir=log_dir)
+        obs.record_event("x", tier=tier, min_level="minimal", fields={"a": 1})

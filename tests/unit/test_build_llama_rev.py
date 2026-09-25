@@ -61,45 +61,44 @@ def clone(tmp_path):
 
 @pytest.mark.unit
 class TestResolveFetchedRev:
-    def test_the_premise_holds_local_master_is_stale_after_fetch(self, clone):
-        """Guard the guard. If git ever advanced local branches on fetch this
-        whole fix would be pointless, and every test below would pass for the
-        wrong reason."""
+    def test_a_branch_resolves_to_the_fetched_remote_ref(self, clone):
+        """A branch name resolves to origin/<branch>, and that ref's commit is
+        the fetched one, not the stale local branch's.
+
+        Guard the guard first: if git ever advanced local branches on fetch
+        this whole fix would be pointless, and the assertions below would pass
+        for the wrong reason."""
         assert sha(clone, "master") != sha(clone, "origin/master")
 
-    def test_a_branch_resolves_to_the_remote_tracking_ref(self, clone):
-        assert resolve_fetched_rev(clone, "master") == "origin/master"
-
-    def test_the_resolved_ref_is_the_fetched_commit(self, clone):
         resolved = resolve_fetched_rev(clone, "master")
+        assert resolved == "origin/master"
         assert sha(clone, resolved) == sha(clone, "origin/master")
         assert sha(clone, resolved) != sha(clone, "master")
 
-    def test_a_tag_is_passed_through_untouched(self, clone):
-        # origin/b1001 does not exist, so a tag must not be rewritten.
-        assert resolve_fetched_rev(clone, "b1001") == "b1001"
-        assert sha(clone, "b1001")  # still resolvable
-
-    def test_a_sha_is_passed_through_untouched(self, clone):
-        head = sha(clone, "origin/master")
-        assert resolve_fetched_rev(clone, head) == head
-
-    def test_an_already_qualified_remote_ref_is_passed_through(self, clone):
-        # origin/origin/master does not exist -> falls through unchanged.
-        assert resolve_fetched_rev(clone, "origin/master") == "origin/master"
-
-    def test_an_unknown_rev_is_passed_through_for_git_to_reject(self, clone):
-        """Not this function's job to validate: `git checkout` gives a better
-        error than anything invented here."""
-        assert resolve_fetched_rev(clone, "no-such-thing") == "no-such-thing"
-
-    def test_HEAD_is_not_treated_as_a_branch(self, clone):
-        """`git clone` always writes refs/remotes/origin/HEAD, so the generic
-        branch mapping would resolve --rev HEAD to the remote default branch
-        tip -- arbitrarily newer code, and the opposite of "build what is
-        checked out"."""
-        assert sha(clone, "origin/HEAD")  # the ref really does exist
-        assert resolve_fetched_rev(clone, "HEAD") == "HEAD"
+    # Everything that is not a plain branch comes back unchanged. `premise` is
+    # a ref that must exist for the row to mean anything.
+    # - tag: origin/b1001 does not exist, so a tag must not be rewritten.
+    # - qualified: origin/origin/master does not exist -> falls through.
+    # - unknown: not this function's job to validate; `git checkout` gives a
+    #   better error than anything invented here.
+    # - HEAD: `git clone` always writes refs/remotes/origin/HEAD, so the
+    #   generic branch mapping would resolve --rev HEAD to the remote default
+    #   branch tip -- arbitrarily newer code, and the opposite of "build what
+    #   is checked out".
+    @pytest.mark.parametrize("rev, premise", [
+        ("b1001", "b1001"),
+        ("<sha of origin/master>", None),
+        ("origin/master", None),
+        ("no-such-thing", None),
+        ("HEAD", "origin/HEAD"),
+    ], ids=["tag", "sha", "already_qualified_remote_ref", "unknown_rev_for_git_to_reject",
+            "HEAD_is_not_a_branch"])
+    def test_non_branch_revs_pass_through_untouched(self, clone, rev, premise):
+        if rev == "<sha of origin/master>":
+            rev = sha(clone, "origin/master")
+        if premise:
+            assert sha(clone, premise)  # the ref really does exist
+        assert resolve_fetched_rev(clone, rev) == rev
 
 
 @pytest.mark.unit

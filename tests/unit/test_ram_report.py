@@ -74,32 +74,34 @@ class TestVmStatParsing:
         assert ram_report._vm_stat_pages() == {}
 
 
+def _warm_machine(monkeypatch):
+    """The regression fixture: 192 GiB total, 27 GiB anonymous, 5 GiB wired,
+    125 GiB free+inactive -- a cache-warm machine after a big unload."""
+    monkeypatch.setattr(ram_report, "_vm_stat_pages", lambda: {
+        "anonymous pages": 27 * GB, "pages wired down": 5 * GB,
+    })
+    monkeypatch.setattr(
+        ram_report.__dict__.setdefault("psutil", __import__("psutil")),
+        "virtual_memory", lambda: type("VM", (), {"total": 192 * GB, "available": 125 * GB})(),
+    )
+
+
 @pytest.mark.unit
 class TestReclaimable:
-    def test_reclaimable_excludes_only_anonymous_and_wired(self, monkeypatch):
-        total = 192 * GB
-        monkeypatch.setattr(ram_report, "_vm_stat_pages", lambda: {
-            "anonymous pages": 27 * GB,
-            "pages wired down": 5 * GB,
-        })
-        monkeypatch.setattr(
-            ram_report.__dict__.setdefault("psutil", __import__("psutil")),
-            "virtual_memory", lambda: type("VM", (), {"total": total, "available": 125 * GB})(),
-        )
-        assert ram_report.reclaimable_gb() == pytest.approx(160.0)
-
-    def test_reclaimable_beats_free_plus_inactive_on_a_cache_warm_machine(self, monkeypatch):
+    @pytest.mark.parametrize("check", [
+        # reclaimable == total - anonymous - wired, nothing else subtracted.
+        pytest.param(lambda reclaimable, available: reclaimable == pytest.approx(160.0),
+                     id="reclaimable_excludes_only_anonymous_and_wired"),
         # THE regression. File-backed pages macOS parked in the active queue
         # are clean and evictable, but free+inactive cannot see them -- so the
         # conservative figure refused a load that then ran without paging.
-        monkeypatch.setattr(ram_report, "_vm_stat_pages", lambda: {
-            "anonymous pages": 27 * GB, "pages wired down": 5 * GB,
-        })
-        monkeypatch.setattr(
-            ram_report.__dict__.setdefault("psutil", __import__("psutil")),
-            "virtual_memory", lambda: type("VM", (), {"total": 192 * GB, "available": 125 * GB})(),
-        )
-        assert ram_report.reclaimable_gb() > ram_report.available_gb() + 30
+        pytest.param(lambda reclaimable, available: reclaimable > available + 30,
+                     id="reclaimable_beats_free_plus_inactive_on_a_cache_warm_machine"),
+    ])
+    def test_reclaimable_on_the_regression_fixture(self, monkeypatch, check):
+        _warm_machine(monkeypatch)
+        reclaimable, available = ram_report.reclaimable_gb(), ram_report.available_gb()
+        assert check(reclaimable, available), (reclaimable, available)
 
     def test_usable_falls_back_when_vm_stat_is_unavailable(self, monkeypatch):
         # Off macOS there are no such counters; the script must still answer.
@@ -116,18 +118,4 @@ class TestReclaimable:
         assert ram_report.reclaimable_gb() is None
 
 
-@pytest.mark.unit
-class TestShardSizing:
-    def test_a_shard_is_sized_as_its_whole_set(self, tmp_path):
-        # The other way this gate lies: a GGUF model_path names ONE shard, and
-        # the first is a few-MB index shard. Sizing the named file called a
-        # 127 GiB model "5 MB".
-        for i, size in ((1, 100), (2, 90_000), (3, 80_000)):
-            (tmp_path / f"m-0000{i}-of-00003.gguf").write_bytes(b"\0" * size)
-        first = tmp_path / "m-00001-of-00003.gguf"
-        assert ram_report._shard_set_bytes(first) == 170_100
-
-    def test_a_standalone_file_is_sized_as_itself(self, tmp_path):
-        f = tmp_path / "solo.gguf"
-        f.write_bytes(b"\0" * 1234)
-        assert ram_report._shard_set_bytes(f) == 1234
+# Shard-set sizing lives in test_ram_fit.py::TestSizing::test_shard_sizing.

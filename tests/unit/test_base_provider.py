@@ -25,65 +25,55 @@ class ConcreteProvider(BaseProvider):
         pass
 
 
+_ABSENT = object()  # leave provider.processor unset
+_SENTINEL = object()
+
+
+class _HfTokenizer:
+    """A text model's processor IS the HF tokenizer; ``_tokenizer`` is its Rust
+    backend, and returning THAT resolved an empty stop set (v2.0.86-88)."""
+    _tokenizer = object()
+
+    def decode(self, ids):
+        return "decoded"
+
+
+class _PublicTokenizer:
+    tokenizer = _SENTINEL
+
+
+class _Decoder:
+    def decode(self, ids):
+        return "decoded"
+
+
+class _Bare:
+    pass
+
+
 class TestGetTokenizer:
-    def test_no_processor_attribute(self):
-        """Provider with no processor attribute returns None."""
+    # expected: None, "processor" (the processor itself), or the object returned
+    @pytest.mark.parametrize("make_processor, expected", [
+        (lambda: _ABSENT, None),          # no processor attribute
+        (lambda: None, None),             # processor is None
+        (_HfTokenizer, "processor"),      # returned itself, not its backend
+        (_PublicTokenizer, _SENTINEL),    # .tokenizer (no _tokenizer) wins
+        (_Decoder, "processor"),          # decode() and no tokenizer attr
+        (_Bare, None),                    # no tokenizer attr, no decode()
+    ], ids=["no_processor_attribute", "processor_is_none",
+            "a_tokenizer_processor_is_returned_not_its_backend",
+            "processor_with_public_tokenizer", "processor_with_decode",
+            "processor_without_decode"])
+    def test_get_tokenizer(self, make_processor, expected):
         provider = ConcreteProvider("test-model", {}, verbose=False)
-        assert provider.get_tokenizer() is None
-
-    def test_processor_is_none(self):
-        """Provider with processor=None returns None."""
-        provider = ConcreteProvider("test-model", {}, verbose=False)
-        provider.processor = None
-        assert provider.get_tokenizer() is None
-
-    def test_a_tokenizer_processor_is_returned_not_its_backend(self):
-        """A text model's processor IS the HF tokenizer, whose ``_tokenizer``
-        is the Rust backend: returning that resolved an empty stop set."""
-        provider = ConcreteProvider("test-model", {}, verbose=False)
-
-        class FakeHfTokenizer:
-            _tokenizer = object()
-
-            def decode(self, ids):
-                return "decoded"
-
-        proc = FakeHfTokenizer()
-        provider.processor = proc
-        assert provider.get_tokenizer() is proc
-
-    def test_processor_with_public_tokenizer(self):
-        """Processor with tokenizer attr (no _tokenizer) returns tokenizer."""
-        provider = ConcreteProvider("test-model", {}, verbose=False)
-        sentinel = object()
-
-        class FakeProcessor:
-            tokenizer = sentinel
-
-        provider.processor = FakeProcessor()
-        assert provider.get_tokenizer() is sentinel
-
-    def test_processor_with_decode(self):
-        """Processor with decode() method but no tokenizer attr returns processor."""
-        provider = ConcreteProvider("test-model", {}, verbose=False)
-
-        class FakeProcessor:
-            def decode(self, ids):
-                return "decoded"
-
-        proc = FakeProcessor()
-        provider.processor = proc
-        assert provider.get_tokenizer() is proc
-
-    def test_processor_without_decode(self):
-        """Processor with no tokenizer attr and no decode() returns None."""
-        provider = ConcreteProvider("test-model", {}, verbose=False)
-
-        class FakeProcessor:
-            pass
-
-        provider.processor = FakeProcessor()
-        assert provider.get_tokenizer() is None
+        proc = make_processor()
+        if proc is not _ABSENT:
+            provider.processor = proc
+        got = provider.get_tokenizer()
+        if expected == "processor":
+            assert got is proc
+        else:
+            assert got is expected
 
 
 class TestMockProcessorHelperContract:

@@ -2,6 +2,11 @@
 """
 Unit tests for the <think>-block thinking parser
 (StreamingThinkingParser + the HybridThinkingParser wrapper).
+
+The plain-text, complete-block, split-tag, long-block and angle-bracket
+cases are rows of test_reasoning_parser.py TestParserInvariants (CORPUS
+"think" and TOKEN_FREE), which run them through the factory's
+HybridThinkingParser, the adapter over StreamingThinkingParser.
 """
 import pytest
 from heylook_llm.thinking_parser import (
@@ -12,66 +17,6 @@ from heylook_llm.thinking_parser import (
 
 class TestStreamingThinkingParser:
     """Tests for the StreamingThinkingParser class."""
-
-    def test_no_thinking_stream(self):
-        """Stream without thinking should all be content."""
-        parser = StreamingThinkingParser()
-        results = []
-        for chunk in ["Hello", " world", "!"]:
-            results.extend(parser.process_chunk(chunk))
-        results.extend(parser.flush())
-
-        # Filter empty results
-        results = [(t, txt) for t, txt in results if txt]
-        assert all(t == 'content' for t, _ in results)
-        full_text = ''.join(txt for _, txt in results)
-        assert "Hello world!" in full_text
-
-    def test_complete_thinking_block(self):
-        """Complete thinking block followed by content."""
-        parser = StreamingThinkingParser()
-        results = []
-
-        # Send thinking block in chunks
-        results.extend(parser.process_chunk("<think>"))
-        results.extend(parser.process_chunk("Reasoning"))
-        results.extend(parser.process_chunk("</think>"))
-        results.extend(parser.process_chunk("Answer"))
-        results.extend(parser.flush())
-
-        # Filter non-empty results
-        results = [(t, txt) for t, txt in results if txt]
-
-        # Check we have thinking and content
-        thinking_parts = [txt for t, txt in results if t == 'thinking']
-        content_parts = [txt for t, txt in results if t == 'content']
-
-        assert len(thinking_parts) > 0, "Should have thinking parts"
-        assert len(content_parts) > 0, "Should have content parts"
-        assert "Reasoning" in ''.join(thinking_parts)
-        assert "Answer" in ''.join(content_parts)
-
-    def test_split_tag_handling(self):
-        """Tags split across chunks should be handled correctly."""
-        parser = StreamingThinkingParser()
-        results = []
-
-        # Split <think> tag across chunks
-        results.extend(parser.process_chunk("<thi"))
-        results.extend(parser.process_chunk("nk>"))
-        results.extend(parser.process_chunk("Thinking"))
-        results.extend(parser.process_chunk("</th"))
-        results.extend(parser.process_chunk("ink>"))
-        results.extend(parser.process_chunk("Content"))
-        results.extend(parser.flush())
-
-        results = [(t, txt) for t, txt in results if txt]
-
-        thinking_text = ''.join(txt for t, txt in results if t == 'thinking')
-        content_text = ''.join(txt for t, txt in results if t == 'content')
-
-        assert "Thinking" in thinking_text
-        assert "Content" in content_text
 
     def test_reset(self):
         """Reset should allow parser reuse."""
@@ -127,30 +72,12 @@ class TestEdgeCases:
         thinking = "".join(x for k, x in out if k == "thinking")
         return content, thinking
 
-    def test_nested_angle_brackets(self):
-        text = "Compare x<y and y>z in the expression"
-        content, thinking = self._run([text])
-        assert content == text
-        assert thinking == ""
-
-    def test_partial_think_tag_is_content(self):
-        text = "<thin some random text with angle brackets"
-        content, thinking = self._run([text])
-        assert content == text
-        assert thinking == ""
-
     def test_unclosed_think_tag_flushes_to_thinking(self):
         # streaming semantics: an opened-never-closed block is thinking at
         # flush (abort mid-thought), unlike the old regex extractor
         content, thinking = self._run(["<think>never closed, stream aborts"])
         assert content == ""
         assert thinking == "never closed, stream aborts"
-
-    def test_very_long_thinking(self):
-        long_thinking = "A" * 10000
-        content, thinking = self._run([f"<think>{long_thinking}</think>Short answer"])
-        assert content == "Short answer"
-        assert thinking == long_thinking
 
 
 class TestHybridThinkingParser:
@@ -179,17 +106,3 @@ class TestHybridThinkingParser:
         )
         assert thinking == 'Thinking'
         assert content == 'Answer'
-
-    def test_text_mode_without_token_ids(self):
-        parser = HybridThinkingParser()
-        content, thinking = self._collect(
-            parser, ['<think>', 'Thinking', '</think>', 'Answer']
-        )
-        assert thinking == 'Thinking'
-        assert content == 'Answer'
-
-    def test_plain_text_routes_to_content(self):
-        parser = HybridThinkingParser()
-        content, thinking = self._collect(parser, ['Hello', ' world'])
-        assert content == 'Hello world'
-        assert thinking == ''

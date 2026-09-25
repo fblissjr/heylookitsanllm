@@ -29,6 +29,35 @@ def store(tmp_path):
     return d
 
 
+def _dedup_written_entry(root):
+    # Same file, derived id, and a WRONG value -- exactly what a rescan
+    # produces for a renamed entry. The hand-written entry survives verbatim.
+    blob = root / "a.gguf"
+    written = entry("my-nice-name", blob, supports_thinking=True)
+    return {"models": [written]}, [entry("a", blob, supports_thinking=False)], [written]
+
+
+def _dedup_symlink(root):
+    # Vendor symlinks in a model folder mean two paths, one file; without
+    # resolution these compare unequal and the model is served twice.
+    real = root / "real"
+    real.mkdir()
+    blob = real / "a.gguf"
+    blob.write_text("x")
+    link = root / "vendor-alias"
+    link.symlink_to(real, target_is_directory=True)
+    written = entry("via-link", link / "a.gguf")
+    return {"models": [written]}, [entry("a", blob)], [written]
+
+
+def _dedup_two_discoveries(root):
+    # Dedup applies within the batch, not only against models.toml:
+    # scan_directory follows symlinks, so one file arrives twice.
+    blob = root / "same.gguf"
+    first = entry("a", blob)
+    return {"models": []}, [first, entry("b", blob)], [first]
+
+
 @pytest.mark.unit
 class TestMergeDiscovered:
     def test_unrepresented_model_is_appended(self, store):
@@ -36,33 +65,16 @@ class TestMergeDiscovered:
         merged = merge_discovered(cfg, [entry("found", store / "b.gguf")])
         assert [m["id"] for m in merged["models"]] == ["configured", "found"]
 
-    def test_explicit_entry_wins_and_is_not_duplicated(self, store):
-        """The hand-written entry must survive verbatim, keeping its id."""
-        blob = store / "a.gguf"
-        cfg = {"models": [entry("my-nice-name", blob, supports_thinking=True)]}
-        # Same file, derived id, and a WRONG value -- exactly what a rescan
-        # produces for a renamed entry.
-        merged = merge_discovered(
-            cfg, [entry("a", blob, supports_thinking=False)])
-        assert [m["id"] for m in merged["models"]] == ["my-nice-name"]
-        assert merged["models"][0]["config"]["supports_thinking"] is True
-
-    def test_symlinked_spelling_counts_as_the_same_file(self, tmp_path):
-        """Vendor symlinks in a model folder mean two paths, one file.
-
-        Without resolution these compare unequal and the model is served
-        twice under two ids.
-        """
-        real = tmp_path / "store"
-        real.mkdir()
-        blob = real / "a.gguf"
-        blob.write_text("x")
-        link = tmp_path / "vendor-alias"
-        link.symlink_to(real, target_is_directory=True)
-
-        cfg = {"models": [entry("via-link", link / "a.gguf")]}
-        merged = merge_discovered(cfg, [entry("a", blob)])
-        assert [m["id"] for m in merged["models"]] == ["via-link"]
+    @pytest.mark.parametrize("setup", [
+        pytest.param(_dedup_written_entry, id="explicit_entry_wins_and_is_not_duplicated"),
+        pytest.param(_dedup_symlink, id="symlinked_spelling_counts_as_the_same_file"),
+        pytest.param(_dedup_two_discoveries, id="two_discoveries_of_one_file_are_served_once"),
+    ])
+    def test_one_file_is_served_once_under_the_first_spelling(self, tmp_path, setup):
+        """The same file reached by the written entry, a symlink, or two
+        discoveries is served once, under the written (or first) id and values."""
+        cfg, discovered, expected = setup(tmp_path)
+        assert merge_discovered(cfg, discovered)["models"] == expected
 
     def test_derived_id_colliding_with_a_different_file_is_refused(self, store, caplog):
         """Serving both would make the id ambiguous; say so rather than guess."""
@@ -96,17 +108,6 @@ class TestMergeDiscovered:
         merged = merge_discovered(cfg, [])
         assert "models" in merged
         AppConfig(**merged)  # must not raise
-
-    def test_two_discoveries_of_one_file_are_served_once(self, store):
-        """Dedup must apply within the batch, not only against models.toml.
-
-        scan_directory follows symlinks, so one file legitimately arrives
-        twice under different ids.
-        """
-        blob = store / "same.gguf"
-        merged = merge_discovered({"models": []}, [entry("a", blob), entry("b", blob)])
-        assert [m["id"] for m in merged["models"]] == ["a"]
-
 
 @pytest.mark.unit
 class TestDiscoverIsBestEffort:
@@ -192,11 +193,19 @@ class TestAnEditWritesTheModelsOwnFile:
         svc.update_config("found", {"config": {"ctx_size": None}})
         assert not (store / "model.heylook.toml").exists()
 
-    def test_reading_does_not_write(self, tmp_path, store, monkeypatch):
-        """Browsing the models page must not write anything."""
+    # Browsing the models page must not write anything. The two rows were
+    # copies in two classes whose models.toml differed only by a trailing
+    # newline; both spellings stay.
+    @pytest.mark.parametrize("trailing", [
+        pytest.param("\n", id="reading_does_not_write"),
+        pytest.param("", id="listing_does_not_write"),
+    ])
+    def test_reading_writes_nothing(self, tmp_path, store, monkeypatch, trailing):
         blob = store / "found.gguf"
         blob.write_text("x")
-        svc, cfg = self._service(tmp_path, store)
+        cfg = tmp_path / "models.toml"
+        cfg.write_text(f'[scan]\nfolders = ["{store}"]{trailing}')
+        svc = ModelService(str(cfg))
         self._stub_scan(monkeypatch, [entry("found", blob)])
         before = cfg.read_text()
         svc.list_configs()
@@ -248,18 +257,31 @@ class TestAdminSurfaceSeesDiscovered:
         assert [c.id for c in svc.list_configs()] == []
         assert svc.get_config("found") is None
 
-    def test_listing_does_not_write(self, tmp_path, store, monkeypatch):
-        blob = store / "found.gguf"
-        blob.write_text("x")
-        cfg = tmp_path / "models.toml"
-        svc = self._service(tmp_path, store)
-        self._stub_scan(monkeypatch, [entry("found", blob)])
-        before = cfg.read_text()
+_LONG_PATH_BODY = textwrap.dedent(f'''
+    # why this model is pinned
+    [[models]]
+    id = "keep-me"
+    provider = "mlx"
+    enabled = true
+    [models.config]
+    model_path = "{"weights/" + "d" * 80 + "/model"}"
 
-        svc.list_configs()
-        svc.get_config("found")
+    [scan]
+    folders = ["a"]
+''')
 
-        assert cfg.read_text() == before
+_SHORT_PATH_BODY = textwrap.dedent('''
+    # short paths inline
+    [[models]]
+    id = "a"
+    provider = "mlx"
+    enabled = true
+    [models.config]
+    model_path = "w"
+
+    [scan]
+    folders = ["a"]
+''')
 
 
 @pytest.mark.unit
@@ -294,74 +316,35 @@ class TestScanConfigAccessors:
         with pytest.raises(ValueError, match="0 disables"):
             svc.set_scan_config(scan_interval_seconds=-1)
 
-    def test_comments_elsewhere_survive_a_scan_edit(self, tmp_path):
-        """Editing [scan] must not cost comments on anything it did not touch.
-
-        The model_path is deliberately LONG. tomli_w renders an array-of-
-        tables INLINE when the whole array fits on one line and as [[models]]
-        when it does not, and toml_comments can only carry comments onto the
-        [[models]] form -- it counts sections and bails when they do not match
-        the model count. Real entries carry absolute paths and always take the
-        [[models]] branch; a short-path fixture would test the other one and
-        this assertion would fail for a reason that has nothing to do with
-        [scan]. See test_short_entries_render_inline_and_lose_comments.
-        """
-        long_path = "weights/" + "d" * 80 + "/model"
-        svc, cfg = self._service(tmp_path, textwrap.dedent(f'''
-            # why this model is pinned
-            [[models]]
-            id = "keep-me"
-            provider = "mlx"
-            enabled = true
-            [models.config]
-            model_path = "{long_path}"
-
-            [scan]
-            folders = ["a"]
-        '''))
-        svc.set_scan_config(folders=["a", "b"])
-        assert "# why this model is pinned" in cfg.read_text()
-
-    def test_short_entries_render_inline_and_lose_comments(self, tmp_path, caplog):
-        """A PRE-EXISTING edge, recorded rather than fixed here.
-
-        tomli_w inlines the models array when it fits on one line, so a
-        models.toml with short paths round-trips as `models = [{...}]`, and
-        toml_comments' section count no longer matches -- it degrades to a
-        comment-less write (loudly, by design) rather than refusing. Harmless
-        on a real config, where absolute paths are far past the threshold, but
-        a fresh minimal file silently loses annotations on its first admin
-        write. Pinned so the next reader finds the cause instead of the
-        symptom.
-        """
-        svc, cfg = self._service(tmp_path, textwrap.dedent('''
-            # short paths inline
-            [[models]]
-            id = "a"
-            provider = "mlx"
-            enabled = true
-            [models.config]
-            model_path = "w"
-
-            [scan]
-            folders = ["a"]
-        '''))
+    # A comment survives a [scan] edit only while its anchor is untouched.
+    # - long path: tomli_w renders the models array as [[models]] only when
+    #   it does not fit on one line, and toml_comments can only carry comments
+    #   onto that form (it counts sections and bails on a mismatch). Real
+    #   entries carry absolute paths, so the fixture path is deliberately long.
+    # - short path: a PRE-EXISTING edge, pinned rather than fixed. The array
+    #   renders inline (`models = [{...}]`), the section count no longer
+    #   matches, and the write degrades to comment-less, loudly by design. A
+    #   fresh minimal file loses its annotations on the first admin write.
+    # - a comment on [scan] itself: documented toml_comments behaviour, not a
+    #   bug. Provenance for a value you edit belongs in the repo's rule files.
+    @pytest.mark.parametrize("body, comment, survives, renders_inline", [
+        pytest.param(_LONG_PATH_BODY, "# why this model is pinned", True, False,
+                     id="comments_elsewhere_survive_a_scan_edit"),
+        pytest.param(_SHORT_PATH_BODY, "# short paths inline", False, True,
+                     id="short_entries_render_inline_and_lose_comments"),
+        pytest.param('\n# why this folder\n[scan]\nfolders = ["a"]\n', "# why this folder",
+                     False, False,
+                     id="a_comment_on_scan_itself_is_dropped_when_scan_changes"),
+    ])
+    def test_a_scan_edit_keeps_comments_only_on_untouched_anchors(
+            self, tmp_path, caplog, body, comment, survives, renders_inline):
+        svc, cfg = self._service(tmp_path, body)
         svc.set_scan_config(folders=["a", "b"])
         text = cfg.read_text()
-        assert "models = [" in text and "[[models]]" not in text
-        assert "# short paths inline" not in text
-        assert "Comment carry-forward failed" in caplog.text
-
-    def test_a_comment_on_scan_itself_is_dropped_when_scan_changes(self, tmp_path):
-        """Documented toml_comments behaviour, pinned so it is not mistaken
-        for a bug: a comment survives only while its ANCHOR is unchanged, so
-        annotating the folder list means losing the note the next time you
-        edit the folder list. Provenance for a value you edit belongs in
-        the repo's rule files, not beside the value."""
-        svc, cfg = self._service(
-            tmp_path, '\n# why this folder\n[scan]\nfolders = ["a"]\n')
-        svc.set_scan_config(folders=["a", "b"])
-        assert "# why this folder" not in cfg.read_text()
+        assert (comment in text) is survives
+        if renders_inline:
+            assert "models = [" in text and "[[models]]" not in text
+            assert "Comment carry-forward failed" in caplog.text
 
 
 @pytest.mark.unit

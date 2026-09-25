@@ -25,34 +25,31 @@ class TestImportWizardChatTemplateDetection:
             (tmp_path / "chat_template.jinja").write_text("{{ messages }}")
         return tmp_path
 
-    def test_jinja_in_folder_is_not_materialized(self, tmp_path):
-        model_dir = tmp_path / "some-model"
+    # An imported MLX entry carries only model_path + operator intent: no
+    # chat_template_source (whether or not a jinja sits in the folder), no
+    # modalities/vision (the config validator detects at load), no auto
+    # description/tags.
+    @pytest.mark.parametrize("dirname, config, with_jinja", [
+        pytest.param("some-model", {"model_type": "llama"}, True,
+                     id="jinja_in_folder_is_not_materialized"),
+        pytest.param("some-vision-model", {"model_type": "gemma4", "vision_config": {}}, False,
+                     id="mlx_entry_is_thin"),
+        pytest.param("some-model", {"model_type": "llama"}, False,
+                     id="no_jinja_in_folder_leaves_source_unset"),
+    ])
+    def test_imported_mlx_entry_is_thin(self, tmp_path, dirname, config, with_jinja):
+        model_dir = tmp_path / dirname
         model_dir.mkdir()
-        self._make_mlx_dir(model_dir, with_jinja=True)
-        importer = ModelImporter()
-
-        models = importer.scan_directory(str(tmp_path))
-
-        assert len(models) == 1
-        assert "chat_template_source" not in models[0]["config"]
-
-    def test_mlx_entry_is_thin(self, tmp_path):
-        """Derive-at-load: an imported MLX entry materializes NO derived
-        metadata -- no modalities/vision (config validator detects at load),
-        no auto description/tags. Only path + operator intent."""
-        model_dir = tmp_path / "some-vision-model"
-        model_dir.mkdir()
-        import json as _json
-        (model_dir / "config.json").write_text(
-            _json.dumps({"model_type": "gemma4", "vision_config": {}}))
+        (model_dir / "config.json").write_text(json.dumps(config))
         (model_dir / "model.safetensors").write_bytes(b"\x00" * 64)
-        importer = ModelImporter()
+        if with_jinja:
+            (model_dir / "chat_template.jinja").write_text("{{ messages }}")
 
-        models = importer.scan_directory(str(tmp_path))
+        models = ModelImporter().scan_directory(str(tmp_path))
 
         assert len(models) == 1
         entry = models[0]
-        for key in ("modalities", "vision"):
+        for key in ("chat_template_source", "modalities", "vision"):
             assert key not in entry["config"], key
         for key in ("description", "tags"):
             assert key not in entry, key
@@ -77,14 +74,3 @@ class TestImportWizardChatTemplateDetection:
         models = ModelImporter().scan_directory(str(tmp_path))
 
         assert [m["id"] for m in models] == ["chat"]
-
-    def test_no_jinja_in_folder_leaves_source_unset(self, tmp_path):
-        model_dir = tmp_path / "some-model"
-        model_dir.mkdir()
-        self._make_mlx_dir(model_dir, with_jinja=False)
-        importer = ModelImporter()
-
-        models = importer.scan_directory(str(tmp_path))
-
-        assert len(models) == 1
-        assert "chat_template_source" not in models[0]["config"]

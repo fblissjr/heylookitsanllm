@@ -66,21 +66,23 @@ def _caps_and_guard(model_dir, **config_overrides):
 @pytest.mark.unit
 class TestVisionCapabilityMatchesTheProviderGuard:
 
-    def test_a_text_checkpoint_reports_no_vision(self, tmp_path):
-        caps, is_vlm = _caps_and_guard(_model_dir(tmp_path, vision=False))
-        assert "vision" not in caps
-        assert is_vlm is False
-
-    @pytest.mark.parametrize("vision", [True, False])
-    def test_the_two_surfaces_agree_on_every_combination(self, tmp_path, vision):
+    @pytest.mark.parametrize(
+        "vision, answer",
+        [(False, False), (True, None), (False, None)],
+        ids=["text-checkpoint-reports-no-vision", "vision-declared", "no-vision-declared"],
+    )
+    def test_the_two_surfaces_agree_on_every_combination(self, tmp_path, vision, answer):
         """The invariant, stated as the equality rather than as six expected
         answers: whatever the router decides, the advertised capability and the
         guard say the same thing. A future change to the routing rule moves both
         or fails here -- which is the property, since either surface alone can be
-        "correct" while the pair is a lie to the client.
+        "correct" while the pair is a lie to the client. The first row also pins
+        the answer for a text checkpoint (no vision, and not a VLM).
         """
         caps, is_vlm = _caps_and_guard(_model_dir(tmp_path, vision=vision))
         assert ("vision" in caps) is is_vlm
+        if answer is not None:
+            assert is_vlm is answer
 
     def test_an_explicit_capabilities_override_still_wins(self, tmp_path):
         """The override is documented as short-circuiting inference entirely,

@@ -19,6 +19,7 @@ from heylook_llm.config import (
     EFFECT_LOAD_TIME_ONLY,
     PROVIDER_CONFIG_CLASSES,
     configurable_fields,
+    field_effect,
     fields_by_effect,
 )
 
@@ -26,54 +27,44 @@ PROVIDERS = sorted(PROVIDER_CONFIG_CLASSES)
 
 
 @pytest.mark.parametrize("provider", PROVIDERS)
-def test_every_settable_field_is_offered(provider):
-    """A field the config accepts but the schema omits is a default the user
-    cannot set through the UI -- invisible, and the reason nobody would know
-    the knob exists."""
+def test_every_offered_field_is_settable_typed_and_classified(provider):
+    """One pass over every offered field, per provider:
+
+    - offered == configurable_fields: a field the config accepts but the
+      schema omits is a default the user cannot set through the UI --
+      invisible, and the reason nobody would know the knob exists.
+    - `model_path` is never offered: it is what makes an entry the model it
+      is; editing it in a 'defaults' form would silently repoint the entry at
+      other weights.
+    - a valid effect, and the one the field declares: effect is what the UI
+      keys its affordance off. A null, unknown or mis-relayed effect leaves
+      the client guessing, and guessing wrong means telling someone a change
+      took effect when the process kept the old value. (Every gguf field with
+      an argv `arg` is requires_reload by
+      test_config_effects_adversarial.py::test_any_field_with_an_arg_spelling_requires_a_reload.)
+    - a renderable type: without one the client cannot pick a control.
+    - `load_time_only` explains itself: it renders DISABLED, and a disabled
+      control with no reason is just a dead input. It is also the one thing
+      the class genuinely cannot imply: max_queue_depth is fixed because it is
+      process-wide, `port` for a completely unrelated reason.
+    """
     cls = PROVIDER_CONFIG_CLASSES[provider]
-    offered = {f["name"] for f in _field_options(cls)}
+    options = _field_options(cls)
+    offered = {f["name"] for f in options}
     assert offered == configurable_fields(cls)
+    assert "model_path" not in offered
 
-
-@pytest.mark.parametrize("provider", PROVIDERS)
-def test_identity_is_never_offered(provider):
-    """`model_path` is what makes an entry the model it is; editing it in a
-    'defaults' form would silently repoint the entry at other weights."""
-    assert "model_path" not in {
-        f["name"] for f in _field_options(PROVIDER_CONFIG_CLASSES[provider])
-    }
-
-
-@pytest.mark.parametrize("provider", PROVIDERS)
-def test_every_field_carries_a_valid_effect(provider):
-    """Effect is what the UI keys its affordance off. A field arriving with a
-    null or unknown effect leaves the client guessing, and guessing wrong here
-    means telling someone a change took effect when the process kept the old
-    value."""
-    for f in _field_options(PROVIDER_CONFIG_CLASSES[provider]):
+    frozen = fields_by_effect(cls).get(EFFECT_LOAD_TIME_ONLY, frozenset())
+    for f in options:
         assert f["effect"] in EFFECT_CLASSES, (
             f"{provider}.{f['name']} has effect={f['effect']!r}"
         )
-
-
-@pytest.mark.parametrize("provider", PROVIDERS)
-def test_every_field_has_a_renderable_type(provider):
-    """Without a type the client cannot pick a control."""
-    for f in _field_options(PROVIDER_CONFIG_CLASSES[provider]):
+        assert f["effect"] == field_effect(cls.model_fields[f["name"]]), (
+            f"{provider}.{f['name']}: the route relays a different effect than declared"
+        )
         assert f["type"] in {"integer", "number", "string", "boolean", "array", "object"}, (
             f"{provider}.{f['name']} has type={f['type']!r}"
         )
-
-
-@pytest.mark.parametrize("provider", PROVIDERS)
-def test_load_time_only_fields_explain_themselves(provider):
-    """`load_time_only` renders DISABLED, and a disabled control with no reason
-    is just a dead input. It is also the one thing the class genuinely cannot
-    imply: max_queue_depth is fixed because it is process-wide, `port` for a
-    completely unrelated reason."""
-    cls = PROVIDER_CONFIG_CLASSES[provider]
-    frozen = fields_by_effect(cls).get(EFFECT_LOAD_TIME_ONLY, frozenset())
-    for f in _field_options(cls):
         if f["name"] in frozen:
             assert f.get("reason"), (
                 f"{provider}.{f['name']} is load_time_only with no `reason`"
@@ -107,12 +98,3 @@ def test_bare_flags_are_marked_as_such():
     gguf = {f["name"]: f for f in _field_options(PROVIDER_CONFIG_CLASSES["gguf"])}
     assert gguf["cpu_moe"]["shape"] == "flag"
     assert gguf["cpu_moe"]["type"] == "boolean"
-
-
-def test_the_newly_exposed_perf_levers_are_present():
-    """spec_draft_p_min is the difference between +1% and +15.7% on gemma-4 12B
-    and was unreachable before; the offload set is the KV-headroom escape."""
-    gguf = {f["name"]: f for f in _field_options(PROVIDER_CONFIG_CLASSES["gguf"])}
-    for name in ("spec_draft_p_min", "n_cpu_moe", "cpu_moe", "override_tensor"):
-        assert name in gguf
-        assert gguf[name]["effect"] == "requires_reload"

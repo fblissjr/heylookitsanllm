@@ -24,42 +24,54 @@ def _checkpoint(tmp_path, config: dict):
     return str(tmp_path)
 
 
-class TestMlxContextLength:
-    def test_top_level_max_position_embeddings(self, tmp_path):
-        assert _mlx_context_length(_checkpoint(tmp_path, {"max_position_embeddings": 40960})) == 40960
-
-    def test_nested_text_config_when_the_top_level_is_silent(self, tmp_path):
-        cfg = {"model_type": "gemma4", "text_config": {"max_position_embeddings": 131072}}
-        assert _mlx_context_length(_checkpoint(tmp_path, cfg)) == 131072
-
-    def test_top_level_wins_over_nested(self, tmp_path):
-        cfg = {"max_position_embeddings": 8192, "text_config": {"max_position_embeddings": 4096}}
-        assert _mlx_context_length(_checkpoint(tmp_path, cfg)) == 8192
-
-    def test_alias_keys(self, tmp_path):
-        assert _mlx_context_length(_checkpoint(tmp_path, {"max_seq_len": 2048})) == 2048
-
-    def test_none_when_the_files_do_not_say(self, tmp_path):
-        assert _mlx_context_length(_checkpoint(tmp_path, {"model_type": "x"})) is None
-        assert _mlx_context_length(str(tmp_path / "missing")) is None
-        (tmp_path / "bad").mkdir()
-        (tmp_path / "bad" / "config.json").write_text("{not json")
-        assert _mlx_context_length(str(tmp_path / "bad")) is None
-
-    def test_non_positive_values_are_not_a_context(self, tmp_path):
-        assert _mlx_context_length(_checkpoint(tmp_path, {"max_position_embeddings": 0})) is None
+_MISSING = object()  # a model dir that does not exist
+_BAD_JSON = object()  # a config.json that does not parse
 
 
-class TestModelContextLength:
-    def test_mlx_routes_to_config_json(self, tmp_path):
-        assert model_context_length("mlx", _checkpoint(tmp_path, {"max_position_embeddings": 32768})) == 32768
+def _files(tmp_path, spec):
+    """A model path from a row's spec: a dict is config.json, `_MISSING` a
+    directory that is not there, `_BAD_JSON` an unparseable config.json."""
+    if spec is _MISSING:
+        return str(tmp_path / "missing")
+    if spec is _BAD_JSON:
+        (tmp_path / "config.json").write_text("{not json")
+        return str(tmp_path)
+    return _checkpoint(tmp_path, spec)
 
-    def test_gguf_unreadable_header_is_none(self, tmp_path):
-        assert model_context_length("gguf", str(tmp_path / "nope.gguf")) is None
 
-    def test_no_path_is_none(self):
-        assert model_context_length("mlx", None) is None
-        assert model_context_length("mlx", "") is None
+# MLX config.json context: top-level beats the nested text_config a VLM
+# wrapper puts the language head in, alias keys count, and None (never a
+# guess) when the files do not say, are missing or unparseable, or the value
+# is not positive.
+@pytest.mark.parametrize("spec, expected", [
+    ({"max_position_embeddings": 40960}, 40960),
+    ({"model_type": "gemma4", "text_config": {"max_position_embeddings": 131072}}, 131072),
+    ({"max_position_embeddings": 8192, "text_config": {"max_position_embeddings": 4096}}, 8192),
+    ({"max_seq_len": 2048}, 2048),
+    ({"model_type": "x"}, None),
+    (_MISSING, None),
+    (_BAD_JSON, None),
+    ({"max_position_embeddings": 0}, None),
+], ids=["top_level", "nested_text_config_when_top_level_silent", "top_level_wins_over_nested",
+        "alias_key", "files_do_not_say", "missing_dir", "bad_json", "non_positive_is_not_a_context"])
+def test_mlx_context_length_from_config_json(tmp_path, spec, expected):
+    assert _mlx_context_length(_files(tmp_path, spec)) == expected
+
+
+# model_context_length routes by provider: mlx reads config.json, an
+# unreadable gguf header is None, no path is None.
+@pytest.mark.parametrize("provider, path, expected", [
+    ("mlx", {"max_position_embeddings": 32768}, 32768),
+    ("gguf", "nope.gguf", None),
+    ("mlx", None, None),
+    ("mlx", "", None),
+], ids=["mlx_routes_to_config_json", "gguf_unreadable_header", "no_path_none", "no_path_empty"])
+def test_model_context_length_routing(tmp_path, provider, path, expected):
+    if isinstance(path, dict):
+        path = _checkpoint(tmp_path, path)
+    elif path:
+        path = str(tmp_path / path)
+    assert model_context_length(provider, path) == expected
 
 
 class TestContextLengthOverride:
@@ -68,21 +80,16 @@ class TestContextLengthOverride:
     the factor in rope_scaling, so the file alone would refuse a prompt the
     model takes. Absent = the file value; non-positive is not a window."""
 
-    def test_override_wins_over_config_json(self, tmp_path):
-        path = _checkpoint(tmp_path, {"max_position_embeddings": 32768})
-        assert model_context_length("mlx", path, override=131072) == 131072
-
-    def test_override_answers_even_when_the_files_do_not(self, tmp_path):
-        assert model_context_length("mlx", str(tmp_path / "missing"), override=8192) == 8192
-
-    def test_absent_override_is_the_file_value(self, tmp_path):
-        path = _checkpoint(tmp_path, {"max_position_embeddings": 32768})
-        assert model_context_length("mlx", path, override=None) == 32768
-
-    def test_non_positive_or_bool_override_is_ignored(self, tmp_path):
-        path = _checkpoint(tmp_path, {"max_position_embeddings": 32768})
-        assert model_context_length("mlx", path, override=0) == 32768
-        assert model_context_length("mlx", path, override=True) == 32768
+    @pytest.mark.parametrize("spec, override, expected", [
+        ({"max_position_embeddings": 32768}, 131072, 131072),
+        (_MISSING, 8192, 8192),
+        ({"max_position_embeddings": 32768}, None, 32768),
+        ({"max_position_embeddings": 32768}, 0, 32768),
+        ({"max_position_embeddings": 32768}, True, 32768),
+    ], ids=["override_wins_over_config_json", "override_answers_when_files_do_not",
+            "absent_override_is_file_value", "zero_override_ignored", "bool_override_ignored"])
+    def test_override_against_the_file(self, tmp_path, spec, override, expected):
+        assert model_context_length("mlx", _files(tmp_path, spec), override=override) == expected
 
     def test_config_field_rejects_a_non_positive_window(self):
         from pydantic import ValidationError

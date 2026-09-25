@@ -81,65 +81,34 @@ class TestThePayloadAndItsModelAgreeBothWays:
             "they should not be declared"
         )
 
-    def test_an_undeclared_key_is_dropped_and_logged(self, caplog, monkeypatch):
-        """Degrading silently would be the failure this exists to end.
-
-        The drop keeps the wire correct; the log is the only thing that tells
-        anyone. It goes through ordinary `logging` on purpose -- the JSONL
-        spine is off by default and would have swallowed it.
-        """
-        real = PerformanceInfo.model_fields
-        monkeypatch.setattr(
-            PerformanceInfo, "model_fields",
-            {k: v for k, v in real.items() if k != "queue_wait_ms"},
-        )
+    # An undeclared key is dropped (the wire stays correct) and logged at
+    # ERROR: degrading silently would be the failure this exists to end, and
+    # the log is the only thing that tells anyone. It goes through ordinary
+    # `logging` on purpose -- the JSONL spine is off by default and would
+    # have swallowed it. A clean payload logs nothing: an error path that
+    # fires on every normal generation is a log nobody reads.
+    @pytest.mark.parametrize("undeclared", ["queue_wait_ms", None],
+                             ids=["undeclared_key_dropped_and_logged", "clean_payload_logs_nothing"])
+    def test_undeclared_keys_are_dropped_with_an_error_log(self, caplog, monkeypatch, undeclared):
+        if undeclared:
+            real = PerformanceInfo.model_fields
+            monkeypatch.setattr(
+                PerformanceInfo, "model_fields",
+                {k: v for k, v in real.items() if k != undeclared},
+            )
         with caplog.at_level("ERROR"):
             perf = build_performance(_fully_measured(), request_duration_ms=1)
-        assert "queue_wait_ms" not in perf, "an undeclared key reached the wire"
-        assert any("queue_wait_ms" in r.getMessage() for r in caplog.records), (
-            "the drop was silent"
-        )
-
-    def test_a_clean_payload_logs_nothing(self, caplog):
-        """An error path that fires on every normal generation is a log nobody
-        reads, which is the same as no log at all."""
-        with caplog.at_level("ERROR"):
-            build_performance(_fully_measured(), request_duration_ms=1)
-        assert not [r for r in caplog.records if "performance" in r.getMessage()]
+        logs = [r.getMessage() for r in caplog.records if "performance" in r.getMessage()]
+        if undeclared:
+            assert undeclared not in perf, "an undeclared key reached the wire"
+            assert any(undeclared in m for m in logs), "the drop was silent"
+        else:
+            assert not logs
 
 
 @pytest.mark.unit
 class TestAbsentMeansUnmeasurable:
     """The contract: present = measured exactly what the name says."""
-
-    def test_an_unmeasured_queue_wait_is_absent(self):
-        """v1.79.58 published this zero; v1.79.59 took it back, on measurement.
-
-        .58 reasoned that "a request that waited no time really did wait zero,
-        so dropping the zero hides a measurement on an idle server". That
-        premise was false. The wait is an elapsed `perf_counter` difference,
-        so an idle gate yields a tiny NONZERO float -- live runs on an idle
-        server reported 0.0044, 0.0037 and 0.0024 ms, never 0.0. The set that
-        emits exactly 0.0 is the unmeasured set and only it: gguf never assigns
-        the field (it bypasses this gate entirely), and an MLX run yielding no
-        chunk loses the tag, which rides the first one.
-
-        So this asserts the ORIGINAL behaviour, restored. The test that stood
-        here asserted the defect, using a bare ChunkTelemetry -- the unmeasured
-        state -- as if it were the idle-server state.
-        """
-        t = ChunkTelemetry()  # never latched: the UNMEASURED state
-        perf = build_performance(t, request_duration_ms=10)
-        assert "queue_wait_ms" not in perf, (
-            "an unmeasured queue wait was published as a measured 0.0 -- on "
-            "gguf that is every single request"
-        )
-
-    def test_a_real_queue_wait_survives(self):
-        t = ChunkTelemetry()
-        t.queue_wait_ms = 0.0044          # what an IDLE gate actually reports
-        perf = build_performance(t, request_duration_ms=10)
-        assert perf["queue_wait_ms"] == 0.0044
 
     def test_the_generation_span_excludes_the_queue_wait(self):
         """Its own description promises "EXCLUDING queue wait and model load".
@@ -159,33 +128,41 @@ class TestAbsentMeansUnmeasurable:
         )
         assert perf["request_duration_ms"] == 35_000, "the wide span keeps it"
 
-    def test_an_unreported_rate_is_absent_not_zero(self):
-        """`prompt_tps` shipped a raw 0.0 non-streaming, indistinguishable
-        from a measured zero -- which reads as an infinitely slow prefill. A
-        rate of exactly zero is not a measurement of anything."""
-        t = ChunkTelemetry()  # prompt_tps defaults to 0.0, never latched
-        perf = build_performance(t, request_duration_ms=10)
-        assert "prompt_tps" not in perf
-        assert "generation_tps" not in perf
-
-    def test_no_rate_is_ever_synthesized(self):
-        """Non-streaming ran `generation_tps` through `headline_tps`, so it
-        produced a plausible figure the engine never measured while the stream
-        omitted it -- one name, two guarantees, indistinguishable on the wire.
-        """
-        t = ChunkTelemetry()
-        t.completion_tokens = 500
-        perf = build_performance(t, request_duration_ms=1000,
-                                 generation_duration_ms=1000)
-        assert "generation_tps" not in perf, (
-            "a rate was synthesized from the duration -- headline_tps belongs "
-            "to the internal perf records, not to this wire"
-        )
-
-    def test_a_span_the_caller_cannot_measure_is_omitted(self):
-        perf = build_performance(_fully_measured(), request_duration_ms=100)
-        assert "generation_duration_ms" not in perf
-        assert "thinking_duration_ms" not in perf
+    # Each performance key is present iff measured.
+    # - unmeasured_queue_wait: v1.79.58 published this zero; v1.79.59 took it
+    #   back, on measurement. The wait is an elapsed perf_counter difference,
+    #   so an idle gate yields a tiny NONZERO float (live idle runs never
+    #   reported 0.0). Exactly 0.0 is the unmeasured set and only it: gguf
+    #   never assigns the field (it bypasses this gate), and an MLX run
+    #   yielding no chunk loses the tag, which rides the first one. On gguf a
+    #   published 0.0 would be every single request.
+    # - real_queue_wait: what an IDLE gate actually reports survives.
+    # - unreported_rate: prompt_tps shipped a raw 0.0 non-streaming,
+    #   indistinguishable from a measured zero (an infinitely slow prefill).
+    # - no_rate_synthesized: non-streaming ran generation_tps through
+    #   headline_tps, a plausible figure the engine never measured while the
+    #   stream omitted it. headline_tps belongs to the internal perf records,
+    #   not to this wire.
+    # - unmeasurable_span: a span the caller cannot measure is omitted.
+    @pytest.mark.parametrize("telemetry, kwargs, present, absent", [
+        (dict(), dict(request_duration_ms=10), {}, ("queue_wait_ms",)),
+        (dict(queue_wait_ms=0.0044), dict(request_duration_ms=10), {"queue_wait_ms": 0.0044}, ()),
+        (dict(), dict(request_duration_ms=10), {}, ("prompt_tps", "generation_tps")),
+        (dict(completion_tokens=500), dict(request_duration_ms=1000, generation_duration_ms=1000),
+         {}, ("generation_tps",)),
+        (None, dict(request_duration_ms=100), {}, ("generation_duration_ms", "thinking_duration_ms")),
+    ], ids=["unmeasured_queue_wait_absent", "real_queue_wait_survives", "unreported_rate_absent_not_zero",
+            "no_rate_synthesized", "unmeasurable_span_omitted"])
+    def test_present_iff_measured(self, telemetry, kwargs, present, absent):
+        if telemetry is None:
+            t = _fully_measured()
+        else:
+            t = ChunkTelemetry()  # never latched: the UNMEASURED state
+            for k, v in telemetry.items():
+                setattr(t, k, v)
+        perf = build_performance(t, **kwargs)
+        assert {k: perf.get(k) for k in present} == present
+        assert not set(absent) & set(perf), f"unmeasured keys published: {set(absent) & set(perf)}"
 
 
 @pytest.mark.unit
@@ -196,16 +173,17 @@ class TestBothRoutesOnTheGrammarUseTheBuilder:
         line = [l for l in sse.splitlines() if l.startswith("data:")][0]
         return json.loads(line[len("data:"):])["performance"]
 
-    def test_message_stop_reports_the_generation_span(self):
-        perf = self._perf()
-        assert "generation_duration_ms" in perf
-        # The translator's clock starts when the stream does, which is AFTER
-        # get_provider -- so it can never be the request span.
-        assert "request_duration_ms" not in perf
-
-    def test_message_stop_reports_the_request_span_when_given_one(self):
+    # The generation span is always reported. The request span only when the
+    # caller gives a start time: the translator's clock starts when the stream
+    # does, which is AFTER get_provider, so it can never be the request span.
+    @pytest.mark.parametrize("started_ago_s", [None, 5], ids=["no_start_time", "given_start_time"])
+    def test_message_stop_spans(self, started_ago_s):
         import time
-        perf = self._perf(request_start_time=time.time() - 5)
-        assert perf["request_duration_ms"] >= 4900
-        assert perf["generation_duration_ms"] < perf["request_duration_ms"]
-
+        kw = {} if started_ago_s is None else {"request_start_time": time.time() - started_ago_s}
+        perf = self._perf(**kw)
+        assert "generation_duration_ms" in perf
+        if started_ago_s is None:
+            assert "request_duration_ms" not in perf
+        else:
+            assert perf["request_duration_ms"] >= started_ago_s * 1000 - 100
+            assert perf["generation_duration_ms"] < perf["request_duration_ms"]

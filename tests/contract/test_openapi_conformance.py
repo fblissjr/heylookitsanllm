@@ -14,30 +14,6 @@ class TestOpenAPISchema:
         """Extract OpenAPI schema from the app."""
         return app.openapi()
 
-    def test_schema_has_info(self, schema):
-        """Schema includes title and version."""
-        assert "info" in schema
-        assert "title" in schema["info"]
-        assert "version" in schema["info"]
-
-    def test_schema_has_paths(self, schema):
-        """Schema has a non-empty paths section."""
-        assert "paths" in schema
-        assert len(schema["paths"]) > 0
-
-    def test_core_endpoints_in_schema(self, schema):
-        """All core API endpoints appear in the schema."""
-        paths = schema["paths"]
-        expected_paths = [
-            "/v1/models",
-            "/v1/messages",
-            "/v1/conversations",
-            "/v1/system/metrics",
-            "/v1/admin/models",
-                ]
-        for path in expected_paths:
-            assert path in paths, f"Missing endpoint in OpenAPI schema: {path}"
-
     def test_every_served_v1_route_is_in_the_schema(self, app, schema):
         """A `/v1` route this app SERVES is documented, and vice versa.
 
@@ -60,6 +36,13 @@ class TestOpenAPISchema:
         schema to itself. That tautology is why nothing caught the planted
         route. Recursing through `original_router` is what actually reaches
         the served set independently of the schema.
+
+        Compared per (path, method), so a documented POST /v1/messages, GET
+        /v1/models or DELETE /v1/requests/{request_id} is the served one; the
+        core endpoints are pinned as present so an emptied app cannot pass as
+        "both sides agree". A route nobody can discover is one nobody uses,
+        and this repo's integration guide points clients at /openapi.json as
+        authoritative.
         """
         from fastapi.routing import APIRoute
         from starlette.routing import Route
@@ -75,28 +58,28 @@ class TestOpenAPISchema:
         # Normalize the path-converter spelling: a route declares
         # `{model_id:path}` where OpenAPI publishes `{model_id}`.
         served = {
-            r.path.replace(":path}", "}")
+            (r.path.replace(":path}", "}"), method.lower())
             for r in walk(app.routes) if r.path.startswith("/v1/")
+            for method in (r.methods or ())
         }
-        published = {p for p in schema["paths"] if p.startswith("/v1/")}
+        published = {
+            (path, method)
+            for path, operations in schema["paths"].items() if path.startswith("/v1/")
+            for method in operations
+        }
         assert served == published, (
             f"served but undocumented: {sorted(served - published)}; "
             f"documented but not served: {sorted(published - served)}"
         )
 
-
-    def test_messages_has_post(self, schema):
-        """POST /v1/messages is documented as the inference route."""
-        endpoint = schema["paths"].get("/v1/messages", {})
-        assert "post" in endpoint
-        post = endpoint["post"]
+        published_paths = {path for path, _ in published}
+        for path in ("/v1/models", "/v1/messages", "/v1/conversations",
+                     "/v1/system/metrics", "/v1/admin/models"):
+            assert path in published_paths, f"Missing endpoint in OpenAPI schema: {path}"
+        # The inference route documents its body and a summary.
+        post = schema["paths"]["/v1/messages"]["post"]
         assert "summary" in post
         assert "requestBody" in post
-
-    def test_models_has_get(self, schema):
-        """GET /v1/models is documented."""
-        endpoint = schema["paths"].get("/v1/models", {})
-        assert "get" in endpoint
 
     def test_schema_has_component_schemas(self, schema):
         """Schema defines component schemas for request/response models."""
@@ -113,10 +96,8 @@ class TestOpenAPISchema:
         # ChatRequest is the INTERNAL request model providers are driven with;
         # since v1.79.66 no route takes it, so it must not be published.
         assert "ChatRequest" not in schemas
-
-    def test_message_request_schema_has_required_fields(self, schema):
-        """MessageCreateRequest schema requires the messages field."""
-        schemas = schema["components"]["schemas"]
-        req = schemas.get("MessageCreateRequest", {})
-        required = req.get("required", [])
-        assert "messages" in required
+        # MessageCreateRequest requires the messages field.
+        assert "messages" in schemas["MessageCreateRequest"].get("required", [])
+        # The document's own envelope: title and version.
+        assert "title" in schema["info"]
+        assert "version" in schema["info"]

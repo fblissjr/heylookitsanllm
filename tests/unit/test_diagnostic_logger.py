@@ -29,33 +29,54 @@ def _read_events(tmp_path):
 
 
 class TestDiagEventDelegates:
-    def test_writes_to_events_stream_with_ts_iso(self, events):
-        dl.diag_event("request_start", request_id="req-1", level="info", model="m")
+    # One diag_event -> one record on the spine. Each row: the call, the keys
+    # the record must carry, and keys it must not have. Every row also checks
+    # the spine's own ts (float) and iso stamp.
+    @pytest.mark.parametrize(
+        "event, kwargs, expected, absent",
+        [
+            # the spine's type/source plus the diag severity and request_id
+            ("request_start", dict(request_id="req-1", level="info", model="m"),
+             {"type": "request_start", "source": "backend", "level": "info",
+              "request_id": "req-1"},
+             ()),
+            # diag fields are flattened onto the record (queryable top-level
+            # keys), never nested under "data"
+            ("request_error", dict(request_id="r", level="error", model="m",
+                                   stage="streaming"),
+             {"model": "m", "stage": "streaming"},
+             ("data",)),
+        ],
+        ids=["writes_to_events_stream_with_ts_iso", "fields_are_flattened_not_nested"],
+    )
+    def test_record_shape(self, events, event, kwargs, expected, absent):
+        dl.diag_event(event, **kwargs)
         (rec,) = _read_events(events)
-        assert rec["type"] == "request_start"
-        assert rec["source"] == "backend"
-        assert rec["level"] == "info"
-        assert rec["request_id"] == "req-1"
+        for key, value in expected.items():
+            assert rec[key] == value, key
+        for key in absent:
+            assert key not in rec
         assert isinstance(rec["ts"], float)
         assert "T" in rec["iso"]
 
-    def test_fields_are_flattened_not_nested(self, events):
-        dl.diag_event("request_error", request_id="r", level="error",
-                      model="m", stage="streaming")
-        (rec,) = _read_events(events)
-        assert rec["model"] == "m"
-        assert rec["stage"] == "streaming"
-        assert "data" not in rec  # flattened top-level, not nested under "data"
-
-    def test_severity_maps_to_verbosity_gate(self, tmp_path):
-        # at minimal: errors/warnings record; info/debug are dropped
-        obs.configure(level="minimal", log_dir=tmp_path)
-        dl.diag_event("err", level="error", a=1)   # kept
-        dl.diag_event("info", level="info", a=2)   # dropped (needs standard)
-        recs = _read_events(tmp_path)
-        assert [r["type"] for r in recs] == ["err"]
-
-    def test_off_suppresses_everything(self, tmp_path):
-        obs.configure(level="off", log_dir=tmp_path)
-        dl.diag_event("err", level="error", a=1)
-        assert not (tmp_path / "events.jsonl").exists()
+    # Severity maps to the spine's verbosity gate. Each row: spine level, the
+    # (type, severity) events emitted, the types that must be recorded. An
+    # empty expectation means the file is never even created.
+    @pytest.mark.parametrize(
+        "spine_level, emitted, recorded",
+        [
+            # at minimal: errors/warnings record; info (needs standard) is dropped
+            ("minimal", [("err", "error"), ("info", "info")], ["err"]),
+            # off suppresses everything, errors included
+            ("off", [("err", "error")], []),
+        ],
+        ids=["severity_maps_to_verbosity_gate", "off_suppresses_everything"],
+    )
+    def test_level_gate(self, tmp_path, spine_level, emitted, recorded):
+        obs.configure(level=spine_level, log_dir=tmp_path)
+        for i, (event, severity) in enumerate(emitted, start=1):
+            dl.diag_event(event, level=severity, a=i)
+        if recorded:
+            assert [r["type"] for r in _read_events(tmp_path)] == recorded
+        else:
+            assert not (tmp_path / "events.jsonl").exists()

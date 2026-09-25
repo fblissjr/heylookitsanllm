@@ -21,111 +21,101 @@ def reconstruct_thinking():
 class TestReconstructThinking:
     """Tests for _reconstruct_thinking() helper."""
 
-    def test_assistant_with_thinking(self, reconstruct_thinking):
-        msg = {"role": "assistant", "content": "hello", "thinking": "I should say hi"}
+    # Exact format: <think>\n{thinking}\n</think>\n{content}. The 'thinking'
+    # key is removed via pop() (so the INPUT dict is mutated), other keys
+    # survive, and multi-line thinking is carried verbatim.
+    @pytest.mark.parametrize(
+        "msg, expected",
+        [
+            ({"role": "assistant", "content": "reply", "thinking": "reason"},
+             {"role": "assistant", "content": "<think>\nreason\n</think>\nreply"}),
+            ({"role": "assistant", "content": "hello", "thinking": "I should say hi"},
+             {"role": "assistant", "content": "<think>\nI should say hi\n</think>\nhello"}),
+            ({"role": "assistant", "content": "answer", "thinking": "let me think"},
+             {"role": "assistant", "content": "<think>\nlet me think\n</think>\nanswer"}),
+            ({"role": "assistant", "content": "42",
+              "thinking": "Step 1: analyze\nStep 2: compute\nStep 3: conclude"},
+             {"role": "assistant", "content":
+              "<think>\nStep 1: analyze\nStep 2: compute\nStep 3: conclude\n</think>\n42"}),
+            ({"role": "assistant", "content": "hi", "thinking": "r", "name": "bot"},
+             {"role": "assistant", "content": "<think>\nr\n</think>\nhi", "name": "bot"}),
+            ({"role": "assistant", "content": "hi", "thinking": "reason"},
+             {"role": "assistant", "content": "<think>\nreason\n</think>\nhi"}),
+        ],
+        ids=[
+            "format", "assistant-with-thinking", "prepended-before-content",
+            "multiline", "preserves-other-keys", "mutates-input-dict",
+        ],
+    )
+    def test_thinking_format(self, reconstruct_thinking, msg, expected):
         result = reconstruct_thinking(msg)
-        assert "<think>" in result["content"]
-        assert "I should say hi" in result["content"]
-        assert "thinking" not in result  # key removed via pop()
-
-    def test_thinking_prepended_before_content(self, reconstruct_thinking):
-        msg = {"role": "assistant", "content": "answer", "thinking": "let me think"}
-        result = reconstruct_thinking(msg)
-        assert result["content"].startswith("<think>")
-        assert result["content"].endswith("answer")
-        assert "let me think" in result["content"]
-
-    def test_thinking_format(self, reconstruct_thinking):
-        """Verify exact format: <think>\n{thinking}\n</think>\n{content}"""
-        msg = {"role": "assistant", "content": "reply", "thinking": "reason"}
-        result = reconstruct_thinking(msg)
-        assert result["content"] == "<think>\nreason\n</think>\nreply"
-
-    def test_user_message_thinking_ignored(self, reconstruct_thinking):
-        msg = {"role": "user", "content": "hi", "thinking": "something"}
-        result = reconstruct_thinking(msg)
-        assert "<think>" not in result["content"]
-        assert result["content"] == "hi"
-
-    def test_system_message_thinking_ignored(self, reconstruct_thinking):
-        msg = {"role": "system", "content": "You are helpful.", "thinking": "something"}
-        result = reconstruct_thinking(msg)
-        assert "<think>" not in result["content"]
-
-    def test_none_thinking(self, reconstruct_thinking):
-        msg = {"role": "assistant", "content": "hello", "thinking": None}
-        result = reconstruct_thinking(msg)
-        assert result["content"] == "hello"
-        assert "thinking" not in result  # None gets popped
-
-    def test_empty_thinking(self, reconstruct_thinking):
-        msg = {"role": "assistant", "content": "hello", "thinking": ""}
-        result = reconstruct_thinking(msg)
-        assert result["content"] == "hello"
-        assert "thinking" not in result  # empty string is falsy
-
-    def test_no_thinking_key(self, reconstruct_thinking):
-        msg = {"role": "assistant", "content": "hello"}
-        result = reconstruct_thinking(msg)
-        assert result["content"] == "hello"
-
-    def test_mutates_input_dict(self, reconstruct_thinking):
-        """_reconstruct_thinking uses pop() so it mutates the dict."""
-        msg = {"role": "assistant", "content": "hi", "thinking": "reason"}
-        reconstruct_thinking(msg)
+        assert result == expected
         assert "thinking" not in msg
 
-    def test_preserves_other_keys(self, reconstruct_thinking):
-        msg = {"role": "assistant", "content": "hi", "thinking": "r", "name": "bot"}
-        result = reconstruct_thinking(msg)
-        assert result["name"] == "bot"
-        assert result["role"] == "assistant"
-
-    def test_multiline_thinking(self, reconstruct_thinking):
-        thinking_text = "Step 1: analyze\nStep 2: compute\nStep 3: conclude"
-        msg = {"role": "assistant", "content": "42", "thinking": thinking_text}
-        result = reconstruct_thinking(msg)
-        assert "Step 1: analyze" in result["content"]
-        assert "Step 3: conclude" in result["content"]
+    # Non-assistant roles, and None / empty / missing thinking: content is
+    # unchanged and the key is still popped.
+    @pytest.mark.parametrize(
+        "msg, expected",
+        [
+            ({"role": "user", "content": "hi", "thinking": "something"},
+             {"role": "user", "content": "hi"}),
+            ({"role": "system", "content": "You are helpful.", "thinking": "something"},
+             {"role": "system", "content": "You are helpful."}),
+            ({"role": "assistant", "content": "hello", "thinking": None},
+             {"role": "assistant", "content": "hello"}),
+            ({"role": "assistant", "content": "hello", "thinking": ""},
+             {"role": "assistant", "content": "hello"}),
+            ({"role": "assistant", "content": "hello"},
+             {"role": "assistant", "content": "hello"}),
+        ],
+        ids=["user-ignored", "system-ignored", "none-thinking", "empty-thinking",
+             "no-thinking-key"],
+    )
+    def test_content_unchanged_without_assistant_thinking(
+        self, reconstruct_thinking, msg, expected
+    ):
+        assert reconstruct_thinking(msg) == expected
 
 
 @pytest.mark.unit
 class TestThinkingForTemplate:
     """v1.79.63: prior thinking goes to the template the way THAT template
-    takes it. Three branches, and the None case keeps the old behaviour."""
+    takes it. Three branches, and the None case keeps the old behaviour.
 
-    def _info(self, **kw):
+    A family with neither (gemma-4 before its template read
+    reasoning_content, or any plain template) drops it: <think> text the
+    model never emits is noise, not history. Non-assistant thinking is
+    dropped everywhere."""
+
+    @pytest.mark.parametrize(
+        "msg, info, expected",
+        [
+            ({"role": "assistant", "content": "a", "thinking": "t"},
+             dict(reads_reasoning_content=True, has_thinking_markers=True),
+             {"role": "assistant", "content": "a", "reasoning_content": "t"}),
+            ({"role": "assistant", "content": "a", "thinking": "t"},
+             dict(has_thinking_markers=True),
+             {"role": "assistant", "content": "<think>\nt\n</think>\na"}),
+            ({"role": "assistant", "content": "a", "thinking": "t"}, {},
+             {"role": "assistant", "content": "a"}),
+            ({"role": "assistant", "content": "a", "thinking": "t"}, None,
+             {"role": "assistant", "content": "<think>\nt\n</think>\na"}),
+            ({"role": "user", "content": "q", "thinking": "t"},
+             dict(reads_reasoning_content=True),
+             {"role": "user", "content": "q"}),
+        ],
+        ids=[
+            "reads-reasoning-content-gets-the-key", "markers-get-tags-reconstructed",
+            "neither-drops-it", "none-keeps-legacy-reconstruction",
+            "non-assistant-dropped-everywhere",
+        ],
+    )
+    def test_thinking_for_template(self, msg, info, expected):
         from types import SimpleNamespace
-        base = dict(has_thinking_markers=False, reads_reasoning_content=False)
-        base.update(kw)
-        return SimpleNamespace(**base)
 
-    def test_template_that_reads_reasoning_content_gets_the_key(self):
         from heylook_llm.providers.common.vlm_inputs import thinking_for_template
-        out = thinking_for_template({"role": "assistant", "content": "a", "thinking": "t"},
-                                    self._info(reads_reasoning_content=True, has_thinking_markers=True))
-        assert out == {"role": "assistant", "content": "a", "reasoning_content": "t"}
 
-    def test_marker_template_without_the_key_gets_tags_reconstructed(self):
-        from heylook_llm.providers.common.vlm_inputs import thinking_for_template
-        out = thinking_for_template({"role": "assistant", "content": "a", "thinking": "t"},
-                                    self._info(has_thinking_markers=True))
-        assert out["content"] == "<think>\nt\n</think>\na" and "thinking" not in out
-
-    def test_family_with_neither_drops_it(self):
-        # gemma-4 before its template read reasoning_content, or any plain
-        # template: <think> text the model never emits is noise, not history.
-        from heylook_llm.providers.common.vlm_inputs import thinking_for_template
-        out = thinking_for_template({"role": "assistant", "content": "a", "thinking": "t"}, self._info())
-        assert out == {"role": "assistant", "content": "a"}
-
-    def test_none_keeps_the_legacy_reconstruction(self):
-        from heylook_llm.providers.common.vlm_inputs import thinking_for_template
-        out = thinking_for_template({"role": "assistant", "content": "a", "thinking": "t"}, None)
-        assert out["content"].startswith("<think>")
-
-    def test_non_assistant_thinking_is_dropped_everywhere(self):
-        from heylook_llm.providers.common.vlm_inputs import thinking_for_template
-        out = thinking_for_template({"role": "user", "content": "q", "thinking": "t"},
-                                    self._info(reads_reasoning_content=True))
-        assert out == {"role": "user", "content": "q"}
+        if info is not None:
+            info = SimpleNamespace(**{
+                "has_thinking_markers": False, "reads_reasoning_content": False, **info})
+        assert thinking_for_template(msg, info) == expected

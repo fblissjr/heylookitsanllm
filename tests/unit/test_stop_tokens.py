@@ -38,13 +38,12 @@ class TestExtendEosFromGenerationConfig:
         extend_eos_from_generation_config(tok, tmp_path)
         assert resolve_stop_tokens(tok) == {1, 2, 106}
 
-    def test_missing_file_is_noop(self, tmp_path):
-        tok = self._tok(eos_token_id=1)
-        extend_eos_from_generation_config(tok, tmp_path)
-        assert resolve_stop_tokens(tok) == {1}
-
-    def test_malformed_file_never_raises(self, tmp_path):
-        (tmp_path / "generation_config.json").write_text("{not json")
+    @pytest.mark.parametrize(
+        "body", [None, "{not json"], ids=["missing-file-is-noop", "malformed-never-raises"],
+    )
+    def test_no_usable_generation_config_leaves_the_set(self, tmp_path, body):
+        if body is not None:
+            (tmp_path / "generation_config.json").write_text(body)
         tok = self._tok(eos_token_id=1)
         extend_eos_from_generation_config(tok, tmp_path)
         assert resolve_stop_tokens(tok) == {1}
@@ -79,48 +78,31 @@ class _SetattrGuardedTokenizer:
 
 @pytest.mark.unit
 class TestResolveStopTokens:
-    def test_plural_eos_token_ids(self):
-        """eos_token_ids (plural) takes priority."""
-        tok = MagicMock()
-        tok.eos_token_ids = [1, 2, 3]
-        tok.eos_token_id = 1
-        assert resolve_stop_tokens(tok) == {1, 2, 3}
+    """eos_token_ids (plural) takes priority; a None or empty plural falls
+    back to eos_token_id (singular); id 0 is valid, not falsy; neither
+    attribute gives an empty set. Always a set. ``spec=[]`` builds a
+    tokenizer that has only the attributes the row sets."""
 
-    def test_singular_eos_token_id(self):
-        """Falls back to eos_token_id (singular) when plural is absent."""
-        tok = MagicMock(spec=[])
-        tok.eos_token_id = 42
-        result = resolve_stop_tokens(tok)
-        assert result == {42}
-
-    def test_none_eos_token_ids_falls_back(self):
-        """When eos_token_ids is None, falls back to eos_token_id."""
-        tok = MagicMock()
-        tok.eos_token_ids = None
-        tok.eos_token_id = 7
-        assert resolve_stop_tokens(tok) == {7}
-
-    def test_empty_eos_token_ids_falls_back(self):
-        """When eos_token_ids is empty, falls back to eos_token_id."""
-        tok = MagicMock()
-        tok.eos_token_ids = []
-        tok.eos_token_id = 5
-        assert resolve_stop_tokens(tok) == {5}
-
-    def test_no_eos_attrs_returns_empty(self):
-        """Returns empty set if tokenizer has neither attribute."""
-        tok = MagicMock(spec=[])
-        assert resolve_stop_tokens(tok) == set()
-
-    def test_returns_set_type(self):
-        """Always returns a set."""
-        tok = MagicMock()
-        tok.eos_token_ids = [10]
+    @pytest.mark.parametrize(
+        "bare, attrs, expected",
+        [
+            (False, {"eos_token_ids": [1, 2, 3], "eos_token_id": 1}, {1, 2, 3}),
+            (True, {"eos_token_id": 42}, {42}),
+            (False, {"eos_token_ids": None, "eos_token_id": 7}, {7}),
+            (False, {"eos_token_ids": [], "eos_token_id": 5}, {5}),
+            (True, {}, set()),
+            (False, {"eos_token_ids": [10]}, {10}),
+            (True, {"eos_token_id": 0}, {0}),
+        ],
+        ids=[
+            "plural-wins", "singular", "none-plural-falls-back", "empty-plural-falls-back",
+            "neither-is-empty", "returns-set-type", "zero-is-valid",
+        ],
+    )
+    def test_resolve_stop_tokens(self, bare, attrs, expected):
+        tok = MagicMock(spec=[]) if bare else MagicMock()
+        for name, value in attrs.items():
+            setattr(tok, name, value)
         result = resolve_stop_tokens(tok)
         assert isinstance(result, set)
-
-    def test_eos_token_id_zero_is_valid(self):
-        """eos_token_id=0 should be treated as valid (not falsy)."""
-        tok = MagicMock(spec=[])
-        tok.eos_token_id = 0
-        assert resolve_stop_tokens(tok) == {0}
+        assert result == expected

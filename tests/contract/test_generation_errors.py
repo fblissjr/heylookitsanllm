@@ -121,14 +121,9 @@ def test_streaming_failure_is_error_event_not_content(client, swap_provider):
     assert not any(e == "message_stop" for e, _ in events)
 
 
-def test_streaming_preflight_failure_also_error_event(client, swap_provider):
-    swap_provider(_PreflightFailingProvider(InvalidGenerationRequest(
-        "Model 'test-mlx-model' is text-only and cannot process images.")))
-    events = _events(_stream(client))
-    assert any(e == "error" for e, _ in events), events
-
-
 def test_streaming_client_error_is_typed_invalid_request(client, swap_provider):
+    # Also the pre-generation failure shape: the provider raises before ANY
+    # chunk, and the stream still ends in an error event, never content.
     # /code-review 53b266c finding 2: provider request-validation guards
     # (audio-on-MLX, the continuation guards) fire at first next(), after
     # headers flushed -- a real 400 is impossible, but the in-band event must

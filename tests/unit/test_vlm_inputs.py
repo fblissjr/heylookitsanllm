@@ -11,6 +11,8 @@ Covers:
 
 from unittest.mock import MagicMock
 
+import pytest
+
 
 class FakeContentPart:
     """Mimics ContentPart with .type, .text, .image_url attributes."""
@@ -224,6 +226,17 @@ class TestUpstreamAttributionAssumption:
         assert [markers(m["content"]) for m in built] == [1, 0, 0]
 
 
+_IMAGE_PART = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA"}}
+
+
+def _image_on(role):
+    """A user text turn, then an image-bearing turn from ``role``."""
+    return [
+        {"role": "user", "content": [{"type": "text", "text": "draw a cat"}]},
+        {"role": role, "content": [_IMAGE_PART, {"type": "text", "text": "here it is"}]},
+    ]
+
+
 class TestNonUserImageGuard:
     """An image on a non-user turn must be REFUSED on MLX, not relocated.
 
@@ -234,34 +247,22 @@ class TestNonUserImageGuard:
     plausible-looking request, so the provider refuses and names gguf.
     """
 
-    @staticmethod
-    def _req(role):
-        from heylook_llm.config import ChatRequest
-        return ChatRequest.model_validate({"messages": [
-            {"role": "user", "content": [
-                {"type": "text", "text": "draw a cat"}]},
-            {"role": role, "content": [
-                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA"}},
-                {"type": "text", "text": "here it is"}]},
-        ]})
-
-    def test_assistant_image_is_detected(self, mock_mlx):
-        from heylook_llm.providers.mlx_provider import _non_user_image_roles
-
-        assert _non_user_image_roles(self._req("assistant").messages) == ["assistant"]
-        assert _non_user_image_roles(self._req("system").messages) == ["system"]
-
-    def test_user_image_is_not_flagged(self, mock_mlx):
+    @pytest.mark.parametrize(
+        "cases",
+        [
+            [(_image_on("assistant"), ["assistant"]), (_image_on("system"), ["system"])],
+            [([{"role": "user", "content": [_IMAGE_PART, {"type": "text", "text": "what is this?"}]},
+               {"role": "assistant", "content": "a cat"}], [])],
+        ],
+        ids=["non-user-image-is-detected", "user-image-is-not-flagged"],
+    )
+    def test_flagged_roles(self, mock_mlx, cases):
         from heylook_llm.config import ChatRequest
         from heylook_llm.providers.mlx_provider import _non_user_image_roles
 
-        ok = ChatRequest.model_validate({"messages": [
-            {"role": "user", "content": [
-                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA"}},
-                {"type": "text", "text": "what is this?"}]},
-            {"role": "assistant", "content": "a cat"},
-        ]})
-        assert _non_user_image_roles(ok.messages) == []
+        for messages, flagged in cases:
+            request = ChatRequest.model_validate({"messages": messages})
+            assert _non_user_image_roles(request.messages) == flagged
 
 
 def test_reasoning_content_survives_mlx_vlms_message_rebuild():

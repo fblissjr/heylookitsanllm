@@ -43,13 +43,10 @@ class TestVendorSampling:
             "temperature": 1.0, "top_k": 64, "top_p": 0.95,
         }
 
-    def test_missing_file_is_empty(self, tmp_path):
-        from heylook_llm.samplers import load_vendor_sampling
-
-        assert load_vendor_sampling(str(tmp_path)) == {}
-
-    def test_malformed_json_is_empty(self, tmp_path):
-        (tmp_path / "generation_config.json").write_text("{nope")
+    @pytest.mark.parametrize("body", [None, "{nope"], ids=["missing-file", "malformed-json"])
+    def test_missing_or_malformed_file_is_empty(self, tmp_path, body):
+        if body is not None:
+            (tmp_path / "generation_config.json").write_text(body)
         from heylook_llm.samplers import load_vendor_sampling
 
         assert load_vendor_sampling(str(tmp_path)) == {}
@@ -80,20 +77,26 @@ class TestResolveEffectiveSampling:
         body.update(kw)
         return ChatRequest.model_validate(body)
 
-    def test_floor_only(self):
+    # floor < vendor < model config < request, per key
+    @pytest.mark.parametrize(
+        "request_fields, config, vendor, expected",
+        [
+            ({}, {}, None,
+             {"temperature": GLOBAL_SAMPLER_FLOOR["temperature"],
+              "max_tokens": GLOBAL_SAMPLER_FLOOR["max_tokens"]}),
+            ({}, {}, {"temperature": 1.0, "top_k": 64}, {"temperature": 1.0, "top_k": 64}),
+            ({"enable_thinking": True, "presence_penalty": 0.2, "temperature": 0.9},
+             {"temperature": 0.3}, {"temperature": 1.0},
+             {"temperature": 0.9, "presence_penalty": 0.2}),
+        ],
+        ids=["floor-only", "vendor-overlay-beats-floor", "explicit-request-fields-win"],
+    )
+    def test_layer_order(self, request_fields, config, vendor, expected):
         from heylook_llm.samplers import resolve_effective_sampling
 
-        merged = resolve_effective_sampling(self._req(), {})
-        assert merged["temperature"] == GLOBAL_SAMPLER_FLOOR["temperature"]
-        assert merged["max_tokens"] == GLOBAL_SAMPLER_FLOOR["max_tokens"]
-
-    def test_vendor_overlay_beats_floor(self):
-        from heylook_llm.samplers import resolve_effective_sampling
-
-        merged = resolve_effective_sampling(
-            self._req(), {}, vendor={"temperature": 1.0, "top_k": 64})
-        assert merged["temperature"] == 1.0
-        assert merged["top_k"] == 64
+        merged = resolve_effective_sampling(self._req(**request_fields), config, vendor=vendor)
+        for key, value in expected.items():
+            assert merged[key] == value, key
 
     def test_thinking_resolves_the_switch_and_changes_nothing_else(self):
         """Thinking flips the switch and NO sampler value with it (v2.0.32).
@@ -117,20 +120,6 @@ class TestResolveEffectiveSampling:
         assert {k: v for k, v in on.items() if k != "enable_thinking"} == \
                {k: v for k, v in off.items() if k != "enable_thinking"}
 
-    def test_the_switch_still_resolves_in_the_documented_order(self):
-        from heylook_llm.samplers import resolve_effective_sampling
-
-        # model config sets it
-        assert resolve_effective_sampling(
-            self._req(), {"enable_thinking": True})["enable_thinking"] is True
-        # an explicit request False beats the model config
-        assert resolve_effective_sampling(
-            self._req(enable_thinking=False),
-            {"enable_thinking": True})["enable_thinking"] is False
-        # silent everywhere follows the capability
-        assert resolve_effective_sampling(
-            self._req(), {}, thinking_capable=True)["enable_thinking"] is True
-
     def test_repetition_control_is_still_reachable_per_model(self):
         """Removing the automatic overlay must not remove the ability.
 
@@ -149,17 +138,6 @@ class TestResolveEffectiveSampling:
             self._req(enable_thinking=True), {"presence_penalty": 1.5})
         assert merged["presence_penalty"] == 1.5
 
-    def test_explicit_request_fields_win(self):
-        from heylook_llm.samplers import resolve_effective_sampling
-
-        merged = resolve_effective_sampling(
-            self._req(enable_thinking=True, presence_penalty=0.2, temperature=0.9),
-            {"temperature": 0.3},
-            vendor={"temperature": 1.0},
-        )
-        assert merged["temperature"] == 0.9
-        assert merged["presence_penalty"] == 0.2
-
 
 class TestThinkingDefault:
     """The thinking switch resolves request > models.toml > CAPABILITY
@@ -168,28 +146,32 @@ class TestThinkingDefault:
     was the standing complaint, and the reason for off-by-default (no way
     to send an explicit off) is gone now that the UI can."""
 
-    def _resolve(self, request_value, config, capable):
-        from types import SimpleNamespace
+    @pytest.mark.parametrize(
+        "cases",
+        [
+            # (request enable_thinking, model config, capable, resolved)
+            [(None, {"enable_thinking": True}, False, True),     # model config sets it
+             (False, {"enable_thinking": True}, False, False),   # request False beats config
+             (None, {}, True, True)],                            # silent: capability
+            [(None, {}, True, True), (None, {}, False, False)],
+            [(None, {"enable_thinking": False}, True, False),
+             (None, {"enable_thinking": True}, False, True)],
+            [(False, {"enable_thinking": True}, True, False),
+             (True, {"enable_thinking": False}, False, True)],
+        ],
+        ids=["documented-order", "unset-everywhere-follows-capability",
+             "config-pins-either-way-over-capability", "request-explicit-wins"],
+    )
+    def test_switch_resolution(self, cases):
+        from heylook_llm.config import ChatRequest
         from heylook_llm.samplers import resolve_effective_sampling
-        req = SimpleNamespace(enable_thinking=request_value, sampler=None)
-        return resolve_effective_sampling(req, config, thinking_capable=capable)["enable_thinking"]
 
-    def test_unset_everywhere_follows_capability(self):
-        assert self._resolve(None, {}, capable=True) is True
-        assert self._resolve(None, {}, capable=False) is False
-
-    def test_config_pins_either_way_over_capability(self):
-        assert self._resolve(None, {"enable_thinking": False}, capable=True) is False
-        assert self._resolve(None, {"enable_thinking": True}, capable=False) is True
-
-    def test_request_explicit_false_wins(self):
-        assert self._resolve(False, {"enable_thinking": True}, capable=True) is False
-        assert self._resolve(True, {"enable_thinking": False}, capable=False) is True
-
-    def test_thinking_default_reports_the_same_answer(self):
-        from heylook_llm.samplers import thinking_default
-        assert thinking_default({}, thinking_capable=True) is True
-        assert thinking_default({"enable_thinking": False}, thinking_capable=True) is False
+        for request_value, config, capable, resolved in cases:
+            req = ChatRequest.model_validate({
+                "messages": [{"role": "user", "content": "hi"}],
+                "enable_thinking": request_value})
+            got = resolve_effective_sampling(req, config, thinking_capable=capable)
+            assert got["enable_thinking"] is resolved, (request_value, config, capable)
 
 
 @pytest.mark.unit
@@ -199,47 +181,50 @@ class TestSamplerDefaultsReporting:
     Every check here compares against `resolve_effective_sampling` itself or
     against a layer the cascade owns."""
 
-    def test_it_is_the_cascade_not_a_re_derivation(self):
-        # The strongest available oracle: run the real cascade for an empty
-        # request and demand agreement on every reported key.
+    # The strongest available oracle: run the real cascade for an empty
+    # request and demand agreement on every reported key, over (cfg,
+    # capability, vendor) combos. Each case also pins the reported thinking
+    # value to thinking_default's own answer (one bag since v2.0.33, so the
+    # two cannot disagree by construction), and a row's pins name the value a
+    # layer must produce: temperature/top_p/top_k ARE the vendor keys, and
+    # dropping the vendor argument would report the global floor for every
+    # model whose generation_config.json overrides it -- silently, and
+    # precisely on the models where the number is worth showing. The panel
+    # writes these keys back as request params, so a key no request accepts
+    # would render a control that cannot do anything.
+    @pytest.mark.parametrize(
+        "cases",
+        [
+            [({"temperature": 0.42}, True, {"top_k": 64, "top_p": 0.9}, {})],
+            [({}, False, {"top_k": 64}, {"top_k": 64}),
+             ({}, False, None, {"top_k": GLOBAL_SAMPLER_FLOOR["top_k"]})],
+            [({"temperature": 0.6}, False, {"temperature": 0.7}, {"temperature": 0.6})],
+            [({}, True, None, {}), ({}, False, None, {}),
+             ({"enable_thinking": False}, True, None, {})],
+            [({}, True, None, {"enable_thinking": True}),
+             ({"enable_thinking": False}, True, None, {"enable_thinking": False})],
+            [({}, True, None, {})],
+        ],
+        ids=[
+            "it-is-the-cascade", "vendor-layer-reaches-the-report",
+            "models-toml-beats-vendor", "thinking-value-is-thinking-defaults-answer",
+            "thinking-default-reports-the-same-answer", "keys-are-request-sampler-fields",
+        ],
+    )
+    def test_it_is_the_cascade_not_a_re_derivation(self, cases):
         from heylook_llm.samplers import (REQUEST_SAMPLER_FIELDS, _NoRequest,
-                                          resolve_effective_sampling, sampler_defaults)
-        cfg = {"temperature": 0.42}
-        vendor = {"top_k": 64, "top_p": 0.9}
-        got = sampler_defaults(cfg, thinking_capable=True, vendor=vendor)
-        want = resolve_effective_sampling(
-            _NoRequest(), cfg, vendor, thinking_capable=True)
-        assert got == {k: want[k] for k in REQUEST_SAMPLER_FIELDS if k in want}
+                                          resolve_effective_sampling, sampler_defaults,
+                                          thinking_default)
 
-    def test_the_vendor_layer_reaches_the_report(self):
-        # temperature/top_p/top_k ARE the vendor keys. Dropping the vendor
-        # argument would report the global floor for every model whose
-        # generation_config.json overrides it -- silently, and precisely on
-        # the models where the number is worth showing.
-        from heylook_llm.samplers import GLOBAL_SAMPLER_FLOOR, sampler_defaults
         assert GLOBAL_SAMPLER_FLOOR["top_k"] != 64, "pick a value the floor does not already have"
-        assert sampler_defaults({}, thinking_capable=False, vendor={"top_k": 64})["top_k"] == 64
-        assert sampler_defaults({}, thinking_capable=False)["top_k"] == GLOBAL_SAMPLER_FLOOR["top_k"]
-
-    def test_models_toml_beats_vendor_the_way_the_cascade_orders_them(self):
-        from heylook_llm.samplers import sampler_defaults
-        got = sampler_defaults({"temperature": 0.6}, thinking_capable=False,
-                               vendor={"temperature": 0.7})
-        assert got["temperature"] == 0.6
-
-    def test_the_reported_thinking_value_is_thinking_defaults_own_answer(self):
-        """One bag since v2.0.33, so the two cannot disagree by construction.
-
-        It was `{"off","on"}` while the anti-loop overlay moved a sampler value
-        off the thinking switch; with that gone the halves were identical but
-        for this key, so the shape reported a distinction the cascade no longer
-        made. What replaces the old "both states differ" claim is that the
-        surviving key agrees with the field that owns it.
-        """
-        from heylook_llm.samplers import sampler_defaults, thinking_default
-        for cfg, cap in (({}, True), ({}, False), ({"enable_thinking": False}, True)):
-            assert (sampler_defaults(cfg, thinking_capable=cap)["enable_thinking"]
-                    is thinking_default(cfg, thinking_capable=cap))
+        for cfg, cap, vendor, pins in cases:
+            got = sampler_defaults(cfg, thinking_capable=cap, vendor=vendor)
+            want = resolve_effective_sampling(_NoRequest(), cfg, vendor, thinking_capable=cap)
+            assert got == {k: want[k] for k in REQUEST_SAMPLER_FIELDS if k in want}
+            assert set(got) <= set(REQUEST_SAMPLER_FIELDS)
+            assert got["enable_thinking"] is thinking_default(cfg, thinking_capable=cap)
+            for key, value in pins.items():
+                assert got[key] == value, (cfg, cap, vendor, key)
 
     def test_vendor_layer_reaches_the_report_on_every_engine(self):
         """Each engine's vendor layer must reach the reported defaults.
@@ -278,9 +263,3 @@ class TestSamplerDefaultsReporting:
                 f"generation uses the vendor values"
             )
         capabilities._vendor_sampling_pairs.cache_clear()
-
-    def test_every_reported_key_is_a_request_sampler_field(self):
-        # The panel writes these keys back as request params; a key here that
-        # no request accepts would render a control that cannot do anything.
-        from heylook_llm.samplers import REQUEST_SAMPLER_FIELDS, sampler_defaults
-        assert set(sampler_defaults({}, thinking_capable=True)) <= set(REQUEST_SAMPLER_FIELDS)

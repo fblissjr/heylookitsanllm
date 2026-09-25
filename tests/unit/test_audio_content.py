@@ -33,24 +33,23 @@ def audio_request():
 
 
 class TestSchema:
-    def test_input_audio_part_validates(self):
-        req = audio_request()
-        part = req.messages[0].content[1]
+    # An input_audio part validates to AudioContentPart (format optional:
+    # llama-server sniffs the codec by magic bytes and ignores it) and dumps
+    # back to the exact wire shape.
+    @pytest.mark.parametrize("content, index, fmt", [
+        pytest.param([TEXT_PART, AUDIO_PART], 1, "wav", id="input_audio_part_validates"),
+        pytest.param([{"type": "input_audio", "input_audio": {"data": "AAAA"}}], 0, None,
+                     id="format_optional"),
+        pytest.param([AUDIO_PART], 0, "wav", id="dump_round_trips_wire_shape"),
+    ])
+    def test_input_audio_part_round_trips(self, content, index, fmt):
+        msg = ChatRequest.model_validate(
+            {"messages": [{"role": "user", "content": content}]}).messages[0]
+        part = msg.content[index]
         assert isinstance(part, AudioContentPart)
-        assert part.input_audio.data == "UklGRg=="
-        assert part.input_audio.format == "wav"
-
-    def test_format_optional(self):
-        # llama-server sniffs the codec by magic bytes and ignores `format`.
-        req = ChatRequest.model_validate({
-            "messages": [{"role": "user", "content": [
-                {"type": "input_audio", "input_audio": {"data": "AAAA"}}]}],
-        })
-        assert req.messages[0].content[0].input_audio.format is None
-
-    def test_dump_round_trips_wire_shape(self):
-        dumped = audio_request().messages[0].model_dump(exclude_none=True)
-        assert dumped["content"][1] == AUDIO_PART
+        assert part.input_audio.data == content[index]["input_audio"]["data"]
+        assert part.input_audio.format == fmt
+        assert msg.model_dump(exclude_none=True)["content"][index] == content[index]
 
 
 class TestLlamaPayloadPassthrough:
@@ -87,38 +86,23 @@ class TestMessagesBridge:
 
 
 class TestCapability:
-    def test_gguf_audio_modality_yields_audio_cap(self):
-        from heylook_llm.capabilities import infer_model_capabilities
-
-        mc = ModelConfig.model_validate({
-            "id": "m", "provider": "gguf",
-            "config": {"model_path": "/x.gguf", "mmproj_path": "/mm.gguf",
-                       "modalities": ["text", "vision", "audio"]},
-        })
-        caps = infer_model_capabilities(mc)
-        assert "audio" in caps
-        assert "vision" in caps
-
-    def test_gguf_media_needs_the_projector(self):
+    @pytest.mark.parametrize("provider, config, present, absent", [
+        pytest.param("gguf", {"model_path": "/x.gguf", "mmproj_path": "/mm.gguf",
+                              "modalities": ["text", "vision", "audio"]},
+                     {"audio", "vision"}, set(), id="gguf_audio_modality_yields_audio_cap"),
         # `modalities` is descriptive on gguf; llama.cpp runs no image or
         # audio without an mmproj, so a declaration alone advertises nothing.
-        from heylook_llm.capabilities import infer_model_capabilities
-
-        mc = ModelConfig.model_validate({
-            "id": "m", "provider": "gguf",
-            "config": {"model_path": "/x.gguf", "modalities": ["text", "vision", "audio"]},
-        })
-        caps = infer_model_capabilities(mc)
-        assert "vision" not in caps and "audio" not in caps
-
-    def test_mlx_never_gains_audio_cap_from_modalities(self):
+        pytest.param("gguf", {"model_path": "/x.gguf", "modalities": ["text", "vision", "audio"]},
+                     set(), {"vision", "audio"}, id="gguf_media_needs_the_projector"),
         # MLX strips audio towers at load; advertising audio would invite
         # requests the provider must 400.
-        mc = ModelConfig.model_validate({
-            "id": "m", "provider": "mlx",
-            "config": {"model_path": "/x", "modalities": ["text", "vision", "audio"]},
-        })
-        assert "audio" not in _infer(mc)
+        pytest.param("mlx", {"model_path": "/x", "modalities": ["text", "vision", "audio"]},
+                     set(), {"audio"}, id="mlx_never_gains_audio_cap_from_modalities"),
+    ])
+    def test_media_capabilities(self, provider, config, present, absent):
+        mc = ModelConfig.model_validate({"id": "m", "provider": provider, "config": config})
+        caps = set(_infer(mc))
+        assert present <= caps and not (absent & caps), caps
 
 
 def _infer(mc):

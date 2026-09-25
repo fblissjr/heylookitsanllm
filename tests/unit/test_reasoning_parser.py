@@ -19,11 +19,18 @@ model's chat template + tokenizer config.
 from __future__ import annotations
 
 import random
-from unittest.mock import MagicMock
+from typing import NamedTuple
 
 import pytest
 
-from heylook_llm.reasoning_parser import select_reasoning_parser
+from heylook_llm.reasoning_parser import (
+    GemmaChannelParser,
+    HarmonyChannelParser,
+    PassThroughParser,
+    StripSpecials,
+    select_reasoning_parser,
+)
+from heylook_llm.thinking_parser import HybridThinkingParser
 
 
 # Reference fixture representing an analysis-then-final harmony response.
@@ -57,6 +64,16 @@ _HARMONY_EXPECTED_THINKING = (
     "around 30-40."
 )
 
+# Gemma-4 canonical format: ``<|channel>NAME\n BODY <channel|>`` inline in
+# the model turn; the ``thought`` channel is reasoning, text outside channels
+# is content.
+_GEMMA_REPRODUCER = (
+    "<|channel>thought\nTopic: sky color. Constraint: two sentences.\n"
+    "<channel|>The sky appears blue because of Rayleigh scattering."
+)
+_GEMMA_EXPECTED_THINKING = "Topic: sky color. Constraint: two sentences.\n"
+_GEMMA_EXPECTED_CONTENT = "The sky appears blue because of Rayleigh scattering."
+
 
 def _template(*, harmony=False, gemma=False, thinking=False, specials=()):
     """ModelTemplateInfo stand-in for factory-driven tests."""
@@ -78,8 +95,6 @@ def _core(parser):
     ``select_reasoning_parser`` composes ``StripSpecials(inner, ...)`` when
     the model declares specials; structural assertions target the inner
     parser, behavioral ones target the composed object."""
-    from heylook_llm.reasoning_parser import StripSpecials
-
     return parser.inner if isinstance(parser, StripSpecials) else parser
 
 
@@ -101,29 +116,19 @@ def _collect(parser, text_chunks):
     return "".join(content_parts), "".join(thinking_parts)
 
 
-class TestPassThroughParser:
-    def test_text_routes_to_content(self):
-        from heylook_llm.reasoning_parser import PassThroughParser
+class _Pinned(NamedTuple):
+    """A TestParserInvariants.CORPUS row whose split is pinned: the stream
+    as these exact chunks must give (content, thinking), and so must the
+    whole-input parse and every random split of the joined text."""
 
-        parser = PassThroughParser()
-        content, thinking = _collect(parser, ["hello ", "world"])
-        assert content == "hello world"
-        assert thinking == ""
-
-    def test_empty_chunks_ignored(self):
-        from heylook_llm.reasoning_parser import PassThroughParser
-
-        parser = PassThroughParser()
-        content, thinking = _collect(parser, ["", "x", ""])
-        assert content == "x"
-        assert thinking == ""
+    chunks: tuple
+    content: str
+    thinking: str = ""
 
 
 class TestHarmonyChannelParser:
     def test_reproducer_whole_input(self):
         """Full reproducer text fed as a single chunk."""
-        from heylook_llm.reasoning_parser import HarmonyChannelParser
-
         parser = HarmonyChannelParser()
         content, thinking = _collect(parser, [_HARMONY_REPRODUCER])
 
@@ -132,48 +137,7 @@ class TestHarmonyChannelParser:
         assert content == _HARMONY_EXPECTED_CONTENT
         assert thinking == _HARMONY_EXPECTED_THINKING
 
-    def test_reproducer_split_per_character(self):
-        """Same input fed one character at a time -- stress-tests partial
-        control-token buffering."""
-        from heylook_llm.reasoning_parser import HarmonyChannelParser
-
-        parser = HarmonyChannelParser()
-        content, thinking = _collect(parser, list(_HARMONY_REPRODUCER))
-
-        assert "<|" not in content
-        assert "<|" not in thinking
-        assert content == _HARMONY_EXPECTED_CONTENT
-        assert thinking == _HARMONY_EXPECTED_THINKING
-
-    def test_split_mid_control_token(self):
-        """Buffer must hold partial control tokens across chunk boundaries."""
-        from heylook_llm.reasoning_parser import HarmonyChannelParser
-
-        parser = HarmonyChannelParser()
-        # Break at every awkward point inside <|channel|>, <|message|>, <|end|>.
-        chunks = [
-            "<|chan", "nel|>", "final", "<|mess", "age|>",
-            "hi", "<|en", "d|>",
-        ]
-        content, thinking = _collect(parser, chunks)
-        assert content == "hi"
-        assert thinking == ""
-
-    def test_analysis_to_thinking_final_to_content(self):
-        from heylook_llm.reasoning_parser import HarmonyChannelParser
-
-        parser = HarmonyChannelParser()
-        text = (
-            "<|channel|>analysis<|message|>reasoning stuff<|end|>"
-            "<|start|>assistant<|channel|>final<|message|>visible answer"
-        )
-        content, thinking = _collect(parser, [text])
-        assert content == "visible answer"
-        assert thinking == "reasoning stuff"
-
     def test_commentary_channel_routes_to_thinking(self):
-        from heylook_llm.reasoning_parser import HarmonyChannelParser
-
         parser = HarmonyChannelParser()
         text = (
             "<|channel|>commentary<|message|>side note<|end|>"
@@ -186,96 +150,23 @@ class TestHarmonyChannelParser:
     def test_unknown_channel_routes_to_content(self):
         """An unexpected channel name must NOT silently vanish; route it to
         content so nothing important is lost if harmony adds new channels."""
-        from heylook_llm.reasoning_parser import HarmonyChannelParser
-
         parser = HarmonyChannelParser()
         text = "<|channel|>novel_channel<|message|>payload<|end|>"
         content, thinking = _collect(parser, [text])
         assert content == "payload"
         assert thinking == ""
 
-    def test_preamble_before_first_control_token_passes_to_content(self):
-        """If a harmony model emits free text before any <|channel|>, route
-        it to content rather than dropping it. Defensive fallback."""
-        from heylook_llm.reasoning_parser import HarmonyChannelParser
-
-        parser = HarmonyChannelParser()
-        text = "oops no tokens here"
-        content, thinking = _collect(parser, [text])
-        assert content == "oops no tokens here"
-        assert thinking == ""
-
-    def test_abort_mid_control_token_drops_partial(self):
-        """Mirror of the gemma abort pair: the final flush emits the WHOLE
-        buffer, so a trailing partial control token must be dropped BEFORE
-        the drain -- an abort landing inside <|end|> would otherwise flush
-        literal garbage like ``<|en``."""
-        from heylook_llm.reasoning_parser import HarmonyChannelParser
-
-        parser = HarmonyChannelParser()
-        content, thinking = _collect(
-            parser, ["<|channel|>final<|message|>answer text<|en"]
-        )
-        assert content == "answer text"
-        assert thinking == ""
-
-    def test_abort_mid_control_token_in_preamble_drops_partial(self):
-        from heylook_llm.reasoning_parser import HarmonyChannelParser
-
-        parser = HarmonyChannelParser()
-        content, thinking = _collect(parser, ["free text<|st"])
-        assert content == "free text"
-        assert thinking == ""
-
-
-class TestThinkingMarkersViaFactory:
-    """Factory returns HybridThinkingParser directly when the template has
-    ``<think>...</think>`` markers -- no wrapper class. Tests target the
-    factory output so the call path stays identical to production."""
-
-    def test_basic_thinking_block(self):
-        from heylook_llm.providers.common.template_info import ModelTemplateInfo
-        from heylook_llm.reasoning_parser import select_reasoning_parser
-
-        info = ModelTemplateInfo(has_thinking_markers=True)
-        parser = select_reasoning_parser(info)
-        text = "<think>internal reasoning</think>visible answer"
-        content, thinking = _collect(parser, [text])
-        assert content == "visible answer"
-        assert thinking == "internal reasoning"
-
 
 class TestGemmaChannelParser:
-    """Gemma-4 canonical format: ``<|channel>NAME\\n BODY <channel|>`` inline in
-    the model turn; the ``thought`` channel is reasoning, text outside channels
-    is content."""
-
-    _REPRODUCER = (
-        "<|channel>thought\nTopic: sky color. Constraint: two sentences.\n"
-        "<channel|>The sky appears blue because of Rayleigh scattering."
-    )
-    _EXPECTED_THINKING = "Topic: sky color. Constraint: two sentences.\n"
-    _EXPECTED_CONTENT = "The sky appears blue because of Rayleigh scattering."
+    """Gemma-4 canonical format (see ``_GEMMA_REPRODUCER``)."""
 
     def _parser(self):
-        from heylook_llm.reasoning_parser import GemmaChannelParser
         return GemmaChannelParser()
 
     def test_reproducer_whole_input(self):
-        content, thinking = _collect(self._parser(), [self._REPRODUCER])
-        assert content == self._EXPECTED_CONTENT
-        assert thinking == self._EXPECTED_THINKING
-
-    def test_reproducer_split_per_character(self):
-        content, thinking = _collect(self._parser(), list(self._REPRODUCER))
-        assert content == self._EXPECTED_CONTENT
-        assert thinking == self._EXPECTED_THINKING
-
-    def test_split_mid_control_token(self):
-        chunks = ["<|chan", "nel>thought\nplan", "ning\n<chan", "nel|>Answer."]
-        content, thinking = _collect(self._parser(), chunks)
-        assert content == "Answer."
-        assert thinking == "planning\n"
+        content, thinking = _collect(self._parser(), [_GEMMA_REPRODUCER])
+        assert content == _GEMMA_EXPECTED_CONTENT
+        assert thinking == _GEMMA_EXPECTED_THINKING
 
     def test_unknown_channel_routes_to_content(self):
         content, thinking = _collect(
@@ -284,31 +175,34 @@ class TestGemmaChannelParser:
         assert content == "remember thisdone"
         assert thinking == ""
 
-    def test_plain_text_is_content(self):
-        content, thinking = _collect(self._parser(), ["Just a plain answer."])
-        assert content == "Just a plain answer."
-        assert thinking == ""
-
     def test_unclosed_thought_flushes_to_thinking(self):
         # aborted stream mid-thought: flush routes the partial body to thinking
         content, thinking = _collect(self._parser(), ["<|channel>thought\nhalf a plan"])
         assert content == ""
         assert thinking == "half a plan"
 
-    def test_abort_mid_close_token_drops_partial(self):
-        # gemma's close token starts "<c", which harmony's partial-strip
-        # doesn't know -- an abort landing mid-<channel|> must not flush
-        # literal garbage like "<chan"
-        content, thinking = _collect(
-            self._parser(), ["<|channel>thought\nplan text\n<chan"]
-        )
-        assert thinking == "plan text\n"
-        assert content == ""
 
-    def test_abort_mid_open_token_drops_partial(self):
-        content, thinking = _collect(self._parser(), ["Answer text<|chann"])
-        assert content == "Answer text"
-        assert thinking == ""
+class TestAbortMidControlToken:
+    """The final flush emits the WHOLE buffer, so a trailing partial control
+    token must be dropped BEFORE the drain: an abort landing inside a control
+    token would otherwise flush literal garbage like ``<|en`` or ``<chan``.
+    Gemma's close token starts "<c", which harmony's partial-strip does not
+    know, so each family needs its own rows."""
+
+    @pytest.mark.parametrize(
+        "parser_cls, chunks, expected",
+        [
+            (HarmonyChannelParser, ["<|channel|>final<|message|>answer text<|en"],
+             ("answer text", "")),
+            (HarmonyChannelParser, ["free text<|st"], ("free text", "")),
+            (GemmaChannelParser, ["<|channel>thought\nplan text\n<chan"],
+             ("", "plan text\n")),
+            (GemmaChannelParser, ["Answer text<|chann"], ("Answer text", "")),
+        ],
+        ids=["harmony-end", "harmony-preamble", "gemma-close", "gemma-open"],
+    )
+    def test_abort_mid_control_token_drops_partial(self, parser_cls, chunks, expected):
+        assert _collect(parser_cls(), chunks) == expected
 
 
 class TestImplicitThinkOpen:
@@ -321,27 +215,13 @@ class TestImplicitThinkOpen:
         return ["I should ", "plan this.", "</think>", "The answer", " is 4."]
 
     def test_initial_thinking_splits_implicit_open(self):
-        from heylook_llm.thinking_parser import HybridThinkingParser
-
         content, thinking = _collect(
             HybridThinkingParser(initial_thinking=True), self._chunks()
         )
         assert thinking == "I should plan this."
         assert content == "The answer is 4."
 
-    def test_default_explicit_mode_unchanged(self):
-        from heylook_llm.thinking_parser import HybridThinkingParser
-
-        content, thinking = _collect(
-            HybridThinkingParser(),
-            ["<think>", "plan", "</think>", "answer"],
-        )
-        assert thinking == "plan"
-        assert content == "answer"
-
     def test_reset_restores_initial_state(self):
-        from heylook_llm.thinking_parser import HybridThinkingParser
-
         p = HybridThinkingParser(initial_thinking=True)
         _collect(p, self._chunks())
         p.reset()
@@ -351,7 +231,6 @@ class TestImplicitThinkOpen:
 
     def test_factory_arms_initial_thinking_from_template_and_request(self):
         from heylook_llm.providers.common.template_info import ModelTemplateInfo
-        from heylook_llm.reasoning_parser import select_reasoning_parser
 
         info = ModelTemplateInfo(
             has_thinking_markers=True, prefills_thinking=True,
@@ -368,200 +247,112 @@ class TestImplicitThinkOpen:
 
 
 class TestReasoningParserFactory:
-    def _info(self, *, has_harmony=False, has_thinking=False, has_gemma=False, specials=()):
-        from heylook_llm.providers.common.template_info import ModelTemplateInfo
+    """Template flags (and whether the model declares specials) pick the
+    parser class and whether it is composed under ``StripSpecials``.
 
-        return ModelTemplateInfo(
-            chat_template="",  # unused by factory directly
-            special_tokens=frozenset(specials),
-            template_source="jinja",
-            has_harmony_structure=has_harmony,
-            has_thinking_markers=has_thinking,
-            has_gemma_channel_structure=has_gemma,
-        )
+    Harmony is the most specific structure and wins over gemma channels and
+    over ``<think>`` markers (a template with both is unusual). No strip set
+    means no wrapper: the filter exists only for stripping. ``None`` template
+    info falls back to pass-through."""
 
-    def test_gemma_selected_when_template_has_channel_structure(self):
-        from heylook_llm.reasoning_parser import (
-            GemmaChannelParser, select_reasoning_parser,
-        )
-
-        parser = select_reasoning_parser(self._info(has_gemma=True))
-        assert isinstance(parser, GemmaChannelParser)
-
-    def test_harmony_wins_over_gemma_structure(self):
-        from heylook_llm.reasoning_parser import (
-            HarmonyChannelParser, select_reasoning_parser,
-        )
-
-        parser = select_reasoning_parser(self._info(has_harmony=True, has_gemma=True))
-        assert isinstance(parser, HarmonyChannelParser)
-
-    def test_harmony_selected_when_template_has_harmony_structure(self):
-        from heylook_llm.reasoning_parser import (
-            HarmonyChannelParser, select_reasoning_parser,
-        )
-
-        info = self._info(has_harmony=True, specials=["<|channel|>", "<|message|>"])
-        parser = select_reasoning_parser(info)
-        assert isinstance(_core(parser), HarmonyChannelParser)
-
-    def test_qwen3_selected_when_template_has_thinking_markers(self):
-        from heylook_llm.reasoning_parser import select_reasoning_parser
-        from heylook_llm.thinking_parser import HybridThinkingParser
-
-        info = self._info(has_thinking=True, specials=["<think>", "</think>"])
-        parser = select_reasoning_parser(info)
-        assert isinstance(_core(parser), HybridThinkingParser)
-
-    def test_pass_through_when_nothing_matches(self):
-        from heylook_llm.reasoning_parser import (
-            PassThroughParser, select_reasoning_parser,
-        )
-
-        info = self._info()
-        parser = select_reasoning_parser(info)
-        assert isinstance(parser, PassThroughParser)
-
-    def test_harmony_wins_over_thinking(self):
-        """Template with both harmony channels and <think> markers (unusual)
-        -- harmony is more specific, takes precedence."""
-        from heylook_llm.reasoning_parser import (
-            HarmonyChannelParser, select_reasoning_parser,
-        )
-
-        info = self._info(has_harmony=True, has_thinking=True)
-        parser = select_reasoning_parser(info)
-        assert isinstance(parser, HarmonyChannelParser)
-
-    def test_none_template_info_falls_back_to_pass_through(self):
-        from heylook_llm.reasoning_parser import (
-            PassThroughParser, select_reasoning_parser,
-        )
-
-        parser = select_reasoning_parser(template_info=None)
-        assert isinstance(parser, PassThroughParser)
-
-    def test_harmony_parser_strips_non_structural_specials(self):
-        """Factory threads the tokenizer-config-declared specials into the
-        harmony parser so it strips ANY declared control token -- not just
-        the six structural harmony tokens. Assert behaviorally: feed a
-        payload with a non-structural special mid-message; it must not
-        appear in the output."""
-        from heylook_llm.reasoning_parser import (
-            HarmonyChannelParser, select_reasoning_parser,
-        )
-
-        specials = ["<|channel|>", "<|message|>", "<|start|>", "<|end|>",
-                    "<|return|>", "<|call|>", "<|reserved_200000|>"]
-        info = self._info(has_harmony=True, specials=specials)
-        parser = select_reasoning_parser(info)
-        assert isinstance(_core(parser), HarmonyChannelParser)
-
-        text = "<|channel|>final<|message|>hello <|reserved_200000|> world<|return|>"
-        content, _ = _collect(parser, [text])
-        assert content == "hello  world"
-        assert "<|reserved_200000|>" not in content
-
+    @pytest.mark.parametrize(
+        "info, parser_cls, composed",
+        [
+            (_template(gemma=True), GemmaChannelParser, False),
+            (_template(harmony=True, gemma=True), HarmonyChannelParser, False),
+            (_template(harmony=True, specials=["<|channel|>", "<|message|>"]),
+             HarmonyChannelParser, True),
+            (_template(thinking=True, specials=["<think>", "</think>"]),
+             HybridThinkingParser, True),
+            (_template(), PassThroughParser, False),
+            (_template(harmony=True, thinking=True), HarmonyChannelParser, False),
+            (None, PassThroughParser, False),
+            (_template(harmony=True), HarmonyChannelParser, False),
+        ],
+        ids=[
+            "gemma-channels", "harmony-over-gemma", "harmony-with-specials",
+            "think-markers-with-specials", "nothing-matches",
+            "harmony-over-thinking", "no-template-info",
+            "no-specials-leaves-uncomposed",
+        ],
+    )
+    def test_template_flags_pick_the_parser(self, info, parser_cls, composed):
+        parser = select_reasoning_parser(template_info=info)
+        assert isinstance(_core(parser), parser_cls)
+        assert isinstance(parser, StripSpecials) is composed
 
 
 class TestParseFullText:
-    """Non-streaming path: ``parse_reasoning(text, parser)`` -> (content, thinking)."""
+    """Non-streaming path: ``parse_reasoning(text, parser)`` -> (content, thinking).
+    Pass-through reports no reasoning as ``None``, not ``""``."""
 
-    def test_harmony_full_text(self):
-        from heylook_llm.reasoning_parser import (
-            HarmonyChannelParser, parse_reasoning,
-        )
+    @pytest.mark.parametrize(
+        "text, parser_cls, expected",
+        [
+            (_HARMONY_REPRODUCER, HarmonyChannelParser,
+             (_HARMONY_EXPECTED_CONTENT, _HARMONY_EXPECTED_THINKING)),
+            ("just text", PassThroughParser, ("just text", None)),
+        ],
+        ids=["harmony", "pass-through"],
+    )
+    def test_full_text(self, text, parser_cls, expected):
+        from heylook_llm.reasoning_parser import parse_reasoning
 
-        content, thinking = parse_reasoning(_HARMONY_REPRODUCER, HarmonyChannelParser())
-        assert content == _HARMONY_EXPECTED_CONTENT
-        assert thinking == _HARMONY_EXPECTED_THINKING
-
-    def test_pass_through_full_text(self):
-        from heylook_llm.reasoning_parser import (
-            PassThroughParser, parse_reasoning,
-        )
-
-        content, thinking = parse_reasoning("just text", PassThroughParser())
-        assert content == "just text"
-        assert thinking is None
+        assert parse_reasoning(text, parser_cls()) == expected
 
 
 class TestStripTokensDefense:
     """EVERY selectable parser is composed under ``StripSpecials`` when the
     model declares specials, so any special token the detokenizer leaks (or
     the model emits mid-payload) is cleaned out before the delta reaches the
-    user."""
+    user.
 
-    def test_hybrid_thinking_strips_declared_specials(self):
-        from heylook_llm.reasoning_parser import StripSpecials
-        from heylook_llm.thinking_parser import HybridThinkingParser
+    Rows: the factory threads tokenizer-config-declared specials into the
+    harmony parser so it strips ANY declared control token, not just the six
+    structural harmony tokens (those are consumed by the state machine); the
+    factory threads them to the hybrid parser too; and a hand-composed filter
+    strips over hybrid, pass-through and a harmony message body."""
 
-        parser = StripSpecials(
-            HybridThinkingParser(), frozenset(["<|reserved_200000|>"])
-        )
-        out = []
-        for ch in ["<think>", "plan <|reserved_200000|> here", "</think>", "answer <|reserved_200000|>"]:
-            out += parser.process_chunk(ch)
-        out += parser.flush()
-        thinking = "".join(t for k, t in out if k == "thinking")
-        content = "".join(t for k, t in out if k == "content")
-        assert "<|reserved_200000|>" not in thinking
-        assert "<|reserved_200000|>" not in content
-        assert "plan" in thinking and "answer" in content
+    _HARMONY_SPECIALS = [
+        "<|channel|>", "<|message|>", "<|start|>", "<|end|>",
+        "<|return|>", "<|call|>", "<|reserved_200000|>",
+    ]
 
-    def test_factory_threads_strip_tokens_to_hybrid(self):
-        from heylook_llm.providers.common.template_info import ModelTemplateInfo
-        from heylook_llm.reasoning_parser import select_reasoning_parser
-
-        info = ModelTemplateInfo(
-            has_thinking_markers=True,
-            special_tokens=frozenset(["<|im_end|>"]),
-        )
-        parser = select_reasoning_parser(info)
-        out = parser.process_chunk("hello <|im_end|>") + parser.flush()
-        assert all("<|im_end|>" not in t for _, t in out)
-
-    def test_pass_through_strips_declared_specials(self):
-        from heylook_llm.reasoning_parser import PassThroughParser, StripSpecials
-
-        parser = StripSpecials(
-            PassThroughParser(),
-            frozenset(["<|endoftext|>", "<|reserved_200000|>"]),
-        )
-        out, _ = _collect(parser, ["hello <|endoftext|> world <|reserved_200000|>"])
-        assert out == "hello  world "
-
-    def test_hybrid_holdback_survives_split_special(self):
-        """The reference case the shared holdback generalizes: the inner
-        parser's own buffering splits a declared special across deltas, so
-        a per-delta sub() would miss both halves."""
-        from heylook_llm.reasoning_parser import select_reasoning_parser
-
-        parser = select_reasoning_parser(
-            _template(thinking=True, specials=["<|reserved_200000|>"])
-        )
-        content, thinking = _collect(
-            parser, ["<think>plan</think>done <|reserved_2", "00000|> now"]
-        )
-        assert content == "done  now"
-        assert thinking == "plan"
-
-    def test_harmony_strips_non_structural_specials_in_message_body(self):
-        """A reserved token that sneaks into message payload gets stripped;
-        the structural tokens are consumed by the state machine."""
-        from heylook_llm.reasoning_parser import HarmonyChannelParser, StripSpecials
-
-        parser = StripSpecials(
-            HarmonyChannelParser(), frozenset(["<|reserved_200000|>"])
-        )
-        text = (
-            "<|channel|>final<|message|>"
-            "hello <|reserved_200000|> world"
-            "<|return|>"
-        )
-        content, _ = _collect(parser, [text])
-        assert content == "hello  world"
-        assert "<|reserved_200000|>" not in content
+    @pytest.mark.parametrize(
+        "build, specials, chunks, expected",
+        [
+            (lambda s: select_reasoning_parser(_template(harmony=True, specials=s)),
+             _HARMONY_SPECIALS,
+             ["<|channel|>final<|message|>hello <|reserved_200000|> world<|return|>"],
+             ("hello  world", "")),
+            (lambda s: StripSpecials(HybridThinkingParser(), frozenset(s)),
+             ["<|reserved_200000|>"],
+             ["<think>", "plan <|reserved_200000|> here", "</think>",
+              "answer <|reserved_200000|>"],
+             ("answer ", "plan  here")),
+            (lambda s: select_reasoning_parser(_template(thinking=True, specials=s)),
+             ["<|im_end|>"], ["hello <|im_end|>"], ("hello ", "")),
+            (lambda s: StripSpecials(PassThroughParser(), frozenset(s)),
+             ["<|endoftext|>", "<|reserved_200000|>"],
+             ["hello <|endoftext|> world <|reserved_200000|>"],
+             ("hello  world ", "")),
+            (lambda s: StripSpecials(HarmonyChannelParser(), frozenset(s)),
+             ["<|reserved_200000|>"],
+             ["<|channel|>final<|message|>hello <|reserved_200000|> world<|return|>"],
+             ("hello  world", "")),
+        ],
+        ids=[
+            "factory-harmony-non-structural", "hybrid", "factory-threads-to-hybrid",
+            "pass-through", "harmony-message-body",
+        ],
+    )
+    def test_declared_specials_never_reach_either_channel(
+        self, build, specials, chunks, expected
+    ):
+        content, thinking = _collect(build(specials), chunks)
+        assert (content, thinking) == expected
+        for special in specials:
+            assert special not in content and special not in thinking
 
 
 class TestStripSpecialsOptOut:
@@ -631,73 +422,18 @@ class TestSharedStripHoldback:
     (<= 10 chars), so a longer declared special straddling an emit boundary
     leaked; pass-through had no holdback at all. The shared filter holds
     back the longest tail that could still grow into a declared special.
+    The straddling cases themselves are pinned rows of
+    TestParserInvariants.CORPUS.
     """
-
-    def test_harmony_long_special_straddling_emit_boundary(self):
-        from heylook_llm.reasoning_parser import select_reasoning_parser
-
-        parser = select_reasoning_parser(
-            _template(harmony=True, specials=["<|reserved_200000|>"])
-        )
-        content, _ = _collect(parser, [
-            "<|channel|>final<|message|>",
-            "hello world padding<|reserved_2",
-            "00000|> tail",
-        ])
-        assert content == "hello world padding tail"
-
-    def test_gemma_long_special_straddling_emit_boundary(self):
-        from heylook_llm.reasoning_parser import select_reasoning_parser
-
-        parser = select_reasoning_parser(
-            _template(gemma=True, specials=["<|reserved_200000|>"])
-        )
-        content, _ = _collect(
-            parser, ["padding text here<|reserved_2", "00000|> tail"]
-        )
-        assert content == "padding text here tail"
-
-    def test_gemma_long_special_straddling_boundary_in_thought(self):
-        from heylook_llm.reasoning_parser import select_reasoning_parser
-
-        parser = select_reasoning_parser(
-            _template(gemma=True, specials=["<|reserved_200000|>"])
-        )
-        content, thinking = _collect(parser, [
-            "<|channel>thought\npadding text here<|reserved_2",
-            "00000|> more\n<channel|>Answer.",
-        ])
-        assert thinking == "padding text here more\n"
-        assert content == "Answer."
-
-    def test_pass_through_holds_back_split_special(self):
-        from heylook_llm.reasoning_parser import select_reasoning_parser
-
-        parser = select_reasoning_parser(_template(specials=["<|endoftext|>"]))
-        content, _ = _collect(parser, ["bye <|end", "oftext|> now"])
-        assert content == "bye  now"
-
-    def test_holdback_covers_non_angle_bracket_specials(self):
-        """Mistral-family specials are ``[INST]``-shaped -- a holdback that
-        only scans for ``<`` leaks them across a chunk boundary."""
-        from heylook_llm.reasoning_parser import select_reasoning_parser
-
-        parser = select_reasoning_parser(_template(specials=["[INST]"]))
-        content, _ = _collect(parser, ["hi [IN", "ST] there"])
-        assert content == "hi  there"
 
     def test_held_tail_that_never_completes_is_emitted(self):
         """Holdback must not swallow text: a tail that looked like a partial
         special but never completes comes out at flush."""
-        from heylook_llm.reasoning_parser import select_reasoning_parser
-
         parser = select_reasoning_parser(_template(specials=["<|endoftext|>"]))
         content, _ = _collect(parser, ["price < ", "x <|end"])
         assert content == "price < x <|end"
 
     def test_reset_clears_held_tail(self):
-        from heylook_llm.reasoning_parser import select_reasoning_parser
-
         parser = select_reasoning_parser(_template(specials=["<|endoftext|>"]))
         parser.process_chunk("stale <|end")
         parser.reset()
@@ -705,8 +441,6 @@ class TestSharedStripHoldback:
         assert content == "fresh"
 
     def test_kind_change_flushes_held_tail_in_order(self):
-        from heylook_llm.reasoning_parser import select_reasoning_parser
-
         parser = select_reasoning_parser(
             _template(thinking=True, specials=["<|endoftext|>"])
         )
@@ -715,16 +449,6 @@ class TestSharedStripHoldback:
         )
         assert thinking == "plan <|end"
         assert content == "answer"
-
-    def test_no_declared_specials_leaves_parser_uncomposed(self):
-        """No strip set -> no wrapper: the filter exists only for stripping."""
-        from heylook_llm.reasoning_parser import (
-            HarmonyChannelParser, StripSpecials, select_reasoning_parser,
-        )
-
-        parser = select_reasoning_parser(_template(harmony=True))
-        assert isinstance(parser, HarmonyChannelParser)
-        assert not isinstance(parser, StripSpecials)
 
 
 class TestUnterminatedChannelHeaderIsNotSwallowed:
@@ -739,63 +463,30 @@ class TestUnterminatedChannelHeaderIsNotSwallowed:
     "immediate empty-EOS" long attributed to model behavior; it is text loss.
 
     Rule: at end of turn, unrouted model text goes to content. Never drop it.
+    (The per-character stream of the spurious open, and the well-formed
+    headers that must still be consumed, are pinned CORPUS rows.)
     """
 
     def test_gemma_spurious_channel_open_keeps_the_answer(self):
-        from heylook_llm.reasoning_parser import GemmaChannelParser
-
         content, thinking = _collect(
             GemmaChannelParser(), ["<|channel> to the movies!"]
         )
         assert content == " to the movies!"
         assert thinking == ""
 
-    def test_gemma_spurious_channel_open_streamed_per_character(self):
-        from heylook_llm.reasoning_parser import GemmaChannelParser
-
-        content, _ = _collect(
-            GemmaChannelParser(), list("Hi<|channel> to the movies!")
-        )
-        assert content == "Hi to the movies!"
-
     def test_gemma_abort_mid_channel_name_surfaces_the_fragment(self):
         """The trade-off, stated explicitly: an abort inside a LEGIT header
         now surfaces a short fragment instead of vanishing. Losing a whole
         answer is the worse failure."""
-        from heylook_llm.reasoning_parser import GemmaChannelParser
-
         content, _ = _collect(GemmaChannelParser(), ["<|channel>thou"])
         assert content == "thou"
 
-    def test_gemma_named_channel_header_still_consumed(self):
-        """A well-formed header is structural and must NOT leak as content."""
-        from heylook_llm.reasoning_parser import GemmaChannelParser
-
-        content, thinking = _collect(
-            GemmaChannelParser(), ["<|channel>thought\nplanning<channel|>Answer."]
-        )
-        assert content == "Answer."
-        assert thinking == "planning"
-
     def test_harmony_unterminated_channel_header_keeps_the_text(self):
-        from heylook_llm.reasoning_parser import HarmonyChannelParser
-
         content, thinking = _collect(
             HarmonyChannelParser(), ["<|channel|>analysis and then some answer"]
         )
         assert content == "analysis and then some answer"
         assert thinking == ""
-
-    def test_harmony_named_channel_header_still_consumed(self):
-        from heylook_llm.reasoning_parser import HarmonyChannelParser
-
-        content, thinking = _collect(
-            HarmonyChannelParser(),
-            ["<|channel|>analysis<|message|>reasoning<|end|>"
-             "<|channel|>final<|message|>answer"],
-        )
-        assert content == "answer"
-        assert thinking == "reasoning"
 
 
 class TestParserInvariants:
@@ -806,6 +497,10 @@ class TestParserInvariants:
     pin the boundaries someone thought to write down; a property says what
     must be true everywhere, and randomised splits explore the chunk
     boundaries that are exactly where streaming parsers break.
+
+    A ``_Pinned`` row also pins one split and its exact output: the
+    reproducers streamed per character, splits inside control tokens, and
+    declared specials straddling an emit boundary (finding #1).
     """
 
     CORPUS = {
@@ -816,6 +511,24 @@ class TestParserInvariants:
             "free preamble text with no tokens",
             "<|channel|>final<|message|>answer text<|en",
             "<|channel|>analysis and then it just keeps going",
+            # the reproducer one character at a time: partial control tokens
+            # buffered at every position
+            _Pinned(tuple(_HARMONY_REPRODUCER),
+                    _HARMONY_EXPECTED_CONTENT, _HARMONY_EXPECTED_THINKING),
+            # broken at every awkward point inside <|channel|>, <|message|>, <|end|>
+            _Pinned(("<|chan", "nel|>", "final", "<|mess", "age|>", "hi", "<|en", "d|>"),
+                    "hi"),
+            _Pinned(("<|channel|>analysis<|message|>reasoning stuff<|end|>"
+                     "<|start|>assistant<|channel|>final<|message|>visible answer",),
+                    "visible answer", "reasoning stuff"),
+            # a long declared special straddling the emit boundary in a message
+            _Pinned(("<|channel|>final<|message|>", "hello world padding<|reserved_2",
+                     "00000|> tail"),
+                    "hello world padding tail"),
+            # a well-formed header is structural and must NOT leak as content
+            _Pinned(("<|channel|>analysis<|message|>reasoning<|end|>"
+                     "<|channel|>final<|message|>answer",),
+                    "answer", "reasoning"),
         ],
         "gemma": [
             "<|channel>thought\nplanning\n<channel|>The answer.",
@@ -823,16 +536,52 @@ class TestParserInvariants:
             "<|channel> to the movies!",
             "Answer text<|chann",
             "<|channel>thought\nhalf a plan",
+            _Pinned(tuple(_GEMMA_REPRODUCER),
+                    _GEMMA_EXPECTED_CONTENT, _GEMMA_EXPECTED_THINKING),
+            _Pinned(("<|chan", "nel>thought\nplan", "ning\n<chan", "nel|>Answer."),
+                    "Answer.", "planning\n"),
+            _Pinned(("padding text here<|reserved_2", "00000|> tail"),
+                    "padding text here tail"),
+            # the same straddle inside a thought
+            _Pinned(("<|channel>thought\npadding text here<|reserved_2",
+                     "00000|> more\n<channel|>Answer."),
+                    "Answer.", "padding text here more\n"),
+            # the 2026-07-23 spurious channel-open, streamed per character
+            _Pinned(tuple("Hi<|channel> to the movies!"), "Hi to the movies!"),
+            _Pinned(("<|channel>thought\nplanning<channel|>Answer.",),
+                    "Answer.", "planning"),
         ],
         "think": [
             "<think>plan</think>answer",
             "<think>plan <|endoftext|> more</think>done [INST] x",
             "no markers at all",
+            # the inner parser's own buffering splits a declared special
+            # across deltas, so a per-delta sub() would miss both halves
+            _Pinned(("<think>plan</think>done <|reserved_2", "00000|> now"),
+                    "done  now", "plan"),
+            # tags split across chunks
+            _Pinned(("<thi", "nk>", "Thinking", "</th", "ink>", "Content"),
+                    "Content", "Thinking"),
+            _Pinned(("<think>internal reasoning</think>visible answer",),
+                    "visible answer", "internal reasoning"),
+            # explicit mode (no prefill) is the default
+            _Pinned(("<think>", "plan", "</think>", "answer"), "answer", "plan"),
+            _Pinned(("<think>", "Reasoning", "</think>", "Answer"), "Answer", "Reasoning"),
+            _Pinned((f"<think>{'A' * 10000}</think>Short answer",),
+                    "Short answer", "A" * 10000),
+            # text mode: no token ids passed
+            _Pinned(("<think>", "Thinking", "</think>", "Answer"), "Answer", "Thinking"),
         ],
         "plain": [
             "just some text",
             "text with <|endoftext|> a special",
             "mistral style [INST] marker",
+            _Pinned(("bye <|end", "oftext|> now"), "bye  now"),
+            # Mistral-family specials are [INST]-shaped: a holdback that only
+            # scans for '<' leaks them across a chunk boundary
+            _Pinned(("hi [IN", "ST] there"), "hi  there"),
+            # empty chunks are ignored
+            _Pinned(("", "x", ""), "x"),
         ],
     }
 
@@ -845,6 +594,16 @@ class TestParserInvariants:
         "Trailing angle bracket <",
         "brackets [like these] and <these>",
         "generic<T> in code",
+        "hello world",
+        # a harmony model's free text before any <|channel|> is content
+        "oops no tokens here",
+        "Just a plain answer.",
+        # a channel parser with no resume starts in content
+        "plain text",
+        "Hello world!",
+        "Hello world",
+        "Compare x<y and y>z in the expression",
+        "<thin some random text with angle brackets",
     ]
 
     def _parser(self, kind):
@@ -874,9 +633,16 @@ class TestParserInvariants:
         reproducible rather than a heisenbug.
         """
         rng = random.Random(20260723)
-        for kind, texts in self.CORPUS.items():
-            for text in texts:
+        for kind, rows in self.CORPUS.items():
+            for row in rows:
+                text = row if isinstance(row, str) else "".join(row.chunks)
                 whole = _collect(self._parser(kind), [text])
+                if isinstance(row, _Pinned):
+                    expected = (row.content, row.thinking)
+                    assert whole == expected, f"[{kind}] {text[:60]!r}: {whole}"
+                    assert _collect(self._parser(kind), row.chunks) == expected, (
+                        f"[{kind}] pinned split changed the output: {row.chunks[:8]}"
+                    )
                 for _ in range(40):
                     chunks = self._splits(text, rng)
                     assert _collect(self._parser(kind), chunks) == whole, (
@@ -903,10 +669,11 @@ class TestParserInvariants:
 class TestChannelParsersResumeInsideThinking:
     """v1.79.63: a mid-thought resume re-opens the channel in the PROMPT and
     appends the partial trace, so the stream's first token is reasoning.
-    Both channel parsers take `initial_thinking` for it; reset() keeps it."""
+    Both channel parsers take `initial_thinking` for it; reset() keeps it.
+    (That a channel parser with no resume starts in content is a TOKEN_FREE
+    row of TestParserInvariants.)"""
 
     def test_gemma_starts_inside_thought(self):
-        from heylook_llm.reasoning_parser import GemmaChannelParser
         parser = GemmaChannelParser(initial_thinking=True)
         content, thinking = _collect(parser, [" and so on.\n<channel|>The answer."])
         assert thinking == " and so on.\n"
@@ -915,13 +682,7 @@ class TestChannelParsersResumeInsideThinking:
         content, thinking = _collect(parser, ["more<channel|>x"])
         assert (thinking, content) == ("more", "x")
 
-    def test_gemma_default_still_starts_in_content(self):
-        from heylook_llm.reasoning_parser import GemmaChannelParser
-        content, thinking = _collect(GemmaChannelParser(), ["plain text"])
-        assert (content, thinking) == ("plain text", "")
-
     def test_harmony_starts_inside_analysis(self):
-        from heylook_llm.reasoning_parser import HarmonyChannelParser
         parser = HarmonyChannelParser(initial_thinking=True)
         content, thinking = _collect(parser, [
             " keep reasoning<|end|><|start|>assistant<|channel|>final<|message|>Done.<|return|>"])
@@ -929,9 +690,6 @@ class TestChannelParsersResumeInsideThinking:
         assert content == "Done."
 
     def test_factory_arms_the_channel_parsers(self):
-        from heylook_llm.reasoning_parser import (
-            GemmaChannelParser, HarmonyChannelParser, select_reasoning_parser)
-
         class Gemma:
             has_harmony_structure = False
             has_gemma_channel_structure = True

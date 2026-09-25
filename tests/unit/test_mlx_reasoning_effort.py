@@ -10,8 +10,9 @@ Claims (what breaks if a test is deleted):
   hard TypeError.
 - the vision test: depth works on a text turn and reverts the moment an image
   is attached -- same model, same conversation, no error.
-- the capability tests: depth is offered where the template has a depth
-  variable, and not inferred from thinking.
+- the capability rows (test_thinking_capability.py
+  TestThinkingCapabilityFromTemplate): depth is offered where the template
+  has a depth variable, and not inferred from thinking.
 """
 import pytest
 
@@ -48,16 +49,28 @@ def _msgs():
 
 @pytest.mark.unit
 class TestVlmTemplateKwargs:
-    def test_depth_is_forwarded_under_the_templates_own_variable(self):
+    """The VLM template path forwards the kwargs exactly like the text path:
+    a bool enable_thinking is forwarded, None omits the kwarg (template
+    default applies), and depth rides under the template's own variable
+    (absent depth sends nothing extra). Exact kwargs, so an extra key fails."""
+
+    @pytest.mark.parametrize(
+        "enable_thinking, depth, sent",
+        [
+            (False, None, {"enable_thinking": False}),
+            (None, None, {}),
+            (False, {"reasoning_strength": "low"},
+             {"enable_thinking": False, "reasoning_strength": "low"}),
+            (True, None, {"enable_thinking": True}),
+        ],
+        ids=["bool-forwarded", "none-omits-the-kwarg",
+             "depth-under-the-templates-own-variable", "absent-depth-sends-no-kwarg"],
+    )
+    def test_template_kwargs_sent(self, enable_thinking, depth, sent):
         p = FakeProcessor()
         vlm_apply_chat_template(p, FakeConfig(), _msgs(), num_images=0,
-                                enable_thinking=False, depth={"reasoning_strength": "low"})
-        assert p.calls[-1].get("reasoning_strength") == "low"
-
-    def test_absent_depth_sends_no_kwarg(self):
-        p = FakeProcessor()
-        vlm_apply_chat_template(p, FakeConfig(), _msgs(), num_images=0, enable_thinking=True)
-        assert set(p.calls[-1]) == {"enable_thinking", "tokenize", "add_generation_prompt"}
+                                enable_thinking=enable_thinking, depth=depth)
+        assert p.calls[-1] == {"tokenize": False, "add_generation_prompt": True, **sent}
 
     def test_the_variable_comes_from_detection(self):
         from types import SimpleNamespace
@@ -124,37 +137,3 @@ class TestTextTemplateRetry:
         with pytest.raises(TypeError):
             _apply_chat_template(FakeProcessor(reject={"tokenize"}), _msgs(),
                                  enable_thinking=True, depth=None, continuing=False)
-
-
-@pytest.mark.unit
-class TestReasoningEffortCapability:
-    """Depth is its own capability, NOT implied by thinking: Qwen3.5 has a
-    switch and no depth, gpt-oss the reverse."""
-
-    def _caps(self, provider, cfg):
-        from heylook_llm.capabilities import infer_model_capabilities
-        from heylook_llm.config import ModelConfig
-        return infer_model_capabilities(ModelConfig.model_validate(
-            {"id": f"x-{cfg['model_path']}", "provider": provider, "config": cfg}))
-
-    def test_a_gguf_model_with_no_readable_template_offers_no_depth(self):
-        """Nothing to detect from, so nothing is offered; the thinking switch
-        falls back to the stored supports_thinking."""
-        caps = self._caps("gguf", {"model_path": "/synthetic/x.gguf", "supports_thinking": True})
-        assert "thinking" in caps and "reasoning_effort" not in caps
-
-    def test_mlx_switch_without_depth(self, tmp_path):
-        (tmp_path / "chat_template.jinja").write_text("{% if enable_thinking %}x{% endif %}")
-        caps = self._caps("mlx", {"model_path": str(tmp_path), "enable_thinking": True})
-        assert "thinking" in caps
-        assert "reasoning_effort" not in caps
-
-    def test_mlx_depth_without_switch(self, tmp_path):
-        """The gpt-oss/harmony case: depth, no enable_thinking anywhere."""
-        (tmp_path / "chat_template.jinja").write_text(
-            '{%- if reasoning_effort is not defined %}'
-            '{%- set reasoning_effort = "medium" %}{%- endif %}'
-            'Reasoning: {{ reasoning_effort }}{% for m in messages %}{{ m.content }}{% endfor %}')
-        caps = self._caps("mlx", {"model_path": str(tmp_path)})
-        assert "reasoning_effort" in caps
-        assert "thinking" not in caps

@@ -26,102 +26,105 @@ import pytest
 from heylook_llm.providers.base import BaseProvider, CacheReport, GenerationChunk, SpecReport
 from heylook_llm.perf_collector import ChunkTelemetry
 
+from _fake_chunk import fake_chunk as _chunk
+
 
 # ---------------------------------------------------------------------------
 # GenerationChunk shape
 # ---------------------------------------------------------------------------
 
 class TestGenerationChunkShape:
-    def test_defaults(self):
-        c = GenerationChunk()
-        assert c.text == ""
-        assert c.token is None
-        assert c.thinking is None
-        assert c.finish_reason is None
-        assert c.prompt_tokens == 0
-        assert c.generation_tokens == 0
-        assert c.prompt_tps == 0.0
-        assert c.generation_tps == 0.0
-        assert c.peak_memory == 0.0
-        assert c.cache is None and c.spec is None
-        assert c.queue_wait_ms == 0.0
+    """Slotted (no silent runtime attr-patching); from_engine copies every
+    field an engine chunk carries and defaults the rest (diffusion /
+    first-vision-token chunks carry only a subset)."""
 
-    def test_slotted_no_attr_patching(self):
-        c = GenerationChunk(text="hi")
+    @pytest.mark.parametrize(
+        "build, expected",
+        [
+            (GenerationChunk,
+             dict(text="", token=None, thinking=None, finish_reason=None,
+                  prompt_tokens=0, generation_tokens=0, prompt_tps=0.0,
+                  generation_tps=0.0, peak_memory=0.0, cache=None, spec=None,
+                  queue_wait_ms=0.0)),
+            (lambda: GenerationChunk(text="hi"), dict(text="hi")),
+            (lambda: GenerationChunk.from_engine(SimpleNamespace(
+                text="tok", token=42, finish_reason="stop", prompt_tokens=10,
+                generation_tokens=5, prompt_tps=100.0, generation_tps=50.0,
+                peak_memory=1.5)),
+             dict(text="tok", token=42, finish_reason="stop", prompt_tokens=10,
+                  generation_tokens=5, prompt_tps=100.0, generation_tps=50.0,
+                  peak_memory=1.5)),
+            (lambda: GenerationChunk.from_engine(SimpleNamespace(text="x")),
+             dict(text="x", token=None, prompt_tokens=0, finish_reason=None)),
+        ],
+        ids=["defaults", "slotted-no-attr-patching", "from-engine-full", "from-engine-sparse"],
+    )
+    def test_shape(self, build, expected):
+        c = build()
+        for field, value in expected.items():
+            assert getattr(c, field) == value, field
         with pytest.raises(AttributeError):
             c.surprise_field = 1  # type: ignore[attr-defined]
-
-    def test_from_engine_full(self):
-        engine = SimpleNamespace(
-            text="tok",
-            token=42,
-            finish_reason="stop",
-            prompt_tokens=10,
-            generation_tokens=5,
-            prompt_tps=100.0,
-            generation_tps=50.0,
-            peak_memory=1.5,
-        )
-        c = GenerationChunk.from_engine(engine)
-        assert c.text == "tok"
-        assert c.token == 42
-        assert c.finish_reason == "stop"
-        assert c.prompt_tokens == 10
-        assert c.generation_tokens == 5
-        assert c.prompt_tps == 100.0
-        assert c.generation_tps == 50.0
-        assert c.peak_memory == 1.5
-
-    def test_from_engine_sparse(self):
-        # Diffusion / first-vision-token chunks carry only a subset.
-        c = GenerationChunk.from_engine(SimpleNamespace(text="x"))
-        assert c.text == "x"
-        assert c.token is None
-        assert c.prompt_tokens == 0
-        assert c.finish_reason is None
 
 
 # ---------------------------------------------------------------------------
 # ChunkTelemetry latch semantics (fields now ALWAYS present on chunks)
 # ---------------------------------------------------------------------------
 
+_REPORT = CacheReport(prompt_tokens=10, cached_tokens=7, outcome="reused")
+
+
 class TestTelemetryLatch:
-    def test_first_chunk_snapshot_fields_survive_later_zeros(self):
-        t = ChunkTelemetry()
-        report = CacheReport(prompt_tokens=10, cached_tokens=7, outcome="reused")
-        t.absorb(GenerationChunk(text="a", cache=report,
-                                 queue_wait_ms=5.5, prompt_tokens=10,
-                                 generation_tokens=1, prompt_tps=100.0,
-                                 generation_tps=50.0))
-        # Later chunks have the fields but at their defaults (0) -- the old
-        # getattr-absence trick no longer protects them.
-        t.absorb(GenerationChunk(text="b", prompt_tokens=10,
-                                 generation_tokens=2, prompt_tps=100.0,
-                                 generation_tps=51.0))
-        assert t.cache is report
-        assert t.queue_wait_ms == 5.5
-        assert t.completion_tokens == 2
+    """ChunkTelemetry.absorb must not regress to last-write-wins now that every
+    field exists on every chunk (the old getattr-absence trick no longer
+    protects them). First-chunk fields (the cache report, queue_wait_ms) and
+    non-zero rates survive later defaults -- the vision first-token chunk has
+    no rates and must not wipe the engine's numbers; finish_reason arrives on
+    the FINAL chunk and a trailing chunk without one must not erase it (the
+    scrape lives in absorb(), one place, so the consume loops cannot drift
+    apart: a response cut off by max_tokens must stay distinguishable from a
+    natural stop); spec-decode reports are cumulative running totals, so the
+    latest wins and a chunk without one does not reset them; peak memory is a
+    max. Rows are absorb steps, each with what must hold after it; the
+    finish_reason rows feed engine-shaped chunks (``_fake_chunk``)."""
 
-    def test_zero_tps_does_not_regress(self):
-        # The vision first-token chunk has no rates; it must not wipe the
-        # engine's numbers absorbed from surrounding chunks.
+    @pytest.mark.parametrize(
+        "steps",
+        [
+            [(GenerationChunk(text="a", cache=_REPORT, queue_wait_ms=5.5, prompt_tokens=10,
+                              generation_tokens=1, prompt_tps=100.0, generation_tps=50.0), {}),
+             (GenerationChunk(text="b", prompt_tokens=10, generation_tokens=2,
+                              prompt_tps=100.0, generation_tps=51.0),
+              {"cache": _REPORT, "queue_wait_ms": 5.5, "completion_tokens": 2})],
+            [(GenerationChunk(text="a", prompt_tps=120.0, generation_tps=80.0), {}),
+             (GenerationChunk(text="b"), {"prompt_tps": 120.0, "generation_tps": 80.0})],
+            [(GenerationChunk(text="a", finish_reason="length"), {}),
+             (GenerationChunk(text=""), {"finish_reason": "length"})],
+            [(GenerationChunk(peak_memory=2.0), {}),
+             (GenerationChunk(peak_memory=1.0), {"peak_memory_gb": 2.0})],
+            [(GenerationChunk(text="a", spec=SpecReport(accepted=4, emitted=10)), {}),
+             (GenerationChunk(text="b", spec=SpecReport(accepted=9, emitted=20)), {}),
+             (GenerationChunk(text=""), {"spec": SpecReport(accepted=9, emitted=20)})],
+            [(_chunk("hi", finish_reason=None), {"finish_reason": None}),
+             (_chunk("", finish_reason="length"), {"finish_reason": "length"})],
+            [(_chunk("", finish_reason="length"), {}),
+             (_chunk("", finish_reason=None), {"finish_reason": "length"})],
+        ],
+        ids=[
+            "first-chunk-snapshot-fields-survive-later-zeros", "zero-tps-does-not-regress",
+            "finish-reason-latches", "peak-memory-monotonic", "spec-report-latches-the-latest",
+            "absorbs-engine-finish-reason", "later-none-does-not-clear-a-seen-reason",
+        ],
+    )
+    def test_latch(self, steps):
         t = ChunkTelemetry()
-        t.absorb(GenerationChunk(text="a", prompt_tps=120.0, generation_tps=80.0))
-        t.absorb(GenerationChunk(text="b"))
-        assert t.prompt_tps == 120.0
-        assert t.generation_tps == 80.0
-
-    def test_finish_reason_latches(self):
-        t = ChunkTelemetry()
-        t.absorb(GenerationChunk(text="a", finish_reason="length"))
-        t.absorb(GenerationChunk(text=""))
-        assert t.finish_reason == "length"
-
-    def test_peak_memory_monotonic(self):
-        t = ChunkTelemetry()
-        t.absorb(GenerationChunk(peak_memory=2.0))
-        t.absorb(GenerationChunk(peak_memory=1.0))
-        assert t.peak_memory_gb == 2.0
+        for chunk, expected in steps:
+            t.absorb(chunk)
+            for field, value in expected.items():
+                if isinstance(value, CacheReport):
+                    assert getattr(t, field) is value, field
+                else:
+                    assert getattr(t, field) == value, field
 
     def test_profile_weights_by_tokens_and_keeps_the_rates_apart(self):
         # Perf-page trends and the cache section (plan W5): token-weighted,
@@ -169,16 +172,6 @@ class TestTelemetryLatch:
         assert row2["cache_share"] is None and row2["draft_acceptance"] is None
         assert c2.build_profile("1h")["cache"] == []
 
-    def test_spec_report_latches_the_latest(self):
-        # Spec-decode reports are cumulative running totals; the final chunk
-        # carries the request's totals and a chunk without one must not
-        # reset them.
-        t = ChunkTelemetry()
-        t.absorb(GenerationChunk(text="a", spec=SpecReport(accepted=4, emitted=10)))
-        t.absorb(GenerationChunk(text="b", spec=SpecReport(accepted=9, emitted=20)))
-        t.absorb(GenerationChunk(text=""))
-        assert (t.spec.accepted, t.spec.emitted) == (9, 20)
-
 
 # ---------------------------------------------------------------------------
 # BaseProvider capability surface
@@ -222,14 +215,9 @@ class TestProviderSurface:
 # ---------------------------------------------------------------------------
 
 class TestProviderConfigRegistry:
-    def test_registry_keys_match_literal(self):
-        import typing
-
-        from heylook_llm.config import PROVIDER_CONFIG_CLASSES, ModelConfig
-
-        # The registry and the ModelConfig.provider Literal must never drift.
-        literal = set(typing.get_args(ModelConfig.model_fields["provider"].annotation))
-        assert set(PROVIDER_CONFIG_CLASSES) == literal
+    # That the registry keys match the ModelConfig.provider Literal is
+    # test_config_effects_adversarial.py::
+    # test_provider_registry_and_the_provider_literal_stay_in_sync.
 
     def test_validator_uses_registry(self):
         from heylook_llm.config import ModelConfig, MLXModelConfig

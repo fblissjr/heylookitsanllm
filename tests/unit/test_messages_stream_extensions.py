@@ -125,38 +125,38 @@ async def client_factory():
 
 @pytest.mark.unit
 class TestMessageStopTiming:
-    @pytest.mark.asyncio
-    async def test_timing_rides_performance(self, client_factory):
-        client, _ = await client_factory(token_chunks())
-        res = await client.post("/v1/messages", json={
-            "model": "fake-model", "stream": True,
-            "messages": [{"role": "user", "content": "hi"}],
-        })
-        stop = next(d for ev, d in sse_events(res.text) if ev == "message_stop")
-        perf = stop["performance"]
-        assert perf["peak_memory_gb"] == pytest.approx(1.5)
-        assert perf["queue_wait_ms"] == pytest.approx(2.0)
-        # absent telemetry is SKIPPED, never null (no spec decode ran here)
-        assert "draft_acceptance" not in perf
+    """Present telemetry rides message_stop.performance; absent telemetry is
+    SKIPPED, never null. In the bare-chunk row the span the stream can always
+    measure (generation_duration_ms) is still there, and an unmeasured queue
+    wait is ABSENT, not a published 0.0 (v1.79.59 -- .58 had this backwards on
+    a premise that measurement refuted). A measured zero queue wait is NOT
+    absent -- that is the v1.79.58 rule. No spec decode runs in either row,
+    so draft_acceptance is absent. ``None`` in ``present`` means presence only."""
 
     @pytest.mark.asyncio
-    async def test_absent_telemetry_is_omitted(self, client_factory):
-        chunks = [GenerationChunk(text="hi", token=0, finish_reason="stop")]
-        client, _ = await client_factory(chunks)
+    @pytest.mark.parametrize(
+        "make_chunks, present, absent",
+        [
+            (token_chunks, {"peak_memory_gb": 1.5, "queue_wait_ms": 2.0}, {"draft_acceptance"}),
+            (lambda: [GenerationChunk(text="hi", token=0, finish_reason="stop")],
+             {"generation_duration_ms": None}, {"peak_memory_gb", "queue_wait_ms"}),
+        ],
+        ids=["timing-rides-performance", "absent-telemetry-is-omitted"],
+    )
+    async def test_message_stop_performance(self, client_factory, make_chunks, present, absent):
+        client, _ = await client_factory(make_chunks())
         res = await client.post("/v1/messages", json={
             "model": "fake-model", "stream": True,
             "messages": [{"role": "user", "content": "hi"}],
         })
         stop = next(d for ev, d in sse_events(res.text) if ev == "message_stop")
         perf = stop["performance"]
-        assert "peak_memory_gb" not in perf
-        # The span the stream can always measure is still there. A measured
-        # zero queue wait is NOT absent -- that is the v1.79.58 rule, and this
-        # run really did wait zero.
-        assert "generation_duration_ms" in perf
-        # An unmeasured queue wait is ABSENT, not a published 0.0 (v1.79.59 --
-        # .58 had this backwards on a premise that measurement refuted).
-        assert "queue_wait_ms" not in perf
+        for key, value in present.items():
+            assert key in perf, key
+            if value is not None:
+                assert perf[key] == pytest.approx(value), key
+        for key in absent:
+            assert key not in perf, key
 
 
 @pytest.mark.unit

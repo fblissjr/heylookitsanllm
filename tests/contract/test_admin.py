@@ -2,14 +2,17 @@
 #
 # Contract tests for /v1/admin/models/ endpoints.
 
+import pytest
+
 from .conftest import TEST_MODEL_IDS
 
 
 class TestAdminListModels:
     """Tests for GET /v1/admin/models (list all configs)."""
 
-    def test_returns_model_list(self, client):
-        """GET /v1/admin/models returns all model configs."""
+    def test_returns_model_list_with_full_config(self, client):
+        """GET /v1/admin/models returns all model configs, each entry with its
+        id, provider and config dict."""
         resp = client.get("/v1/admin/models")
         assert resp.status_code == 200
 
@@ -20,11 +23,7 @@ class TestAdminListModels:
         # carries one row per provider so provider-branching routes have every
         # arm under test, and it grows when a provider gains one.
         assert data["total"] == len(TEST_MODEL_IDS)
-
-    def test_model_entries_have_full_config(self, client):
-        """Admin model entries include the config dict."""
-        resp = client.get("/v1/admin/models")
-        for model in resp.json()["models"]:
+        for model in data["models"]:
             assert "id" in model
             assert "provider" in model
             assert "config" in model
@@ -59,18 +58,6 @@ class TestAdminEngineRow:
         listed = client.get("/v1/admin/models").json()["models"][0]
         single = client.get(f"/v1/admin/models/{listed['id']}").json()
         assert single["engine"] == listed["engine"]
-
-    def test_thinking_default_is_on_every_row_and_a_bool(self, client):
-        """`thinking_default` (v1.79.62) is the cascade's answer for an empty
-        request -- derived, so answered for unloaded models -- and the value
-        a UI's 'model default' choice actually means."""
-        rows = client.get("/v1/admin/models").json()["models"]
-        assert rows
-        for row in rows:
-            assert isinstance(row["thinking_default"], bool)
-            # A model without the thinking capability cannot default to on.
-            if "thinking" not in row["capabilities"]:
-                assert row["thinking_default"] is False
 
     def test_context_length_override_is_what_the_row_reports(self, client, mock_service):
         """An MLX entry's own `config.context_length` wins over the checkpoint's
@@ -154,14 +141,19 @@ class TestAdminReload:
         resp = client.post("/v1/admin/models/nope/reload?warm=true")
         assert resp.status_code == 400
 
-    def test_reload_of_a_generating_model_409s_with_the_reason(self, client, mock_router, monkeypatch):
-        # A model that is generating is a CONFLICT the caller can act on --
-        # previously the router's RuntimeError escaped as an opaque 500.
+    # A model that is generating is a CONFLICT the caller can act on --
+    # previously the router's RuntimeError escaped as an opaque 500. /unload
+    # shared the raw-500 mechanism, so it is a row too.
+    @pytest.mark.parametrize("action", [
+        pytest.param("reload", id="reload_of_a_generating_model_409s_with_the_reason"),
+        pytest.param("unload", id="unload_of_a_generating_model_409s_too"),
+    ])
+    def test_a_generating_model_409s_with_the_reason(self, client, mock_router, monkeypatch, action):
         def _generating(model_id, force=False):
             raise RuntimeError(f"Model '{model_id}' is generating. "
                                f"Stop the generation, or use force=True to override.")
         monkeypatch.setattr(mock_router, "unload_model", _generating)
-        resp = client.post("/v1/admin/models/test-mlx-model/reload")
+        resp = client.post(f"/v1/admin/models/test-mlx-model/{action}")
         assert resp.status_code == 409
         assert "generating" in resp.json()["detail"]
 
@@ -174,13 +166,3 @@ class TestAdminReload:
         resp = client.post("/v1/admin/models/test-mlx-model/reload")
         assert resp.status_code == 409
         assert "in flight" in resp.json()["detail"]
-
-    def test_unload_of_a_generating_model_409s_too(self, client, mock_router, monkeypatch):
-        # Ride-along: /unload shared the raw-500 mechanism.
-        def _generating(model_id, force=False):
-            raise RuntimeError(f"Model '{model_id}' is generating. "
-                               f"Stop the generation, or use force=True to override.")
-        monkeypatch.setattr(mock_router, "unload_model", _generating)
-        resp = client.post("/v1/admin/models/test-mlx-model/unload")
-        assert resp.status_code == 409
-        assert "generating" in resp.json()["detail"]

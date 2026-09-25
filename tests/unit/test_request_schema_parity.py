@@ -112,7 +112,7 @@ class TestRequestSchemaParity:
         assert not stale_internal, f"INTERNAL_ONLY names non-exclusive fields: {sorted(stale_internal)}"
         assert not stale_messages, f"MESSAGES_ONLY names non-exclusive fields: {sorted(stale_messages)}"
 
-    def test_declared_asymmetries_carry_a_reason(self):
+        # ...and every declared entry carries its reason.
         for table, name in ((INTERNAL_ONLY, "INTERNAL_ONLY"), (MESSAGES_ONLY, "MESSAGES_ONLY")):
             for field, reason in table.items():
                 assert reason.strip(), f"{name}[{field!r}] has no reason"

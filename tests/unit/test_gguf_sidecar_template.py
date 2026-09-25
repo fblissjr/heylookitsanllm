@@ -33,147 +33,125 @@ def _gguf_dir(tmp_path, *, sidecar: bool):
     return tmp_path / "model-Q8_0.gguf"
 
 
+class _Contains(str):
+    """An expected origin that only has to appear IN the reported one."""
+
+    def __eq__(self, other):
+        return str(self) in other
+
+    __hash__ = str.__hash__
+
+
+_SIDECAR = "chat_template.jinja"
+_CHOSEN = "chosen.jinja"
+
+
+def _expected_path(tmp_path, name):
+    return None if name is None else str(tmp_path / name)
+
+
+# Precedence: explicit path > sidecar > embedded.
+# - explicit_outranks_sidecar: naming a file is a stronger statement than a
+#   file being present; silently preferring the directory would override an
+#   operator's deliberate choice with an incidental one.
+# - opt_out_restores_embedded: why the opt-out is a field rather than "delete
+#   the file": the embedded template is a legitimate choice, and a downloaded
+#   snapshot dir is not somewhere to vandalize to get the default back.
+# - discovery_scoped_to_own_dir: a template one level up belongs to whatever
+#   else lives up there. Split GGUF shards all sit in the model dir, so the
+#   narrow probe loses nothing.
 @pytest.mark.unit
-class TestSidecarTemplatePrecedence:
-    def test_a_sidecar_beside_the_weights_is_used(self, tmp_path):
-        model = _gguf_dir(tmp_path, sidecar=True)
-        path, origin = _provider(model)._resolve_chat_template()
-        assert path == str(tmp_path / "chat_template.jinja")
-        assert origin == "sidecar"
-
-    def test_no_sidecar_falls_through_to_the_embedded_template(self, tmp_path):
-        model = _gguf_dir(tmp_path, sidecar=False)
-        path, origin = _provider(model)._resolve_chat_template()
-        assert path is None
-        assert "embedded" in origin
-
-    def test_an_explicit_path_outranks_a_sidecar(self, tmp_path):
-        """Naming a file is a stronger statement than a file being present.
-        Silently preferring the directory would override an operator's
-        deliberate choice with an incidental one."""
-        model = _gguf_dir(tmp_path, sidecar=True)
-        chosen = tmp_path / "chosen.jinja"
-        chosen.write_text("{{ 'chosen' }}")
-        path, origin = _provider(model, chat_template_path=str(chosen))._resolve_chat_template()
-        assert path == str(chosen)
-        assert origin == "configured"
-
-    def test_the_embedded_template_stays_reachable_with_the_sidecar_on_disk(self, tmp_path):
-        """The reason the opt-out is a field rather than "delete the file":
-        the embedded template is a legitimate choice, and a downloaded
-        snapshot dir is not somewhere to vandalize to get the documented
-        default back."""
-        model = _gguf_dir(tmp_path, sidecar=True)
-        path, origin = _provider(model, use_sidecar_chat_template=False)._resolve_chat_template()
-        assert path is None
-        assert "embedded" in origin
-
-    def test_discovery_is_scoped_to_the_model_file_s_own_directory(self, tmp_path):
-        """A template one level up belongs to whatever else lives up there.
-        Split GGUF shards all sit in the model dir, so this is the same folder
-        either way and the narrow probe loses nothing."""
-        (tmp_path / "chat_template.jinja").write_text("{{ 'parent' }}")
+@pytest.mark.parametrize("layout, config, expected_path, expected_origin", [
+    ("sidecar", {}, _SIDECAR, "sidecar"),
+    ("none", {}, None, _Contains("embedded")),
+    ("sidecar", {"chat_template_path": _CHOSEN}, _CHOSEN, "configured"),
+    ("sidecar", {"use_sidecar_chat_template": False}, None, _Contains("embedded")),
+    ("parent", {}, None, _Contains("embedded")),
+], ids=["sidecar_beside_weights_used", "no_sidecar_falls_to_embedded", "explicit_outranks_sidecar",
+        "opt_out_restores_embedded", "discovery_scoped_to_own_dir"])
+def test_sidecar_template_precedence(tmp_path, layout, config, expected_path, expected_origin):
+    if layout == "parent":
+        (tmp_path / _SIDECAR).write_text("{{ 'parent' }}")
         nested = tmp_path / "quant"
         nested.mkdir()
         model = _gguf_dir(nested, sidecar=False)
-        assert _provider(model)._resolve_chat_template()[0] is None
+    else:
+        model = _gguf_dir(tmp_path, sidecar=layout == "sidecar")
+    if "chat_template_path" in config:
+        (tmp_path / _CHOSEN).write_text("{{ 'chosen' }}")
+        config = {**config, "chat_template_path": str(tmp_path / _CHOSEN)}
+    path, origin = _provider(model, **config)._resolve_chat_template()
+    assert path == _expected_path(tmp_path, expected_path)
+    assert expected_origin == origin
+
+
+# A sidecar may not cost the model its projector: the guard that stopped this
+# feature shipping broken. Found live 2026-08-30: every sidecar-carrying gguf
+# model on this machine was MULTIMODAL, and `unsloth_Muse-Glimmer-30B-GGUF`
+# ships a sidecar with the bare words "image" and "video" and no media
+# control tokens. Unguarded, the default would have loaded that model's
+# projector and rendered every prompt through a template that can never
+# reference an image -- a vision model quietly answering as a text one.
+# - projector_accepts_media_aware: the guard must not become a blanket ban;
+#   real sidecars that DO carry the markers are the ones the owner asked for.
+# - text_model_takes_media_blind: the guard keys on what would be LOST, not
+#   on the template alone.
+# - bare_word_image_is_not_media: the precise shape of the real defect; a
+#   substring test for "image" would have waved Muse-Glimmer through. Markers
+#   are what a projector can actually bind to.
+# - explicit_path_never_second_guessed: the guard exists because discovery is
+#   implicit; naming a file is not, and the warning tells operators to use it
+#   as the override.
+_TEXT_ONLY = "{% for m in messages %}{{ m['content'] }}{% endfor %}"
+_WITH_MEDIA = ("{% for m in messages %}{% if m.image %}"
+               "<|vision_start|><|image_pad|><|vision_end|>{% endif %}"
+               "{{ m['content'] }}{% endfor %}")
+_BARE_WORD_IMAGE = ("{# describe the image or video #}{% for m in messages %}"
+                    "{{ m['content'] }}{% endfor %}")
 
 
 @pytest.mark.unit
-class TestASidecarMayNotCostTheModelItsProjector:
-    """The guard that stopped this feature shipping broken.
-
-    Found live 2026-08-30: all three sidecar-carrying gguf models on this
-    machine are MULTIMODAL, and `unsloth_Muse-Glimmer-30B-GGUF` ships a
-    sidecar containing the bare words "image" and "video" and no media
-    control tokens at all. Unguarded, the default would have loaded that
-    model's projector and then rendered every prompt through a template that
-    can never reference an image -- a vision model quietly answering as a
-    text one, which nothing downstream would flag.
-    """
-
-    _TEXT_ONLY = "{% for m in messages %}{{ m['content'] }}{% endfor %}"
-    _WITH_MEDIA = ("{% for m in messages %}{% if m.image %}"
-                   "<|vision_start|><|image_pad|><|vision_end|>{% endif %}"
-                   "{{ m['content'] }}{% endfor %}")
-
-    def _dir(self, tmp_path, template: str):
-        (tmp_path / "model-Q8_0.gguf").write_bytes(b"GGUF")
-        (tmp_path / "chat_template.jinja").write_text(template)
-        return tmp_path / "model-Q8_0.gguf"
-
-    def test_a_projector_model_refuses_a_media_blind_sidecar(self, tmp_path):
-        model = self._dir(tmp_path, self._TEXT_ONLY)
-        path, origin = _provider(
-            model, mmproj_path=str(tmp_path / "mmproj.gguf"),
-            modalities=["text", "vision"])._resolve_chat_template()
-        assert path is None
-        assert "sidecar skipped" in origin
-
-    def test_a_projector_model_accepts_a_media_aware_sidecar(self, tmp_path):
-        """The guard must not become a blanket ban: two of the three real
-        sidecars DO carry the markers, and those are the ones the owner asked
-        for."""
-        model = self._dir(tmp_path, self._WITH_MEDIA)
-        path, origin = _provider(
-            model, mmproj_path=str(tmp_path / "mmproj.gguf"),
-            modalities=["text", "vision"])._resolve_chat_template()
-        assert path == str(tmp_path / "chat_template.jinja")
-        assert origin == "sidecar"
-
-    def test_a_text_model_takes_a_media_blind_sidecar_happily(self, tmp_path):
-        """A template with no media markers is exactly right for a model with
-        no projector -- the guard keys on what would be LOST, not on the
-        template alone."""
-        model = self._dir(tmp_path, self._TEXT_ONLY)
-        path, origin = _provider(model)._resolve_chat_template()
-        assert path == str(tmp_path / "chat_template.jinja")
-        assert origin == "sidecar"
-
-    def test_the_bare_word_image_is_not_media_handling(self, tmp_path):
-        """The precise shape of the real defect. A substring test for "image"
-        would have waved the Muse-Glimmer sidecar through; markers are what a
-        projector can actually bind to."""
-        model = self._dir(
-            tmp_path,
-            "{# describe the image or video #}{% for m in messages %}"
-            "{{ m['content'] }}{% endfor %}")
-        path, _ = _provider(
-            model, mmproj_path=str(tmp_path / "mmproj.gguf"),
-            modalities=["text", "vision"])._resolve_chat_template()
-        assert path is None
-
-    def test_an_explicit_path_is_never_second_guessed(self, tmp_path):
-        """The guard exists because discovery is implicit. Naming a file is
-        not, so the refusal must not extend to it -- the warning even tells
-        operators to use this as the override."""
-        model = self._dir(tmp_path, self._TEXT_ONLY)
-        chosen = tmp_path / "chosen.jinja"
-        chosen.write_text(self._TEXT_ONLY)
-        path, origin = _provider(
-            model, chat_template_path=str(chosen),
-            mmproj_path=str(tmp_path / "mmproj.gguf"),
-            modalities=["text", "vision"])._resolve_chat_template()
-        assert path == str(chosen)
-        assert origin == "configured"
+@pytest.mark.parametrize("template, projector, explicit, expected_path, expected_origin", [
+    (_TEXT_ONLY, True, False, None, _Contains("sidecar skipped")),
+    (_WITH_MEDIA, True, False, _SIDECAR, "sidecar"),
+    (_TEXT_ONLY, False, False, _SIDECAR, "sidecar"),
+    (_BARE_WORD_IMAGE, True, False, None, _Contains("sidecar skipped")),
+    (_TEXT_ONLY, True, True, _CHOSEN, "configured"),
+], ids=["projector_refuses_media_blind", "projector_accepts_media_aware", "text_model_takes_media_blind",
+        "bare_word_image_is_not_media", "explicit_path_never_second_guessed"])
+def test_a_sidecar_may_not_cost_the_model_its_projector(
+        tmp_path, template, projector, explicit, expected_path, expected_origin):
+    (tmp_path / "model-Q8_0.gguf").write_bytes(b"GGUF")
+    (tmp_path / _SIDECAR).write_text(template)
+    config = {}
+    if projector:
+        config.update(mmproj_path=str(tmp_path / "mmproj.gguf"), modalities=["text", "vision"])
+    if explicit:
+        (tmp_path / _CHOSEN).write_text(template)
+        config["chat_template_path"] = str(tmp_path / _CHOSEN)
+    path, origin = _provider(tmp_path / "model-Q8_0.gguf", **config)._resolve_chat_template()
+    assert path == _expected_path(tmp_path, expected_path)
+    assert expected_origin == origin
 
 
+# Discovery degrades to a clean miss.
+# - nonexistent_model_path: `_build_args` is exercised with paths that do not
+#   exist (the argv/metadata drift test), so a filesystem probe on that path
+#   must be a clean miss rather than an error.
+# - dir_named_chat_template_jinja: `is_file`, not `exists` -- handing
+#   llama-server a directory would turn a quiet fallthrough into a spawn
+#   failure.
 @pytest.mark.unit
-class TestSidecarDiscoveryDegradesQuietly:
-    def test_a_nonexistent_model_path_finds_nothing_and_does_not_raise(self):
-        """`_build_args` is exercised with paths that do not exist (the
-        argv/metadata drift test), so a filesystem probe added to that path
-        must be a clean miss rather than an error."""
-        path, origin = _provider("/no/such/dir/model.gguf")._resolve_chat_template()
-        assert path is None
-        assert "embedded" in origin
-
-    def test_a_directory_named_chat_template_jinja_is_not_a_template(self, tmp_path):
-        """`is_file`, not `exists` -- handing llama-server a directory would
-        turn a quiet fallthrough into a spawn failure."""
+@pytest.mark.parametrize("case", ["nonexistent_model_path", "dir_named_chat_template_jinja"])
+def test_sidecar_discovery_degrades_quietly(tmp_path, case):
+    if case == "nonexistent_model_path":
+        model = "/no/such/dir/model.gguf"
+    else:
         model = _gguf_dir(tmp_path, sidecar=False)
-        (tmp_path / "chat_template.jinja").mkdir()
-        assert _provider(model)._resolve_chat_template()[0] is None
+        (tmp_path / _SIDECAR).mkdir()
+    path, origin = _provider(model)._resolve_chat_template()
+    assert path is None
+    assert "embedded" in origin
 
 
 @pytest.mark.unit
@@ -190,13 +168,18 @@ class TestSidecarReachesTheCommandLine:
         assert args[args.index("--chat-template-file") + 1] == str(
             tmp_path / "chat_template.jinja")
 
-    def test_no_sidecar_emits_no_template_flag_at_all(self, tmp_path):
-        """Absent must mean ABSENT: passing an empty or placeholder value would
-        be llama-server's problem to interpret, and the documented default is
-        that it reads the template out of the GGUF itself."""
+    # Absent must mean ABSENT: the default MUST stay "whatever the quantizer
+    # baked in", and an empty or placeholder value would be llama-server's
+    # problem to interpret. Rows: a real dir with no sidecar, and a model path
+    # that does not exist (the provider tests' `/fake/model.gguf`).
+    @pytest.mark.parametrize("where", ["dir_without_sidecar", "nonexistent_model_path"])
+    def test_no_sidecar_emits_no_template_flag_at_all(self, tmp_path, where):
         from pathlib import Path
 
-        model = _gguf_dir(tmp_path, sidecar=False)
+        if where == "dir_without_sidecar":
+            model = _gguf_dir(tmp_path, sidecar=False)
+        else:
+            model = "/fake/model.gguf"
         args = _provider(model)._build_args(Path("/bin/llama-server"), 8080)
         assert "--chat-template-file" not in args
 

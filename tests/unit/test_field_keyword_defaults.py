@@ -38,17 +38,15 @@ def _positional_defaults() -> list[str]:
 
 
 def test_no_positional_field_defaults():
-    hits = _positional_defaults()
-    assert not hits, (
-        "Field() with a POSITIONAL default; use Field(default=...) instead:\n  "
-        + "\n  ".join(hits))
-
-
-def test_scan_reaches_the_source_tree():
-    # Guard against a vacuous pass: the scan must actually find Field calls.
+    # The scan must actually find Field calls, or a pass is vacuous.
     count = 0
     for path in SRC.rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         count += sum(1 for n in ast.walk(tree)
                      if isinstance(n, ast.Call) and _is_field_call(n))
     assert count > 0, f"no Field() calls found under {SRC}; the scan looked at nothing"
+
+    hits = _positional_defaults()
+    assert not hits, (
+        "Field() with a POSITIONAL default; use Field(default=...) instead:\n  "
+        + "\n  ".join(hits))

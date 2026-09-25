@@ -41,8 +41,7 @@ def test_generation_pinned_to_one_thread():
     assert idents[0] != threading.get_ident()
 
 
-def test_sequential_generations_reuse_thread():
-    first = _drain(_thread_ident_gen(3))
+def _a_second_generation_reuses_the_worker(first):
     second = _drain(_thread_ident_gen(3))
     assert set(first) == set(second), (
         "sequential generations must reuse the pooled worker, not spawn+kill "
@@ -50,23 +49,7 @@ def test_sequential_generations_reuse_thread():
     )
 
 
-def test_pool_release_returns_executor():
-    ex = _executor_pool.acquire()
-    _executor_pool.acquire()  # concurrent lease gets a different executor
-    _executor_pool.release(ex)
-    assert _executor_pool.acquire() is ex
-
-
-def test_concurrent_leases_are_distinct():
-    a = _executor_pool.acquire()
-    b = _executor_pool.acquire()
-    assert a is not b
-    _executor_pool.release(a)
-    _executor_pool.release(b)
-
-
-def test_executor_survives_stream_end():
-    _drain(_thread_ident_gen(2))
+def _a_pooled_executor_still_accepts_work(first):  # noqa: ARG001
     ex = _executor_pool.acquire()
     try:
         # A shut-down executor raises RuntimeError on submit; a pooled one
@@ -74,6 +57,30 @@ def test_executor_survives_stream_end():
         assert ex.submit(lambda: 42).result(timeout=5) == 42
     finally:
         _executor_pool.release(ex)
+
+
+@pytest.mark.parametrize("then", [
+    pytest.param(_a_second_generation_reuses_the_worker, id="sequential_generations_reuse_thread"),
+    pytest.param(_a_pooled_executor_still_accepts_work, id="executor_survives_stream_end"),
+])
+def test_a_finished_generation_leaves_its_worker_in_the_pool(then):
+    then(_drain(_thread_ident_gen(3)))
+
+
+@pytest.mark.parametrize("released", [
+    pytest.param(0, id="pool_release_returns_executor"),
+    pytest.param(1, id="concurrent_leases_are_distinct"),
+])
+def test_concurrent_leases_differ_and_a_released_one_is_reissued(released):
+    leases = [_executor_pool.acquire(), _executor_pool.acquire()]
+    assert leases[0] is not leases[1]
+    _executor_pool.release(leases[released])
+    again = _executor_pool.acquire()
+    try:
+        assert again is leases[released]
+    finally:
+        for ex in leases:
+            _executor_pool.release(ex)
 
 
 class TestQuarantine:

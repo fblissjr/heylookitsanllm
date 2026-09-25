@@ -14,59 +14,51 @@ from fastapi import HTTPException
 from _fake_request import FakeRequest as _FakeRequest
 
 
+# One pure guard, one row per case: (env value or None for unset, header
+# dicts each sent separately, expected status -- None means allowed through).
+# - empty env: an exported-but-unassigned HEYLOOK_ADMIN_TOKEN='' is treated
+#   as unset. Without that, every admin call would reject because '' never
+#   matches any header.
+# - case: HTTP headers are case-insensitive per RFC 7230; Starlette's
+#   Request.headers.get() handles this, and the guard must work regardless
+#   of header case (lowercase and uppercase both pass).
+_ADMIN_TOKEN_ROWS = [
+    pytest.param(None, [{}], None, id="no_env_var_allows_through"),
+    pytest.param(
+        "secret-token-value",
+        [{"X-Heylook-Admin-Token": "secret-token-value"}],
+        None,
+        id="matching_header_allows_through",
+    ),
+    pytest.param("secret", [{}], 401, id="missing_header_rejects"),
+    pytest.param(
+        "secret", [{"X-Heylook-Admin-Token": "wrong"}], 401, id="wrong_header_rejects"
+    ),
+    pytest.param("", [{}], None, id="empty_env_var_is_no_op"),
+    pytest.param(
+        "secret",
+        [{"x-heylook-admin-token": "secret"}, {"X-HEYLOOK-ADMIN-TOKEN": "secret"}],
+        None,
+        id="header_case_insensitive",
+    ),
+]
+
+
 class TestRequireAdminToken:
-    def test_no_env_var_allows_through(self, monkeypatch: pytest.MonkeyPatch):
-        """HEYLOOK_ADMIN_TOKEN unset: middleware is a no-op."""
-        monkeypatch.delenv("HEYLOOK_ADMIN_TOKEN", raising=False)
+    @pytest.mark.parametrize("env, header_sets, expected_status", _ADMIN_TOKEN_ROWS)
+    def test_admin_token_table(
+        self, monkeypatch: pytest.MonkeyPatch, env, header_sets, expected_status
+    ):
+        if env is None:
+            monkeypatch.delenv("HEYLOOK_ADMIN_TOKEN", raising=False)
+        else:
+            monkeypatch.setenv("HEYLOOK_ADMIN_TOKEN", env)
         from heylook_llm.auth import require_admin_token
 
-        # No header, no env var -- must not raise.
-        require_admin_token(_FakeRequest())
-
-    def test_matching_header_allows_through(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("HEYLOOK_ADMIN_TOKEN", "secret-token-value")
-        from heylook_llm.auth import require_admin_token
-
-        request = _FakeRequest({"X-Heylook-Admin-Token": "secret-token-value"})
-        require_admin_token(request)
-
-    def test_missing_header_rejects(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("HEYLOOK_ADMIN_TOKEN", "secret")
-        from heylook_llm.auth import require_admin_token
-
-        with pytest.raises(HTTPException) as excinfo:
-            require_admin_token(_FakeRequest())
-        assert excinfo.value.status_code == 401
-
-    def test_wrong_header_rejects(self, monkeypatch: pytest.MonkeyPatch):
-        monkeypatch.setenv("HEYLOOK_ADMIN_TOKEN", "secret")
-        from heylook_llm.auth import require_admin_token
-
-        with pytest.raises(HTTPException) as excinfo:
-            require_admin_token(_FakeRequest({"X-Heylook-Admin-Token": "wrong"}))
-        assert excinfo.value.status_code == 401
-
-    def test_empty_env_var_is_no_op(self, monkeypatch: pytest.MonkeyPatch):
-        """Explicit empty HEYLOOK_ADMIN_TOKEN='' should be treated as unset.
-
-        Catches the footgun where someone exports the var without assigning
-        a value. Without this, every admin call would reject because ''
-        never matches any header. Explicit no-op on empty is friendlier.
-        """
-        monkeypatch.setenv("HEYLOOK_ADMIN_TOKEN", "")
-        from heylook_llm.auth import require_admin_token
-
-        # Empty token -> treated as unset -> allow through.
-        require_admin_token(_FakeRequest())
-
-    def test_header_case_insensitive(self, monkeypatch: pytest.MonkeyPatch):
-        """HTTP headers are case-insensitive per RFC 7230; Starlette's
-        Request.headers.get() handles this. Confirm the middleware works
-        regardless of header case."""
-        monkeypatch.setenv("HEYLOOK_ADMIN_TOKEN", "secret")
-        from heylook_llm.auth import require_admin_token
-
-        # Lowercase
-        require_admin_token(_FakeRequest({"x-heylook-admin-token": "secret"}))
-        # Uppercase
-        require_admin_token(_FakeRequest({"X-HEYLOOK-ADMIN-TOKEN": "secret"}))
+        for headers in header_sets:
+            if expected_status is None:
+                require_admin_token(_FakeRequest(headers))
+            else:
+                with pytest.raises(HTTPException) as excinfo:
+                    require_admin_token(_FakeRequest(headers))
+                assert excinfo.value.status_code == expected_status

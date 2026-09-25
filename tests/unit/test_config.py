@@ -18,98 +18,115 @@ from heylook_llm.config import (
 )
 
 
-@pytest.mark.unit
-class TestChatMessage:
-    def test_simple_text_message(self):
-        msg = ChatMessage(role="user", content="hello")
-        assert msg.role == "user"
-        assert msg.content == "hello"
-        assert msg.thinking is None
-
-    def test_assistant_message(self):
-        msg = ChatMessage(role="assistant", content="hi there")
-        assert msg.role == "assistant"
-
-    def test_system_message(self):
-        msg = ChatMessage(role="system", content="You are helpful.")
-        assert msg.role == "system"
-
-    def test_multimodal_content(self):
-        parts = [
+# Pydantic construction round-trip: ChatMessage / ChatRequest / ModelConfig /
+# AppConfig construct from every role and content shape, round-trip thinking,
+# and omit None on dump. Rows: (build the object, project what the row checks,
+# expected projection). Built inside the test so a constructor failure is a
+# failed row, not a collection error.
+_CONSTRUCTION_ROWS = [
+    pytest.param(
+        lambda: ChatMessage(role="user", content="hello"),
+        lambda m: (m.role, m.content, m.thinking),
+        ("user", "hello", None),
+        id="simple_text_message",
+    ),
+    pytest.param(
+        lambda: ChatMessage(role="assistant", content="hi there"),
+        lambda m: m.role, "assistant", id="assistant_message",
+    ),
+    pytest.param(
+        lambda: ChatMessage(role="system", content="You are helpful."),
+        lambda m: m.role, "system", id="system_message",
+    ),
+    pytest.param(
+        lambda: ChatMessage(role="user", content=[
             TextContentPart(type="text", text="What is this?"),
-            ImageContentPart(type="image_url", image_url=ImageUrl(url="https://example.com/img.png")),
-        ]
-        msg = ChatMessage(role="user", content=parts)
-        assert isinstance(msg.content, list)
-        assert len(msg.content) == 2
+            ImageContentPart(type="image_url",
+                             image_url=ImageUrl(url="https://example.com/img.png")),
+        ]),
+        lambda m: (isinstance(m.content, list), len(m.content)),
+        (True, 2),
+        id="multimodal_content",
+    ),
+    pytest.param(
+        lambda: ChatMessage(role="assistant", content="answer", thinking="reasoning"),
+        lambda m: (m.thinking, m.model_dump()["thinking"]),
+        ("reasoning", "reasoning"),
+        id="thinking_roundtrip",
+    ),
+    pytest.param(
+        lambda: ChatMessage(role="assistant", content="hi"),
+        lambda m: "thinking" in m.model_dump(exclude_none=True),
+        False,
+        id="thinking_excluded_when_none",
+    ),
+    pytest.param(
+        lambda: ChatMessage(role="user", content="test"),
+        lambda m: (m.name, m.tool_call_id, m.tool_calls),
+        (None, None, None),
+        id="optional_fields_default_none",
+    ),
+    pytest.param(
+        lambda: ChatRequest(messages=[ChatMessage(role="user", content="hi")]),
+        lambda r: (r.model, r.stream, len(r.messages)),
+        (None, False, 1),
+        id="minimal_request",
+    ),
+    pytest.param(
+        lambda: ChatRequest(
+            model="test",
+            messages=[ChatMessage(role="user", content="hi")],
+            temperature=0.5, top_p=0.9, top_k=40, min_p=0.1,
+            repetition_penalty=1.1, max_tokens=256, seed=42,
+        ),
+        lambda r: (r.temperature, r.top_k, r.seed),
+        (0.5, 40, 42),
+        id="all_sampler_params",
+    ),
+    pytest.param(
+        lambda: ChatRequest(messages=[ChatMessage(role="user", content="hi")],
+                            enable_thinking=True),
+        lambda r: r.enable_thinking, True, id="enable_thinking",
+    ),
+    pytest.param(
+        lambda: ModelConfig(id="test-mlx", provider="mlx",
+                            config={"model_path": "/fake/path"}),
+        lambda mc: (mc.id, mc.provider, isinstance(mc.config, MLXModelConfig),
+                    mc.config.model_path),
+        ("test-mlx", "mlx", True, "/fake/path"),
+        id="mlx_model_config",
+    ),
+    pytest.param(
+        lambda: ModelConfig(id="test", provider="mlx", config={"model_path": "/fake"},
+                            capabilities=["chat", "thinking", "vision"]),
+        lambda mc: "thinking" in mc.capabilities, True, id="capabilities_list",
+    ),
+    pytest.param(
+        lambda: AppConfig(models=[ModelConfig(id="m1", provider="mlx",
+                                              config={"model_path": "/a"})]),
+        # m3 is missing
+        lambda c: (c.get_model_config("m1") is not None, c.get_model_config("m3")),
+        (True, None),
+        id="get_model_config",
+    ),
+]
 
-    def test_thinking_roundtrip(self):
-        msg = ChatMessage(role="assistant", content="answer", thinking="reasoning")
-        assert msg.thinking == "reasoning"
-        d = msg.model_dump()
-        assert d["thinking"] == "reasoning"
 
-    def test_thinking_excluded_when_none(self):
-        msg = ChatMessage(role="assistant", content="hi")
-        d = msg.model_dump(exclude_none=True)
-        assert "thinking" not in d
-
-    def test_optional_fields_default_none(self):
-        msg = ChatMessage(role="user", content="test")
-        assert msg.name is None
-        assert msg.tool_call_id is None
-        assert msg.tool_calls is None
+@pytest.mark.unit
+@pytest.mark.parametrize("build, project, expected", _CONSTRUCTION_ROWS)
+def test_pydantic_construction_round_trip(build, project, expected):
+    assert project(build()) == expected
 
 
 @pytest.mark.unit
 class TestChatRequest:
-    def test_minimal_request(self):
-        req = ChatRequest(messages=[ChatMessage(role="user", content="hi")])
-        assert req.model is None
-        assert req.stream is False
-        assert len(req.messages) == 1
-
     def test_empty_messages_rejected(self):
         with pytest.raises(ValueError, match="Messages list cannot be empty"):
             ChatRequest(messages=[])
 
-    def test_all_sampler_params(self):
-        req = ChatRequest(
-            model="test",
-            messages=[ChatMessage(role="user", content="hi")],
-            temperature=0.5,
-            top_p=0.9,
-            top_k=40,
-            min_p=0.1,
-            repetition_penalty=1.1,
-            max_tokens=256,
-            seed=42,
-        )
-        assert req.temperature == 0.5
-        assert req.top_k == 40
-        assert req.seed == 42
-
-    def test_enable_thinking(self):
-        req = ChatRequest(
-            messages=[ChatMessage(role="user", content="hi")],
-            enable_thinking=True,
-        )
-        assert req.enable_thinking is True
-
 
 @pytest.mark.unit
 class TestModelConfig:
-    def test_mlx_model_config(self):
-        mc = ModelConfig(
-            id="test-mlx",
-            provider="mlx",
-            config={"model_path": "/fake/path"},
-        )
-        assert mc.id == "test-mlx"
-        assert mc.provider == "mlx"
-        assert isinstance(mc.config, MLXModelConfig)
-        assert mc.config.model_path == "/fake/path"
-
     def test_invalid_config_for_provider_rejected(self):
         """Config missing required fields raises validation error."""
         with pytest.raises(ValueError):
@@ -124,23 +141,9 @@ class TestModelConfig:
         assert mc.vision is False
         assert mc.enable_thinking is None  # v1.79.62: unset = follow the thinking capability
 
-    def test_capabilities_list(self):
-        mc = ModelConfig(
-            id="test",
-            provider="mlx",
-            config={"model_path": "/fake"},
-            capabilities=["chat", "thinking", "vision"],
-        )
-        assert "thinking" in mc.capabilities
-
 
 @pytest.mark.unit
 class TestAppConfig:
-    def test_get_model_config(self):
-        cfg = AppConfig(models=[ModelConfig(id="m1", provider="mlx", config={"model_path": "/a"})])
-        assert cfg.get_model_config("m1") is not None
-        assert cfg.get_model_config("m3") is None  # missing
-
     def test_max_loaded_models_default(self):
         cfg = AppConfig(models=[])
         assert cfg.max_loaded_models == 1
@@ -165,12 +168,10 @@ class TestMLXRuntimeDefaultFields:
         "prefill_step_size",
     })
 
-    def test_derived_set_matches_expected(self):
+    def test_derived_set_matches_expected_and_each_is_optional(self):
         assert MLX_RUNTIME_DEFAULT_FIELDS == self.EXPECTED_RUNTIME_DEFAULTS
-
-    def test_every_runtime_default_is_optional(self):
-        """Safety: runtime defaults must be omittable so models.toml entries
-        that don't set them fall through to mlx-lm's own defaults."""
+        # Safety: runtime defaults must be omittable so models.toml entries
+        # that don't set them fall through to mlx-lm's own defaults.
         for name in MLX_RUNTIME_DEFAULT_FIELDS:
             field = MLXModelConfig.model_fields[name]
             # Either the default is explicit OR the field allows None.
@@ -189,10 +190,25 @@ class TestMLXModelConfigValidation:
     # call site otherwise.
     BASE: ClassVar[dict[str, Any]] = {"model_path": "/fake/model"}
 
-    def test_unknown_key_rejected(self):
-        # extra="forbid": a typo like `temperatue` must not silently vanish.
-        with pytest.raises(ValidationError):
-            MLXModelConfig(**self.BASE, temperatue=0.9)
+    # extra="forbid": an unknown or retired key fails validation. Each row is
+    # a list of kwargs sets, each refused on its own.
+    # - unknown_key: a typo like `temperatue` must not silently vanish.
+    # - quantized_kv_start: dead config (stored and forwarded but never
+    #   consumed by _build_cache_config/make_cache), removed outright.
+    # - retired_mlx_fields: retired with the mlx-vlm engine (plan W10 stage 3);
+    #   an entry still carrying one fails at load rather than doing nothing.
+    @pytest.mark.parametrize("bad_kwargs", [
+        pytest.param([{"temperatue": 0.9}], id="unknown_key_rejected"),
+        pytest.param([{"quantized_kv_start": 1024}], id="quantized_kv_start_removed"),
+        pytest.param([{"loader": "mlx-lm"}, {"cache_type": "quantized"},
+                      {"kv_bits": 8}, {"draft_model_path": "/d"},
+                      {"num_draft_tokens": 3}],
+                     id="retired_mlx_fields_are_refused"),
+    ])
+    def test_extra_keys_are_forbidden(self, bad_kwargs):
+        for kwargs in bad_kwargs:
+            with pytest.raises(ValidationError):
+                MLXModelConfig(**self.BASE, **kwargs)
 
     def test_max_queue_depth_is_a_real_field(self):
         # The provider reads config["max_queue_depth"]; without a field the
@@ -200,11 +216,6 @@ class TestMLXModelConfigValidation:
         assert MLXModelConfig(**self.BASE).max_queue_depth == 8
         assert MLXModelConfig(**self.BASE, max_queue_depth=2).max_queue_depth == 2
 
-    def test_quantized_kv_start_removed(self):
-        # Dead config: stored and forwarded but never consumed by
-        # _build_cache_config/make_cache. Removed outright.
-        with pytest.raises(ValidationError):
-            MLXModelConfig(**self.BASE, quantized_kv_start=1024)
 
 
 @pytest.mark.unit
@@ -222,54 +233,34 @@ class TestModalitiesAndLoader:
     # call site otherwise.
     BASE: ClassVar[dict[str, Any]] = {"model_path": "/fake/model"}
 
-    def test_defaults_are_text_only(self):
-        cfg = MLXModelConfig(**self.BASE)
-        assert cfg.modalities == ["text"]
-        assert cfg.vision is False
-
-    def test_legacy_vision_true_derives_modalities(self):
-        # Old entries carry only ``vision = true``; modalities derives from it.
-        cfg = MLXModelConfig(**self.BASE, vision=True)
-        assert cfg.modalities == ["text", "vision"]
-        assert cfg.vision is True
-
-    def test_explicit_modalities_syncs_vision_true(self):
-        cfg = MLXModelConfig(**self.BASE, modalities=["text", "vision", "audio"])
-        assert cfg.vision is True                     # derived from modalities
-        assert "audio" in cfg.modalities
-
-    def test_explicit_modalities_without_vision_sets_vision_false(self):
-        # A non-vision multimodal model (e.g. text+audio) must NOT read as vision.
-        cfg = MLXModelConfig(**self.BASE, modalities=["text", "audio"])
-        assert cfg.vision is False
-        assert cfg.modalities == ["text", "audio"]
-
-    def test_modalities_are_authoritative_over_vision(self):
-        # Contradiction (vision=True but modalities lacks it): modalities wins,
-        # since it is the richer, author-declared description.
-        cfg = MLXModelConfig(**self.BASE, vision=True, modalities=["text"])
-        assert cfg.vision is False
-        assert cfg.modalities == ["text"]
-
-    def test_text_always_present(self):
-        # Every language model does text; normalize it in even if omitted.
-        cfg = MLXModelConfig(**self.BASE, modalities=["vision"])
-        assert cfg.modalities[0] == "text"
-        assert "vision" in cfg.modalities
-
-    def test_modalities_deduped(self):
-        cfg = MLXModelConfig(**self.BASE, modalities=["text", "vision", "vision"])
-        assert cfg.modalities == ["text", "vision"]
-
-    def test_retired_mlx_fields_are_refused(self):
-        # Retired with the mlx-vlm engine (plan W10 stage 3): an entry still
-        # carrying one fails at load rather than silently doing nothing.
-        for field, value in (("loader", "mlx-lm"), ("cache_type", "quantized"),
-                             ("kv_bits", 8), ("draft_model_path", "/d"),
-                             ("num_draft_tokens", 3)):
-            with pytest.raises(ValidationError):
-                MLXModelConfig(**self.BASE, **{field: value})
-
+    # Normalization rows: (kwargs, expected modalities). Text first, deduped,
+    # `vision` mirrors "vision" in modalities, modalities beat the legacy bool.
+    # - legacy_vision_true: old entries carry only `vision = true`.
+    # - without_vision: a non-vision multimodal model (text+audio) must NOT
+    #   read as vision.
+    # - authoritative: vision=True but modalities lacks it -> modalities wins,
+    #   being the richer, author-declared description.
+    # - text_always_present: every language model does text; normalized in.
+    @pytest.mark.parametrize("kwargs, expected", [
+        pytest.param({}, ["text"], id="defaults_are_text_only"),
+        pytest.param({"vision": True}, ["text", "vision"],
+                     id="legacy_vision_true_derives_modalities"),
+        pytest.param({"modalities": ["text", "vision", "audio"]},
+                     ["text", "vision", "audio"],
+                     id="explicit_modalities_syncs_vision_true"),
+        pytest.param({"modalities": ["text", "audio"]}, ["text", "audio"],
+                     id="explicit_modalities_without_vision_sets_vision_false"),
+        pytest.param({"vision": True, "modalities": ["text"]}, ["text"],
+                     id="modalities_are_authoritative_over_vision"),
+        pytest.param({"modalities": ["vision"]}, ["text", "vision"],
+                     id="text_always_present"),
+        pytest.param({"modalities": ["text", "vision", "vision"]}, ["text", "vision"],
+                     id="modalities_deduped"),
+    ])
+    def test_modalities_normalization(self, kwargs, expected):
+        cfg = MLXModelConfig(**self.BASE, **kwargs)
+        assert cfg.modalities == expected
+        assert cfg.vision is ("vision" in expected)  # derived mirror
 
 
 @pytest.mark.unit
@@ -284,35 +275,33 @@ class TestModalitiesDeriveAtLoad:
     derived metadata that rots when the dir changes in place.
     """
 
-    def _model_dir(self, tmp_path, config: dict):
-        import json as _json
-        (tmp_path / "config.json").write_text(_json.dumps(config))
-        return str(tmp_path)
-
-    def test_unset_modalities_detects_from_model_dir(self, tmp_path):
-        path = self._model_dir(
-            tmp_path, {"model_type": "gemma4", "vision_config": {}, "audio_config": {}})
-        cfg = MLXModelConfig(model_path=path)
-        assert cfg.modalities == ["text", "vision", "audio"]
-        assert cfg.vision is True  # mirror syncs to detection
-
-    def test_unset_modalities_text_only_dir(self, tmp_path):
-        path = self._model_dir(tmp_path, {"model_type": "llama"})
-        cfg = MLXModelConfig(model_path=path)
-        assert cfg.modalities == ["text"]
-        assert cfg.vision is False
-
-    def test_stored_modalities_override_detection(self, tmp_path):
-        # Operator says text-only; the dir says vision. Stored intent wins.
-        path = self._model_dir(tmp_path, {"model_type": "x", "vision_config": {}})
-        cfg = MLXModelConfig(model_path=path, modalities=["text"])
-        assert cfg.modalities == ["text"]
-        assert cfg.vision is False
-
-    def test_no_config_json_falls_back_to_legacy_vision_bool(self):
-        # Fake paths (tests, HF repo ids) keep the pre-6a derivation.
-        cfg = MLXModelConfig(model_path="/fake/model", vision=True)
-        assert cfg.modalities == ["text", "vision"]
+    # Rows: (model dir config.json, or None for a fake path with no dir;
+    # stored kwargs; expected modalities). `vision` mirrors the result.
+    # - stored_override: the operator says text-only, the dir says vision;
+    #   stored intent wins.
+    # - no_config_json: fake paths (tests, HF repo ids) keep the pre-6a
+    #   derivation from the legacy vision bool.
+    @pytest.mark.parametrize("config_json, kwargs, expected", [
+        pytest.param({"model_type": "gemma4", "vision_config": {}, "audio_config": {}},
+                     {}, ["text", "vision", "audio"],
+                     id="unset_modalities_detects_from_model_dir"),
+        pytest.param({"model_type": "llama"}, {}, ["text"],
+                     id="unset_modalities_text_only_dir"),
+        pytest.param({"model_type": "x", "vision_config": {}}, {"modalities": ["text"]},
+                     ["text"], id="stored_modalities_override_detection"),
+        pytest.param(None, {"vision": True}, ["text", "vision"],
+                     id="no_config_json_falls_back_to_legacy_vision_bool"),
+    ])
+    def test_modalities_derive_at_load(self, tmp_path, config_json, kwargs, expected):
+        if config_json is None:
+            path = "/fake/model"
+        else:
+            import json as _json
+            (tmp_path / "config.json").write_text(_json.dumps(config_json))
+            path = str(tmp_path)
+        cfg = MLXModelConfig(model_path=path, **kwargs)
+        assert cfg.modalities == expected
+        assert cfg.vision is ("vision" in expected)  # mirror syncs to detection
 
 
 @pytest.mark.unit

@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.160]
+
+Pruning pass, part 3 (owner ruling 2026-09-25): the merges. Groups of tests
+that made the same assertion over different inputs became table-driven
+checks, mostly `pytest.mark.parametrize`, so each old case is still a row.
+Test functions in the 75 files involved went from 1,143 to 632; collected
+cases from 1,585 to 1,498, suite green.
+
+### Changed
+
+- Where the collected count moved, the local ledgers
+  (`internal/claude/prune/merge/ledger_{1,2,3,4}.md`) account for every
+  group: parser examples became rows of the existing chunking and token-free
+  invariants (CORPUS and TOKEN_FREE); several groups that were one call with
+  several assertions became one test holding all of them; cases duplicated
+  by a kept test (named per case) were dropped; and some old tests that
+  checked several inputs now have a row per input, which raised a few counts.
+- Duplicates were checked, not assumed: of test_preset_store.py's ten, three
+  that no route test asserts were kept; two store cases the conversation-API
+  tests claimed to cover were added to the surviving tests instead.
+- `test_every_served_v1_route_is_in_the_schema` now compares served and
+  published routes per path and method.
+- `test_finish_reason.py` (its two cases are rows of the stop-reason latch
+  table in test_generation_chunk.py) and `mlx_perf/test_type_consistency.py`
+  (its float16 check is test_samplers.py's) are removed; test_idle_unload.py
+  moved from unittest to pytest so it could be parametrized.
+- Not merged, by design: cross-file groups whose halves sit in different
+  files, cases with genuinely different assertions, and the owner-kept
+  `strip_specials=False` tests.
+
 ## [2.0.159]
 
 ### Changed

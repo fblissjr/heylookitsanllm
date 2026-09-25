@@ -100,78 +100,81 @@ def test_provider_registry_and_the_provider_literal_stay_in_sync():
     )
 
 
-@pytest.mark.unit
-def test_unknown_provider_falls_back_to_the_conservative_union():
-    """Over-reporting costs a needless prompt; under-reporting serves stale.
+# Over-reporting costs a needless prompt; under-reporting serves stale.
+# `reload_required_for` keys off the raw provider string from the toml entry.
+# - unknown: a missing or misspelt provider (None, '', typo, case drift) must
+#   not come back with an EMPTY reload set, which would report every edit as
+#   free; it gets the union.
+# - registry: every real key is a plain lowercase identifier resolving to its
+#   own non-empty set inside the union. A key that were not normalised would
+#   make the silent downgrade to the union the NORMAL path, not the exception.
+_PROVIDER_SPELLING_ROWS = [
+    pytest.param((None, "", "ggf", "MLX", "does-not-exist"), False,
+                 id="unknown_provider_falls_back_to_the_conservative_union"),
+    pytest.param(tuple(PROVIDERS), True,
+                 id="provider_spelling_matches_registry_keys_exactly"),
+]
 
-    A `models.toml` entry with a missing or misspelt provider must not come
-    back with an EMPTY reload set, which would report every edit as free.
-    """
+
+@pytest.mark.unit
+@pytest.mark.parametrize("spellings, is_registry_key", _PROVIDER_SPELLING_ROWS)
+def test_provider_spelling_resolves_its_reload_set(spellings, is_registry_key):
     union = ms.RELOAD_REQUIRED_FIELDS
-    for bogus in (None, "", "ggf", "MLX", "does-not-exist"):
-        assert ms.reload_required_for(bogus) == union, (
-            f"provider={bogus!r} should fall back to the union, not "
-            f"{sorted(ms.reload_required_for(bogus))}"
-        )
-    # And the union genuinely covers every provider's own answer.
-    for provider in PROVIDERS:
-        assert ms.reload_required_for(provider) <= union
+    for key in spellings:
+        got = ms.reload_required_for(key)
+        if is_registry_key:
+            assert key == key.lower().strip(), f"registry key {key!r} is not normalised"
+            assert got, f"{key!r} resolved to an empty set"
+            # The union genuinely covers every provider's own answer.
+            assert got <= union
+        else:
+            assert got == union, (
+                f"provider={key!r} should fall back to the union, not {sorted(got)}"
+            )
+
+
+def _mutate(schema):  # pydantic calls this instead of merging a dict
+    schema["effect"] = "requires_reload"
+
+
+# "We don't know" must never become "no reload required". A field whose effect
+# is misspelt, set through a callable json_schema_extra, or missing lands in
+# the None (unclassified) bucket, stays out of the reload set, and is exactly
+# what the import guard reports (the only thing that can stop it, since a class
+# registered after import reaches the derived helpers unguarded).
+# - misspelt: an earlier version bucketed by the raw string, so
+#   "requires-reload" (hyphen) created its own bucket, left the unclassified
+#   set empty, passed every completeness check and dropped the field out of
+#   the reload set. The guard reports it as bogus.
+# - callable: pydantic allows a CALLABLE json_schema_extra that `_extra` cannot
+#   read; the declaration LOOKS annotated at a glance. It is *missing*, not
+#   *bogus*, so the guard reports it as undeclared (invalid_effects is empty).
+# - missing: no json_schema_extra at all; likewise undeclared.
+_UNCLASSIFIED_ROWS = [
+    pytest.param({"json_schema_extra": {"effect": "requires-reload"}},
+                 "requires-reload", {"ctx_size": "requires-reload"},
+                 id="a_misspelt_effect_is_unclassified_not_a_new_category"),
+    pytest.param({"json_schema_extra": _mutate}, None, {},
+                 id="json_schema_extra_as_a_callable_is_unclassified_not_silently_ok"),
+    pytest.param({}, None, {},
+                 id="an_unclassified_field_never_counts_as_reload_required"),
+]
 
 
 @pytest.mark.unit
-def test_provider_spelling_matches_registry_keys_exactly():
-    """`reload_required_for` keys off the raw string from the toml entry.
-
-    Case or separator drift silently downgrades to the union, which is safe,
-    but a registry key that is not a plain lowercase identifier would make
-    that silent downgrade the NORMAL path rather than the exception.
-    """
-    for key in PROVIDER_CONFIG_CLASSES:
-        assert key == key.lower().strip(), f"registry key {key!r} is not normalised"
-        assert ms.reload_required_for(key), f"{key!r} resolved to an empty set"
-
-
-@pytest.mark.unit
-def test_json_schema_extra_as_a_callable_is_unclassified_not_silently_ok():
-    """Pydantic allows a CALLABLE json_schema_extra; `_extra` cannot read it.
-
-    The safe outcome is "unclassified" (loud, caught by the import guard), not
-    a field that quietly claims no effect. Pinning it because the failure would
-    otherwise be invisible: the declaration LOOKS annotated at a glance.
-    """
-    def _mutate(schema):  # pydantic calls this instead of merging a dict
-        schema["effect"] = "requires_reload"
-
-    class CallableExtra(BaseModel):
+@pytest.mark.parametrize("field_kwargs, raw_effect, expected_invalid", _UNCLASSIFIED_ROWS)
+def test_an_unknown_effect_is_unclassified(field_kwargs, raw_effect, expected_invalid):
+    class Probe(BaseModel):
         model_path: str = PField(json_schema_extra={"effect": EFFECT_IDENTITY})
-        ctx_size: int = PField(default=0, json_schema_extra=_mutate)
+        ctx_size: int = PField(default=0, **field_kwargs)
 
-    assert field_effect(CallableExtra.model_fields["ctx_size"]) is None
-    assert "ctx_size" in fields_by_effect(CallableExtra)[None]
-    # It is *missing*, not *bogus* -- so the guard reports it as undeclared.
-    assert invalid_effects(CallableExtra) == {}
-
-
-@pytest.mark.unit
-def test_an_unclassified_field_never_counts_as_reload_required():
-    """Whatever else happens, "we don't know" must not become "no reload".
-
-    A class the import guard never saw (registered after import) can still
-    reach the derived helpers. This pins the one property that matters: an
-    unclassified field is absent from the reload set, so it can only ever be
-    caught by the guard -- never silently blessed as safe to change live.
-    """
-    class Unguarded(BaseModel):
-        model_path: str = PField(json_schema_extra={"effect": EFFECT_IDENTITY})
-        ctx_size: int = PField(default=0)
-
-    by = fields_by_effect(Unguarded)
-    assert by[None] == {"ctx_size"}
-    assert "ctx_size" not in reload_required_fields(Unguarded)
-    # Which is exactly why the import guard must be the thing that stops it.
-    assert invalid_effects(Unguarded) == {}
-
-
+    # The raw declaration as read (None when unreadable or absent).
+    assert field_effect(Probe.model_fields["ctx_size"]) == raw_effect
+    by = fields_by_effect(Probe)
+    assert by[None] == {"ctx_size"}, "an unknown effect must land as unclassified"
+    assert "requires-reload" not in by, "a typo must not invent a bucket"
+    assert "ctx_size" not in reload_required_fields(Probe)
+    assert invalid_effects(Probe) == expected_invalid
 
 
 @pytest.mark.unit
@@ -205,60 +208,43 @@ def test_any_field_with_an_arg_spelling_requires_a_reload(provider):
     )
 
 
+# The gguf import allowlist widened from a hand-written tuple to a derived set
+# (configurable_fields; "every field but model_path, each validating with its
+# default" is test_config_effects.py::test_configurable_fields_exclude_identity_only).
+# "Derived" also means nobody chose the contents, so these rows pin what it
+# must still admit, as a visible diff:
+# - previously_allowed: the old hand-written tuple; losing one means a field
+#   that used to import silently stopped importing.
+# - once_dropped: the five fields the derivation FIXED; each used to be
+#   silently dropped on import. (`default_sampler` was a sixth until v2.0.30
+#   removed the named-sampler system entirely.)
+# Deliberately NOT an exact frozen list of the difference. The original version
+# pinned one, and adding four legitimate fields (spec_draft_p_min, n_cpu_moe,
+# cpu_moe, override_tensor) broke it with no safety gained -- a hand-maintained
+# list that must be edited whenever a field is added is the very pattern this
+# change removed.
+_ALLOWLIST_ROWS = [
+    pytest.param(
+        ("mmproj_path", "draft_model_path", "spec_type", "spec_draft_n_max",
+         "ctx_size", "n_gpu_layers", "server_binary", "host", "port",
+         "startup_timeout_s", "extra_args", "max_tokens", "supports_thinking",
+         "modalities"),
+        id="previously_allowed",
+    ),
+    pytest.param(
+        ("cache_ram_mb", "enable_thinking", "load_mode",
+         "n_gpu_layers_draft", "sleep_idle_seconds"),
+        id="once_dropped",
+    ),
+]
+
+
 @pytest.mark.unit
-def test_gguf_import_allowlist_rejects_identity_and_accepts_nothing_unknown():
-    """The allowlist widened from a hand-written tuple to a derived set.
-
-    Wider is the point (five fields were being dropped), but it must not have
-    become "anything at all": every key it yields has to be a real field the
-    config class will validate, and `model_path` must stay excluded because
-    the import path sets it separately.
-    """
-    cls = PROVIDER_CONFIG_CLASSES["gguf"]
-    settable = configurable_fields(cls)
-    assert "model_path" not in settable
-    assert settable <= set(cls.model_fields)
-    # Every settable key must actually be accepted by the model (extra="forbid"
-    # would reject an invented one).
-    for name in settable:
-        cls(model_path="/tmp/x.gguf", **{name: cls.model_fields[name].default})
-
-
-@pytest.mark.unit
-def test_allowlist_widening_added_exactly_the_dropped_fields():
-    """The derived allowlist must be a superset, and a KNOWN one.
-
-    Deriving it fixed five silently-dropped fields, but "derived" also means
-    nobody chose the contents. This pins what the change actually admits, so a
-    future field lands here as a visible diff rather than appearing in written
-    config unnoticed. (`default_sampler` was listed here until v2.0.30; it is now
-    settable via the config block, where previously only the explicit importer
-    argument could set it (and that argument still wins, being stamped after).
-    """
-    previously_allowed = {
-        "mmproj_path", "draft_model_path", "spec_type", "spec_draft_n_max",
-        "ctx_size", "n_gpu_layers", "server_binary", "host", "port",
-        "startup_timeout_s", "extra_args", "max_tokens", "supports_thinking",
-        "modalities",
-    }
+@pytest.mark.parametrize("fields", _ALLOWLIST_ROWS)
+def test_gguf_import_allowlist_keeps_every_named_field(fields):
     now = configurable_fields(PROVIDER_CONFIG_CLASSES["gguf"])
-    assert previously_allowed <= now, (
-        f"the derived allowlist DROPPED {sorted(previously_allowed - now)} -- "
-        f"a field that used to import silently stopped importing"
+    missing = sorted(set(fields) - now)
+    assert not missing, (
+        f"the derived gguf import allowlist DROPPED {missing} -- a field that "
+        f"used to import (or was fixed to) silently stopped importing"
     )
-    # The five fields the derivation FIXED. These are the regression -- each
-    # one used to be silently dropped on import. (`default_sampler` was a
-    # sixth until v2.0.30 removed the named-sampler system entirely.)
-    for field in ("cache_ram_mb", "enable_thinking", "load_mode",
-                  "n_gpu_layers_draft", "sleep_idle_seconds"):
-        assert field in now, f"`{field}` was dropped on import before; it must stay settable"
-
-    # Deliberately NOT an exact frozen list of the difference. The original
-    # version pinned one, and adding four legitimate fields (spec_draft_p_min,
-    # n_cpu_moe, cpu_moe, override_tensor) broke it with no safety gained --
-    # a hand-maintained list of field names that must be edited whenever a
-    # field is added is the very pattern this whole change removed. The real
-    # invariants are: nothing is dropped (above), and the allowlist is exactly
-    # the non-identity fields of the class (below), which stays true forever.
-    cls = PROVIDER_CONFIG_CLASSES["gguf"]
-    assert now == frozenset(cls.model_fields) - {"model_path"}

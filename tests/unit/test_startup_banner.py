@@ -25,36 +25,23 @@ class TestEndpointDiscovery:
 
     def test_the_banner_lists_every_v1_path_the_schema_publishes(self):
         """The oracle is the OpenAPI schema -- the surface this repo already
-        treats as authoritative -- rather than a hand-written roster."""
+        treats as authoritative -- rather than a hand-written roster.
+
+        Set equality also carries three former checks: router-mounted routes
+        are listed (the specific failure: `/v1/messages`, the wire v3 speaks,
+        `/v1/conversations`, `/v1/admin/models` were each invisible), routes
+        mounted on the app itself are still listed (a fix that lost those
+        would trade one blind spot for another), and nothing outside /v1
+        (`/docs`, `/openapi.json`, the frontend at `/`) is reported. The
+        subset assertion keeps the equality from passing on a schema that
+        holds only one mount kind."""
         from heylook_llm.server import get_api_endpoints
 
         app = self._app()
         published = {p for p in app.openapi()["paths"] if p.startswith("/v1/")}
+        assert {
+            "/v1/messages", "/v1/conversations", "/v1/admin/models",  # via include_router
+            "/v1/data/clear",  # mounted on the app itself
+            "/v1/models",
+        } <= published
         assert set(get_api_endpoints(app)) == published
-
-    def test_router_mounted_endpoints_are_included(self):
-        """The specific failure. These three are each mounted through
-        `include_router` and were each invisible; `/v1/messages` is the one
-        that matters most, since it is the wire v3 speaks and the one the
-        integration guide points external clients at."""
-        from heylook_llm.server import get_api_endpoints
-
-        found = set(get_api_endpoints(self._app()))
-        for path in ("/v1/messages", "/v1/conversations", "/v1/admin/models"):
-            assert path in found, f"{path} missing -- router-mounted routes are invisible again"
-
-    def test_directly_mounted_endpoints_are_still_included(self):
-        """The old implementation got these right, so a fix that lost them
-        would be trading one blind spot for another."""
-        from heylook_llm.server import get_api_endpoints
-
-        found = set(get_api_endpoints(self._app()))
-        assert "/v1/data/clear" in found  # mounted on the app itself, not via a router
-        assert "/v1/models" in found
-
-    def test_only_v1_paths_are_reported(self):
-        """`/docs`, `/openapi.json` and the frontend at `/` are not API
-        endpoints, and the banner's line says "under /v1"."""
-        from heylook_llm.server import get_api_endpoints
-
-        assert all(p.startswith("/v1/") for p in get_api_endpoints(self._app()))

@@ -31,48 +31,33 @@ def importer():
 
 @pytest.mark.unit
 class TestDetectModalities:
-    def test_text_only(self, importer, tmp_path):
-        _write(tmp_path, {"model_type": "llama"})
-        assert importer.detect_modalities(tmp_path) == ["text"]
-
-    def test_vision_config_block(self, importer, tmp_path):
-        _write(tmp_path, {"model_type": "qwen3_5", "vision_config": {"depth": 32}})
-        assert importer.detect_modalities(tmp_path) == ["text", "vision"]
-
-    def test_image_token_id_signal(self, importer, tmp_path):
+    @pytest.mark.parametrize("config, files, expected", [
+        pytest.param({"model_type": "llama"}, [], ["text"], id="text_only"),
+        pytest.param({"model_type": "qwen3_5", "vision_config": {"depth": 32}}, [],
+                     ["text", "vision"], id="vision_config_block"),
         # No vision_config, but the model routes image tokens -> still vision.
-        _write(tmp_path, {"model_type": "x", "image_token_id": 12345})
-        assert importer.detect_modalities(tmp_path) == ["text", "vision"]
-
-    def test_image_token_index_signal(self, importer, tmp_path):
-        # LLaVA/Mistral/Pixtral naming uses image_token_INDEX (not _id); a
-        # stripped/converted checkpoint may carry it without a vision_config
-        # block (found on soundTeam/MS3.2-24b-Angel in the local model audit).
-        _write(tmp_path, {"model_type": "llava", "image_token_index": 32000})
-        assert importer.detect_modalities(tmp_path) == ["text", "vision"]
-
-    def test_audio_config_block(self, importer, tmp_path):
-        _write(tmp_path, {"model_type": "x", "audio_config": {"n_mels": 128}})
-        assert importer.detect_modalities(tmp_path) == ["text", "audio"]
-
-    def test_vision_and_audio(self, importer, tmp_path):
+        pytest.param({"model_type": "x", "image_token_id": 12345}, [],
+                     ["text", "vision"], id="image_token_id_signal"),
+        # LLaVA/Mistral/Pixtral spell it image_token_INDEX; a stripped/converted
+        # checkpoint may carry it without a vision_config block (found on
+        # soundTeam/MS3.2-24b-Angel in the local model audit).
+        pytest.param({"model_type": "llava", "image_token_index": 32000}, [],
+                     ["text", "vision"], id="image_token_index_signal"),
+        pytest.param({"model_type": "x", "audio_config": {"n_mels": 128}}, [],
+                     ["text", "audio"], id="audio_config_block"),
         # gemma-4 shape: declares text + vision + audio.
-        _write(tmp_path, {"model_type": "gemma4", "vision_config": {},
-                          "audio_config": {}, "image_token_id": 1, "audio_token_id": 2})
-        assert importer.detect_modalities(tmp_path) == ["text", "vision", "audio"]
-
-    def test_video_signal(self, importer, tmp_path):
-        _write(tmp_path, {"model_type": "x", "vision_config": {}, "video_token_id": 9})
-        mods = importer.detect_modalities(tmp_path)
-        assert "video" in mods and mods[0] == "text"
-
-    def test_missing_config_is_text_only(self, importer, tmp_path):
-        # Robustness: a draft/MTP head or a sparse dir with no config.json must
-        # never crash -- default to text.
-        assert importer.detect_modalities(tmp_path) == ["text"]
-
-    def test_vision_weight_file_fallback(self, importer, tmp_path):
+        pytest.param({"model_type": "gemma4", "vision_config": {}, "audio_config": {},
+                      "image_token_id": 1, "audio_token_id": 2}, [],
+                     ["text", "vision", "audio"], id="vision_and_audio"),
+        pytest.param({"model_type": "x", "vision_config": {}, "video_token_id": 9}, [],
+                     ["text", "vision", "video"], id="video_signal"),
+        # A draft/MTP head or a sparse dir with no config.json must never
+        # crash -- default to text.
+        pytest.param(None, [], ["text"], id="missing_config_is_text_only"),
         # Sparse checkpoint (GGUF/split) with no vision_config but an mmproj file.
-        _write(tmp_path, {"model_type": "x"}, files=["mmproj-model-f16.gguf"])
-        assert importer.detect_modalities(tmp_path) == ["text", "vision"]
-
+        pytest.param({"model_type": "x"}, ["mmproj-model-f16.gguf"],
+                     ["text", "vision"], id="vision_weight_file_fallback"),
+    ])
+    def test_detect_modalities(self, importer, tmp_path, config, files, expected):
+        _write(tmp_path, config, files=files)
+        assert importer.detect_modalities(tmp_path) == expected

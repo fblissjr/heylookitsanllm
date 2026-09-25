@@ -79,43 +79,6 @@ def test_off_level_silences_streams(mm: MemoryManager, tmp_path: Path):
     assert mm.maybe_log_baseline() is False
 
 
-def test_register_model_load_writes_event(mm: MemoryManager, tmp_path: Path):
-    metadata = ModelMetadata(
-        model_id="test-model",
-        path="/some/path",
-        weights_bytes=1_024_000,
-        architecture="test_arch",
-        quantization="4bit",
-        param_count=1_500_000_000,
-        context_length=8192,
-    )
-    mm.register_model_load(metadata, load_duration_ms=1234.5)
-
-    events = _read_jsonl(tmp_path / "model_events.jsonl")
-    assert len(events) == 1
-    record = events[0]
-    assert record["event"] == "load"
-    assert record["model_id"] == "test-model"
-    assert record["weights_bytes"] == 1_024_000
-    assert record["quantization"] == "4bit"
-    assert record["param_count"] == 1_500_000_000
-    assert record["load_duration_ms"] == 1234.5
-    assert mm.model_metadata["test-model"] is metadata
-
-
-def test_register_model_unload_emits_event_and_clears_metadata(mm: MemoryManager, tmp_path: Path):
-    mm.model_metadata["to-evict"] = ModelMetadata(
-        "to-evict", "/p", 0, "a", "none", 0, 0
-    )
-    mm.register_model_unload("to-evict", reason="lru_evict")
-
-    events = _read_jsonl(tmp_path / "model_events.jsonl")
-    assert len(events) == 1
-    assert events[0]["event"] == "unload"
-    assert events[0]["reason"] == "lru_evict"
-    assert "to-evict" not in mm.model_metadata
-
-
 def test_snapshot_shape_and_content_invariant(mm: MemoryManager):
     mm.model_metadata["m1"] = ModelMetadata("m1", "/p", 123, "arch", "4bit", 7_000_000_000, 8192)
     snapshot = mm.snapshot()
@@ -135,25 +98,88 @@ def test_snapshot_shape_and_content_invariant(mm: MemoryManager):
     _assert_no_forbidden_keys(snapshot)
 
 
-def test_model_event_content_invariant(mm: MemoryManager, tmp_path: Path):
-    metadata = ModelMetadata(
-        model_id="qwen3-4b",
-        path="~/models/qwen3-4b-4bit",  # path-privacy: ignore (fixture: tests tilde normalization)
-        weights_bytes=2_400_000_000,
-        architecture="qwen3",
-        quantization="4bit",
-        param_count=4_000_000_000,
-        context_length=32768,
-    )
-    mm.register_model_load(metadata, load_duration_ms=3500.0)
-    mm.register_model_unload("qwen3-4b", reason="lru_evict")
+_LOADED = ModelMetadata(
+    model_id="test-model",
+    path="/some/path",
+    weights_bytes=1_024_000,
+    architecture="test_arch",
+    quantization="4bit",
+    param_count=1_500_000_000,
+    context_length=8192,
+)
+_QWEN = ModelMetadata(
+    model_id="qwen3-4b",
+    path="~/models/qwen3-4b-4bit",  # path-privacy: ignore (fixture: tests tilde normalization)
+    weights_bytes=2_400_000_000,
+    architecture="qwen3",
+    quantization="4bit",
+    param_count=4_000_000_000,
+    context_length=32768,
+)
+
+
+# One model_events.jsonl stream, three views of it. Each row: models already
+# resident, the load/unload ops to run, the subset every written record must
+# carry (one dict per record, in order), and what model_metadata holds after
+# (the identical object, or None for gone). Every record on every row is also
+# walked for content-bearing keys.
+@pytest.mark.parametrize(
+    "resident, ops, expected_events, expected_metadata",
+    [
+        # load writes one record carrying the metadata fields and the duration,
+        # and keeps the very object it was given
+        (
+            {},
+            [("load", _LOADED, 1234.5)],
+            [{
+                "event": "load", "model_id": "test-model", "weights_bytes": 1_024_000,
+                "quantization": "4bit", "param_count": 1_500_000_000,
+                "load_duration_ms": 1234.5,
+            }],
+            {"test-model": _LOADED},
+        ),
+        # unload writes one record with its reason and forgets the metadata
+        (
+            {"to-evict": ModelMetadata("to-evict", "/p", 0, "a", "none", 0, 0)},
+            [("unload", "to-evict", "lru_evict")],
+            [{"event": "unload", "reason": "lru_evict"}],
+            {"to-evict": None},
+        ),
+        # content invariant across a load/unload pair of a realistic model
+        # (a ~ path, real sizes): neither record carries a content key
+        (
+            {},
+            [("load", _QWEN, 3500.0), ("unload", "qwen3-4b", "lru_evict")],
+            [{"event": "load"}, {"event": "unload"}],
+            {"qwen3-4b": None},
+        ),
+    ],
+    ids=[
+        "register_model_load_writes_event",
+        "register_model_unload_emits_event_and_clears_metadata",
+        "model_event_content_invariant",
+    ],
+)
+def test_model_events(mm: MemoryManager, tmp_path: Path, resident, ops,
+                      expected_events, expected_metadata):
+    mm.model_metadata.update(resident)
+    for op in ops:
+        if op[0] == "load":
+            mm.register_model_load(op[1], load_duration_ms=op[2])
+        else:
+            mm.register_model_unload(op[1], reason=op[2])
 
     events = _read_jsonl(tmp_path / "model_events.jsonl")
-    assert len(events) == 2
-    for event in events:
-        _assert_no_forbidden_keys(event)
-
-
+    assert len(events) == len(expected_events)
+    for record, expected in zip(events, expected_events):
+        for key, value in expected.items():
+            assert record[key] == value, key
+        _assert_no_forbidden_keys(record)
+    for model_id, metadata in expected_metadata.items():
+        if metadata is None:
+            assert model_id not in mm.model_metadata
+        else:
+            assert mm.model_metadata[model_id] is metadata
 
 
 def test_normalize_path_strips_home_prefix():

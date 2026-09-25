@@ -25,6 +25,8 @@ import time
 import unittest
 from unittest.mock import patch
 
+import pytest
+
 from heylook_llm.router import ModelRouter
 
 from _mock_provider import MockProvider
@@ -74,13 +76,36 @@ class TestUnloadWaitsForWaiters(unittest.TestCase):
             "-- weights freed under a request about to run",
         )
 
-    def test_unload_immediate_when_quiescent(self):
-        p = _bare_provider(
-            lambda: {"active": 0, "waiting": 0, "max_waiting": 10, "capacity": 1}
-        )
-        start = time.monotonic()
-        p.unload()
-        self.assertLess(time.monotonic() - start, 1.0)
+
+
+def _quiescent_bare_provider(request):
+    return _bare_provider(
+        lambda: {"active": 0, "waiting": 0, "max_waiting": 10, "capacity": 1}
+    )
+
+
+def _idle_loaded_mock_provider(request):
+    from helpers.mlx_mock import create_mock_model, create_mock_processor
+
+    p = request.getfixturevalue("mock_mlx_provider")
+    p.model = create_mock_model()
+    p.processor = create_mock_processor()
+    return p
+
+
+# The control for the wait above: with nothing active or queued, unload()
+# returns at once. Two surfaces: the bare skeleton (gate reports quiescent) and
+# a mocked provider holding a model and processor (moved from
+# test_mlx_provider.py TestUnload).
+@pytest.mark.parametrize("build, bound_s", [
+    (_quiescent_bare_provider, 1.0),
+    (_idle_loaded_mock_provider, 0.5),
+], ids=["unload_immediate_when_quiescent", "unload_immediate_when_idle"])
+def test_unload_returns_at_once_when_nothing_waits(request, build, bound_s):
+    p = build(request)
+    start = time.monotonic()
+    p.unload()
+    assert time.monotonic() - start < bound_s
 
 
 # ---------------------------------------------------------------------------

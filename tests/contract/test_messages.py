@@ -12,8 +12,10 @@ from helpers.sse import streamed_text
 class TestMessagesNonStreaming:
     """Tests for POST /v1/messages (non-streaming)."""
 
-    def test_valid_request_returns_200(self, client):
-        """A valid messages request returns 200 with content blocks."""
+    def test_valid_request_returns_the_response_shape(self, client):
+        """A valid messages request returns 200: an assistant message whose
+        content blocks include a non-empty text block, with usage (output
+        tokens), an id and the model."""
         resp = client.post("/v1/messages", json={
             "model": "test-mlx-model",
             "messages": [{"role": "user", "content": "Hello"}],
@@ -25,60 +27,29 @@ class TestMessagesNonStreaming:
         assert data["role"] == "assistant"
         assert isinstance(data["content"], list)
         assert len(data["content"]) >= 1
-
-    def test_response_has_text_block(self, client):
-        """Response content includes at least one text block."""
-        resp = client.post("/v1/messages", json={
-            "model": "test-mlx-model",
-            "messages": [{"role": "user", "content": "Hello"}],
-            "max_tokens": 128,
-        })
-        data = resp.json()
         text_blocks = [b for b in data["content"] if b["type"] == "text"]
         assert len(text_blocks) >= 1
         assert len(text_blocks[0]["text"]) > 0
-
-    def test_response_has_usage(self, client):
-        """Response includes usage with input/output tokens."""
-        resp = client.post("/v1/messages", json={
-            "model": "test-mlx-model",
-            "messages": [{"role": "user", "content": "Hello"}],
-            "max_tokens": 128,
-        })
-        data = resp.json()
         assert "usage" in data
         assert "output_tokens" in data["usage"]
-
-    def test_response_has_model_and_id(self, client):
-        """Response includes model and id fields."""
-        resp = client.post("/v1/messages", json={
-            "model": "test-mlx-model",
-            "messages": [{"role": "user", "content": "Hello"}],
-            "max_tokens": 128,
-        })
-        data = resp.json()
         assert "id" in data
         assert data["model"] == "test-mlx-model"
 
-    def test_content_blocks_with_typed_input(self, client):
-        """Content blocks as input (not just string) are accepted."""
+    # Accepted input spellings: content blocks as input (not just a string),
+    # and the system prompt as a top-level parameter, not in messages.
+    @pytest.mark.parametrize("messages, extra", [
+        pytest.param([{"role": "user", "content": [{"type": "text", "text": "Hello typed"}]}],
+                     {}, id="content_blocks_with_typed_input"),
+        pytest.param([{"role": "user", "content": "Hello"}],
+                     {"system": "You are a helpful assistant."},
+                     id="system_prompt_as_top_level_param"),
+    ])
+    def test_accepted_input_shapes(self, client, messages, extra):
         resp = client.post("/v1/messages", json={
             "model": "test-mlx-model",
-            "messages": [{
-                "role": "user",
-                "content": [{"type": "text", "text": "Hello typed"}],
-            }],
+            "messages": messages,
             "max_tokens": 128,
-        })
-        assert resp.status_code == 200
-
-    def test_system_prompt_as_top_level_param(self, client):
-        """System prompt is a top-level parameter, not in messages."""
-        resp = client.post("/v1/messages", json={
-            "model": "test-mlx-model",
-            "messages": [{"role": "user", "content": "Hello"}],
-            "system": "You are a helpful assistant.",
-            "max_tokens": 128,
+            **extra,
         })
         assert resp.status_code == 200
 
@@ -94,8 +65,10 @@ class TestMessagesNonStreaming:
 class TestMessagesStreaming:
     """Tests for POST /v1/messages with stream=true."""
 
-    def test_streaming_returns_sse_events(self, client):
-        """stream=true returns SSE with structured event types."""
+    def test_streaming_event_grammar(self, client):
+        """stream=true returns SSE with structured event types: it starts with
+        message_start, ends with message_stop, carries content_block_start /
+        _delta / _stop, and every data: line is JSON with a type."""
         resp = client.post("/v1/messages", json={
             "model": "test-mlx-model",
             "messages": [{"role": "user", "content": "Hello"}],
@@ -114,31 +87,10 @@ class TestMessagesStreaming:
         assert event_types[0] == "message_start"
         assert event_types[-1] == "message_stop"
 
-    def test_streaming_has_content_block_events(self, client):
-        """Streaming includes content_block_start, content_block_delta, content_block_stop."""
-        resp = client.post("/v1/messages", json={
-            "model": "test-mlx-model",
-            "messages": [{"role": "user", "content": "Hello"}],
-            "max_tokens": 128,
-            "stream": True,
-        })
-        body = resp.text
-        event_lines = [l for l in body.split("\n") if l.startswith("event: ")]
-        event_types = [l.split("event: ", 1)[1] for l in event_lines]
-
         assert "content_block_start" in event_types
         assert "content_block_delta" in event_types
         assert "content_block_stop" in event_types
 
-    def test_streaming_data_lines_are_valid_json(self, client):
-        """Each data: line in SSE is valid JSON."""
-        resp = client.post("/v1/messages", json={
-            "model": "test-mlx-model",
-            "messages": [{"role": "user", "content": "Hello"}],
-            "max_tokens": 128,
-            "stream": True,
-        })
-        body = resp.text
         for line in body.split("\n"):
             if line.startswith("data: "):
                 payload = line[6:]
@@ -302,9 +254,6 @@ class TestNonStreamingPerformance:
         assert resp.status_code == 200
         return resp.json()["performance"]
 
-    def test_performance_is_unconditional(self, client):
-        assert self._perf(client) is not None
-
     def test_peak_memory_reaches_the_non_streaming_response(self, client):
         """The fake's last chunk carries peak_memory=1.25; this asserts it
         survives ChunkTelemetry -> the builder -> PerformanceInfo. This was
@@ -340,8 +289,9 @@ class TestNonStreamingPerformance:
         assert perf["request_duration_ms"] is not None
         assert "total_duration_ms" not in perf, "retired in v1.79.58"
 
-    def test_the_three_telemetry_keys_reach_this_path_too(self, client):
-        """Declared on PerformanceInfo and built here as of v1.79.54.
+    def test_performance_is_unconditional_with_the_three_telemetry_keys(self, client):
+        """`performance` is always present, and carries the three telemetry
+        keys, declared on PerformanceInfo and built here as of v1.79.54.
 
         They rode `message_stop` from the start and were absent here by
         OMISSION -- and the model did not declare them, so they could not have
@@ -351,6 +301,7 @@ class TestNonStreamingPerformance:
         streaming_response` is the one that follows a value end to end.
         """
         perf = self._perf(client)
+        assert perf is not None
         for key in ("queue_wait_ms", "cache", "speculative"):
             assert key in perf, key
 

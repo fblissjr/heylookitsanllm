@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 
 _HARMONY_TOKENIZER_CONFIG = {
     "added_tokens_decoder": {
@@ -37,6 +39,46 @@ _HARMONY_JINJA = (
     '{%- endif -%}\n'
 )
 
+_HARMONY_FILES = {
+    "chat_template.jinja": _HARMONY_JINJA,
+    "tokenizer_config.json": _HARMONY_TOKENIZER_CONFIG,
+}
+
+_THINK_JINJA = (
+    "{% if add_generation_prompt %}<|im_start|>assistant\n"
+    "{% if enable_thinking %}<think>\n\n</think>\n\n"
+    "{% endif %}{% endif %}"
+)
+
+_GEMMA_JINJA = (
+    "{{ bos_token }}{% if enable_thinking %}<|think|>\n{% endif %}"
+    "{% for m in messages %}<|turn>{{ m['role'] }}\n{{ m['content'] }}<turn|>\n{% endfor %}"
+    "{% if add_generation_prompt %}<|turn>model\n"
+    "{% if not enable_thinking %}<|channel>thought\n<channel|>{% endif %}{% endif %}"
+)
+
+_QWEN35_STYLE = (
+    "{% for m in messages %}<|im_start|>{{ m['role'] }}\n{{ m['content'] }}<|im_end|>\n{% endfor %}"
+    "{% if add_generation_prompt %}<|im_start|>assistant\n"
+    "{% if enable_thinking is defined and enable_thinking is false %}"
+    "{{ '<think>\\n\\n</think>\\n\\n' }}{% else %}{{ '<think>\\n' }}{% endif %}{% endif %}"
+)
+_QWEN3_CLASSIC = (
+    "{% for m in messages %}<|im_start|>{{ m['role'] }}\n{{ m['content'] }}<|im_end|>\n{% endfor %}"
+    "{% if add_generation_prompt %}<|im_start|>assistant\n"
+    "{% if enable_thinking is false %}{{ '<think>\\n\\n</think>\\n\\n' }}{% endif %}{% endif %}"
+)
+
+# gemma-like: eos_token_id resolves via added_tokens_decoder to <eos> + <end_of_turn>
+_STOP_CFG = {
+    "eos_token": "<eos>",
+    "eos_token_id": [1, 106],
+    "added_tokens_decoder": {
+        "1": {"content": "<eos>", "special": True},
+        "106": {"content": "<end_of_turn>", "special": True},
+    },
+}
+
 
 def _write_model_dir(tmp_path, *, jinja=None, tokenizer_config=None):
     if jinja is not None:
@@ -46,344 +88,200 @@ def _write_model_dir(tmp_path, *, jinja=None, tokenizer_config=None):
     return tmp_path
 
 
-class TestReadTemplateInfoTokenizerJson:
+def _read(tmp_path, files, source=None):
+    """Write ``files`` (name -> str written raw, or dict written as JSON) into
+    the model dir and read it back. ``{dir}`` in ``source`` is the model dir."""
+    from heylook_llm.providers.common.template_info import read_template_info
+
+    for name, body in files.items():
+        (tmp_path / name).write_text(body if isinstance(body, str) else json.dumps(body))
+    if source is not None:
+        source = source.format(dir=tmp_path)
+    return read_template_info(tmp_path, source=source)
+
+
+class TestReadTemplateInfoSpecials:
     """``tokenizer.json``'s ``added_tokens`` array is the authoritative source
     for fast tokenizers. Some models don't populate ``tokenizer_config.json``
-    ``added_tokens_decoder`` at all, so template_info must read both files
-    and union the results."""
+    ``added_tokens_decoder`` at all, and some split the set between the two
+    files, so template_info reads both and unions them. Only special:true
+    entries count."""
 
-    def test_reads_specials_from_tokenizer_json(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-
-        (tmp_path / "tokenizer.json").write_text(json.dumps({
-            "added_tokens": [
+    @pytest.mark.parametrize(
+        "files, present, absent",
+        [
+            ({"tokenizer.json": {"added_tokens": [
                 {"id": 0, "content": "<pad>", "special": True},
                 {"id": 1, "content": "<eos>", "special": True},
                 {"id": 100, "content": "<|channel>", "special": True},
                 {"id": 101, "content": "<channel|>", "special": True},
                 {"id": 200, "content": "regular_token", "special": False},
-            ],
-        }))
-
-        info = read_template_info(tmp_path, source=None)
-
-        assert "<pad>" in info.special_tokens
-        assert "<|channel>" in info.special_tokens
-        assert "<channel|>" in info.special_tokens
-        assert "regular_token" not in info.special_tokens
-
-    def test_unions_specials_from_both_files(self, tmp_path):
-        """tokenizer_config.json and tokenizer.json may list DIFFERENT
-        specials (some models split the set). Union the two."""
-        from heylook_llm.providers.common.template_info import read_template_info
-
-        (tmp_path / "tokenizer_config.json").write_text(json.dumps({
-            "added_tokens_decoder": {
-                "1": {"content": "<|from_config|>", "special": True},
-            },
-            "chat_template": "{{ '' }}",
-        }))
-        (tmp_path / "tokenizer.json").write_text(json.dumps({
-            "added_tokens": [
-                {"id": 2, "content": "<|from_json|>", "special": True},
-            ],
-        }))
-
-        info = read_template_info(tmp_path, source=None)
-
-        assert "<|from_config|>" in info.special_tokens
-        assert "<|from_json|>" in info.special_tokens
-
-
-class TestReadTemplateInfoHarmonyFormat:
-    def test_reads_jinja_when_present(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-
-        _write_model_dir(
-            tmp_path, jinja=_HARMONY_JINJA,
-            tokenizer_config=_HARMONY_TOKENIZER_CONFIG,
-        )
-        info = read_template_info(tmp_path, source=None)
-
-        assert info.chat_template == _HARMONY_JINJA
-        assert info.template_source == "jinja"
-
-    def test_special_tokens_set_from_added_tokens_decoder(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-
-        _write_model_dir(
-            tmp_path, jinja=_HARMONY_JINJA,
-            tokenizer_config=_HARMONY_TOKENIZER_CONFIG,
-        )
-        info = read_template_info(tmp_path, source=None)
-
-        # Only tokens with special:true, not the 12345 one.
-        assert "<|channel|>" in info.special_tokens
-        assert "<|message|>" in info.special_tokens
-        assert "<|start|>" in info.special_tokens
-        assert "<|end|>" in info.special_tokens
-        assert "<|return|>" in info.special_tokens
-        assert "<|normal_token|>" not in info.special_tokens
-
-    def test_detects_harmony_format_from_template(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-
-        _write_model_dir(
-            tmp_path, jinja=_HARMONY_JINJA,
-            tokenizer_config=_HARMONY_TOKENIZER_CONFIG,
-        )
-        info = read_template_info(tmp_path, source=None)
-
-        assert info.has_harmony_structure is True
-
-
-class TestReadTemplateInfoThinkingMarkers:
-    def test_detects_thinking_markers_from_template(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-
-        jinja = (
-            "{% if add_generation_prompt %}<|im_start|>assistant\n"
-            "{% if enable_thinking %}<think>\n\n</think>\n\n"
-            "{% endif %}{% endif %}"
-        )
-        tokenizer_config = {
-            "added_tokens_decoder": {
-                "151667": {"content": "<think>", "special": True},
-                "151668": {"content": "</think>", "special": True},
-                "151643": {"content": "<|im_start|>", "special": True},
-            },
-            "chat_template": jinja,
-        }
-        _write_model_dir(tmp_path, jinja=jinja, tokenizer_config=tokenizer_config)
-
-        info = read_template_info(tmp_path, source=None)
-
-        assert info.has_thinking_markers is True
-        assert info.has_harmony_structure is False
-        assert "<think>" in info.special_tokens
-        assert "</think>" in info.special_tokens
-
-
-class TestReadTemplateInfoGemmaChannelFormat:
-    _GEMMA_JINJA = (
-        "{{ bos_token }}{% if enable_thinking %}<|think|>\n{% endif %}"
-        "{% for m in messages %}<|turn>{{ m['role'] }}\n{{ m['content'] }}<turn|>\n{% endfor %}"
-        "{% if add_generation_prompt %}<|turn>model\n"
-        "{% if not enable_thinking %}<|channel>thought\n<channel|>{% endif %}{% endif %}"
+            ]}},
+             {"<pad>", "<|channel>", "<channel|>"}, {"regular_token"}),
+            ({"tokenizer_config.json": {
+                "added_tokens_decoder": {"1": {"content": "<|from_config|>", "special": True}},
+                "chat_template": "{{ '' }}",
+              },
+              "tokenizer.json": {"added_tokens": [
+                  {"id": 2, "content": "<|from_json|>", "special": True}]}},
+             {"<|from_config|>", "<|from_json|>"}, set()),
+            (_HARMONY_FILES,
+             {"<|channel|>", "<|message|>", "<|start|>", "<|end|>", "<|return|>"},
+             {"<|normal_token|>"}),
+        ],
+        ids=["tokenizer-json", "union-of-both-files", "added-tokens-decoder"],
     )
-
-    def test_detects_gemma_channel_structure(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-
-        _write_model_dir(tmp_path, jinja=self._GEMMA_JINJA)
-        info = read_template_info(tmp_path, source=None)
-
-        assert info.has_gemma_channel_structure is True
-        assert info.has_harmony_structure is False
-        assert info.has_thinking_markers is False
-
-    def test_harmony_template_is_not_gemma_structure(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-
-        _write_model_dir(
-            tmp_path, jinja=_HARMONY_JINJA,
-            tokenizer_config=_HARMONY_TOKENIZER_CONFIG,
-        )
-        info = read_template_info(tmp_path, source=None)
-
-        assert info.has_gemma_channel_structure is False
-
-    def test_detects_enable_thinking_toggle(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-
-        _write_model_dir(tmp_path, jinja=self._GEMMA_JINJA)
-        assert read_template_info(tmp_path, source=None).supports_enable_thinking is True
-
-    def test_no_enable_thinking_reference_means_no_toggle(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-
-        _write_model_dir(
-            tmp_path,
-            jinja="{{ bos_token }}{% for m in messages %}{{ m['content'] }}{% endfor %}",
-        )
-        assert read_template_info(tmp_path, source=None).supports_enable_thinking is False
+    def test_specials_come_from_the_tokenizer_files(self, tmp_path, files, present, absent):
+        specials = _read(tmp_path, files).special_tokens
+        assert present <= specials
+        assert not (absent & specials)
 
 
-class TestPrefillsThinking:
-    _QWEN35_STYLE = (
-        "{% for m in messages %}<|im_start|>{{ m['role'] }}\n{{ m['content'] }}<|im_end|>\n{% endfor %}"
-        "{% if add_generation_prompt %}<|im_start|>assistant\n"
-        "{% if enable_thinking is defined and enable_thinking is false %}"
-        "{{ '<think>\\n\\n</think>\\n\\n' }}{% else %}{{ '<think>\\n' }}{% endif %}{% endif %}"
+class TestReadTemplateInfoFormat:
+    @pytest.mark.parametrize(
+        "files, flags, specials",
+        [
+            (_HARMONY_FILES, {"has_harmony_structure": True}, set()),
+            ({"chat_template.jinja": _THINK_JINJA, "tokenizer_config.json": {
+                "added_tokens_decoder": {
+                    "151667": {"content": "<think>", "special": True},
+                    "151668": {"content": "</think>", "special": True},
+                    "151643": {"content": "<|im_start|>", "special": True},
+                },
+                "chat_template": _THINK_JINJA,
+              }},
+             {"has_thinking_markers": True, "has_harmony_structure": False},
+             {"<think>", "</think>"}),
+            ({"chat_template.jinja": _GEMMA_JINJA},
+             {"has_gemma_channel_structure": True, "has_harmony_structure": False,
+              "has_thinking_markers": False}, set()),
+            (_HARMONY_FILES, {"has_gemma_channel_structure": False}, set()),
+        ],
+        ids=["harmony", "thinking-markers", "gemma-channels", "harmony-is-not-gemma"],
     )
-    _QWEN3_CLASSIC = (
-        "{% for m in messages %}<|im_start|>{{ m['role'] }}\n{{ m['content'] }}<|im_end|>\n{% endfor %}"
-        "{% if add_generation_prompt %}<|im_start|>assistant\n"
-        "{% if enable_thinking is false %}{{ '<think>\\n\\n</think>\\n\\n' }}{% endif %}{% endif %}"
+    def test_format_flags_are_read_from_the_template(self, tmp_path, files, flags, specials):
+        info = _read(tmp_path, files)
+        for attr, value in flags.items():
+            assert getattr(info, attr) is value, attr
+        assert specials <= info.special_tokens
+
+    @pytest.mark.parametrize(
+        "jinja, expected",
+        [
+            (_GEMMA_JINJA, True),
+            ("{{ bos_token }}{% for m in messages %}{{ m['content'] }}{% endfor %}", False),
+        ],
+        ids=["references-enable-thinking", "no-reference-no-toggle"],
     )
+    def test_enable_thinking_toggle(self, tmp_path, jinja, expected):
+        info = _read(tmp_path, {"chat_template.jinja": jinja})
+        assert info.supports_enable_thinking is expected
 
-    def test_qwen35_prefill_detected(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-        _write_model_dir(tmp_path, jinja=self._QWEN35_STYLE)
-        info = read_template_info(tmp_path, source=None)
+    @pytest.mark.parametrize(
+        "jinja, expected",
+        [(_QWEN35_STYLE, True), (_QWEN3_CLASSIC, False)],
+        ids=["qwen35-prefill", "classic-empty-block-is-not-prefill"],
+    )
+    def test_prefills_thinking(self, tmp_path, jinja, expected):
+        info = _read(tmp_path, {"chat_template.jinja": jinja})
         assert info.has_thinking_markers is True
-        assert info.prefills_thinking is True
-
-    def test_classic_empty_block_not_prefill(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-        _write_model_dir(tmp_path, jinja=self._QWEN3_CLASSIC)
-        info = read_template_info(tmp_path, source=None)
-        assert info.has_thinking_markers is True
-        assert info.prefills_thinking is False
+        assert info.prefills_thinking is expected
 
 
-class TestReadTemplateInfoFallbacks:
-    def test_falls_back_to_embedded_template_when_jinja_missing(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
+class TestTemplatePrecedence:
+    """Auto order: chat_template.jinja > the tokenizer_config.json embedded
+    template > chat_template.json > nothing ("auto", empty).
 
-        _write_model_dir(
-            tmp_path, jinja=None,
-            tokenizer_config={
+    chat_template.json: some VLM conversions ship the template only there
+    (the processor-side convention ``{"chat_template": "..."}``). The
+    tokenizer never sees that file, so template_info reads it as the last
+    auto fallback, or a chat_template.json-only model looks template-less to
+    us while the processor knows better.
+
+    An explicit source forces its file. 'chat_template_json' appears as a
+    resolved-source label in load logs, so it must also be an accepted
+    explicit value (otherwise configuring what the log reports warns 'not
+    recognized' and still force-installs the auto pick); when that file is
+    missing, the auto order applies."""
+
+    @pytest.mark.parametrize(
+        "files, source, expected",
+        [
+            (_HARMONY_FILES, None,
+             {"chat_template": _HARMONY_JINJA, "template_source": "jinja"}),
+            ({"tokenizer_config.json": {
                 "added_tokens_decoder": {"1": {"content": "<|eos|>", "special": True}},
-                "chat_template": "{{ 'embedded template body' }}",
-            },
-        )
+                "chat_template": "{{ 'embedded template body' }}"}},
+             None,
+             {"chat_template": "{{ 'embedded template body' }}",
+              "template_source": "tokenizer_config"}),
+            ({}, None,
+             {"chat_template": "", "special_tokens": frozenset(),
+              "has_harmony_structure": False, "has_thinking_markers": False,
+              "template_source": "auto"}),
+            ({"chat_template.jinja": "{{ 'forced jinja' }}",
+              "tokenizer_config.json": {"added_tokens_decoder": {},
+                                        "chat_template": "{{ 'ignored embedded' }}"}},
+             "jinja", {"chat_template": "{{ 'forced jinja' }}"}),
+            ({"chat_template.jinja": "{{ 'ignored jinja' }}",
+              "tokenizer_config.json": {"added_tokens_decoder": {},
+                                        "chat_template": "{{ 'forced embedded' }}"}},
+             "tokenizer_config", {"chat_template": "{{ 'forced embedded' }}"}),
+            ({"my_template.jinja": "{{ 'custom from path' }}",
+              "chat_template.jinja": "{{ 'dir jinja' }}",
+              "tokenizer_config.json": {"added_tokens_decoder": {}, "chat_template": "x"}},
+             "{dir}/my_template.jinja", {"chat_template": "{{ 'custom from path' }}"}),
+            ({"chat_template.json": {"chat_template": "{{ 'from chat_template.json' }}"}},
+             None,
+             {"chat_template": "{{ 'from chat_template.json' }}",
+              "template_source": "chat_template_json"}),
+            ({"tokenizer_config.json": {"added_tokens_decoder": {},
+                                        "chat_template": "{{ 'embedded' }}"},
+              "chat_template.json": {"chat_template": "{{ 'json' }}"}},
+             None, {"chat_template": "{{ 'embedded' }}", "template_source": "tokenizer_config"}),
+            ({"chat_template.jinja": "{{ 'jinja' }}",
+              "chat_template.json": {"chat_template": "{{ 'json' }}"}},
+             None, {"chat_template": "{{ 'jinja' }}", "template_source": "jinja"}),
+            ({"chat_template.jinja": "{{ 'jinja' }}",
+              "chat_template.json": {"chat_template": "{{ 'forced json' }}"}},
+             "chat_template_json",
+             {"chat_template": "{{ 'forced json' }}", "template_source": "chat_template_json"}),
+            ({"chat_template.jinja": "{{ 'jinja' }}"}, "chat_template_json",
+             {"chat_template": "{{ 'jinja' }}", "template_source": "jinja"}),
+        ],
+        ids=[
+            "jinja-when-present", "embedded-when-jinja-missing", "empty-when-nothing",
+            "source-jinja-forces-jinja", "source-tokenizer-config-forces-embedded",
+            "source-absolute-path", "auto-falls-back-to-chat-template-json",
+            "embedded-wins-over-chat-template-json", "jinja-wins-over-chat-template-json",
+            "source-chat-template-json-forces-it", "source-chat-template-json-missing-is-auto",
+        ],
+    )
+    def test_which_template_is_read(self, tmp_path, files, source, expected):
+        info = _read(tmp_path, files, source)
+        for attr, value in expected.items():
+            assert getattr(info, attr) == value, attr
 
-        info = read_template_info(tmp_path, source=None)
-
-        assert info.chat_template == "{{ 'embedded template body' }}"
-        assert info.template_source == "tokenizer_config"
-
-    def test_empty_when_nothing_available(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-
-        info = read_template_info(tmp_path, source=None)
-
-        assert info.chat_template == ""
-        assert info.special_tokens == frozenset()
-        assert info.has_harmony_structure is False
-        assert info.has_thinking_markers is False
-        assert info.template_source == "auto"
-
-    def test_source_jinja_forces_jinja_even_with_embedded_template(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-
-        _write_model_dir(
-            tmp_path,
-            jinja="{{ 'forced jinja' }}",
-            tokenizer_config={
-                "added_tokens_decoder": {},
-                "chat_template": "{{ 'ignored embedded' }}",
-            },
-        )
-
-        info = read_template_info(tmp_path, source="jinja")
-
-        assert info.chat_template == "{{ 'forced jinja' }}"
-
-    def test_source_tokenizer_config_forces_embedded_even_with_jinja(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-
-        _write_model_dir(
-            tmp_path,
-            jinja="{{ 'ignored jinja' }}",
-            tokenizer_config={
-                "added_tokens_decoder": {},
-                "chat_template": "{{ 'forced embedded' }}",
-            },
-        )
-
-        info = read_template_info(tmp_path, source="tokenizer_config")
-
-        assert info.chat_template == "{{ 'forced embedded' }}"
-
-    def test_source_absolute_path(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-
-        custom = tmp_path / "my_template.jinja"
-        custom.write_text("{{ 'custom from path' }}")
-        _write_model_dir(
-            tmp_path, jinja="{{ 'dir jinja' }}",
-            tokenizer_config={"added_tokens_decoder": {}, "chat_template": "x"},
-        )
-
-        info = read_template_info(tmp_path, source=str(custom))
-
-        assert info.chat_template == "{{ 'custom from path' }}"
-
-    def test_malformed_tokenizer_config_does_not_raise(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-
-        (tmp_path / "tokenizer_config.json").write_text("{{{ not json")
-        info = read_template_info(tmp_path, source=None)
-
-        assert info.special_tokens == frozenset()
-
-
-class TestChatTemplateJsonFallback:
-    """Some VLM conversions ship the template only as ``chat_template.json``
-    (the processor-side convention: ``{"chat_template": "..."}``). The
-    tokenizer never sees that file, so template_info must read it as the
-    last auto fallback -- otherwise a chat_template.json-only model looks
-    template-less to us while the processor knows better."""
-
-    def test_auto_falls_back_to_chat_template_json(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-
-        (tmp_path / "chat_template.json").write_text(
-            json.dumps({"chat_template": "{{ 'from chat_template.json' }}"})
-        )
-
-        info = read_template_info(tmp_path, source=None)
-
-        assert info.chat_template == "{{ 'from chat_template.json' }}"
-        assert info.template_source == "chat_template_json"
-
-    def test_embedded_template_wins_over_chat_template_json(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-
-        _write_model_dir(
-            tmp_path, jinja=None,
-            tokenizer_config={
-                "added_tokens_decoder": {},
-                "chat_template": "{{ 'embedded' }}",
-            },
-        )
-        (tmp_path / "chat_template.json").write_text(
-            json.dumps({"chat_template": "{{ 'json' }}"})
-        )
-
-        info = read_template_info(tmp_path, source=None)
-
-        assert info.chat_template == "{{ 'embedded' }}"
-        assert info.template_source == "tokenizer_config"
-
-    def test_jinja_wins_over_chat_template_json(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-
-        _write_model_dir(tmp_path, jinja="{{ 'jinja' }}", tokenizer_config=None)
-        (tmp_path / "chat_template.json").write_text(
-            json.dumps({"chat_template": "{{ 'json' }}"})
-        )
-
-        info = read_template_info(tmp_path, source=None)
-
-        assert info.chat_template == "{{ 'jinja' }}"
-        assert info.template_source == "jinja"
-
-    def test_malformed_chat_template_json_does_not_raise(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-
-        (tmp_path / "chat_template.json").write_text("{{{ not json")
-
-        info = read_template_info(tmp_path, source=None)
-
-        assert info.chat_template == ""
+    @pytest.mark.parametrize(
+        "name, expected",
+        [
+            ("tokenizer_config.json", {"special_tokens": frozenset()}),
+            ("chat_template.json", {"chat_template": ""}),
+        ],
+        ids=["tokenizer-config", "chat-template-json"],
+    )
+    def test_a_malformed_file_does_not_raise(self, tmp_path, name, expected):
+        info = _read(tmp_path, {name: "{{{ not json"})
+        for attr, value in expected.items():
+            assert getattr(info, attr) == value
 
 
 class _FakeTokenizer:
     def __init__(self, chat_template=None):
         self.chat_template = chat_template
+
+
+_NO_TOKENIZER = object()
 
 
 class TestInstallChatTemplate:
@@ -394,210 +292,134 @@ class TestInstallChatTemplate:
     - force=False (auto): only fill in a MISSING tokenizer template --
       covers chat_template.json-only models where AutoTokenizer loads
       nothing, without stomping on what transformers loaded natively.
+    - an empty resolved template installs nothing; a None tokenizer is safe.
     """
 
-    def _info(self, template="{{ 'resolved' }}"):
-        from heylook_llm.providers.common.template_info import ModelTemplateInfo
-        return ModelTemplateInfo(chat_template=template)
+    @pytest.mark.parametrize(
+        "native, resolved, force, installed, final",
+        [
+            ("{{ 'native' }}", "{{ 'resolved' }}", True, True, "{{ 'resolved' }}"),
+            (None, "{{ 'resolved' }}", False, True, "{{ 'resolved' }}"),
+            ("{{ 'native' }}", "{{ 'resolved' }}", False, False, "{{ 'native' }}"),
+            (None, "", True, False, None),
+            (_NO_TOKENIZER, "{{ 'resolved' }}", True, False, None),
+        ],
+        ids=[
+            "force-overwrites-existing", "auto-fills-missing", "auto-preserves-native",
+            "noop-when-no-resolved-template", "none-tokenizer-is-safe",
+        ],
+    )
+    def test_install(self, native, resolved, force, installed, final):
+        from heylook_llm.providers.common.template_info import (
+            ModelTemplateInfo, install_chat_template)
 
-    def test_force_overwrites_existing_template(self):
-        from heylook_llm.providers.common.template_info import install_chat_template
-
-        tok = _FakeTokenizer(chat_template="{{ 'native' }}")
-        installed = install_chat_template(tok, self._info(), force=True)
-
-        assert installed is True
-        assert tok.chat_template == "{{ 'resolved' }}"
-
-    def test_auto_fills_missing_template(self):
-        from heylook_llm.providers.common.template_info import install_chat_template
-
-        tok = _FakeTokenizer(chat_template=None)
-        installed = install_chat_template(tok, self._info(), force=False)
-
-        assert installed is True
-        assert tok.chat_template == "{{ 'resolved' }}"
-
-    def test_auto_preserves_native_template(self):
-        from heylook_llm.providers.common.template_info import install_chat_template
-
-        tok = _FakeTokenizer(chat_template="{{ 'native' }}")
-        installed = install_chat_template(tok, self._info(), force=False)
-
-        assert installed is False
-        assert tok.chat_template == "{{ 'native' }}"
-
-    def test_noop_when_no_resolved_template(self):
-        from heylook_llm.providers.common.template_info import install_chat_template
-
-        tok = _FakeTokenizer(chat_template=None)
-        installed = install_chat_template(tok, self._info(template=""), force=True)
-
-        assert installed is False
-        assert tok.chat_template is None
-
-    def test_none_tokenizer_is_safe(self):
-        from heylook_llm.providers.common.template_info import install_chat_template
-
-        assert install_chat_template(None, self._info(), force=True) is False
-
-
-class TestExplicitChatTemplateJsonSource:
-    """'chat_template_json' appears as a resolved-source label in load logs,
-    so it must also be an accepted explicit ``chat_template_source`` value --
-    otherwise configuring what the log reports warns 'not recognized' and,
-    worse, still force-installs the auto pick."""
-
-    def test_source_chat_template_json_forces_json_file(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-
-        _write_model_dir(tmp_path, jinja="{{ 'jinja' }}", tokenizer_config=None)
-        (tmp_path / "chat_template.json").write_text(
-            json.dumps({"chat_template": "{{ 'forced json' }}"})
-        )
-
-        info = read_template_info(tmp_path, source="chat_template_json")
-
-        assert info.chat_template == "{{ 'forced json' }}"
-        assert info.template_source == "chat_template_json"
-
-    def test_source_chat_template_json_missing_falls_back_to_auto(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-
-        _write_model_dir(tmp_path, jinja="{{ 'jinja' }}", tokenizer_config=None)
-
-        info = read_template_info(tmp_path, source="chat_template_json")
-
-        assert info.chat_template == "{{ 'jinja' }}"
-        assert info.template_source == "jinja"
+        info = ModelTemplateInfo(chat_template=resolved)
+        if native is _NO_TOKENIZER:
+            assert install_chat_template(None, info, force=force) is installed
+            return
+        tok = _FakeTokenizer(chat_template=native)
+        assert install_chat_template(tok, info, force=force) is installed
+        assert tok.chat_template == final
 
 
 class TestIsExplicitSource:
     """force-install must engage only for a genuinely explicit source --
     the documented value \"auto\" is truthy but means the fill-only path."""
 
-    def test_none_and_empty_are_not_explicit(self):
+    @pytest.mark.parametrize(
+        "values, expected",
+        [
+            ((None, ""), False),
+            (("auto", " AUTO "), False),
+            (("jinja", "tokenizer_config", "chat_template_json", "/abs/path/custom.jinja"),
+             True),
+        ],
+        ids=["none-and-empty", "auto", "named-sources-and-paths"],
+    )
+    def test_is_explicit_source(self, values, expected):
         from heylook_llm.providers.common.template_info import is_explicit_source
 
-        assert is_explicit_source(None) is False
-        assert is_explicit_source("") is False
-
-    def test_auto_is_not_explicit(self):
-        from heylook_llm.providers.common.template_info import is_explicit_source
-
-        assert is_explicit_source("auto") is False
-        assert is_explicit_source(" AUTO ") is False
-
-    def test_named_sources_and_paths_are_explicit(self):
-        from heylook_llm.providers.common.template_info import is_explicit_source
-
-        assert is_explicit_source("jinja") is True
-        assert is_explicit_source("tokenizer_config") is True
-        assert is_explicit_source("chat_template_json") is True
-        assert is_explicit_source("/abs/path/custom.jinja") is True
+        for value in values:
+            assert is_explicit_source(value) is expected, value
 
 
 class TestMissingTemplateError:
     """``missing_template_error(tokenizer, model_id)`` decides 'the model
     truly has no chat template' from TOKENIZER STATE, not from matching
-    transformers' error prose (which is version-fragile)."""
+    transformers' error prose (which is version-fragile). The error names
+    the model when there is one and is generic otherwise."""
 
-    def test_returns_actionable_error_when_no_template(self):
+    @pytest.mark.parametrize(
+        "template, model_id, message_has",
+        [
+            (None, "my-model", ("my-model", "chat_template")),
+            ("{{ x }}", "m", None),
+            (None, None, ("chat_template",)),
+        ],
+        ids=["actionable-error-when-no-template", "none-when-template-present",
+             "generic-without-model-id"],
+    )
+    def test_missing_template_error(self, template, model_id, message_has):
         from heylook_llm.providers.common.template_info import missing_template_error
 
-        tok = _FakeTokenizer(chat_template=None)
-        err = missing_template_error(tok, "my-model")
-
+        err = missing_template_error(_FakeTokenizer(chat_template=template), model_id)
+        if message_has is None:
+            assert err is None
+            return
         assert isinstance(err, ValueError)
-        assert "my-model" in str(err)
-        assert "chat_template" in str(err)
-
-    def test_returns_none_when_template_present(self):
-        from heylook_llm.providers.common.template_info import missing_template_error
-
-        tok = _FakeTokenizer(chat_template="{{ x }}")
-
-        assert missing_template_error(tok, "m") is None
-
-    def test_message_is_generic_without_model_id(self):
-        from heylook_llm.providers.common.template_info import missing_template_error
-
-        err = missing_template_error(_FakeTokenizer(chat_template=None), None)
-
-        assert isinstance(err, ValueError)
-        assert "chat_template" in str(err)
+        for text in message_has:
+            assert text in str(err)
 
 
 class TestStopTokenValidation:
     """A stop-less chat template (renders none of the model's OWN stop tokens)
     is rejected + self-heals, so a broken/corrupted jinja can't cause runaway
-    generation. The stop set is read from the model's config, never hardcoded."""
+    generation. The stop set is read from the model's config, never hardcoded.
 
-    # gemma-like: eos_token_id resolves via added_tokens_decoder to <eos> + <end_of_turn>
-    _CFG = {
-        "eos_token": "<eos>",
-        "eos_token_id": [1, 106],
-        "added_tokens_decoder": {
-            "1": {"content": "<eos>", "special": True},
-            "106": {"content": "<end_of_turn>", "special": True},
-        },
-    }
+    Rows (all live-found): broken jinja with no valid fallback is NOT
+    installed; a valid jinja is kept; a broken jinja self-heals to a valid
+    embedded template; an undeterminable stop set is never rejected (never
+    break on uncertainty); gemma-4's shape, where tokenizer_config has NO
+    added_tokens_decoder and the generation_config eos ids (incl. the <turn|>
+    terminator the canonical template renders) resolve only via
+    tokenizer.json's added_tokens. Before that resolution the canonical
+    template was wrongly rejected as stopless -> template_info emptied ->
+    thinking parser + capability sniffing silently disabled."""
 
-    def test_broken_jinja_rejected_no_valid_fallback(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-        # renders <|turn>model -- none of the model's stop tokens; embedded has none either
-        _write_model_dir(tmp_path, jinja="{{ '<|turn>model\\n' }}", tokenizer_config=self._CFG)
-        info = read_template_info(tmp_path, source="jinja")
-        assert info.chat_template == ""                       # broken jinja NOT installed
-        assert info.template_source == "none(stopless)"
-
-    def test_valid_jinja_kept(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-        _write_model_dir(tmp_path, jinja="{{ '<start_of_turn>model\\n<end_of_turn>' }}",
-                         tokenizer_config=self._CFG)
-        info = read_template_info(tmp_path, source="jinja")
-        assert "<end_of_turn>" in info.chat_template
-
-    def test_self_heals_to_embedded(self, tmp_path):
-        from heylook_llm.providers.common.template_info import read_template_info
-        cfg = dict(self._CFG, chat_template="{{ '<end_of_turn>' }}")  # embedded IS valid
-        _write_model_dir(tmp_path, jinja="{{ '<|turn>model' }}", tokenizer_config=cfg)
-        info = read_template_info(tmp_path, source="jinja")
-        assert "<end_of_turn>" in info.chat_template
-        assert info.template_source == "tokenizer_config"
-
-    def test_unknown_stop_set_not_rejected(self, tmp_path):
-        # can't determine the model's stop tokens -> DON'T reject (never break on uncertainty)
-        from heylook_llm.providers.common.template_info import read_template_info
-        _write_model_dir(tmp_path, jinja="{{ '<|turn>model' }}", tokenizer_config={})
-        info = read_template_info(tmp_path, source="jinja")
-        assert "<|turn>model" in info.chat_template
-
-    def test_eos_ids_resolve_via_tokenizer_json(self, tmp_path):
-        # gemma-4 shape: tokenizer_config has NO added_tokens_decoder; the
-        # generation_config eos ids (incl. the <turn|> turn terminator the
-        # canonical template renders) resolve only via tokenizer.json's
-        # added_tokens. Before this resolution the canonical template was
-        # wrongly rejected as stopless -> template_info emptied -> thinking
-        # parser + capability sniffing silently disabled.
-        from heylook_llm.providers.common.template_info import read_template_info
-        _write_model_dir(
-            tmp_path,
-            jinja="{{ '<|turn>model\\n' }}{{ '<turn|>' }}",
-            tokenizer_config={"eos_token": "<eos>"},
-        )
-        (tmp_path / "generation_config.json").write_text(
-            json.dumps({"eos_token_id": [1, 106]})
-        )
-        (tmp_path / "tokenizer.json").write_text(json.dumps({
-            "added_tokens": [
-                {"id": 1, "content": "<eos>", "special": True},
-                {"id": 106, "content": "<turn|>", "special": True},
-            ],
-        }))
-        info = read_template_info(tmp_path, source="jinja")
-        assert "<turn|>" in info.chat_template
-        assert info.template_source == "jinja"
+    @pytest.mark.parametrize(
+        "files, in_template, expected",
+        [
+            ({"chat_template.jinja": "{{ '<|turn>model\\n' }}", "tokenizer_config.json": _STOP_CFG},
+             None, {"chat_template": "", "template_source": "none(stopless)"}),
+            ({"chat_template.jinja": "{{ '<start_of_turn>model\\n<end_of_turn>' }}",
+              "tokenizer_config.json": _STOP_CFG},
+             "<end_of_turn>", {}),
+            ({"chat_template.jinja": "{{ '<|turn>model' }}",
+              "tokenizer_config.json": dict(_STOP_CFG, chat_template="{{ '<end_of_turn>' }}")},
+             "<end_of_turn>", {"template_source": "tokenizer_config"}),
+            ({"chat_template.jinja": "{{ '<|turn>model' }}", "tokenizer_config.json": {}},
+             "<|turn>model", {}),
+            ({"chat_template.jinja": "{{ '<|turn>model\\n' }}{{ '<turn|>' }}",
+              "tokenizer_config.json": {"eos_token": "<eos>"},
+              "generation_config.json": {"eos_token_id": [1, 106]},
+              "tokenizer.json": {"added_tokens": [
+                  {"id": 1, "content": "<eos>", "special": True},
+                  {"id": 106, "content": "<turn|>", "special": True},
+              ]}},
+             "<turn|>", {"template_source": "jinja"}),
+        ],
+        ids=[
+            "broken-jinja-rejected-no-valid-fallback", "valid-jinja-kept",
+            "self-heals-to-embedded", "unknown-stop-set-not-rejected",
+            "eos-ids-resolve-via-tokenizer-json",
+        ],
+    )
+    def test_stop_validation(self, tmp_path, files, in_template, expected):
+        info = _read(tmp_path, files, "jinja")
+        if in_template is not None:
+            assert in_template in info.chat_template
+        for attr, value in expected.items():
+            assert getattr(info, attr) == value, attr
 
 
 class TestReadsReasoningContent:

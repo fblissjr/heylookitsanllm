@@ -27,7 +27,6 @@ from heylook_llm.config import (
     PROVIDER_CONFIG_CLASSES,
     _validate_effect_declarations,
     configurable_fields,
-    invalid_effects,
     fields_by_effect,
     reload_required_fields,
 )
@@ -39,29 +38,6 @@ PROVIDERS = sorted(PROVIDER_CONFIG_CLASSES)
 
 
 
-
-
-@pytest.mark.unit
-def test_a_misspelt_effect_is_unclassified_not_a_new_category():
-    """Regression: a typo must not silently mean "no reload required".
-
-    An earlier version bucketed by the raw string, so `"requires-reload"`
-    (hyphen) created its own bucket, left the unclassified set empty, passed
-    every completeness check, and dropped the field out of the reload set --
-    reintroducing the precise bug this metadata exists to prevent.
-    """
-    from pydantic import BaseModel, Field as PField
-
-    class Typo(BaseModel):
-        model_path: str = PField(json_schema_extra={"effect": EFFECT_IDENTITY})
-        ctx_size: int = PField(
-            default=0, json_schema_extra={"effect": "requires-reload"}
-        )
-
-    by = fields_by_effect(Typo)
-    assert "ctx_size" in by[None], "a misspelt effect must land as unclassified"
-    assert "requires-reload" not in by, "a typo must not invent a bucket"
-    assert invalid_effects(Typo) == {"ctx_size": "requires-reload"}
 
 
 @pytest.mark.unit
@@ -121,10 +97,18 @@ def test_exactly_one_identity_field(provider):
 @pytest.mark.unit
 @pytest.mark.parametrize("provider", PROVIDERS)
 def test_configurable_fields_exclude_identity_only(provider):
+    """The settable set (the gguf import allowlist among its users) is every
+    field but `model_path`, which the import path sets separately, and every
+    settable key is one the class will validate with its own default
+    (extra="forbid" would reject an invented one). The named-field history of
+    the allowlist is test_config_effects_adversarial.py's
+    test_gguf_import_allowlist_keeps_every_named_field."""
     cls = PROVIDER_CONFIG_CLASSES[provider]
     configurable = configurable_fields(cls)
     assert "model_path" not in configurable
     assert configurable == frozenset(cls.model_fields) - {"model_path"}
+    for name in configurable:
+        cls(model_path="/tmp/x.gguf", **{name: cls.model_fields[name].default})
 
 
 
@@ -148,17 +132,6 @@ def test_gguf_load_time_fields_are_reload_required():
             f"requires_reload -- changing it would report no reload needed "
             f"while the process keeps the old value"
         )
-
-
-@pytest.mark.unit
-def test_gguf_import_allowlist_covers_every_settable_field():
-    """The import path must not silently drop fields the config accepts."""
-    settable = configurable_fields(PROVIDER_CONFIG_CLASSES["gguf"])
-    for field in (
-        "n_gpu_layers_draft", "cache_ram_mb", "load_mode",
-        "sleep_idle_seconds", "enable_thinking",
-    ):
-        assert field in settable, f"gguf import would drop `{field}`"
 
 
 @pytest.mark.unit

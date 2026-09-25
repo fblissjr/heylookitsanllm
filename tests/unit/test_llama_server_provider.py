@@ -105,8 +105,15 @@ class TestProviderSurface:
         assert LlamaServerProvider.provider_name == "gguf"
         assert p.template_info() is None  # llama-server owns templating/split
 
-    def test_unload_without_load_is_safe(self):
-        make_provider().unload()  # must not raise
+    # unload is safe before any load, and forgets the running context the
+    # process reported.
+    @pytest.mark.parametrize("running_ctx", [None, 4096], ids=["never_loaded", "running_ctx_set"])
+    def test_unload_is_safe_and_forgets_running_ctx(self, running_ctx):
+        p = make_provider()
+        if running_ctx is not None:
+            p.running_ctx = running_ctx
+        p.unload()  # must not raise
+        assert p.running_ctx is None
 
 
 # ---------------------------------------------------------------------------
@@ -121,19 +128,6 @@ class TestBuildArgs:
     def _args(**config):
         from pathlib import Path
         return make_provider(**config)._build_args(Path("/bin/llama-server"), 1234)
-
-    def test_memory_and_lifecycle_flags_reach_argv(self):
-        args = self._args(
-            n_gpu_layers_draft=0,
-            cache_ram_mb=32768,
-            sleep_idle_seconds=120,
-            load_mode="mmap+mlock",
-        )
-        pairs = list(zip(args, args[1:]))
-        assert ("-ngld", "0") in pairs
-        assert ("-cram", "32768") in pairs
-        assert ("--sleep-idle-seconds", "120") in pairs
-        assert ("-lm", "mmap+mlock") in pairs
 
     def test_absent_knobs_emit_nothing(self):
         # Every one of these has a llama-server default worth inheriting; a
@@ -152,26 +146,27 @@ class TestBuildArgs:
         return p._build_args(Path("/bin/llama-server"), 1234,
                              auto_ubatch=p._auto_ubatch())
 
-    def test_auto_ubatch_is_2048_with_headroom(self, monkeypatch):
-        args = self._spawn_args(monkeypatch, 40.0)
-        assert ("-ub", "2048") in list(zip(args, args[1:]))
-        assert "-b" not in args  # n_batch None = llama-server's own 2048
-
-    def test_auto_ubatch_inherits_llama_default_at_the_ceiling(self, monkeypatch):
-        # DeepSeek V4 Flash Vision, 2026-09-07: 16 GiB of headroom loaded at
-        # 2048 and died in the first decode with a Metal OOM. Below the
-        # threshold the flag must be ABSENT, not 512 -- llama-server's own
-        # default is the thing being inherited.
-        args = self._spawn_args(monkeypatch, 16.0)
-        assert "-ub" not in args
-
-    def test_auto_ubatch_inherits_when_no_ceiling_is_readable(self, monkeypatch):
-        assert "-ub" not in self._spawn_args(monkeypatch, None)
-
-    def test_stored_ubatch_wins_over_auto_both_ways(self, monkeypatch):
-        pairs = lambda a: list(zip(a, a[1:]))
-        assert ("-ub", "512") in pairs(self._spawn_args(monkeypatch, 40.0, n_ubatch=512))
-        assert ("-ub", "4096") in pairs(self._spawn_args(monkeypatch, 16.0, n_ubatch=4096))
+    # -ub 2048 with headroom; ABSENT (not 512 -- llama-server's own default is
+    # the thing being inherited) at the ceiling or when no ceiling is
+    # readable; a stored n_ubatch wins over auto both ways. n_batch unset
+    # never emits -b (llama-server's own 2048).
+    # - at_the_ceiling: DeepSeek V4 Flash Vision, 2026-09-07, loaded at 2048
+    #   on this headroom and died in the first decode with a Metal OOM.
+    @pytest.mark.parametrize("headroom, config, expected_ub", [
+        (40.0, {}, "2048"),
+        (16.0, {}, None),
+        (None, {}, None),
+        (40.0, {"n_ubatch": 512}, "512"),
+        (16.0, {"n_ubatch": 4096}, "4096"),
+    ], ids=["2048_with_headroom", "inherits_at_the_ceiling", "inherits_when_no_ceiling_readable",
+            "stored_wins_over_auto_with_headroom", "stored_wins_over_auto_at_the_ceiling"])
+    def test_auto_ubatch(self, monkeypatch, headroom, config, expected_ub):
+        args = self._spawn_args(monkeypatch, headroom, **config)
+        if expected_ub is None:
+            assert "-ub" not in args
+        else:
+            assert ("-ub", expected_ub) in list(zip(args, args[1:]))
+        assert "-b" not in args
 
     def test_ubatch_above_batch_is_refused_not_clamped(self):
         # llama_context takes min(n_batch, n_ubatch) silently; the config
@@ -204,105 +199,53 @@ class TestBuildArgs:
                               extra_args=["--verbose", "--slot-prompt-similarity", "0.5"])
         assert cfg.extra_args[0] == "--verbose"
 
-    def test_chat_template_override_reaches_argv(self):
-        args = self._args(chat_template_path="/tmp/qwen38-official.jinja")
-        assert ("--chat-template-file", "/tmp/qwen38-official.jinja") in \
-            list(zip(args, args[1:]))
-
-    def test_missing_chat_template_fails_before_spawn(self, tmp_path, monkeypatch):
-        # The failure this prevents is silent: at observability_level=off the
-        # subprocess output is kept nowhere, so llama-server dying on an unreadable
-        # template file would surface as a bare startup timeout. Assert we
-        # never even reach Popen.
+    @staticmethod
+    def _stub_spawn(tmp_path, monkeypatch, popen):
         monkeypatch.setattr(LlamaServerProvider, "_resolve_binary",
                             lambda self: tmp_path / "llama-server")
-        monkeypatch.setattr(
-            llama_mod.subprocess, "Popen",
-            lambda *a, **k: pytest.fail("spawned despite an unreadable template"))
-        provider = make_provider(model_path=str(_weights(tmp_path)),
-                                 chat_template_path=str(tmp_path / "nope.jinja"))
-        with pytest.raises(FileNotFoundError, match="chat_template_path"):
-            provider.load_model()
+        monkeypatch.setattr(llama_mod.subprocess, "Popen", popen)
 
-    def test_present_chat_template_passes_preflight(self, tmp_path, monkeypatch):
-        # Guard the guard: the check must key on the file existing, not reject
-        # the field outright (which would pass the test above for free).
-        tmpl = tmp_path / "ok.jinja"
-        tmpl.write_text("{{ messages }}")
-        monkeypatch.setattr(LlamaServerProvider, "_resolve_binary",
-                            lambda self: tmp_path / "llama-server")
-        spawned = []
-        monkeypatch.setattr(
-            llama_mod.subprocess, "Popen",
-            lambda *a, **k: spawned.append(a) or (_ for _ in ()).throw(
-                RuntimeError("stop here -- preflight passed")))
-        provider = make_provider(model_path=str(_weights(tmp_path)),
-                                 chat_template_path=str(tmpl))
-        with pytest.raises(RuntimeError, match="preflight passed"):
-            provider.load_model()
-        assert spawned, "preflight rejected a template file that exists"
-
+    # A configured path that is missing fails before Popen, naming the FIELD
+    # (the entry can carry four paths and only one of them is wrong). The
+    # failure this prevents is silent: llama-server exits 1 immediately and
+    # its output is kept nowhere at the default observability level, so the
+    # operator got `exited with code 1 -- output not captured` and nothing
+    # naming the file (2026-09-06: a models.toml entry outliving a directory
+    # rename); an unreadable template surfaced as a bare startup timeout.
     @pytest.mark.parametrize("field, filename", [
+        ("chat_template_path", "nope.jinja"),
         ("model_path", "gone.gguf"),
         ("mmproj_path", "gone-mmproj.gguf"),
         ("draft_model_path", "gone-draft.gguf"),
     ])
     def test_missing_configured_file_fails_before_spawn(
             self, tmp_path, monkeypatch, field, filename):
-        # A models.toml entry outliving a directory rename. llama-server exits
-        # 1 immediately and its output is kept nowhere at the default observability
-        # level, so the operator gets `exited with code 1 -- output not
-        # captured` and nothing naming the file (2026-09-06). The error must
-        # name the FIELD, since the entry can carry four paths and only one of
-        # them is wrong.
-        monkeypatch.setattr(LlamaServerProvider, "_resolve_binary",
-                            lambda self: tmp_path / "llama-server")
-        monkeypatch.setattr(
-            llama_mod.subprocess, "Popen",
-            lambda *a, **k: pytest.fail(f"spawned despite a missing {field}"))
+        self._stub_spawn(tmp_path, monkeypatch,
+                         lambda *a, **k: pytest.fail(f"spawned despite a missing {field}"))
         cfg = {"model_path": str(_weights(tmp_path)), field: str(tmp_path / filename)}
         provider = make_provider(**cfg)
         with pytest.raises(FileNotFoundError, match=field):
             provider.load_model()
 
-    def test_present_configured_files_pass_preflight(self, tmp_path, monkeypatch):
-        # Guard the guard, same reason as the template pair above: a check that
-        # rejected these fields outright would pass every case above for free.
-        monkeypatch.setattr(LlamaServerProvider, "_resolve_binary",
-                            lambda self: tmp_path / "llama-server")
+    # Guard the guard: the check keys on the file existing, not on rejecting
+    # the field outright (which would pass every case above for free).
+    @pytest.mark.parametrize("files", [
+        {"chat_template_path": "ok.jinja"},
+        {"mmproj_path": "mmproj.gguf", "draft_model_path": "draft.gguf"},
+    ], ids=["chat_template", "mmproj_and_draft"])
+    def test_present_configured_files_pass_preflight(self, tmp_path, monkeypatch, files):
         spawned = []
-        monkeypatch.setattr(
-            llama_mod.subprocess, "Popen",
-            lambda *a, **k: spawned.append(a) or (_ for _ in ()).throw(
-                RuntimeError("stop here -- preflight passed")))
-        mmproj = tmp_path / "mmproj.gguf"
-        mmproj.write_bytes(b"GGUF")
-        draft = tmp_path / "draft.gguf"
-        draft.write_bytes(b"GGUF")
-        provider = make_provider(model_path=str(_weights(tmp_path)),
-                                 mmproj_path=str(mmproj),
-                                 draft_model_path=str(draft))
+        self._stub_spawn(tmp_path, monkeypatch,
+                         lambda *a, **k: spawned.append(a) or (_ for _ in ()).throw(
+                             RuntimeError("stop here -- preflight passed")))
+        cfg = {"model_path": str(_weights(tmp_path))}
+        for field, filename in files.items():
+            (tmp_path / filename).write_bytes(b"GGUF")
+            cfg[field] = str(tmp_path / filename)
+        provider = make_provider(**cfg)
         with pytest.raises(RuntimeError, match="preflight passed"):
             provider.load_model()
-        assert spawned, "preflight rejected files that all exist"
-
-    def test_absent_chat_template_leaves_the_gguf_embedded_one_in_force(self):
-        # The default MUST stay "whatever the quantizer baked in". Emitting a
-        # flag here would override the embedded template with something the
-        # user never chose -- the exact failure this field exists to make
-        # explicit rather than accidental.
-        assert "--chat-template-file" not in self._args()
-
-    @pytest.mark.parametrize("field,flag,value", [
-        ("n_gpu_layers_draft", "-ngld", 0),   # 0 = drafter entirely off the GPU
-        ("cache_ram_mb", "-cram", 0),         # 0 = disable the prompt cache
-        ("cache_ram_mb", "-cram", -1),        # -1 = unlimited
-    ])
-    def test_falsy_but_meaningful_values_are_not_dropped(self, field, flag, value):
-        # These went through `if cfg.get(x)` once; 0 and -1 are real settings,
-        # not "unset", and truthiness silently discarded them.
-        args = self._args(**{field: value})
-        assert (flag, str(value)) in list(zip(args, args[1:]))
+        assert spawned, f"preflight rejected files that all exist: {files}"
 
 
 # ---------------------------------------------------------------------------
@@ -395,30 +338,25 @@ class TestSleepWakeTimeout:
     next request pays a full RELOAD before the first byte. On a large model
     that is minutes -- far past the 120s wedge-detection timeout."""
 
-    def test_normal_timeout_when_sleep_is_not_configured(self):
-        p = make_provider()
-        p._base_url = "http://127.0.0.1:1"
-        assert p._request_timeout() == llama_mod._SSE_READ_TIMEOUT_S
-
-    def test_awake_server_keeps_the_wedge_timeout(self, monkeypatch):
-        p = make_provider(sleep_idle_seconds=60, startup_timeout_s=900.0)
-        p._base_url = "http://127.0.0.1:1"
-        monkeypatch.setattr(p, "_is_sleeping", lambda: False)
-        assert p._request_timeout() == llama_mod._SSE_READ_TIMEOUT_S
-
-    def test_sleeping_server_gets_the_reload_budget(self, monkeypatch):
-        p = make_provider(sleep_idle_seconds=60, startup_timeout_s=900.0)
-        p._base_url = "http://127.0.0.1:1"
-        monkeypatch.setattr(p, "_is_sleeping", lambda: True)
-        assert p._request_timeout() == 900.0
-
-    def test_unreachable_props_does_not_raise(self):
-        # Best-effort probe: an older llama-server without /props is_sleeping,
-        # or one mid-restart, must degrade to the normal timeout, not a 500.
-        p = make_provider(sleep_idle_seconds=60)
+    # The reload budget (startup_timeout_s) applies iff sleep is configured
+    # AND the server is asleep; otherwise the wedge timeout. `sleeping` None
+    # means the real probe runs against an address nothing listens on: the
+    # best-effort /props probe (an older llama-server without it, or one
+    # mid-restart) must degrade to "awake" and the normal timeout, not a 500.
+    @pytest.mark.parametrize("config, sleeping, expected", [
+        ({}, None, llama_mod._SSE_READ_TIMEOUT_S),
+        ({"sleep_idle_seconds": 60, "startup_timeout_s": 900.0}, False, llama_mod._SSE_READ_TIMEOUT_S),
+        ({"sleep_idle_seconds": 60, "startup_timeout_s": 900.0}, True, 900.0),
+        ({"sleep_idle_seconds": 60}, None, llama_mod._SSE_READ_TIMEOUT_S),
+    ], ids=["sleep_not_configured", "awake_keeps_wedge_timeout", "sleeping_gets_reload_budget",
+            "unreachable_props_does_not_raise"])
+    def test_request_timeout(self, monkeypatch, config, sleeping, expected):
+        p = make_provider(**config)
         p._base_url = "http://127.0.0.1:1"  # nothing listening
-        assert p._is_sleeping() is False
-        assert p._request_timeout() == llama_mod._SSE_READ_TIMEOUT_S
+        if sleeping is not None:
+            monkeypatch.setattr(p, "_is_sleeping", lambda: sleeping)
+        assert p._is_sleeping() is bool(sleeping)
+        assert p._request_timeout() == expected
 
 
 # ---------------------------------------------------------------------------
@@ -471,26 +409,22 @@ class TestSubprocessRegistry:
 
     teardown_method = setup_method
 
-    def test_spawned_process_is_registered(self, monkeypatch):
-        p = make_provider()
-        proc = _FakeProc()
-        monkeypatch.setattr(llama_mod.os, "getpgid", lambda pid: pid)
-        p._register_proc(proc)
-        assert proc in llama_mod._ACTIVE_PROCS
-
-    def test_unload_deregisters(self, monkeypatch):
-        """Claim: an unloaded model must not be killed again at exit -- its pid
-        may have been recycled by then."""
+    # A spawned process is registered; a deliberate unload signals the group
+    # and deregisters it -- an unloaded model must not be killed again at
+    # exit, since its pid may have been recycled by then.
+    @pytest.mark.parametrize("unload", [False, True], ids=["spawn_registers", "unload_deregisters"])
+    def test_registry_tracks_spawn_and_unload(self, monkeypatch, unload):
         p = make_provider()
         proc = _FakeProc()
         killed = []
         monkeypatch.setattr(llama_mod.os, "getpgid", lambda pid: pid)
         monkeypatch.setattr(llama_mod.os, "killpg", lambda pgid, sig: killed.append((pgid, sig)))
         p._register_proc(proc)
-        p._proc = proc
-        p.unload()
-        assert proc not in llama_mod._ACTIVE_PROCS
-        assert killed, "unload should still signal the group"
+        if unload:
+            p._proc = proc
+            p.unload()
+        assert (proc in llama_mod._ACTIVE_PROCS) is not unload
+        assert bool(killed) is unload, "unload should still signal the group"
 
     def test_destructor_signals_without_waiting(self, monkeypatch):
         """A destructor must not block, on THIS provider too.
@@ -543,11 +477,17 @@ class TestSubprocessRegistry:
             "the deliberate teardown path stopped waiting for the process to exit")
         assert proc not in llama_mod._ACTIVE_PROCS
 
-    def test_backstop_kills_leftover_process_group(self, monkeypatch):
-        """Claim: this is the last line of defense. Delete it and any exit path
-        that skips the lifespan shutdown (startup crash, second Ctrl-C) leaks
-        the subprocess."""
+    # _kill_orphans is the last line of defense: delete it and any exit path
+    # that skips the lifespan shutdown (startup crash, second Ctrl-C) leaks
+    # the subprocess. It SIGTERMs live groups only -- a pid that already
+    # exited may belong to something else by now -- and empties the registry.
+    @pytest.mark.parametrize("returncode, expected_kills", [
+        (None, [(4242, signal.SIGTERM)]),
+        (0, []),
+    ], ids=["kills_leftover_group", "skips_already_dead"])
+    def test_backstop_signals_live_groups_only(self, monkeypatch, returncode, expected_kills):
         proc = _FakeProc()
+        proc._rc = returncode
         killed = []
         monkeypatch.setattr(llama_mod.os, "getpgid", lambda pid: pid)
         monkeypatch.setattr(llama_mod.os, "killpg", lambda pgid, sig: killed.append((pgid, sig)))
@@ -555,21 +495,8 @@ class TestSubprocessRegistry:
 
         llama_mod._kill_orphans()
 
-        assert killed == [(4242, signal.SIGTERM)]
+        assert killed == expected_kills
         assert not llama_mod._ACTIVE_PROCS
-
-    def test_backstop_skips_already_dead_process(self, monkeypatch):
-        """A pid that already exited must not be signalled -- the number may
-        belong to something else by now."""
-        proc = _FakeProc()
-        proc._rc = 0
-        killed = []
-        monkeypatch.setattr(llama_mod.os, "killpg", lambda pgid, sig: killed.append((pgid, sig)))
-        llama_mod._ACTIVE_PROCS.add(proc)
-
-        llama_mod._kill_orphans()
-
-        assert killed == []
 
     def test_backstop_actually_runs_on_interpreter_exit(self):
         """End-to-end: importing the provider must arm the hook.
@@ -605,57 +532,38 @@ class TestSubprocessRegistry:
 # ---------------------------------------------------------------------------
 
 class TestPayload:
-    def test_floor_applied_and_max_tokens_always_sent(self):
-        p = make_provider()
-        payload = p._build_payload(req())
-        assert payload["temperature"] == GLOBAL_SAMPLER_FLOOR["temperature"]
-        assert payload["max_tokens"] == GLOBAL_SAMPLER_FLOOR["max_tokens"]  # llama default is UNLIMITED; must always send
-        assert payload["stream"] is True
-        assert payload["stream_options"] == {"include_usage": True}
-        assert payload["messages"] == [{"role": "user", "content": "hi"}]
-
-    def test_request_overrides_and_param_mapping(self):
-        p = make_provider()
-        payload = p._build_payload(req(temperature=0.1, repetition_penalty=1.3, max_tokens=64, seed=7, presence_penalty=1.5, top_k=20))
-        assert payload["temperature"] == 0.1
-        assert payload["repeat_penalty"] == 1.3  # llama.cpp's name
-        assert "repetition_penalty" not in payload
-        assert payload["max_tokens"] == 64
-        assert payload["seed"] == 7
-        assert payload["presence_penalty"] == 1.5
-        assert "reasoning_budget_tokens" not in payload   # no cap unless asked
-        assert p._build_payload(req(thinking_budget_tokens=128))["reasoning_budget_tokens"] == 128
-        assert payload["top_k"] == 20
-
-    def test_model_config_max_tokens_beats_floor(self):
-        # Deleting this resurrects the dead-overlay bug (code-review
-        # 2026-07-26): the floor pre-seeds max_tokens, so a guarded
-        # "if not in merged" write could never fire and a model-level
-        # max_tokens silently fell back to the floor.
-        p = make_provider(max_tokens=8000)
-        payload = p._build_payload(req())
-        assert payload["max_tokens"] == 8000
-
-    def test_request_max_tokens_beats_model_config(self):
-        p = make_provider(max_tokens=8000)
-        payload = p._build_payload(req(max_tokens=64))
-        assert payload["max_tokens"] == 64
-
-    def test_thinking_reaches_the_template_and_changes_no_sampler_value(self):
-        """gguf mirrors MLX: thinking is a TEMPLATE kwarg, not a sampler
-        change. It carried presence_penalty 1.5 until v2.0.32; that value was
-        never measured and contradicted the guidance of the family it came
-        from, so the switch now travels alone."""
-        p = make_provider()
-        payload = p._build_payload(req(enable_thinking=True))
-        assert payload["chat_template_kwargs"] == {"enable_thinking": True}
-        assert payload["presence_penalty"] == GLOBAL_SAMPLER_FLOOR["presence_penalty"]
-
-    def test_a_looping_model_can_still_be_tuned_per_model(self):
-        """gguf gained the per-model field in v2.0.32, having had none: the
-        removal must not cost the ABILITY, only the automatic default."""
-        p = make_provider(presence_penalty=1.5)
-        assert p._build_payload(req(enable_thinking=True))["presence_penalty"] == 1.5
+    # The cascade floor < model config < request, in llama.cpp's names.
+    # - floor: max_tokens is ALWAYS sent -- llama's default is UNLIMITED.
+    # - request_overrides_and_mapping: repetition_penalty travels as
+    #   llama.cpp's repeat_penalty; no reasoning budget unless asked.
+    # - model_max_tokens_beats_floor: the floor pre-seeds max_tokens, so a
+    #   guarded "if not in merged" write could never fire and a model-level
+    #   max_tokens silently fell back to the floor (code-review 2026-07-26).
+    # - looping_model_tuned_per_model: gguf gained the per-model field in
+    #   v2.0.32, having had none: the thinking overlay's removal must not cost
+    #   the ABILITY, only the automatic default.
+    @pytest.mark.parametrize("config, body, expected, absent", [
+        ({}, {},
+         {"temperature": GLOBAL_SAMPLER_FLOOR["temperature"],
+          "max_tokens": GLOBAL_SAMPLER_FLOOR["max_tokens"],
+          "stream": True, "stream_options": {"include_usage": True},
+          "messages": [{"role": "user", "content": "hi"}]}, ()),
+        ({}, dict(temperature=0.1, repetition_penalty=1.3, max_tokens=64, seed=7,
+                  presence_penalty=1.5, top_k=20),
+         {"temperature": 0.1, "repeat_penalty": 1.3, "max_tokens": 64, "seed": 7,
+          "presence_penalty": 1.5, "top_k": 20},
+         ("repetition_penalty", "reasoning_budget_tokens")),
+        ({}, dict(thinking_budget_tokens=128), {"reasoning_budget_tokens": 128}, ()),
+        ({"max_tokens": 8000}, {}, {"max_tokens": 8000}, ()),
+        ({"max_tokens": 8000}, {"max_tokens": 64}, {"max_tokens": 64}, ()),
+        ({"presence_penalty": 1.5}, {"enable_thinking": True}, {"presence_penalty": 1.5}, ()),
+    ], ids=["floor_and_max_tokens_always_sent", "request_overrides_and_mapping",
+            "reasoning_budget_only_when_asked", "model_max_tokens_beats_floor",
+            "request_max_tokens_beats_model", "looping_model_tuned_per_model"])
+    def test_payload_cascade(self, config, body, expected, absent):
+        payload = make_provider(**config)._build_payload(req(**body))
+        assert {k: payload.get(k) for k in expected} == expected
+        assert not set(absent) & set(payload)
 
     def test_per_model_sampling_matches_mlx_and_reaches_the_payload(self):
         """Owner call 2026-09-25: a gguf model's own file tunes sampling as
@@ -683,83 +591,70 @@ class TestPayload:
 
 
 
-    def test_the_vendor_layer_reaches_the_payload(self, tmp_path):
-        """What replaced the named-sampler layers: the model's OWN published
-        settings, and this pins that they reach the REQUEST BODY.
+    # The vendor layer: the model's OWN published settings (a real GGUF whose
+    # header carries `general.sampling.*`) reach the REQUEST BODY through
+    # `_build_payload`, and stay a layer: the request outranks it, and a key
+    # the header does not publish still gets the floor rather than being
+    # dropped. Each row also pins the header parse (`vendor_sampling`).
+    #
+    # Why through the provider: the version this replaces asserted the FLOOR
+    # value against `make_provider()`, whose model_path does not exist -- so
+    # `vendor_sampling` returned nothing and the assertion held whether or not
+    # the provider consulted the vendor layer at all. Its second half called
+    # `resolve_effective_sampling` with a literal vendor dict, exercising
+    # samplers.py and never the provider; deleting the provider's `vendor=`
+    # argument left the whole suite green. top_k is the one that bit: heylook
+    # sends every sampler key explicitly, so llama.cpp's own read of this block
+    # is overridden on every request and a missing layer silently sent the
+    # floor. (The reporting side has its own guard,
+    # `test_vendor_layer_reaches_the_report_on_every_engine`.)
+    _FULL_HEADER = (("general.sampling.temp", "F32", 0.5),
+                    ("general.sampling.top_p", "F32", 0.8),
+                    ("general.sampling.top_k", "I32", 20))
 
-        Through `_build_payload`, against a provider pointed at a real GGUF
-        whose header carries `general.sampling.*`. Both halves are the fix for
-        a check that could not fail. The version this replaces asserted the
-        FLOOR value against `make_provider()`, whose model_path does not exist
-        -- so `vendor_sampling` returned nothing and the assertion held whether
-        or not the provider consulted the vendor layer at all. Its second half
-        called `resolve_effective_sampling` directly with a literal vendor
-        dict, which exercises samplers.py and never the provider. Deleting the
-        provider's `vendor=` argument entirely left the whole suite green.
+    @pytest.mark.parametrize("header, body, vendor, expected", [
+        (_FULL_HEADER, {},
+         {"temperature": 0.5, "top_p": 0.8, "top_k": 20},
+         {"temperature": 0.5, "top_p": 0.8, "top_k": 20}),
+        (_FULL_HEADER, {"temperature": 0.1},
+         {"temperature": 0.5, "top_p": 0.8, "top_k": 20},
+         {"temperature": 0.1}),
+        ((("general.sampling.temp", "F32", 0.5),), {},
+         {"temperature": 0.5},
+         {"temperature": 0.5, "top_p": GLOBAL_SAMPLER_FLOOR["top_p"]}),
+    ], ids=["header_reaches_payload", "request_outranks_header", "floor_where_header_silent"])
+    def test_the_vendor_layer_reaches_the_payload(self, tmp_path, header, body, vendor, expected):
+        import helpers.gguf as g
+        from heylook_llm.gguf_metadata import vendor_sampling
 
-        The reporting side of this layer already had a guard
-        (`test_vendor_layer_reaches_the_report_on_every_engine`); generation,
-        which is the side the original bug was on, had none.
-        """
-        from helpers.gguf import write_gguf, STR, F32, I32
+        f = g.write_gguf(tmp_path / "m.gguf", [("general.architecture", g.STR, "qwen3")] +
+                         [(k, getattr(g, t), v) for k, t, v in header])
+        assert vendor_sampling(f) == {k: pytest.approx(v) for k, v in vendor.items()}
+        payload = make_provider(model_path=str(f))._build_payload(req(**body))
+        assert {k: payload[k] for k in expected} == {k: pytest.approx(v) for k, v in expected.items()}
 
-        f = write_gguf(tmp_path / "m.gguf", [
-            ("general.architecture", STR, "qwen3"),
-            ("general.sampling.temp", F32, 0.5),
-            ("general.sampling.top_p", F32, 0.8),
-            ("general.sampling.top_k", I32, 20),
-        ])
-        p = make_provider(model_path=str(f))
-        payload = p._build_payload(req())
-        assert payload["temperature"] == pytest.approx(0.5), \
-            "the header's temperature did not reach the payload"
-        assert payload["top_p"] == pytest.approx(0.8)
-        assert payload["top_k"] == 20, (
-            "top_k is the one that bit: heylook sends every sampler key "
-            "explicitly, so llama.cpp's own read of this block is overridden "
-            "on every request and a missing layer silently sent the floor")
-
-        # Still a LAYER: the request outranks it.
-        explicit = p._build_payload(req(temperature=0.1))
-        assert explicit["temperature"] == pytest.approx(0.1)
-
-    def test_the_floor_applies_only_where_the_header_is_silent(self, tmp_path):
-        """The other half of "layer": a key the model does not publish still
-        gets the floor, rather than being dropped."""
-        from helpers.gguf import write_gguf, STR, F32
-
-        f = write_gguf(tmp_path / "m.gguf", [
-            ("general.architecture", STR, "qwen3"),
-            ("general.sampling.temp", F32, 0.5),
-        ])
-        payload = make_provider(model_path=str(f))._build_payload(req())
-        assert payload["temperature"] == pytest.approx(0.5)
-        assert payload["top_p"] == GLOBAL_SAMPLER_FLOOR["top_p"]
-
-    def test_enable_thinking_maps_to_chat_template_kwargs(self):
-        p = make_provider()
-        on = p._build_payload(req(enable_thinking=True))
-        off = p._build_payload(req(enable_thinking=False))
-        assert on["chat_template_kwargs"] == {"enable_thinking": True}
-        assert off["chat_template_kwargs"] == {"enable_thinking": False}
-
-    def test_unset_thinking_is_sent_as_an_explicit_off(self):
-        """Claim: an omitted enable_thinking means OFF on gguf, exactly as it
-        already does on MLX -- and it must travel as an explicit `false`.
-
-        Omitting the key is not "no opinion" here. llama-server runs --jinja,
-        so with no chat_template_kwargs it applies the GGUF's own template
-        default, which is thinking-ON for gemma-4 / Qwen3.6 / DeepSeek-V4.
-        MLX resolves the same unset request to False. That made one v3
-        checkbox mean opposite things per engine, and left no way at all to
-        turn thinking off on a gguf model (the control only ever sends
-        true/null). Asserting the sent VALUE, not just the key's presence,
-        is the point: a bare `"chat_template_kwargs" in payload` check would
-        pass on a payload that says true.
-        """
-        payload = make_provider()._build_payload(req())
-        assert payload["chat_template_kwargs"] == {"enable_thinking": False}
-        assert payload["presence_penalty"] == 0.0
+    # Thinking is a TEMPLATE kwarg, not a sampler change: enable_thinking
+    # always travels in chat_template_kwargs and presence_penalty stays the
+    # floor (it carried 1.5 until v2.0.32; that value was never measured and
+    # contradicted the guidance of the family it came from).
+    # - unset: an omitted enable_thinking means OFF on gguf, exactly as on
+    #   MLX, and must travel as an explicit `false`. llama-server runs --jinja,
+    #   so with no chat_template_kwargs it applies the GGUF's own template
+    #   default, which is thinking-ON for gemma-4 / Qwen3.6 / DeepSeek-V4:
+    #   one v3 checkbox meant opposite things per engine, with no way to turn
+    #   thinking off on gguf. Asserting the sent VALUE is the point: a bare
+    #   `"chat_template_kwargs" in payload` check passes on a payload that
+    #   says true.
+    @pytest.mark.parametrize("body, expected_kwargs, expected_presence", [
+        ({"enable_thinking": True}, {"enable_thinking": True}, GLOBAL_SAMPLER_FLOOR["presence_penalty"]),
+        ({"enable_thinking": False}, {"enable_thinking": False}, GLOBAL_SAMPLER_FLOOR["presence_penalty"]),
+        ({}, {"enable_thinking": False}, 0.0),
+    ], ids=["on", "off", "unset_is_explicit_off"])
+    def test_thinking_reaches_the_template_and_changes_no_sampler_value(
+            self, body, expected_kwargs, expected_presence):
+        payload = make_provider()._build_payload(req(**body))
+        assert payload["chat_template_kwargs"] == expected_kwargs
+        assert payload["presence_penalty"] == expected_presence
 
     def test_multimodal_content_parts_pass_through(self):
         p = make_provider()
@@ -829,19 +724,23 @@ class TestSSEAdapter:
         assert (final.spec.drafted, final.spec.accepted) == (12, 5)
 
 
-    def test_error_frame_raises_instead_of_ending_cleanly(self, monkeypatch):
-        # llama-server reports a decode failure INSIDE the stream (the HTTP
-        # status was already 200): `data: {"error": {...}}`. It has no
-        # `choices`, so the adapter used to skip it and the stream ended as a
-        # zero-token end_turn -- an empty reply for what was a Metal OOM.
+    # A failure inside the stream raises GenerationFailed carrying the
+    # server's message, and is never sized as a compute error. llama-server
+    # reports a decode failure INSIDE the stream (the HTTP status was already
+    # 200): `data: {"error": {...}}`. It has no `choices`, so the adapter used
+    # to skip it and the stream ended as a zero-token end_turn -- an empty
+    # reply for what was a Metal OOM.
+    @pytest.mark.parametrize("frame, match", [
+        ('data: {"error":{"code":500,"message":"template failed","type":"server_error"}}', "template"),
+        ("data: {not json", None),
+    ], ids=["error_frame", "malformed_frame"])
+    def test_stream_failure_raises_generation_failed(self, monkeypatch, frame, match):
         from heylook_llm.providers.base import GenerationFailed
         p = make_provider()
         monkeypatch.setattr(llama_mod.ram_fit, "fit_for_config",
                             lambda cfg, **kw: pytest.fail("no sizing for a non-compute error"))
-        with pytest.raises(GenerationFailed, match="template"):
-            list(p._stream_chunks(_stream_bytes(
-                'data: {"error":{"code":500,"message":"template failed","type":"server_error"}}'),
-                abort_event=None))
+        with pytest.raises(GenerationFailed, match=match):
+            list(p._stream_chunks(_stream_bytes(frame), abort_event=None))
 
     def test_compute_error_names_the_metal_ceiling_and_the_sysctl(self, monkeypatch):
         # "Compute error." is all llama-server says; the ggml OOM line is in a
@@ -862,13 +761,6 @@ class TestSSEAdapter:
         assert "working set" in text and "16.0 GiB" in text
         assert "iogpu.wired_limit_mb=177458" in text
 
-    def test_malformed_frame_raises_generation_failed(self):
-        from heylook_llm.providers.base import GenerationFailed
-
-        p = make_provider()
-        with pytest.raises(GenerationFailed):
-            list(p._stream_chunks(_stream_bytes("data: {not json"), abort_event=None))
-
 
 class TestContinuationEchoStrip:
     """llama-server ECHOES a continued assistant message's prefill back as the
@@ -882,33 +774,23 @@ class TestContinuationEchoStrip:
         return list(p._stream_chunks(_stream_bytes(*frames), abort_event=None,
                                      echo_chars=echo_chars))
 
-    def test_echo_in_one_delta_is_stripped(self):
+    # Exactly echo_chars leading content chars are dropped, across delta
+    # boundaries, and a delta that was pure echo is swallowed rather than
+    # emitted empty.
+    # - one_delta: the delta's surplus space is real continuation.
+    @pytest.mark.parametrize("deltas, echo, expected", [
+        (["1, 2, 3, ", "4, 5"], "1, 2, 3,", " 4, 5"),
+        (["1, 2", ", 3, 4"], "1, 2, 3", ", 4"),
+        (["prefix", " tail"], "prefix", " tail"),
+    ], ids=["echo_in_one_delta", "echo_spanning_deltas", "pure_echo_delta_swallowed"])
+    def test_content_echo_is_stripped(self, deltas, echo, expected):
         frames = [
-            'data: {"choices":[{"delta":{"content":"1, 2, 3, "},"index":0,"finish_reason":null}]}',
-            'data: {"choices":[{"delta":{"content":"4, 5"},"index":0,"finish_reason":null}]}',
-            "data: [DONE]",
-        ]
-        text = "".join(c.text for c in self.collect(frames, echo_chars=len("1, 2, 3,")))
-        assert text == " 4, 5"  # the delta's surplus space is real continuation
-
-    def test_echo_spanning_deltas_is_stripped(self):
-        frames = [
-            'data: {"choices":[{"delta":{"content":"1, 2"},"index":0,"finish_reason":null}]}',
-            'data: {"choices":[{"delta":{"content":", 3, 4"},"index":0,"finish_reason":null}]}',
-            "data: [DONE]",
-        ]
-        text = "".join(c.text for c in self.collect(frames, echo_chars=len("1, 2, 3")))
-        assert text == ", 4"
-
-    def test_pure_echo_deltas_are_swallowed_not_emitted_empty(self):
-        frames = [
-            'data: {"choices":[{"delta":{"content":"prefix"},"index":0,"finish_reason":null}]}',
-            'data: {"choices":[{"delta":{"content":" tail"},"index":0,"finish_reason":null}]}',
-            "data: [DONE]",
-        ]
-        chunks = self.collect(frames, echo_chars=len("prefix"))
+            'data: {"choices":[{"delta":{"content":' + json.dumps(d) + '},"index":0,"finish_reason":null}]}'
+            for d in deltas
+        ] + ["data: [DONE]"]
+        chunks = self.collect(frames, echo_chars=len(echo))
         assert all(c.text or c.thinking or c.finish_reason or c.prompt_tokens for c in chunks)
-        assert "".join(c.text for c in chunks) == " tail"
+        assert "".join(c.text for c in chunks) == expected
 
     def test_thinking_deltas_untouched_without_a_thinking_prefill(self):
         frames = [
@@ -979,31 +861,29 @@ class TestContinuationGuards:
     def _payload(self, req):
         return {"messages": [m.model_dump(exclude_none=True) for m in req.messages]}
 
-    def test_user_role_continuation_400s(self):
+    # What llama-server cannot express is an InvalidGenerationRequest (400).
+    @pytest.mark.parametrize("messages, flag, match", [
+        ([{"role": "user", "content": "finish my sentence"}], True, "assistant turns only"),
+        ([{"role": "user", "content": "hi"}, {"role": "assistant", "content": "he"}], False,
+         "always continues"),
+    ], ids=["user_role_continuation", "false_with_trailing_assistant"])
+    def test_inexpressible_continuation_400s(self, messages, flag, match):
         from heylook_llm.providers.base import InvalidGenerationRequest
         p = make_provider()
-        req = self._req([{"role": "user", "content": "finish my sentence"}], True)
-        with pytest.raises(InvalidGenerationRequest, match="assistant turns only"):
+        req = self._req(messages, flag)
+        with pytest.raises(InvalidGenerationRequest, match=match):
             p._continuation_echo_chars(req, self._payload(req))
 
-    def test_false_with_trailing_assistant_400s(self):
-        from heylook_llm.providers.base import InvalidGenerationRequest
+    # (content, thinking) echo lengths: the prefill's length for a trailing
+    # assistant turn (auto), (0, 0) with nothing to continue.
+    @pytest.mark.parametrize("messages, expected", [
+        ([{"role": "user", "content": "count"}, {"role": "assistant", "content": "1, 2,"}], (5, 0)),
+        ([{"role": "user", "content": "hi"}], (0, 0)),
+    ], ids=["auto_trailing_assistant", "no_continuation"])
+    def test_echo_length(self, messages, expected):
         p = make_provider()
-        req = self._req([{"role": "user", "content": "hi"},
-                         {"role": "assistant", "content": "he"}], False)
-        with pytest.raises(InvalidGenerationRequest, match="always continues"):
-            p._continuation_echo_chars(req, self._payload(req))
-
-    def test_auto_trailing_assistant_returns_prefill_length(self):
-        p = make_provider()
-        req = self._req([{"role": "user", "content": "count"},
-                         {"role": "assistant", "content": "1, 2,"}], None)
-        assert p._continuation_echo_chars(req, self._payload(req)) == (5, 0)
-
-    def test_no_continuation_returns_zero(self):
-        p = make_provider()
-        req = self._req([{"role": "user", "content": "hi"}], None)
-        assert p._continuation_echo_chars(req, self._payload(req)) == (0, 0)
+        req = self._req(messages, None)
+        assert p._continuation_echo_chars(req, self._payload(req)) == expected
 
     def test_thinking_prefill_echo_is_measured_lstripped(self):
         # llama-server echoes a prefilled reasoning_content back on the
@@ -1082,36 +962,28 @@ class TestBinaryResolution:
         p = make_provider()
         assert p._resolve_binary() == canonical
 
-    def test_env_override_warns_about_shadowing(self, tmp_path, monkeypatch, caplog):
+    # An override is used, and WARNs naming its source and the canonical build
+    # it shadows: $HEYLOOK_LLAMA_SERVER, or a models.toml server_binary.
+    @pytest.mark.parametrize("source", ["HEYLOOK_LLAMA_SERVER", "server_binary"])
+    def test_an_override_is_used_and_warns(self, tmp_path, monkeypatch, caplog, source):
         import logging as _logging
         canonical = self._with_canonical(tmp_path, monkeypatch)
         override = tmp_path / "elsewhere" / "llama-server"
         override.parent.mkdir(parents=True)
         override.write_text("#!/bin/true\n")
-        monkeypatch.setenv("HEYLOOK_LLAMA_SERVER", str(override))
-        p = make_provider()
-        with caplog.at_level(_logging.WARNING):
-            resolved = p._resolve_binary()
-        assert resolved == override
-        warnings = [r for r in caplog.records if r.levelno >= _logging.WARNING
-                    and "HEYLOOK_LLAMA_SERVER" in r.getMessage()]
-        assert warnings, "an env-var override shadowing the canonical build must WARN"
-        assert any(str(canonical) in r.getMessage() for r in warnings), \
-            "the warning must NAME the canonical build being shadowed"
-
-    def test_server_binary_override_warns_with_its_source(self, tmp_path, monkeypatch, caplog):
-        import logging as _logging
-        self._with_canonical(tmp_path, monkeypatch)
-        override = tmp_path / "per-model" / "llama-server"
-        override.parent.mkdir(parents=True)
-        override.write_text("#!/bin/true\n")
-        monkeypatch.delenv("HEYLOOK_LLAMA_SERVER", raising=False)
-        p = make_provider(server_binary=str(override))
+        if source == "HEYLOOK_LLAMA_SERVER":
+            monkeypatch.setenv("HEYLOOK_LLAMA_SERVER", str(override))
+            p = make_provider()
+        else:
+            monkeypatch.delenv("HEYLOOK_LLAMA_SERVER", raising=False)
+            p = make_provider(server_binary=str(override))
         with caplog.at_level(_logging.WARNING):
             assert p._resolve_binary() == override
-        assert any("server_binary" in r.getMessage() for r in caplog.records
-                   if r.levelno >= _logging.WARNING), \
-            "a models.toml server_binary override must WARN naming its source"
+        warnings = [r.getMessage() for r in caplog.records
+                    if r.levelno >= _logging.WARNING and source in r.getMessage()]
+        assert warnings, f"an override from {source} must WARN naming its source"
+        assert any(str(canonical) in m for m in warnings), \
+            "the warning must NAME the canonical build being shadowed"
 
 
 @pytest.mark.unit
@@ -1129,42 +1001,34 @@ class TestReasoningEffort:
         # rather than as a real assertion.
         return make_provider(**(config or {}))._build_payload(req(**body))
 
-    def test_effort_rides_chat_template_kwargs(self):
-        kw = self._payload(enable_thinking=True, reasoning_effort="low",
-                           max_tokens=32)["chat_template_kwargs"]
-        assert kw == {"enable_thinking": True, "reasoning_effort": "low"}
-
-    def test_effort_is_sent_even_with_thinking_off(self):
-        """NOT gated on enable_thinking. gpt-oss/harmony reads
-        reasoning_effort unconditionally and has no enable_thinking at all, so
-        gating made the knob unreachable for the one family the docs name as
-        taking low|medium|high. A template that ignores the variable is
-        unaffected -- jinja forwards unknown kwargs as template variables."""
-        kw = self._payload(enable_thinking=False, reasoning_effort="low",
-                           max_tokens=32)["chat_template_kwargs"]
-        assert kw == {"enable_thinking": False, "reasoning_effort": "low"}
-
-    def test_effort_alone_still_reaches_the_template(self):
-        """The harmony shape: depth set, thinking never mentioned."""
-        kw = self._payload(reasoning_effort="high", max_tokens=32)["chat_template_kwargs"]
-        assert kw["reasoning_effort"] == "high"
-
-    def test_absent_effort_leaves_the_templates_own_default(self):
-        kw = self._payload(enable_thinking=True, max_tokens=32)["chat_template_kwargs"]
-        assert "reasoning_effort" not in kw
-
-    def test_model_level_default_reaches_the_payload(self):
-        """The third route the CHANGELOG claims (per request / per preset /
-        per model). It depends on the single line added to
-        EFFECTIVE_SAMPLER_KEYS, so it can regress silently."""
-        kw = self._payload({"reasoning_effort": "medium"},
-                           enable_thinking=True, max_tokens=32)["chat_template_kwargs"]
-        assert kw["reasoning_effort"] == "medium"
-
-    def test_request_beats_the_model_level_default(self):
-        kw = self._payload({"reasoning_effort": "medium"},
-                           reasoning_effort="low", max_tokens=32)["chat_template_kwargs"]
-        assert kw["reasoning_effort"] == "low"
+    # reasoning_effort rides chat_template_kwargs regardless of thinking;
+    # absent leaves the template's own default; request > model default.
+    # - thinking_off: NOT gated on enable_thinking. gpt-oss/harmony reads
+    #   reasoning_effort unconditionally and has no enable_thinking at all,
+    #   so gating made the knob unreachable for the one family the docs name
+    #   as taking low|medium|high. A template that ignores the variable is
+    #   unaffected -- jinja forwards unknown kwargs as template variables.
+    # - effort_alone: the harmony shape, depth set, thinking never mentioned.
+    # - model_level_default: the third route the CHANGELOG claims (per request
+    #   / per preset / per model). It depends on the single line added to
+    #   EFFECTIVE_SAMPLER_KEYS, so it can regress silently.
+    @pytest.mark.parametrize("config, body, expected", [
+        (None, dict(enable_thinking=True, reasoning_effort="low"),
+         {"enable_thinking": True, "reasoning_effort": "low"}),
+        (None, dict(enable_thinking=False, reasoning_effort="low"),
+         {"enable_thinking": False, "reasoning_effort": "low"}),
+        (None, dict(reasoning_effort="high"),
+         {"enable_thinking": False, "reasoning_effort": "high"}),
+        (None, dict(enable_thinking=True),
+         {"enable_thinking": True}),
+        ({"reasoning_effort": "medium"}, dict(enable_thinking=True),
+         {"enable_thinking": True, "reasoning_effort": "medium"}),
+        ({"reasoning_effort": "medium"}, dict(reasoning_effort="low"),
+         {"enable_thinking": False, "reasoning_effort": "low"}),
+    ], ids=["rides_chat_template_kwargs", "sent_with_thinking_off", "effort_alone",
+            "absent_leaves_template_default", "model_level_default", "request_beats_model_default"])
+    def test_effort_reaches_the_template(self, config, body, expected):
+        assert self._payload(config, max_tokens=32, **body)["chat_template_kwargs"] == expected
 
     def test_the_templates_own_list_decides_and_names_the_variable(self):
         """Plan W2: a value the in-force template does not offer is refused
@@ -1215,14 +1079,26 @@ class TestGenerationGate:
         )
         return p
 
-    def test_gate_is_taken_when_driven_and_released_after_the_stream(self, monkeypatch):
+    # Nothing is acquired until the generator is driven; the gate is held
+    # across the stream and released on every exit: exhaustion, a forward
+    # that fails, and an early close.
+    @pytest.mark.parametrize("exit_by", ["exhaustion", "forward_failure", "early_close"])
+    def test_gate_is_released_on_every_exit(self, monkeypatch, exit_by):
         p = self._gated(monkeypatch)
+        if exit_by == "forward_failure":
+            def timed_out(*a, **k):
+                raise urllib.error.URLError("timed out")
+            monkeypatch.setattr(llama_mod.urllib.request, "urlopen", timed_out)
         gen = p.create_chat_completion(req())
         assert p._gen_gate.busy is False, "nothing is acquired until the generator is driven"
-        next(gen)
-        assert p._gen_gate.busy is True, "held across the stream"
-        list(gen)
-        assert p._gen_gate.busy is False, "released on exhaustion"
+        if exit_by == "forward_failure":
+            with pytest.raises(GenerationFailed):
+                list(gen)
+        else:
+            next(gen)
+            assert p._gen_gate.busy is True, "held across the stream"
+            gen.close() if exit_by == "early_close" else list(gen)
+        assert p._gen_gate.busy is False, f"not released on {exit_by}"
 
     def test_the_model_counts_as_busy_while_llama_server_is_still_prefilling(self, monkeypatch):
         # llama-server answers urlopen only once it has a first result, so the
@@ -1244,24 +1120,6 @@ class TestGenerationGate:
         # nets it out of the generation span); an idle gate measures a tiny
         # positive wait, never the unmeasured zero
         assert chunks[0].queue_wait_ms > 0
-
-    def test_gate_is_released_when_the_forward_fails(self, monkeypatch):
-        p = self._gated(monkeypatch)
-
-        def timed_out(*a, **k):
-            raise urllib.error.URLError("timed out")
-
-        monkeypatch.setattr(llama_mod.urllib.request, "urlopen", timed_out)
-        with pytest.raises(GenerationFailed):
-            list(p.create_chat_completion(req()))
-        assert p._gen_gate.busy is False
-
-    def test_gate_is_released_when_the_stream_is_closed_early(self, monkeypatch):
-        p = self._gated(monkeypatch)
-        gen = p.create_chat_completion(req())
-        next(gen)
-        gen.close()
-        assert p._gen_gate.busy is False
 
     def test_a_waiter_cancelled_while_queued_never_forwards(self, monkeypatch):
         # Reported 2026-09-13: the gate was taken without a cancel check, so a
@@ -1314,25 +1172,18 @@ class TestRunningContext:
     not a context.
     """
 
-    def test_reads_the_slot_ctx(self):
-        props = {"default_generation_settings": {"n_ctx": 32768, "id": 0}, "total_slots": 1}
-        assert LlamaServerProvider._ctx_from_props(props) == 32768
-
-    @pytest.mark.parametrize("props", [
-        {}, {"default_generation_settings": {}}, {"default_generation_settings": None},
-        {"default_generation_settings": {"n_ctx": 0}},
-        {"default_generation_settings": {"n_ctx": True}},
-        {"default_generation_settings": {"n_ctx": "32768"}},
-        [], None,
+    @pytest.mark.parametrize("props, expected", [
+        ({"default_generation_settings": {"n_ctx": 32768, "id": 0}, "total_slots": 1}, 32768),
+        ({}, None), ({"default_generation_settings": {}}, None),
+        ({"default_generation_settings": None}, None),
+        ({"default_generation_settings": {"n_ctx": 0}}, None),
+        ({"default_generation_settings": {"n_ctx": True}}, None),
+        ({"default_generation_settings": {"n_ctx": "32768"}}, None),
+        ([], None), (None, None),
     ])
-    def test_anything_else_is_none(self, props):
-        assert LlamaServerProvider._ctx_from_props(props) is None
-
-    def test_unload_forgets_it(self):
-        p = make_provider()
-        p.running_ctx = 4096
-        p.unload()
-        assert p.running_ctx is None
+    def test_ctx_from_props(self, props, expected):
+        got = LlamaServerProvider._ctx_from_props(props)
+        assert got == expected and type(got) is type(expected)
 
 
 # ---------------------------------------------------------------------------
@@ -1345,37 +1196,26 @@ class TestPrefillProgress:
         p = make_provider()
         assert p._build_payload(req())["return_progress"] is True
 
-    def test_progress_frame_reports_work_only_and_yields_nothing(self):
+    # prompt_progress frames report (processed - cache, total - cache) up the
+    # request's signal channel -- llama-server's processed INCLUDES the cache
+    # hit; the signal carries the work this request runs -- and yield nothing.
+    # A fully cached prompt reports nothing; no signal channel is fine.
+    @pytest.mark.parametrize("progress, with_signals, expected_progress, expected_texts", [
+        ({"total": 100, "cache": 20, "processed": 60, "time_ms": 5}, True, (40, 80), ["Hi"]),
+        ({"total": 50, "cache": 50, "processed": 50, "time_ms": 0}, True, None, []),
+        ({"total": 10, "cache": 0, "processed": 5, "time_ms": 1}, False, None, []),
+    ], ids=["reports_work_only_and_yields_nothing", "fully_cached_reports_nothing", "no_signal_channel"])
+    def test_progress_frames(self, progress, with_signals, expected_progress, expected_texts):
         from heylook_llm.providers.abort import AbortEvent
-        signals = AbortEvent()
-        frames = [
-            'data: {"choices":[{"delta":{},"index":0,"finish_reason":null}],'
-            '"prompt_progress":{"total":100,"cache":20,"processed":60,"time_ms":5}}',
-            'data: {"choices":[{"delta":{"content":"Hi"},"index":0,"finish_reason":null}]}',
-        ]
-        p = make_provider()
-        chunks = list(p._stream_chunks(_stream_bytes(*frames), abort_event=signals))
-        # llama-server's processed INCLUDES the cache hit; the signal carries
-        # the work this request runs, cache subtracted from both.
-        assert signals.prefill_progress() == (40, 80)
-        assert [c.text for c in chunks] == ["Hi"]
-
-    def test_a_fully_cached_prompt_reports_nothing(self):
-        from heylook_llm.providers.abort import AbortEvent
-        signals = AbortEvent()
-        frames = [
-            'data: {"choices":[{"delta":{},"index":0,"finish_reason":null}],'
-            '"prompt_progress":{"total":50,"cache":50,"processed":50,"time_ms":0}}',
-        ]
-        list(make_provider()._stream_chunks(_stream_bytes(*frames), abort_event=signals))
-        assert signals.prefill_progress() is None
-
-    def test_no_signal_channel_is_fine(self):
-        frames = [
-            'data: {"choices":[{"delta":{},"index":0,"finish_reason":null}],'
-            '"prompt_progress":{"total":10,"cache":0,"processed":5,"time_ms":1}}',
-        ]
-        assert list(make_provider()._stream_chunks(_stream_bytes(*frames), abort_event=None)) == []
+        signals = AbortEvent() if with_signals else None
+        frames = ['data: {"choices":[{"delta":{},"index":0,"finish_reason":null}],'
+                  '"prompt_progress":' + json.dumps(progress) + '}']
+        frames += ['data: {"choices":[{"delta":{"content":' + json.dumps(t) + '},"index":0,"finish_reason":null}]}'
+                   for t in expected_texts]
+        chunks = list(make_provider()._stream_chunks(_stream_bytes(*frames), abort_event=signals))
+        assert [c.text for c in chunks] == expected_texts
+        if signals is not None:
+            assert signals.prefill_progress() == expected_progress
 
 
 class TestMediaInTheContinuedTurn:
@@ -1409,22 +1249,20 @@ class TestMediaInTheContinuedTurn:
             lambda *a, **k: io.BytesIO(json.dumps({"prompt": rendered}).encode()))
         return p
 
-    def test_a_dropped_marker_is_detected(self, monkeypatch):
-        p = self._answering(monkeypatch, "<|turn>model\nThe three colours are red,")
-        assert p._media_markers_dropped(self._payload(
-            [{"role": "assistant", "content": [self.IMG, {"type": "text", "text": "x"}]}])) is True
-
-    def test_a_kept_marker_is_allowed(self, monkeypatch):
-        p = self._answering(monkeypatch, "<|turn>model\n<__media_abc__>The three colours are red,")
-        assert p._media_markers_dropped(self._payload(
-            [{"role": "assistant", "content": [self.IMG, {"type": "text", "text": "x"}]}])) is False
-
-    def test_two_images_need_two_markers(self, monkeypatch):
-        # An undercount is the failure mode, so one marker for two images must
-        # read the same as none for one.
-        p = self._answering(monkeypatch, "<|turn>user\n<__media_a__>only one marker")
-        assert p._media_markers_dropped(self._payload(
-            [{"role": "user", "content": [self.IMG, self.IMG]}])) is True
+    # Dropped iff the render carries fewer media markers than media parts.
+    # - two_images_one_marker: an undercount is the failure mode, so one
+    #   marker for two images reads the same as none for one.
+    @pytest.mark.parametrize("rendered, messages, dropped", [
+        ("<|turn>model\nThe three colours are red,",
+         [{"role": "assistant", "content": [IMG, {"type": "text", "text": "x"}]}], True),
+        ("<|turn>model\n<__media_abc__>The three colours are red,",
+         [{"role": "assistant", "content": [IMG, {"type": "text", "text": "x"}]}], False),
+        ("<|turn>user\n<__media_a__>only one marker",
+         [{"role": "user", "content": [IMG, IMG]}], True),
+    ], ids=["dropped_marker_detected", "kept_marker_allowed", "two_images_one_marker"])
+    def test_media_markers_dropped(self, monkeypatch, rendered, messages, dropped):
+        p = self._answering(monkeypatch, rendered)
+        assert p._media_markers_dropped(self._payload(messages)) is dropped
 
     def test_no_media_never_asks(self, monkeypatch):
         # The precheck costs an HTTP round trip; it must not fire on the
@@ -1464,27 +1302,30 @@ class TestDrafterGivesWayToFit:
             return SimpleNamespace(weights_gb=gb, headroom_gb=8.0, reclaimable_gb=reclaimable)
         monkeypatch.setattr(ram_fit, "fit_for_config", fake)
 
-    def test_short_only_because_of_the_drafter_drops_it(self, monkeypatch):
+    # Dropped only when the drafter ALONE makes the model not fit.
+    @pytest.mark.parametrize("with_drafter, alone, skipped", [
+        (162.5, 150.4, "short by 10.5 GiB"),
+        (150.0, 140.0, None),   # both fit: keep it
+        (170.0, 160.0, None),   # neither fits: not the drafter's fault
+    ], ids=["short_only_because_of_drafter", "both_fit", "neither_fits"])
+    def test_drafter_gives_way_only_when_it_alone_breaks_fit(self, monkeypatch, with_drafter, alone, skipped):
         p = make_provider(draft_model_path="/fake/dspark.gguf", spec_type="draft-dspark")
-        self._sizes(monkeypatch, with_drafter=162.5, alone=150.4)
-        p._drop_drafter_if_short()
-        assert "draft_model_path" not in p.config and "spec_type" not in p.config
-        assert "short by 10.5 GiB" in p.drafter_skipped
-
-    @pytest.mark.parametrize("with_drafter,alone", [(150.0, 140.0),    # both fit: keep it
-                                                    (170.0, 160.0)])   # neither fits: not the drafter's fault
-    def test_otherwise_the_drafter_stays(self, monkeypatch, with_drafter, alone):
-        p = make_provider(draft_model_path="/fake/dspark.gguf")
         self._sizes(monkeypatch, with_drafter, alone)
         p._drop_drafter_if_short()
-        assert p.config["draft_model_path"] == "/fake/dspark.gguf" and p.drafter_skipped is None
+        if skipped:
+            assert "draft_model_path" not in p.config and "spec_type" not in p.config
+            assert skipped in p.drafter_skipped
+        else:
+            assert p.config["draft_model_path"] == "/fake/dspark.gguf" and p.drafter_skipped is None
 
 
+# Discovery pairs drafters the build may not run (a split-out MTP head with no
+# embeddings). A load that exits with a drafter set is retried once without
+# it, and the next load of the same drafter skips straight there. A load
+# failure with no drafter is not retried.
 @pytest.mark.unit
-def test_a_drafter_the_build_cannot_load_costs_one_retry_not_the_model(monkeypatch):
-    """Discovery pairs drafters the build may not run (a split-out MTP head
-    with no embeddings). A load that exits with a drafter set is retried once
-    without it; the next load of the same drafter skips straight there."""
+@pytest.mark.parametrize("drafter", ["/fake/mtp-shared.gguf", None], ids=["with_drafter", "without_drafter"])
+def test_a_drafter_load_failure_costs_one_retry_not_the_model(monkeypatch, drafter):
     from heylook_llm.providers import llama_server_provider as lsp
     monkeypatch.setattr(lsp, "_UNLOADABLE_DRAFTERS", set())
     monkeypatch.setattr(LlamaServerProvider, "_resolve_binary", lambda self: Path("/fake/llama-server"))
@@ -1492,34 +1333,25 @@ def test_a_drafter_the_build_cannot_load_costs_one_retry_not_the_model(monkeypat
 
     def load_once(self):
         spawns.append(self.config.get("draft_model_path"))
-        if self.config.get("draft_model_path"):
+        if self.config.get("draft_model_path") or drafter is None:
             raise lsp.LlamaServerLoadExit("llama-server exited with code 1 while loading")
     monkeypatch.setattr(LlamaServerProvider, "_load_once", load_once)
 
-    p = make_provider(draft_model_path="/fake/mtp-shared.gguf", spec_type="draft-mtp")
+    if drafter is None:
+        with pytest.raises(lsp.LlamaServerLoadExit):
+            make_provider().load_model()
+        assert spawns == [None]
+        return
+
+    p = make_provider(draft_model_path=drafter, spec_type="draft-mtp")
     p.load_model()
-    assert spawns == ["/fake/mtp-shared.gguf", None]
+    assert spawns == [drafter, None]
     assert "draft_model_path" not in p.config and "spec_type" not in p.config
     assert "retried without it" in p.drafter_skipped
 
     spawns.clear()
-    make_provider(draft_model_path="/fake/mtp-shared.gguf").load_model()
+    make_provider(draft_model_path=drafter).load_model()
     assert spawns == [None]
-
-
-@pytest.mark.unit
-def test_a_load_failure_without_a_drafter_is_not_retried(monkeypatch):
-    from heylook_llm.providers import llama_server_provider as lsp
-    monkeypatch.setattr(LlamaServerProvider, "_resolve_binary", lambda self: Path("/fake/llama-server"))
-    calls = []
-
-    def load_once(self):
-        calls.append(1)
-        raise lsp.LlamaServerLoadExit("exited")
-    monkeypatch.setattr(LlamaServerProvider, "_load_once", load_once)
-    with pytest.raises(lsp.LlamaServerLoadExit):
-        make_provider().load_model()
-    assert calls == [1]
 
 
 def test_flash_attn_reports_what_auto_resolved_to():

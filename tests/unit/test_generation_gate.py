@@ -5,6 +5,7 @@ Pure threading; no MLX required.
 """
 import threading
 import time
+from contextlib import contextmanager
 
 import pytest
 
@@ -15,33 +16,49 @@ from heylook_llm.providers.common.generation_gate import (
 )
 
 
+@contextmanager
+def _gate_with(max_waiting, holders, waiters):
+    """A gate with ``holders`` (0 or 1) active and ``waiters`` threads queued
+    behind it; on exit every slot is released and every waiter drained."""
+    gate = GenerationGate(max_waiting=max_waiting)
+    threads = []
+    if holders:
+        gate.acquire()
+    try:
+        for n in range(1, waiters + 1):
+            t = threading.Thread(target=gate.acquire)
+            t.start()
+            threads.append(t)
+            # Wait until the thread is actually queued.
+            _wait_for(lambda n=n: gate.waiting == n)
+        yield gate
+    finally:
+        if holders:
+            gate.release()           # let the first waiter through
+            for t in threads:
+                t.join(timeout=2)
+                gate.release()       # release that waiter's slot
+
+
+def _busy_error_from_a_full_gate():
+    with _gate_with(max_waiting=0, holders=1, waiters=0) as gate:
+        with pytest.raises(ModelBusyError) as exc:
+            gate.check_capacity()
+    return exc.value
+
+
 @pytest.mark.unit
 class TestGenerationGateBasics:
-    def test_acquire_release_single(self):
-        gate = GenerationGate(max_waiting=4)
-        gate.acquire()
-        assert gate.busy is True
-        gate.release()
-        assert gate.busy is False
-
-    def test_waiting_starts_zero(self):
-        gate = GenerationGate(max_waiting=4)
-        assert gate.waiting == 0
-
-    def test_model_busy_error_message_contains_marker(self):
+    @pytest.mark.parametrize("check", [
         # The API layer maps errors to HTTP 503 via `"MODEL_BUSY" in str(e)`.
-        gate = GenerationGate(max_waiting=0)
-        gate.acquire()
-        try:
-            with pytest.raises(ModelBusyError) as exc:
-                gate.check_capacity()
-            assert "MODEL_BUSY" in str(exc.value)
-        finally:
-            gate.release()
-
-    def test_model_busy_is_runtimeerror(self):
+        pytest.param(lambda: "MODEL_BUSY" in str(_busy_error_from_a_full_gate()),
+                     id="model_busy_error_message_contains_marker"),
         # Routes catch `except RuntimeError as e`.
-        assert issubclass(ModelBusyError, RuntimeError)
+        pytest.param(lambda: issubclass(ModelBusyError, RuntimeError),
+                     id="model_busy_is_runtimeerror"),
+    ])
+    def test_model_busy_error(self, check):
+        assert check()
 
     def test_negative_max_waiting_rejected(self):
         with pytest.raises(ValueError):
@@ -50,48 +67,25 @@ class TestGenerationGateBasics:
 
 @pytest.mark.unit
 class TestGenerationGateCapacity:
-    def test_check_capacity_ok_when_idle(self):
-        gate = GenerationGate(max_waiting=2)
-        gate.check_capacity()  # no raise
-
-    def test_check_capacity_ok_while_active_but_no_queue(self):
-        # The active holder does not count as "waiting".
-        gate = GenerationGate(max_waiting=2)
-        gate.acquire()
-        try:
-            gate.check_capacity()  # 0 waiting < 2 -> ok
-        finally:
-            gate.release()
-
-    def test_check_capacity_raises_when_queue_full(self):
-        gate = GenerationGate(max_waiting=1)
-        gate.acquire()  # active holder
-        blocked = threading.Thread(target=gate.acquire)  # becomes the 1 waiter
-        blocked.start()
-        try:
-            # Wait until the second thread is actually queued.
-            _wait_for(lambda: gate.waiting == 1)
-            with pytest.raises(ModelBusyError):
-                gate.check_capacity()
-        finally:
-            gate.release()       # let the waiter through
-            blocked.join(timeout=2)
-            gate.release()       # release the waiter's slot
-
-    def test_max_waiting_zero_admits_first_request_when_idle(self):
-        # Regression: an idle gate with max_waiting=0 must still admit the first
-        # request (it becomes active, it doesn't wait).
-        gate = GenerationGate(max_waiting=0)
-        gate.check_capacity()  # no raise
-
-    def test_max_waiting_zero_is_single_flight(self):
-        gate = GenerationGate(max_waiting=0)
-        gate.acquire()
-        try:
-            with pytest.raises(ModelBusyError):
-                gate.check_capacity()  # one active, no room behind it
-        finally:
-            gate.release()
+    # check_capacity raises iff a holder exists and waiting >= max_waiting.
+    # The active holder does not count as "waiting".
+    @pytest.mark.parametrize("max_waiting, holders, waiters, raises", [
+        pytest.param(2, 0, 0, False, id="check_capacity_ok_when_idle"),
+        pytest.param(2, 1, 0, False, id="check_capacity_ok_while_active_but_no_queue"),
+        pytest.param(1, 1, 1, True, id="check_capacity_raises_when_queue_full"),
+        # Regression: an idle gate with max_waiting=0 must still admit the
+        # first request (it becomes active, it doesn't wait).
+        pytest.param(0, 0, 0, False, id="max_waiting_zero_admits_first_request_when_idle"),
+        # One active, no room behind it.
+        pytest.param(0, 1, 0, True, id="max_waiting_zero_is_single_flight"),
+    ])
+    def test_check_capacity(self, max_waiting, holders, waiters, raises):
+        with _gate_with(max_waiting, holders, waiters) as gate:
+            if raises:
+                with pytest.raises(ModelBusyError):
+                    gate.check_capacity()
+            else:
+                gate.check_capacity()  # no raise
 
 
 @pytest.mark.unit
@@ -139,35 +133,24 @@ class TestGenerationGateCancel:
 
 @pytest.mark.unit
 class TestGenerationGateSnapshot:
-    def test_idle_snapshot(self):
-        gate = GenerationGate(max_waiting=8)
-        snap = gate.snapshot()
-        assert snap == {"active": 0, "waiting": 0, "max_waiting": 8, "capacity": 9}
-
-    def test_active_snapshot(self):
-        gate = GenerationGate(max_waiting=8)
-        gate.acquire()
-        try:
-            snap = gate.snapshot()
-            assert snap["active"] == 1
-            assert snap["waiting"] == 0
-            assert snap["capacity"] == 9
-        finally:
-            gate.release()
-
-    def test_snapshot_counts_waiters(self):
-        gate = GenerationGate(max_waiting=8)
-        gate.acquire()
-        blocked = threading.Thread(target=gate.acquire)
-        blocked.start()
-        try:
-            _wait_for(lambda: gate.snapshot()["waiting"] == 1)
-            snap = gate.snapshot()
-            assert snap["active"] == 1 and snap["waiting"] == 1
-        finally:
-            gate.release()
-            blocked.join(timeout=2)
-            gate.release()
+    # snapshot/busy/waiting track acquire, queue and release; capacity is
+    # max_waiting + 1. Every row also checks the gate is idle after release.
+    @pytest.mark.parametrize("max_waiting, holders, waiters", [
+        pytest.param(4, 1, 0, id="acquire_release_single"),
+        pytest.param(4, 0, 0, id="waiting_starts_zero"),
+        pytest.param(8, 0, 0, id="idle_snapshot"),
+        pytest.param(8, 1, 0, id="active_snapshot"),
+        pytest.param(8, 1, 1, id="snapshot_counts_waiters"),
+    ])
+    def test_snapshot(self, max_waiting, holders, waiters):
+        with _gate_with(max_waiting, holders, waiters) as gate:
+            assert gate.snapshot() == {"active": holders, "waiting": waiters,
+                                       "max_waiting": max_waiting,
+                                       "capacity": max_waiting + 1}
+            assert gate.busy is bool(holders)
+            assert gate.waiting == waiters
+        assert gate.busy is False
+        assert gate.waiting == 0
 
 
 @pytest.mark.unit

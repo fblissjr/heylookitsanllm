@@ -67,15 +67,18 @@ def _make_snapshot(
 # ---------------------------------------------------------------------------
 
 class TestParseTimeRange:
-    def test_valid_ranges(self):
-        assert _parse_time_range("1h") == 3600
-        assert _parse_time_range("6h") == 6 * 3600
-        assert _parse_time_range("24h") == 24 * 3600
-        assert _parse_time_range("7d") == 7 * 24 * 3600
-
-    def test_unknown_range_defaults_to_1h(self):
-        assert _parse_time_range("invalid") == 3600
-        assert _parse_time_range("") == 3600
+    # range string -> seconds; anything unknown (incl. empty) is 1h
+    @pytest.mark.parametrize(
+        "expected",
+        [
+            {"1h": 3600, "6h": 6 * 3600, "24h": 24 * 3600, "7d": 7 * 24 * 3600},
+            {"invalid": 3600, "": 3600},
+        ],
+        ids=["valid_ranges", "unknown_range_defaults_to_1h"],
+    )
+    def test_parse_time_range(self, expected):
+        for text, seconds in expected.items():
+            assert _parse_time_range(text) == seconds, text
 
 
 # ---------------------------------------------------------------------------
@@ -83,25 +86,32 @@ class TestParseTimeRange:
 # ---------------------------------------------------------------------------
 
 class TestRecording:
-    def test_record_request(self):
-        c = PerfCollector(max_events=100)
-        e = _make_event()
-        c.record_request(e)
-        assert len(c._events) == 1
-
-    def test_record_resource_snapshot(self):
-        c = PerfCollector(max_snapshots=100)
-        s = _make_snapshot()
-        c.record_resource_snapshot(s)
-        assert len(c._resource_snapshots) == 1
-
-    def test_ring_buffer_eviction(self):
-        c = PerfCollector(max_events=3)
-        for i in range(5):
-            c.record_request(_make_event(total_ms=float(i)))
-        assert len(c._events) == 3
-        # Oldest events should be evicted
-        assert c._events[0].total_ms == 2.0
+    # Recording lands in a bounded ring buffer. Each row: collector bounds,
+    # the recorder, how many items it gets (item i from make(i)), the buffer
+    # it lands in, its length after, and the oldest surviving total_ms
+    # (None = not checked).
+    @pytest.mark.parametrize(
+        "bounds, recorder, make, n, buffer, expected_len, oldest_total_ms",
+        [
+            ({"max_events": 100}, "record_request",
+             lambda i: _make_event(), 1, "_events", 1, None),
+            ({"max_snapshots": 100}, "record_resource_snapshot",
+             lambda i: _make_snapshot(), 1, "_resource_snapshots", 1, None),
+            # past the bound the oldest events are evicted (0 and 1 go)
+            ({"max_events": 3}, "record_request",
+             lambda i: _make_event(total_ms=float(i)), 5, "_events", 3, 2.0),
+        ],
+        ids=["record_request", "record_resource_snapshot", "ring_buffer_eviction"],
+    )
+    def test_recording(self, bounds, recorder, make, n, buffer, expected_len,
+                       oldest_total_ms):
+        c = PerfCollector(**bounds)
+        for i in range(n):
+            getattr(c, recorder)(make(i))
+        items = getattr(c, buffer)
+        assert len(items) == expected_len
+        if oldest_total_ms is not None:
+            assert items[0].total_ms == oldest_total_ms
 
 
 # ---------------------------------------------------------------------------
@@ -109,21 +119,23 @@ class TestRecording:
 # ---------------------------------------------------------------------------
 
 class TestBuildProfileEmpty:
-    def test_empty_returns_valid_structure(self):
-        c = PerfCollector()
-        profile = c.build_profile("1h")
-
-        assert profile["time_range"] == "1h"
-        assert len(profile["timing_breakdown"]) == 3
-        assert profile["resource_timeline"] == []
-        assert profile["bottlenecks"] == []
-        assert profile["trends"] == []
-
-    def test_empty_timing_breakdown_has_all_operations(self):
-        c = PerfCollector()
-        profile = c.build_profile("1h")
-        ops = {item["operation"] for item in profile["timing_breakdown"]}
-        assert ops == {"model_load", "token_generation", "other"}
+    # An empty collector still returns a valid profile. Each row projects the
+    # profile and names what the projection must equal.
+    @pytest.mark.parametrize(
+        "project, expected",
+        [
+            # every section present and empty; timing_breakdown keeps its 3 rows
+            (lambda p: (p["time_range"], len(p["timing_breakdown"]),
+                        p["resource_timeline"], p["bottlenecks"], p["trends"]),
+             ("1h", 3, [], [], [])),
+            # the 3 rows are exactly the three operations
+            (lambda p: {item["operation"] for item in p["timing_breakdown"]},
+             {"model_load", "token_generation", "other"}),
+        ],
+        ids=["empty_returns_valid_structure", "empty_timing_breakdown_has_all_operations"],
+    )
+    def test_empty_profile(self, project, expected):
+        assert project(PerfCollector().build_profile("1h")) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -242,26 +254,31 @@ class TestTrends:
 # ---------------------------------------------------------------------------
 
 class TestTimeRangeFiltering:
-    def test_old_events_excluded(self):
+    # Items older than the window (2h old vs a 1h range) are excluded, for
+    # request events and resource snapshots alike. Each row: the recorder,
+    # make(timestamp, label), the profile projection, and what it must equal.
+    @pytest.mark.parametrize(
+        "recorder, make, project, expected",
+        [
+            ("record_request",
+             lambda ts, label: _make_event(timestamp=ts, model=label),
+             lambda p: [b["model"] for b in p["bottlenecks"]],
+             ["recent"]),
+            ("record_resource_snapshot",
+             lambda ts, label: _make_snapshot(timestamp=ts),
+             lambda p: len(p["resource_timeline"]),
+             1),
+        ],
+        ids=["old_events_excluded", "snapshots_filtered_by_time_range"],
+    )
+    def test_window_excludes_old_items(self, recorder, make, project, expected):
         c = PerfCollector()
         old = time.time() - 7200  # 2 hours ago
         recent = time.time()
-        c.record_request(_make_event(timestamp=old, model="old"))
-        c.record_request(_make_event(timestamp=recent, model="recent"))
+        getattr(c, recorder)(make(old, "old"))
+        getattr(c, recorder)(make(recent, "recent"))
 
-        profile = c.build_profile("1h")
-        assert len(profile["bottlenecks"]) == 1
-        assert profile["bottlenecks"][0]["model"] == "recent"
-
-    def test_snapshots_filtered_by_time_range(self):
-        c = PerfCollector()
-        old = time.time() - 7200
-        recent = time.time()
-        c.record_resource_snapshot(_make_snapshot(timestamp=old))
-        c.record_resource_snapshot(_make_snapshot(timestamp=recent))
-
-        profile = c.build_profile("1h")
-        assert len(profile["resource_timeline"]) == 1
+        assert project(c.build_profile("1h")) == expected
 
 
 # ---------------------------------------------------------------------------

@@ -187,11 +187,10 @@ class TestControlFrames:
         assert event == "event: ping"
         assert json.loads(data[len("data: "):]) == {"type": "ping"}
         assert frame.endswith("\n\n")
-
-    def test_keepalive_is_never_an_sse_comment(self):
-        # The pre-v1.79.66 OpenAI spelling. A comment is invisible to an
-        # EventSource-style reader, which is why the grammar has `ping`.
-        assert not control_frame(KEEPALIVE_MARKER).startswith(":")
+        # Never an SSE comment (the pre-v1.79.66 OpenAI spelling): a comment
+        # is invisible to an EventSource-style reader, which is why the
+        # grammar has `ping`.
+        assert not frame.startswith(":")
 
     def test_progress_is_a_namespaced_event(self):
         frame = control_frame(PrefillProgress(512, 4096))

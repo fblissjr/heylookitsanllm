@@ -32,18 +32,19 @@ async def conv(conn):
 
 
 class TestStringBackCompat:
+    # A string stores as one text block and reads back as the same string.
+    # Rows: the wire field and what it carries, on the write and the read.
     @pytest.mark.asyncio
-    async def test_string_content_round_trips_as_string(self, conn, conv):
+    @pytest.mark.parametrize("field, expected", [
+        pytest.param("content", "hello", id="string_content_round_trips_as_string"),
+        pytest.param("content_blocks", [{"type": "text", "text": "hello"}],
+                     id="string_content_exposes_single_text_block"),
+    ])
+    async def test_string_content(self, conn, conv, field, expected):
         msg = await db.append_message(conn, conv["id"], role="user", content="hello")
-        assert msg["content"] == "hello"
+        assert msg[field] == expected
         got = await db.get_conversation(conn, conv["id"])
-        assert got["messages"][0]["content"] == "hello"
-
-    @pytest.mark.asyncio
-    async def test_string_content_exposes_single_text_block(self, conn, conv):
-        await db.append_message(conn, conv["id"], role="user", content="hello")
-        got = await db.get_conversation(conn, conv["id"])
-        assert got["messages"][0]["content_blocks"] == [{"type": "text", "text": "hello"}]
+        assert got["messages"][0][field] == expected
 
 
 class TestBlockStorage:
@@ -65,19 +66,32 @@ class TestBlockStorage:
         blob = await db.get_media_blob(conn, conv["id"], src["media_id"])
         assert blob == ("image/png", b"heylook")  # aGV5bG9vaw== decoded
 
+    # `content` is the newline-joined text of the text blocks only, on the
+    # write and the read. Rows: (blocks, expected content, blocks stored as
+    # given).
+    # - null_text: {"type":"text","text":null} must not poison the row: flatten
+    #   would TypeError on None and make the conversation permanently
+    #   unreadable.
+    # - unknown_type: a non-text block passes through untouched and adds no text.
     @pytest.mark.asyncio
-    async def test_flattened_content_is_text_blocks_only(self, conn, conv):
-        blocks = [IMAGE_BLOCK, {"type": "text", "text": "what is this?"}]
-        await db.append_message(conn, conv["id"], role="user", content=blocks)
+    @pytest.mark.parametrize("blocks, expected_content, stored_as_given", [
+        pytest.param([IMAGE_BLOCK, {"type": "text", "text": "what is this?"}],
+                     "what is this?", False,
+                     id="flattened_content_is_text_blocks_only"),
+        pytest.param([{"type": "text", "text": "a"}, {"type": "text", "text": "b"}],
+                     "a\nb", False, id="multiple_text_blocks_flatten_joined"),
+        pytest.param([{"type": "text", "text": None}], "", False,
+                     id="null_text_block_normalizes_to_empty"),
+        pytest.param([{"type": "thinking", "thinking": "hmm"}], "", True,
+                     id="unknown_block_type_passes_through"),
+    ])
+    async def test_flatten(self, conn, conv, blocks, expected_content, stored_as_given):
+        msg = await db.append_message(conn, conv["id"], role="user", content=blocks)
+        assert msg["content"] == expected_content
+        if stored_as_given:
+            assert msg["content_blocks"] == blocks
         got = await db.get_conversation(conn, conv["id"])
-        assert got["messages"][0]["content"] == "what is this?"
-
-    @pytest.mark.asyncio
-    async def test_multiple_text_blocks_flatten_joined(self, conn, conv):
-        blocks = [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]
-        await db.append_message(conn, conv["id"], role="user", content=blocks)
-        got = await db.get_conversation(conn, conv["id"])
-        assert got["messages"][0]["content"] == "a\nb"
+        assert got["messages"][0]["content"] == expected_content
 
     @pytest.mark.asyncio
     async def test_update_message_with_blocks(self, conn, conv):
@@ -106,18 +120,32 @@ class TestStructuralInvariants:
         assert await db.get_conversation(conn, conv["id"]) is None
         counts = await db.clear_all_data(conn)
         assert counts["conversations_deleted"] == 0
+        # the message rows themselves are gone, not just unreachable
+        count = await conn.run(
+            lambda c: c.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        )
+        assert count == 0
 
+    # Rows: (after_position, deleted, contents kept, next append's position).
+    # A position past the end deletes nothing and keeps every message.
     @pytest.mark.asyncio
-    async def test_truncate_after_position_with_blocks(self, conn, conv):
+    @pytest.mark.parametrize("after, deleted_n, kept, next_position", [
+        pytest.param(1, 2, ["m0", "m1"], 2, id="truncate_after_position_with_blocks"),
+        pytest.param(5, 0, ["m0", "m1", "m2", "m3"], 4,
+                     id="truncate_past_the_end_preserves_earlier_messages"),
+    ])
+    async def test_truncate_after_position_with_blocks(
+        self, conn, conv, after, deleted_n, kept, next_position
+    ):
         for i in range(4):
             await db.append_message(conn, conv["id"], role="user", content=f"m{i}")
-        deleted = await db.truncate_messages_after(conn, conv["id"], 1)
-        assert deleted == 2
+        deleted = await db.truncate_messages_after(conn, conv["id"], after)
+        assert deleted == deleted_n
         got = await db.get_conversation(conn, conv["id"])
-        assert [m["content"] for m in got["messages"]] == ["m0", "m1"]
+        assert [m["content"] for m in got["messages"]] == kept
         # positions keep appending after truncation
         msg = await db.append_message(conn, conv["id"], role="assistant", content="m2b")
-        assert msg["position"] == 2
+        assert msg["position"] == next_position
 
     @pytest.mark.asyncio
     async def test_concurrent_appends_serialize(self, conn, conv):
@@ -134,43 +162,23 @@ class TestStructuralInvariants:
 
 
 class TestValidationAndEdgeCases:
+    # A malformed block raises ValueError and persists nothing.
     @pytest.mark.asyncio
-    async def test_null_text_block_normalizes_to_empty(self, conn, conv):
-        # {"type":"text","text":null} must not poison the row: flatten would
-        # TypeError on None and make the conversation permanently unreadable.
-        msg = await db.append_message(
-            conn, conv["id"], role="user", content=[{"type": "text", "text": None}]
-        )
-        assert msg["content"] == ""
-        got = await db.get_conversation(conn, conv["id"])
-        assert got["messages"][0]["content"] == ""
-
-    @pytest.mark.asyncio
-    async def test_malformed_image_block_rejected_before_persist(self, conn, conv):
+    @pytest.mark.parametrize("content", [
+        pytest.param([{"type": "image"}], id="malformed_image_block_rejected_before_persist"),
+        pytest.param(["hi"], id="non_dict_block_rejected"),
+    ])
+    async def test_block_refusal(self, conn, conv, content):
         with pytest.raises(ValueError):
-            await db.append_message(
-                conn, conv["id"], role="user", content=[{"type": "image"}]
-            )
+            await db.append_message(conn, conv["id"], role="user", content=content)
         got = await db.get_conversation(conn, conv["id"])
         assert got["messages"] == []  # nothing persisted
-
-    @pytest.mark.asyncio
-    async def test_non_dict_block_rejected(self, conn, conv):
-        with pytest.raises(ValueError):
-            await db.append_message(conn, conv["id"], role="user", content=["hi"])
 
     @pytest.mark.asyncio
     async def test_url_image_source_round_trips(self, conn, conv):
         block = {"type": "image", "source": {"type": "url", "url": "https://x/y.png"}}
         msg = await db.append_message(conn, conv["id"], role="user", content=[block])
         assert msg["content_blocks"] == [block]
-
-    @pytest.mark.asyncio
-    async def test_unknown_block_type_passes_through(self, conn, conv):
-        block = {"type": "thinking", "thinking": "hmm"}
-        msg = await db.append_message(conn, conv["id"], role="user", content=[block])
-        assert msg["content_blocks"] == [block]
-        assert msg["content"] == ""  # not a text block
 
     @pytest.mark.asyncio
     async def test_exception_does_not_wedge_connection(self, conn, conv):
@@ -191,6 +199,33 @@ async def _first_media_id(conn, conv_id):
     return None
 
 
+async def _delete_last_reference(conn, cid):
+    msg = await db.append_message(conn, cid, role="user", content=[IMAGE_BLOCK])
+    assert await db.delete_message(conn, cid, msg["id"]) is True
+    return msg["content_blocks"][0]["source"]["media_id"]
+
+
+async def _delete_one_of_two_references(conn, cid):
+    m1 = await db.append_message(conn, cid, role="user", content=[IMAGE_BLOCK])
+    await db.append_message(conn, cid, role="user", content=[IMAGE_BLOCK])
+    await db.delete_message(conn, cid, m1["id"])
+    return m1["content_blocks"][0]["source"]["media_id"]
+
+
+async def _truncate_the_referencing_message(conn, cid):
+    await db.append_message(conn, cid, role="user", content="text first")
+    await db.append_message(conn, cid, role="user", content=[IMAGE_BLOCK])
+    media_id = await _first_media_id(conn, cid)
+    await db.truncate_messages_after(conn, cid, 0)
+    return media_id
+
+
+async def _delete_the_conversation(conn, cid):
+    msg = await db.append_message(conn, cid, role="user", content=[IMAGE_BLOCK])
+    await db.delete_conversation(conn, cid)
+    return msg["content_blocks"][0]["source"]["media_id"]
+
+
 class TestMediaByReference:
     """Schema v7: blob lifecycle -- dedup, GC direction, round-trip honesty."""
 
@@ -201,28 +236,24 @@ class TestMediaByReference:
         id1 = m1["content_blocks"][0]["source"]["media_id"]
         assert id1 == m2["content_blocks"][0]["source"]["media_id"]  # content-addressed
 
+    # A media blob exists iff some message in the conversation still
+    # references it. Rows: (the removal, whether the blob survives it). Each
+    # removal returns the media_id it put at stake.
     @pytest.mark.asyncio
-    async def test_deleting_last_reference_collects_the_blob(self, conn, conv):
-        msg = await db.append_message(conn, conv["id"], role="user", content=[IMAGE_BLOCK])
-        media_id = msg["content_blocks"][0]["source"]["media_id"]
-        assert await db.delete_message(conn, conv["id"], msg["id"]) is True
-        assert await db.get_media_blob(conn, conv["id"], media_id) is None
-
-    @pytest.mark.asyncio
-    async def test_surviving_reference_keeps_the_blob(self, conn, conv):
-        m1 = await db.append_message(conn, conv["id"], role="user", content=[IMAGE_BLOCK])
-        await db.append_message(conn, conv["id"], role="user", content=[IMAGE_BLOCK])
-        media_id = m1["content_blocks"][0]["source"]["media_id"]
-        await db.delete_message(conn, conv["id"], m1["id"])
-        assert await db.get_media_blob(conn, conv["id"], media_id) is not None
-
-    @pytest.mark.asyncio
-    async def test_truncate_collects_orphaned_blobs(self, conn, conv):
-        await db.append_message(conn, conv["id"], role="user", content="text first")
-        await db.append_message(conn, conv["id"], role="user", content=[IMAGE_BLOCK])
-        media_id = await _first_media_id(conn, conv["id"])
-        await db.truncate_messages_after(conn, conv["id"], 0)
-        assert await db.get_media_blob(conn, conv["id"], media_id) is None
+    @pytest.mark.parametrize("remove, survives", [
+        pytest.param(_delete_last_reference, False,
+                     id="deleting_last_reference_collects_the_blob"),
+        pytest.param(_delete_one_of_two_references, True,
+                     id="surviving_reference_keeps_the_blob"),
+        pytest.param(_truncate_the_referencing_message, False,
+                     id="truncate_collects_orphaned_blobs"),
+        pytest.param(_delete_the_conversation, False,
+                     id="delete_conversation_deletes_its_blobs"),
+    ])
+    async def test_blob_lifecycle(self, conn, conv, remove, survives):
+        media_id = await remove(conn, conv["id"])
+        blob = await db.get_media_blob(conn, conv["id"], media_id)
+        assert (blob is not None) is survives
 
     @pytest.mark.asyncio
     async def test_round_tripped_stored_block_keeps_its_media_id(self, conn, conv):
@@ -244,13 +275,6 @@ class TestMediaByReference:
         stolen = msg["content_blocks"][0]
         planted = await db.append_message(conn, other["id"], role="user", content=[stolen])
         assert "media_id" not in planted["content_blocks"][0]["source"]
-
-    @pytest.mark.asyncio
-    async def test_delete_conversation_deletes_its_blobs(self, conn, conv):
-        msg = await db.append_message(conn, conv["id"], role="user", content=[IMAGE_BLOCK])
-        media_id = msg["content_blocks"][0]["source"]["media_id"]
-        await db.delete_conversation(conn, conv["id"])
-        assert await db.get_media_blob(conn, conv["id"], media_id) is None
 
 
 class TestSingleMessageDelete:

@@ -10,7 +10,9 @@ class TestListModels:
     """Tests for GET /v1/models."""
 
     def test_returns_model_list(self, client):
-        """GET /v1/models returns a list with expected structure."""
+        """GET /v1/models returns the OpenAI list shape: one entry per
+        configured model (ids == the test roster), each with id, object and
+        owned_by, carrying its provider."""
         resp = client.get("/v1/models")
         assert resp.status_code == 200
 
@@ -19,45 +21,58 @@ class TestListModels:
         assert isinstance(data["data"], list)
         assert len(data["data"]) == len(TEST_MODEL_IDS)
 
-    def test_model_entry_has_required_fields(self, client):
-        """Each model entry has id, object, and owned_by fields."""
-        resp = client.get("/v1/models")
-        data = resp.json()
-
         for model in data["data"]:
             assert "id" in model
             assert model["object"] == "model"
             assert "owned_by" in model
 
-    def test_model_ids_match_config(self, client):
-        """Model IDs in response match the test config."""
-        resp = client.get("/v1/models")
-        ids = {m["id"] for m in resp.json()["data"]}
-        assert ids == set(TEST_MODEL_IDS)
+        assert {m["id"] for m in data["data"]} == set(TEST_MODEL_IDS)
 
-    def test_model_has_provider_field(self, client):
-        """Models include provider information."""
-        resp = client.get("/v1/models")
-        providers = {m["id"]: m.get("provider") for m in resp.json()["data"]}
+        providers = {m["id"]: m.get("provider") for m in data["data"]}
         assert providers["test-mlx-model"] == "mlx"
 
 
 class TestThinkingDefaultOnModelRows:
-    """v1.79.63: every /v1/models entry carries `thinking_default`, the
-    cascade's answer for an empty request -- the same value the admin row
-    reports, so a page reading either list labels 'model default' the same."""
+    """v1.79.62/63: every model row carries `thinking_default`, the cascade's
+    answer for an empty request -- derived, so answered for unloaded models --
+    and the value a UI's 'model default' choice actually means. Both lists
+    report it, so a page reading either labels 'model default' the same.
 
-    def test_present_and_bool_on_every_entry(self, client):
-        data = client.get("/v1/models").json()["data"]
-        assert data
-        for entry in data:
-            assert isinstance(entry["thinking_default"], bool)
-            if "thinking" not in entry.get("capabilities", []):
-                assert entry["thinking_default"] is False
+    Rows: (route, list key, whether every row must carry `capabilities`; the
+    /v1/models row omits the key when the list is empty)."""
 
-    def test_agrees_with_the_admin_row(self, client):
-        listed = {m["id"]: m["thinking_default"] for m in client.get("/v1/models").json()["data"]}
-        admin = {m["id"]: m["thinking_default"] for m in client.get("/v1/admin/models").json()["models"]}
+    @pytest.mark.parametrize("route, key, caps_required", [
+        pytest.param("/v1/models", "data", False, id="present_and_bool_on_every_entry"),
+        pytest.param("/v1/admin/models", "models", True,
+                     id="admin_thinking_default_is_on_every_row_and_a_bool"),
+    ])
+    def test_present_and_bool_on_every_entry(self, client, route, key, caps_required):
+        rows = client.get(route).json()[key]
+        assert rows
+        for row in rows:
+            assert isinstance(row["thinking_default"], bool)
+            caps = row["capabilities"] if caps_required else row.get("capabilities", [])
+            # A model without the thinking capability cannot default to on.
+            if "thinking" not in caps:
+                assert row["thinking_default"] is False
+
+
+class TestRowsAgreeWithTheAdminRow:
+    """/v1/models and /v1/admin/models report the same value per id. Two row
+    builders derived these separately once and drifted; one derivation
+    (capabilities.derived_model_facts) feeds both, so equality is the
+    assertion that keeps it. `engine` is compared whole, not just the context
+    ceiling."""
+
+    @pytest.mark.parametrize("field", [
+        pytest.param("thinking_default", id="thinking_default_agrees_with_the_admin_row"),
+        pytest.param("sampler_defaults", id="sampler_defaults_agrees_with_the_admin_row"),
+        pytest.param("engine", id="engine_agrees_with_the_admin_row"),
+    ])
+    def test_agrees_with_the_admin_row(self, client, field):
+        listed = {m["id"]: m[field] for m in client.get("/v1/models").json()["data"]}
+        admin = {m["id"]: m[field] for m in client.get("/v1/admin/models").json()["models"]}
+        assert listed
         for mid, value in listed.items():
             assert admin.get(mid) == value, mid
 
@@ -108,16 +123,6 @@ class TestSamplerDefaultsOnModelRows:
             assert entry["sampler_defaults"]["enable_thinking"] == entry["thinking_default"], \
                 entry["id"]
 
-    def test_agrees_with_the_admin_row(self, client):
-        # Two row builders derived these separately once and drifted; one
-        # derivation feeds both, so equality is the assertion that keeps it.
-        listed = {m["id"]: m["sampler_defaults"]
-                  for m in client.get("/v1/models").json()["data"]}
-        admin = {m["id"]: m["sampler_defaults"]
-                 for m in client.get("/v1/admin/models").json()["models"]}
-        for mid, value in listed.items():
-            assert admin.get(mid) == value, mid
-
 
 class TestContextLengthOnModelRows:
     """Every /v1/models entry carries the context ceiling
@@ -131,11 +136,3 @@ class TestContextLengthOnModelRows:
         for entry in data:
             value = entry["engine"]["context"]["length"]["value"]
             assert value is None or isinstance(value, int), entry["id"]
-
-    def test_agrees_with_the_admin_row(self, client):
-        """Not just the ceiling: the whole engine object is the same on both
-        routes (one derivation, capabilities.derived_model_facts)."""
-        listed = {m["id"]: m["engine"] for m in client.get("/v1/models").json()["data"]}
-        admin = {m["id"]: m["engine"] for m in client.get("/v1/admin/models").json()["models"]}
-        for mid, engine in listed.items():
-            assert admin.get(mid) == engine, mid

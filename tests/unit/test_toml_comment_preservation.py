@@ -71,19 +71,33 @@ OLD_DATA = tomllib.loads(OLD)
 
 
 class TestUnchangedEverythingCarries:
-    def test_identical_data_keeps_every_comment(self):
+    # Identical data keeps every comment shape, each directly above its anchor.
+    # Rows map a comment to the line that must follow it (None = presence only;
+    # inline comments such as "# routes here" are checked as substrings).
+    @pytest.mark.parametrize("expected", [
+        pytest.param({
+            "# banner: what this file is": None,
+            "# routes here": None,
+            "# --- section divider above first model ---": None,
+            "# the workhorse": None,
+            "# standalone: why enabled": None,
+            "# about the config sub-table": None,
+            "# local weights": None,
+            "# trailing block: describes model b below": None,
+        }, id="identical_data_keeps_every_comment"),
+        pytest.param({
+            "# --- section divider above first model ---": "[[models]]",
+            "# trailing block: describes model b below": "[[models]]",
+            "# standalone: why enabled": "enabled = true",
+        }, id="comment_position_is_preserved"),
+    ])
+    def test_unchanged_data_keeps_comments_in_place(self, expected):
         merged = merge_comments(OLD, _render(OLD_DATA))
-        for line in (
-            "# banner: what this file is",
-            "# routes here",
-            "# --- section divider above first model ---",
-            "# the workhorse",
-            "# standalone: why enabled",
-            "# about the config sub-table",
-            "# local weights",
-            "# trailing block: describes model b below",
-        ):
-            assert line in merged, f"lost: {line}"
+        lines = merged.splitlines()
+        for comment, next_line in expected.items():
+            assert comment in merged, f"lost: {comment}"
+            if next_line is not None:
+                assert lines[lines.index(comment) + 1] == next_line
 
     def test_merged_values_identical_to_fresh_render(self):
         fresh = _render(OLD_DATA)
@@ -108,67 +122,75 @@ class TestUnchangedEverythingCarries:
         assert "config = {" not in merged
         assert "# keep me" in merged
 
-    def test_comment_position_is_preserved(self):
-        merged = merge_comments(OLD, _render(OLD_DATA)).splitlines()
-        divider = merged.index("# --- section divider above first model ---")
-        assert merged[divider + 1] == "[[models]]"
-        trailing = merged.index("# trailing block: describes model b below")
-        assert merged[trailing + 1] == "[[models]]"
-        standalone = merged.index("# standalone: why enabled")
-        assert merged[standalone + 1] == "enabled = true"
+
+def _patch_model_a(data):
+    data["models"][0]["config"]["temperature"] = 0.2
+
+
+def _disable_model_a(data):
+    data["models"][0]["enabled"] = False
+
+
+def _move_model_b(data):
+    data["models"][1]["config"]["model_path"] = "/moved"
+
+
+def _change_root_key(data):
+    data["default_model"] = "b"
+
+
+def _remove_model_a(data):
+    del data["models"][0]
+
+
+def _add_model_c(data):
+    data["models"].append(_model("c", "/w3"))
+
+
+# Edit -> comments that must drop / must survive. Every row's merged text also
+# parses to exactly the edited data.
+# - patched: a changed model drops ALL its comments; unchanged root keys keep
+#   theirs.
+# - trailing: the block sits above model b's header; it describes b, even
+#   though TOML-structurally it lives at the end of model a's section. Model a
+#   is untouched, so its own comments survive.
+# - root key: the banner is anchored to default_model too -- it drops with it.
+# - removed: b changed neighbours, so the trailing block's anchor pair broke.
+_DROP_ROWS = [
+    pytest.param(
+        _patch_model_a,
+        ("# the workhorse", "# standalone: why enabled",
+         "# about the config sub-table", "# local weights"),
+        ("# banner: what this file is", "# routes here"),
+        id="patched_model_drops_its_comments_others_survive",
+    ),
+    pytest.param(_disable_model_a, ("# --- section divider above first model ---",), (),
+                 id="divider_above_first_model_drops_when_it_changes"),
+    pytest.param(_move_model_b, ("# trailing block: describes model b below",),
+                 ("# the workhorse",),
+                 id="trailing_block_drops_when_the_next_model_changes"),
+    pytest.param(_change_root_key, ("# routes here", "# banner: what this file is"),
+                 ("# the workhorse",),
+                 id="changed_root_key_drops_only_its_comment"),
+    pytest.param(_remove_model_a,
+                 ("# the workhorse", "# local weights",
+                  "# trailing block: describes model b below"), (),
+                 id="removed_model_takes_its_comments_along"),
+    pytest.param(_add_model_c, (), ("# the workhorse",),
+                 id="added_model_carries_nothing_and_breaks_nothing"),
+]
 
 
 class TestChangedAnchorsDrop:
-    def test_patched_model_drops_its_comments_others_survive(self):
+    @pytest.mark.parametrize("edit, must_drop, must_keep", _DROP_ROWS)
+    def test_changed_anchor_drops_its_comments(self, edit, must_drop, must_keep):
         data = tomllib.loads(OLD)
-        data["models"][0]["config"]["temperature"] = 0.2  # patch model a
+        edit(data)
         merged = merge_comments(OLD, _render(data))
-        for gone in ("# the workhorse", "# standalone: why enabled",
-                     "# about the config sub-table", "# local weights"):
-            assert gone not in merged, f"comment outlived its model: {gone}"
-        # Root keys unchanged -> their comments stay.
-        assert "# banner: what this file is" in merged
-        assert "# routes here" in merged
-
-    def test_divider_above_first_model_drops_when_it_changes(self):
-        data = tomllib.loads(OLD)
-        data["models"][0]["enabled"] = False
-        merged = merge_comments(OLD, _render(data))
-        assert "# --- section divider above first model ---" not in merged
-
-    def test_trailing_block_drops_when_the_next_model_changes(self):
-        # The block sits above model b's header; it describes b, even though
-        # TOML-structurally it lives at the end of model a's section.
-        data = tomllib.loads(OLD)
-        data["models"][1]["config"]["model_path"] = "/moved"
-        merged = merge_comments(OLD, _render(data))
-        assert "# trailing block: describes model b below" not in merged
-        # Model a untouched -> its own comments survive.
-        assert "# the workhorse" in merged
-
-    def test_changed_root_key_drops_only_its_comment(self):
-        data = tomllib.loads(OLD)
-        data["default_model"] = "b"
-        merged = merge_comments(OLD, _render(data))
-        assert "# routes here" not in merged
-        # The banner is anchored to default_model too -- it drops with it.
-        assert "# banner: what this file is" not in merged
-        assert "# the workhorse" in merged
-
-    def test_removed_model_takes_its_comments_along(self):
-        data = tomllib.loads(OLD)
-        del data["models"][0]
-        merged = merge_comments(OLD, _render(data))
-        assert "# the workhorse" not in merged
-        assert "# local weights" not in merged
-        # b changed neighbors, and the trailing block's anchor pair broke.
-        assert "# trailing block: describes model b below" not in merged
-
-    def test_added_model_carries_nothing_and_breaks_nothing(self):
-        data = tomllib.loads(OLD)
-        data["models"].append(_model("c", "/w3"))
-        merged = merge_comments(OLD, _render(data))
-        assert "# the workhorse" in merged
+        for gone in must_drop:
+            assert gone not in merged, f"comment outlived its anchor: {gone}"
+        for kept in must_keep:
+            assert kept in merged, f"lost: {kept}"
         assert tomllib.loads(merged) == data
 
 
@@ -206,28 +228,42 @@ class TestThroughModelService:
         p.write_text(text)
         return p
 
-    def test_admin_patch_keeps_other_models_comments(self, config_path):
+    # Admin patches through ModelService. Rows: (patches applied in order,
+    # comments that must survive, comments that must drop, (model index,
+    # temperature) the written file must parse to and render).
+    # - admin_patch: the patched model's neighbourhood note drops with it.
+    # - second_patch: comments must survive REPEATED rewrites, not just the
+    #   first.
+    @pytest.mark.parametrize("patches, must_keep, must_drop, expected", [
+        pytest.param(
+            [("b", 0.5)],
+            ("# banner: what this file is", "# the workhorse", "# local weights"),
+            ("# trailing block: describes model b below",),
+            (1, 0.5),
+            id="admin_patch_keeps_other_models_comments",
+        ),
+        pytest.param(
+            [("b", 0.5), ("b", 0.6)],
+            ("# the workhorse", "# standalone: why enabled"),
+            (),
+            (1, 0.6),
+            id="second_patch_still_carries",
+        ),
+        pytest.param([("a", 0.1)], (), (), (0, 0.1),
+                     id="written_file_is_valid_and_parses_to_patched_values"),
+    ])
+    def test_admin_patch_through_the_service(
+        self, config_path, patches, must_keep, must_drop, expected
+    ):
         service = ModelService(str(config_path))
-        service.update_config("b", {"config": {"temperature": 0.5}})
+        for model_id, temperature in patches:
+            service.update_config(model_id, {"config": {"temperature": temperature}})
         text = config_path.read_text()
-        assert "# banner: what this file is" in text
-        assert "# the workhorse" in text
-        assert "# local weights" in text
-        # The patched model's neighborhood note drops with it.
-        assert "# trailing block: describes model b below" not in text
-        assert 'temperature = 0.5' in text
-
-    def test_second_patch_still_carries(self, config_path):
-        # Comments must survive REPEATED rewrites, not just the first.
-        service = ModelService(str(config_path))
-        service.update_config("b", {"config": {"temperature": 0.5}})
-        service.update_config("b", {"config": {"temperature": 0.6}})
-        text = config_path.read_text()
-        assert "# the workhorse" in text
-        assert "# standalone: why enabled" in text
-
-    def test_written_file_is_valid_and_parses_to_patched_values(self, config_path):
-        service = ModelService(str(config_path))
-        service.update_config("a", {"config": {"temperature": 0.1}})
-        data = tomllib.loads(config_path.read_text())
-        assert data["models"][0]["config"]["temperature"] == 0.1
+        for kept in must_keep:
+            assert kept in text, f"lost: {kept}"
+        for gone in must_drop:
+            assert gone not in text, f"comment outlived its anchor: {gone}"
+        index, temperature = expected
+        assert f"temperature = {temperature}" in text
+        data = tomllib.loads(text)
+        assert data["models"][index]["config"]["temperature"] == temperature

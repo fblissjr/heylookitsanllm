@@ -4,12 +4,10 @@
 The cross-model mechanism: templates that reference ``enable_thinking``
 support the toggle (Qwen3 renders <think> blocks, gemma-4 renders thought
 channels); capabilities are sniffed from the model's own template so
-/v1/models reports "thinking" without a manual models.toml flag, and the
-VLM template path forwards the kwarg exactly like the text path.
+/v1/models reports "thinking" without a manual models.toml flag. (That the
+VLM template path forwards the kwarg exactly like the text path is
+test_mlx_reasoning_effort.py TestVlmTemplateKwargs.)
 """
-
-from types import SimpleNamespace
-from unittest.mock import patch
 
 import pytest
 
@@ -23,28 +21,46 @@ _GEMMA_JINJA = (
 
 @pytest.mark.unit
 class TestThinkingCapabilityFromTemplate:
-    def _model_config(self, tmp_path):
+    """'thinking' and 'reasoning_effort' come from the model's own template.
+    Depth is its own capability, NOT implied by thinking: Qwen3.5 has a
+    switch and no depth, gpt-oss the reverse. A gguf model with no readable
+    template offers no depth (nothing to detect from); its thinking switch
+    falls back to the stored supports_thinking."""
+
+    @pytest.mark.parametrize(
+        "provider, template, cfg, present, absent",
+        [
+            ("mlx", _GEMMA_JINJA, {}, {"thinking"}, set()),
+            ("mlx", "{{ bos_token }}{% for m in messages %}{{ m['content'] }}{% endfor %}",
+             {}, set(), {"thinking"}),
+            ("gguf", None, {"model_path": "/synthetic/x.gguf", "supports_thinking": True},
+             {"thinking"}, {"reasoning_effort"}),
+            ("mlx", "{% if enable_thinking %}x{% endif %}", {"enable_thinking": True},
+             {"thinking"}, {"reasoning_effort"}),
+            # the gpt-oss/harmony case: depth, no enable_thinking anywhere
+            ("mlx",
+             '{%- if reasoning_effort is not defined %}'
+             '{%- set reasoning_effort = "medium" %}{%- endif %}'
+             'Reasoning: {{ reasoning_effort }}{% for m in messages %}{{ m.content }}{% endfor %}',
+             {}, {"reasoning_effort"}, {"thinking"}),
+        ],
+        ids=[
+            "toggle-reports-thinking", "no-toggle-no-thinking",
+            "gguf-no-readable-template-offers-no-depth", "mlx-switch-without-depth",
+            "mlx-depth-without-switch",
+        ],
+    )
+    def test_capabilities_from_template(self, tmp_path, provider, template, cfg, present, absent):
+        from heylook_llm.capabilities import infer_model_capabilities
         from heylook_llm.config import ModelConfig
 
-        return ModelConfig(
-            id="m", provider="mlx", config={"model_path": str(tmp_path)}
-        )
-
-    def test_template_toggle_reports_thinking(self, tmp_path):
-        from heylook_llm.capabilities import infer_model_capabilities
-
-        (tmp_path / "chat_template.jinja").write_text(_GEMMA_JINJA)
-        caps = infer_model_capabilities(self._model_config(tmp_path))
-        assert "thinking" in caps
-
-    def test_no_toggle_no_thinking(self, tmp_path):
-        from heylook_llm.capabilities import infer_model_capabilities
-
-        (tmp_path / "chat_template.jinja").write_text(
-            "{{ bos_token }}{% for m in messages %}{{ m['content'] }}{% endfor %}"
-        )
-        caps = infer_model_capabilities(self._model_config(tmp_path))
-        assert "thinking" not in caps
+        if template is not None:
+            (tmp_path / "chat_template.jinja").write_text(template)
+        cfg = {"model_path": str(tmp_path), **cfg}
+        caps = infer_model_capabilities(ModelConfig.model_validate(
+            {"id": f"x-{cfg['model_path']}", "provider": provider, "config": cfg}))
+        assert present <= set(caps), caps
+        assert not (absent & set(caps)), caps
 
     def test_mlx_config_rejects_supports_thinking(self):
         """Claim: MLX thinking capability is DERIVED (template probe /
@@ -198,41 +214,6 @@ class TestThinkingFlagAgreesAcrossSurfaces:
             for cfg in self.CONFIGS for kw in self.REQUESTS
         }
         assert seen == {True, False}, f"matrix only ever produced {seen}"
-
-
-@pytest.mark.unit
-class TestVlmTemplateThinkingForwarding:
-    class _FakeTokenizer:
-        def __init__(self):
-            self.last_kwargs = None
-
-        def apply_chat_template(self, messages, tokenize=False,
-                                add_generation_prompt=True, **kwargs):
-            self.last_kwargs = kwargs
-            return "PROMPT"
-
-    def _run(self, **call_kwargs):
-        from heylook_llm.providers import mlx_provider
-
-        tok = self._FakeTokenizer()
-        processor = SimpleNamespace(tokenizer=tok, image_token="<image>")
-        messages = [{"role": "user", "content": "hi"}]
-        with patch.object(
-            mlx_provider, "mlx_vlm_apply_chat_template",
-            side_effect=lambda p, c, m, num_images, return_messages: m,
-        ):
-            out = mlx_provider.vlm_apply_chat_template(
-                processor, {}, messages, num_images=0, **call_kwargs
-            )
-        assert out == "PROMPT"
-        return tok.last_kwargs
-
-    def test_bool_is_forwarded(self):
-        assert self._run(enable_thinking=False) == {"enable_thinking": False}
-        assert self._run(enable_thinking=True) == {"enable_thinking": True}
-
-    def test_none_omits_the_kwarg(self):
-        assert self._run(enable_thinking=None) == {}
 
 
 class TestTemplateProbeCaching:

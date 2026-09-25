@@ -41,9 +41,19 @@ def service(tmp_path):
     return ModelService(str(toml))
 
 
-def test_clearing_a_field_removes_it_and_persists(service):
+# Rows: the config patch. Every row clears ctx_size; a value set in the same
+# patch must still be written. Belt and braces on the file text itself: nothing
+# writes a null value, asserted structurally rather than by catching TypeError,
+# so this keeps holding if the writer is ever swapped for one that silently
+# drops nulls instead of raising.
+@pytest.mark.parametrize("patch", [
+    pytest.param({"ctx_size": None}, id="clearing_a_field_removes_it_and_persists"),
+    pytest.param({"ctx_size": None, "n_gpu_layers": 999},
+                 id="no_none_ever_reaches_the_toml_writer"),
+])
+def test_clearing_a_field_removes_it_and_persists(service, patch):
     """The whole chain: null -> key removed -> file rewritten -> still gone."""
-    _, reload_fields = service.update_config("m", {"config": {"ctx_size": None}})
+    _, reload_fields = service.update_config("m", {"config": patch})
 
     config = service.get_config("m")
     assert config is not None
@@ -62,6 +72,12 @@ def test_clearing_a_field_removes_it_and_persists(service):
     # And clearing a spawn-time flag is a reload-required change, not a no-op.
     assert "ctx_size" in reload_fields
 
+    text = open(service.config_path).read()
+    assert "ctx_size" not in text
+    for key, value in patch.items():
+        if value is not None:
+            assert f"{key} = {value}" in text
+
 
 def test_clearing_an_already_unset_field_is_not_a_change(service):
     """Idempotence: no spurious 'needs a reload' for a field that was unset."""
@@ -77,19 +93,3 @@ def test_setting_a_value_still_works_and_is_reload_required(service):
     assert config is not None
     assert config.config.model_dump().get("ctx_size") == 4096
     assert "ctx_size" in reload_fields
-
-
-def test_no_none_ever_reaches_the_toml_writer(service):
-    """Belt and braces: whatever else changes, nothing writes a null value.
-
-    Asserted structurally rather than by catching TypeError, so this keeps
-    holding if the writer is ever swapped for one that silently drops nulls
-    instead of raising.
-    """
-    service.update_config(
-        "m", {"config": {"ctx_size": None, "n_gpu_layers": 999}}
-    )
-    text = service.config_path.read_text() if hasattr(service.config_path, "read_text") \
-        else open(service.config_path).read()
-    assert "ctx_size" not in text
-    assert "n_gpu_layers = 999" in text

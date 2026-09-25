@@ -124,15 +124,6 @@ class TestReportFields:
         unknown = evaluate_fit(60.0, 8.0, hard_working_set=True)
         assert not [l for l in unknown.lines if l.ceiling == "metal_max_buffer"]
 
-    def test_largest_alloc_reads_the_biggest_shard_not_the_set(self, tmp_path):
-        from heylook_llm.ram_fit import largest_alloc_gb, size_config_gb
-        for i, mb in ((1, 30), (2, 40), (3, 20)):
-            (tmp_path / f"m-0000{i}-of-00003.gguf").write_bytes(b"\0" * (mb << 20))
-        cfg = {"model_path": str(tmp_path / "m-00001-of-00003.gguf")}
-        total, _ = size_config_gb(cfg)
-        assert total == pytest.approx(90 / 1024, rel=0.01)      # the whole set
-        assert largest_alloc_gb(cfg) == pytest.approx(40 / 1024, rel=0.01)  # one shard
-
     def test_no_metal_reports_ram_only(self, monkeypatch):
         _patch_ceilings(monkeypatch, usable=100.0, working_set=None)
         report = evaluate_fit(60.0, 8.0, hard_working_set=True)
@@ -148,15 +139,41 @@ class TestSizing:
         path.write_bytes(b"\0" * size)
         return path
 
-    def test_shard_set_counts_the_whole_set(self, tmp_path):
+    # One property, four rows (two came from test_ram_report.py): a shard set
+    # is sized as the WHOLE set, its largest shard as ONE allocation, and a
+    # standalone file as itself. Every row asserts all three measures.
+    @pytest.mark.parametrize("sizes, named, set_bytes, largest_bytes", [
+        # The Metal cap limits ONE buffer: the largest shard, not the set.
+        pytest.param({"m-00001-of-00003.gguf": 30 << 20, "m-00002-of-00003.gguf": 40 << 20,
+                      "m-00003-of-00003.gguf": 20 << 20},
+                     "m-00001-of-00003.gguf", 90 << 20, 40 << 20,
+                     id="largest_alloc_reads_the_biggest_shard_not_the_set"),
         # The named shard can be a tiny index file; sizing it alone is wrong
         # by orders of magnitude (the DeepSeek trap ram_report exists for).
-        self._gguf(tmp_path / "m-00001-of-00003.gguf", 10)
-        self._gguf(tmp_path / "m-00002-of-00003.gguf", 1000)
-        self._gguf(tmp_path / "m-00003-of-00003.gguf", 1000)
-        size_gb, notes = size_config_gb({"model_path": str(tmp_path / "m-00001-of-00003.gguf")})
-        assert size_gb == pytest.approx(2010 / ram_fit.GB)
-        assert any("3-shard set" in n for n in notes)
+        pytest.param({"m-00001-of-00003.gguf": 10, "m-00002-of-00003.gguf": 1000,
+                      "m-00003-of-00003.gguf": 1000},
+                     "m-00001-of-00003.gguf", 2010, 1000,
+                     id="shard_set_counts_the_whole_set"),
+        # The other way this gate lies: sizing the named first shard called a
+        # 127 GiB model "5 MB".
+        pytest.param({"m-00001-of-00003.gguf": 100, "m-00002-of-00003.gguf": 90_000,
+                      "m-00003-of-00003.gguf": 80_000},
+                     "m-00001-of-00003.gguf", 170_100, 90_000,
+                     id="a_shard_is_sized_as_its_whole_set"),
+        pytest.param({"solo.gguf": 1234}, "solo.gguf", 1234, 1234,
+                     id="a_standalone_file_is_sized_as_itself"),
+    ])
+    def test_shard_sizing(self, tmp_path, sizes, named, set_bytes, largest_bytes):
+        from heylook_llm.ram_fit import largest_alloc_gb
+        for name, size in sizes.items():
+            self._gguf(tmp_path / name, size)
+        cfg = {"model_path": str(tmp_path / named)}
+        assert ram_fit._shard_set_bytes(tmp_path / named) == set_bytes
+        size_gb, notes = size_config_gb(cfg)
+        assert size_gb == pytest.approx(set_bytes / ram_fit.GB)
+        assert largest_alloc_gb(cfg) == pytest.approx(largest_bytes / ram_fit.GB)
+        is_set = len(sizes) > 1
+        assert any(f"{len(sizes)}-shard set" in n for n in notes) is is_set
 
     def test_dir_sizing_and_sidecars(self, tmp_path):
         d = tmp_path / "weights"
@@ -177,19 +194,19 @@ class TestSizing:
         assert is_mlx_config({"model_path": "/models/some-dir"})
         assert not is_mlx_config({"model_path": "/models/model.gguf"})
 
-    def test_fit_for_config_derives_hard_flag_from_layout(self, tmp_path, monkeypatch):
-        _patch_ceilings(monkeypatch, usable=1000.0, working_set=1000.0)
-        gguf = self._gguf(tmp_path / "m.gguf", 10)
-        report = fit_for_config({"model_path": str(gguf)})
-        assert report.hard_working_set is False
-        d = tmp_path / "mlxdir"
-        d.mkdir()
-        report = fit_for_config({"model_path": str(d)})
-        assert report.hard_working_set is True
-
-    def test_fit_for_config_honors_explicit_hard_flag(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("cases", [
+        # (layout, explicit hard flag, expected report.hard_working_set)
+        pytest.param([("gguf", None, False), ("mlx_dir", None, True)],
+                     id="fit_for_config_derives_hard_flag_from_layout"),
         # The server passes the provider-derived truth; layout must not win.
+        pytest.param([("gguf", True, True)],
+                     id="fit_for_config_honors_explicit_hard_flag"),
+    ])
+    def test_fit_for_config_hard_flag(self, tmp_path, monkeypatch, cases):
         _patch_ceilings(monkeypatch, usable=1000.0, working_set=1000.0)
-        gguf = self._gguf(tmp_path / "m.gguf", 10)
-        report = fit_for_config({"model_path": str(gguf)}, hard_working_set=True)
-        assert report.hard_working_set is True
+        paths = {"gguf": self._gguf(tmp_path / "m.gguf", 10), "mlx_dir": tmp_path / "mlxdir"}
+        paths["mlx_dir"].mkdir()
+        for layout, explicit, expected in cases:
+            kwargs = {} if explicit is None else {"hard_working_set": explicit}
+            report = fit_for_config({"model_path": str(paths[layout])}, **kwargs)
+            assert report.hard_working_set is expected, (layout, explicit)

@@ -24,48 +24,27 @@ from heylook_llm.request_registry import (
 )
 
 
+# The route-level rules (an unknown id cancels nothing, a finished request
+# becomes unknown, duplicate ids both cancel, the map empties once a request
+# unwinds) are pinned through DELETE /v1/requests in
+# tests/contract/test_request_cancel.py::TestCancelEndpoint, whose 404 is
+# exactly `cancel(...) == 0` on the module registry. What stays here is what
+# that route cannot reach.
 @pytest.mark.unit
 class TestCancellingById:
-    def test_cancel_sets_the_registered_event(self):
+    @pytest.mark.parametrize("cancels", [
+        pytest.param(1, id="cancel_sets_the_registered_event"),
+        # Each request removes its OWN entry when it unwinds. Evicting on
+        # cancel would make a second cancel of a still-running generation
+        # answer 404 while it was demonstrably still running.
+        pytest.param(2, id="cancel_does_not_evict_a_still_running_request"),
+    ])
+    def test_cancel_signals_and_keeps_the_entry(self, cancels):
         reg, ev = RequestRegistry(), AbortEvent()
         reg.register("req-1", ev)
-        assert reg.cancel("req-1") == 1
+        for _ in range(cancels):
+            assert reg.cancel("req-1") == 1
         assert ev.is_set()
-
-    def test_an_unknown_id_cancels_nothing(self):
-        """Which is what the route turns into a 404. A registry that reported
-        success for an id it never held would tell a client it stopped
-        something that had already finished."""
-        assert RequestRegistry().cancel("never-existed") == 0
-
-    def test_a_finished_request_becomes_unknown(self):
-        """Against the MODULE registry, which is the one `track_request` writes
-        to. This asserted against a fresh local `RequestRegistry()` that
-        `track_request` never touches, so it passed for the wrong reason --
-        `unregister` could have been deleted outright and it would still be
-        green. It names the module's central lifetime rule; it has to actually
-        exercise it."""
-        from heylook_llm.request_registry import get_request_registry
-
-        reg = get_request_registry()
-        ev = AbortEvent()
-        with track_request("req-finished", ev):
-            assert reg.cancel("req-finished") == 1   # live: cancellable
-        assert reg.cancel("req-finished") == 0       # finished: unknown
-        assert "req-finished" not in reg.live_ids()
-
-    def test_duplicate_ids_both_cancel(self):
-        """The id is CLIENT-supplied, so uniqueness is not ours to assume: a
-        retry, a buggy client or a shared correlation id can put two live
-        requests under one name. A single-slot map would let the second
-        registration orphan the first -- a running generation nothing can
-        name, which is the exact condition this module exists to remove."""
-        reg = RequestRegistry()
-        first, second = AbortEvent(), AbortEvent()
-        reg.register("shared", first)
-        reg.register("shared", second)
-        assert reg.cancel("shared") == 2
-        assert first.is_set() and second.is_set()
 
     def test_one_of_two_finishing_leaves_the_other_cancellable(self):
         reg = RequestRegistry()
@@ -77,27 +56,9 @@ class TestCancellingById:
         assert running.is_set()
         assert not done.is_set()
 
-    def test_cancel_does_not_evict_a_still_running_request(self):
-        """Each request removes its OWN entry when it unwinds. Evicting here
-        would make a second cancel of a still-running generation answer 404
-        while it was demonstrably still running."""
-        reg, ev = RequestRegistry(), AbortEvent()
-        reg.register("req-1", ev)
-        assert reg.cancel("req-1") == 1
-        assert reg.cancel("req-1") == 1
-
 
 @pytest.mark.unit
 class TestRegistrationLifetime:
-    def test_the_map_is_empty_once_a_request_unwinds(self):
-        """Bounded by liveness, not by a clock -- there is no TTL sweeper, so
-        a leaked entry would be a permanent one."""
-        reg_ev = AbortEvent()
-        with track_request("req-1", reg_ev):
-            pass
-        from heylook_llm.request_registry import get_request_registry
-        assert "req-1" not in get_request_registry().live_ids()
-
     def test_an_exception_still_unregisters(self):
         """Route bodies raise HTTPException as ordinary control flow, so the
         error path is the common path, not the rare one."""

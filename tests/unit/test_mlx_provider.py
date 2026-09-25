@@ -16,228 +16,217 @@ from heylook_llm.config import ChatMessage, ChatRequest
 from helpers.mlx_mock import create_mock_model, create_mock_processor
 
 
+def _fixture(name):
+    """A row builder that returns the named conftest fixture's value."""
+    return lambda request: request.getfixturevalue(name)
+
+
+def _custom_provider(request):
+    request.getfixturevalue("mock_mlx")
+    from heylook_llm.providers.mlx_provider import MLXProvider
+
+    return MLXProvider(
+        model_id="custom",
+        config={
+            "model_path": "/my/model",
+            "vision": True,
+            "enable_thinking": True,
+            "max_tokens": 2048,
+        },
+        verbose=True,
+    )
+
+
+def _read(provider, path):
+    """``attr`` or ``config.key`` off a provider."""
+    if path.startswith("config."):
+        return provider.config[path.split(".", 1)[1]]
+    return getattr(provider, path)
+
+
 @pytest.mark.unit
 class TestMLXProviderInit:
-    def test_init_sets_model_id(self, mock_mlx_provider):
-        assert mock_mlx_provider.model_id == "test-model"
-
-    def test_init_defaults(self, mock_mlx_provider):
-        assert mock_mlx_provider._active_generations == 0
-        assert mock_mlx_provider.model is None
-        assert mock_mlx_provider.processor is None
-
-    def test_init_text_only_not_vlm(self, mock_mlx_provider):
-        assert mock_mlx_provider.is_vlm is False
-
-    def test_init_vlm_flag(self, mock_vlm_provider):
-        assert mock_vlm_provider.is_vlm is True
-
-    def test_init_strategies_empty_before_load(self, mock_mlx_provider):
-        assert mock_mlx_provider._strategies == {}
-
-    def test_init_with_config_values(self, mock_mlx):  # noqa: ARG001
-        from heylook_llm.providers.mlx_provider import MLXProvider
-
-        provider = MLXProvider(
-            model_id="custom",
-            config={
-                "model_path": "/my/model",
-                "vision": True,
-                "enable_thinking": True,
-                "max_tokens": 2048,
-            },
-            verbose=True,
-        )
-        assert provider.model_id == "custom"
-        assert provider.is_vlm is True
-        assert provider.verbose is True
-        assert provider.config["enable_thinking"] is True
+    # One row per constructor fact. bool/None expectations are identity checks.
+    @pytest.mark.parametrize("build, expected", [
+        (_fixture("mock_mlx_provider"), {"model_id": "test-model"}),
+        (_fixture("mock_mlx_provider"),
+         {"_active_generations": 0, "model": None, "processor": None}),
+        (_fixture("mock_mlx_provider"), {"is_vlm": False}),
+        (_fixture("mock_vlm_provider"), {"is_vlm": True}),
+        (_fixture("mock_mlx_provider"), {"_strategies": {}}),
+        (_custom_provider, {"model_id": "custom", "is_vlm": True, "verbose": True,
+                            "config.enable_thinking": True}),
+    ], ids=["init_sets_model_id", "init_defaults", "init_text_only_not_vlm",
+            "init_vlm_flag", "init_strategies_empty_before_load",
+            "init_with_config_values"])
+    def test_constructor_state(self, request, build, expected):
+        provider = build(request)
+        for path, want in expected.items():
+            got = _read(provider, path)
+            if want is None or isinstance(want, bool):
+                assert got is want, path
+            else:
+                assert got == want, path
 
 
 @pytest.mark.unit
 class TestStrategyCompilation:
-    def test_text_only_strategy_compiled(self, mock_mlx_provider):
-        """After _compile_strategies, text-only provider has 'text' strategy."""
-        mock_mlx_provider._compile_strategies()
-        assert "text" in mock_mlx_provider._strategies
+    """Which strategies _compile_strategies registers, by is_vlm x is_diffusion.
 
-    def test_vlm_strategies_compiled(self, mock_vlm_provider):
-        """VLM provider has 'text' and 'vision' strategies."""
-        mock_vlm_provider._compile_strategies()
-        assert "text" in mock_vlm_provider._strategies
-        assert "vision" in mock_vlm_provider._strategies
+    Diffusion rows guard a silent empty-response bug, not a crash: a
+    masked-diffusion checkpoint driven by mlx-lm's autoregressive
+    stream_generate emits ZERO tokens (it samples one meaningless token from
+    the last prompt position, which lands on EOS).
+    """
 
-    def test_text_only_no_vision_strategy(self, mock_mlx_provider):
-        mock_mlx_provider._compile_strategies()
-        assert "vision" not in mock_mlx_provider._strategies
-
-    def test_text_strategy_is_vlm_flag(self, mock_vlm_provider):
-        """VLM provider's text strategy should have is_vlm=True."""
-        mock_vlm_provider._compile_strategies()
-        assert mock_vlm_provider._strategies['text'].is_vlm is True
-
-    def test_text_only_strategy_not_vlm(self, mock_mlx_provider):
-        """Text-only provider's text strategy should have is_vlm=False."""
-        mock_mlx_provider._compile_strategies()
-        assert mock_mlx_provider._strategies['text'].is_vlm is False
-
-    def test_no_diffusion_strategy_by_default(self, mock_vlm_provider):
-        """An ordinary VLM must not get the denoising path."""
-        mock_vlm_provider._compile_strategies()
-        assert "diffusion" not in mock_vlm_provider._strategies
-
-    def test_diffusion_strategy_compiled_when_detected(self, mock_vlm_provider):
-        """A diffusion checkpoint registers 'diffusion' alongside 'text'.
-
-        'text' stays registered even for diffusion models: warmup resolves its
-        generation model through UnifiedTextStrategy._get_generation_model.
-        """
-        mock_vlm_provider.is_diffusion = True
-        mock_vlm_provider._compile_strategies()
-        assert "diffusion" in mock_vlm_provider._strategies
-        assert "text" in mock_vlm_provider._strategies
+    @pytest.mark.parametrize("provider_fixture, diffusion, compile_, check", [
+        # text-only provider has a 'text' strategy
+        ("mock_mlx_provider", None, True, lambda s, p: "text" in s),
+        # VLM provider has 'text' and 'vision'
+        ("mock_vlm_provider", None, True, lambda s, p: "text" in s and "vision" in s),
+        ("mock_mlx_provider", None, True, lambda s, p: "vision" not in s),
+        # VLM provider's text strategy carries is_vlm=True ...
+        ("mock_vlm_provider", None, True, lambda s, p: s["text"].is_vlm is True),
+        # ... and a text-only provider's is_vlm=False
+        ("mock_mlx_provider", None, True, lambda s, p: s["text"].is_vlm is False),
+        # an ordinary VLM must not get the denoising path
+        ("mock_vlm_provider", None, True, lambda s, p: "diffusion" not in s),
+        # a diffusion checkpoint registers 'diffusion' alongside 'text'; 'text'
+        # stays because warmup resolves its generation model through
+        # UnifiedTextStrategy._get_generation_model
+        ("mock_vlm_provider", True, True, lambda s, p: "diffusion" in s and "text" in s),
+        # detection defaults to the autoregressive path
+        ("mock_mlx_provider", None, False, lambda s, p: p.is_diffusion is False),
+        # diffusion takes images inline: the route picks 'diffusion' before the
+        # is_vlm/has_images branch, so it must never fall through to 'vision'
+        ("mock_vlm_provider", True, True,
+         lambda s, p: s["diffusion"] is not s.get("vision")),
+    ], ids=["text_only_strategy_compiled", "vlm_strategies_compiled",
+            "text_only_no_vision_strategy", "text_strategy_is_vlm_flag",
+            "text_only_strategy_not_vlm", "no_diffusion_strategy_by_default",
+            "diffusion_strategy_compiled_when_detected", "defaults_to_autoregressive",
+            "diffusion_wins_over_vision_routing"])
+    def test_compiled_strategies(self, request, provider_fixture, diffusion, compile_, check):
+        provider = request.getfixturevalue(provider_fixture)
+        if diffusion is not None:
+            provider.is_diffusion = diffusion
+        if compile_:
+            provider._compile_strategies()
+        assert check(provider._strategies, provider)
 
 
 @pytest.mark.unit
 class TestDiffusionDetection:
-    """Diffusion routing decisions.
-
-    A masked-diffusion checkpoint driven by mlx-lm's autoregressive
-    stream_generate emits ZERO tokens (it samples one meaningless token from
-    the last prompt position, which lands on EOS), so these assertions guard a
-    silent empty-response bug, not a crash.
-    """
-
-    def test_defaults_to_autoregressive(self, mock_mlx_provider):
-        assert mock_mlx_provider.is_diffusion is False
-
     def test_detect_returns_false_when_predicate_unavailable(self, mock_mlx_provider):
-        """Detection is best-effort: a predicate failure degrades to the AR path."""
+        """Detection is best-effort: a predicate failure degrades to the AR path
+        (see TestStrategyCompilation for why that path matters)."""
         mock_mlx_provider.model = object()  # no config, no language_model
         assert mock_mlx_provider._detect_diffusion() is False
 
-    def test_diffusion_wins_over_vision_routing(self, mock_vlm_provider):
-        """Diffusion takes images inline -- there is no separate vision split."""
-        mock_vlm_provider.is_diffusion = True
-        mock_vlm_provider._compile_strategies()
-        # The route picks 'diffusion' before the is_vlm/has_images branch, so a
-        # diffusion provider must never be able to fall through to 'vision'.
-        assert mock_vlm_provider._strategies["diffusion"] is not mock_vlm_provider._strategies.get("vision")
+
+def _text_parts_only(request):
+    from heylook_llm.config import TextContentPart
+
+    return [ChatMessage(role="user",
+                        content=[TextContentPart(type="text", text="just text")])]
 
 
 @pytest.mark.unit
 class TestDetectImages:
-    def test_no_images_text_content(self, mock_mlx_provider):
-        messages = [ChatMessage(role="user", content="Hello")]
-        assert mock_mlx_provider._detect_images_optimized(messages) is False
+    @pytest.mark.parametrize("build_messages, expected, calls", [
+        (lambda r: [ChatMessage(role="user", content="Hello")], False, 1),
+        (lambda r: r.getfixturevalue("sample_multimodal_request").messages, True, 1),
+        # multipart content with only text parts is not an image
+        (_text_parts_only, False, 1),
+        # asked twice: the answer holds with no content cache (_content_cache
+        # was removed)
+        (lambda r: [ChatMessage(role="user", content="hello")], False, 2),
+    ], ids=["no_images_text_content", "images_detected",
+            "text_only_multipart_no_images", "detect_images_no_caching"])
+    def test_detect_images(self, request, mock_mlx_provider, build_messages, expected, calls):
+        messages = build_messages(request)
+        for _ in range(calls):
+            assert mock_mlx_provider._detect_images_optimized(messages) is expected
 
-    def test_images_detected(self, mock_mlx_provider, sample_multimodal_request):
-        assert mock_mlx_provider._detect_images_optimized(
-            sample_multimodal_request.messages
-        ) is True
 
-    def test_text_only_multipart_no_images(self, mock_mlx_provider):
-        """Multipart content with only text parts should not detect images."""
-        from heylook_llm.config import TextContentPart
-
-        messages = [
-            ChatMessage(
-                role="user",
-                content=[TextContentPart(type="text", text="just text")],
-            )
-        ]
-        assert mock_mlx_provider._detect_images_optimized(messages) is False
+_FLOOR = GLOBAL_SAMPLER_FLOOR
+_THINK_ON = {"model_path": "/fake", "vision": False, "enable_thinking": True}
 
 
 @pytest.mark.unit
 class TestApplyModelDefaults:
-    def test_defaults_applied(self, mock_mlx_provider):
-        req = ChatRequest(
-            messages=[ChatMessage(role="user", content="hi")],
-        )
-        effective = mock_mlx_provider._apply_model_defaults(req)
-        assert effective["temperature"] == GLOBAL_SAMPLER_FLOOR["temperature"]  # global floor
-        assert effective["max_tokens"] == GLOBAL_SAMPLER_FLOOR["max_tokens"]
+    # (model_id, config) builds a provider; None uses the mock_mlx_provider
+    # fixture. vendor, when set, is written as the model dir's
+    # generation_config.json (model_path then points at that dir).
+    # bool expectations are identity checks.
+    @pytest.mark.parametrize("provider_spec, vendor, request_kwargs, expected", [
+        (None, None, {},
+         {"temperature": _FLOOR["temperature"], "max_tokens": _FLOOR["max_tokens"]}),
+        (None, None, {"temperature": 0.8, "max_tokens": 1024},
+         {"temperature": 0.8, "max_tokens": 1024}),
+        # model-config thinking sets the switch and nothing else: decode tuning
+        # comes from the vendor layer or the floor, never a hardcode tuned for
+        # one family (gemma wants 1.0/64, not Qwen's 0.6/20); since v2.0.32 that
+        # includes the presence_penalty the overlay used to add
+        (("think-model", _THINK_ON), None, {},
+         {"enable_thinking": True, "presence_penalty": _FLOOR["presence_penalty"],
+          "temperature": _FLOOR["temperature"]}),
+        # a request flipping thinking ON resolves the switch though the model
+        # config never declares it (keying on model config alone made the layer
+        # dead code) and changes no sampling on the way (v2.0.32)
+        (("think-model", {"model_path": "/fake", "vision": False}), None,
+         {"enable_thinking": True},
+         {"enable_thinking": True, "presence_penalty": _FLOOR["presence_penalty"]}),
+        # request enable_thinking=False beats a thinking-on model config: no
+        # loop penalty rides a non-thinking generation
+        (("think-model", _THINK_ON), None, {"enable_thinking": False},
+         {"presence_penalty": 0.0, "enable_thinking": False}),
+        # operator fields in models.toml stay above the vendor layer
+        (("vendor-model", {"vision": False, "temperature": 0.3}), {"temperature": 1.0},
+         {}, {"temperature": 0.3}),
+        (("think-model", {**_THINK_ON, "temperature": 0.3}), None, {},
+         {"temperature": 0.3}),
+        # fields are read off the request with getattr, not model_dump()
+        (None, None, {"seed": 42}, {"seed": 42}),
+        # a None request field does not override the default
+        (None, None, {}, {"temperature": _FLOOR["temperature"]}),
+        # every scalar sampler field is extractable from the request
+        (None, None,
+         {"temperature": 0.5, "top_p": 0.9, "top_k": 10, "min_p": 0.05,
+          "max_tokens": 256, "repetition_penalty": 1.2, "presence_penalty": 0.5,
+          "enable_thinking": True, "seed": 123},
+         {"temperature": 0.5, "top_p": 0.9, "top_k": 10, "min_p": 0.05,
+          "max_tokens": 256, "repetition_penalty": 1.2, "presence_penalty": 0.5,
+          "enable_thinking": True, "seed": 123}),
+    ], ids=["defaults_applied", "request_overrides_defaults", "thinking_mode_defaults",
+            "request_thinking_reaches_the_prompt_without_a_sampler_change",
+            "request_thinking_false_suppresses_overlay", "models_toml_overrides_vendor",
+            "config_overrides_thinking_defaults", "seed_from_request",
+            "none_fields_excluded", "all_scalar_fields_extracted"])
+    def test_effective_values(self, request, tmp_path, provider_spec, vendor,
+                              request_kwargs, expected):
+        if provider_spec is None:
+            provider = request.getfixturevalue("mock_mlx_provider")
+        else:
+            request.getfixturevalue("mock_mlx")
+            from heylook_llm.providers.mlx_provider import MLXProvider
 
-    def test_request_overrides_defaults(self, mock_mlx_provider):
-        req = ChatRequest(
-            messages=[ChatMessage(role="user", content="hi")],
-            temperature=0.8,
-            max_tokens=1024,
-        )
-        effective = mock_mlx_provider._apply_model_defaults(req)
-        assert effective["temperature"] == 0.8
-        assert effective["max_tokens"] == 1024
+            model_id, config = provider_spec
+            config = dict(config)
+            if vendor is not None:
+                import json
 
-    def test_thinking_mode_defaults(self, mock_mlx):  # noqa: ARG001
-        """Model-config thinking sets the switch and nothing else.
-
-        Decode tuning comes from the vendor layer or the floor -- never a
-        hardcode tuned for one family and wrong for the rest (gemma wants
-        1.0/64, not Qwen's 0.6/20). Since v2.0.32 that includes
-        presence_penalty, which the overlay used to add here.
-        """
-        from heylook_llm.providers.mlx_provider import MLXProvider
-
-        provider = MLXProvider(
-            model_id="think-model",
-            config={
-                "model_path": "/fake",
-                "vision": False,
-                "enable_thinking": True,
-            },
-            verbose=False,
-        )
-        req = ChatRequest(
-            messages=[ChatMessage(role="user", content="think about this")],
-        )
+                (tmp_path / "generation_config.json").write_text(json.dumps(vendor))
+                config["model_path"] = str(tmp_path)
+            provider = MLXProvider(model_id=model_id, config=config, verbose=False)
+        req = ChatRequest(messages=[ChatMessage(role="user", content="hi")],
+                          **request_kwargs)
         effective = provider._apply_model_defaults(req)
-        assert effective["enable_thinking"] is True
-        assert effective["presence_penalty"] == GLOBAL_SAMPLER_FLOOR["presence_penalty"]
-        assert effective["temperature"] == GLOBAL_SAMPLER_FLOOR["temperature"]  # floor, NOT Qwen's 0.6
-
-    def test_request_thinking_reaches_the_prompt_without_a_sampler_change(self, mock_mlx):  # noqa: ARG001
-        """A request flipping thinking ON resolves the switch even when the
-        model config never declares it -- keying the layer on model config
-        alone made it dead code, since nothing sets it. What it must NOT do
-        any more is change sampling on the way (v2.0.32).
-        """
-        from heylook_llm.providers.mlx_provider import MLXProvider
-
-        provider = MLXProvider(
-            model_id="think-model",
-            config={"model_path": "/fake", "vision": False},
-            verbose=False,
-        )
-        req = ChatRequest(
-            messages=[ChatMessage(role="user", content="hi")],
-            enable_thinking=True,
-        )
-        effective = provider._apply_model_defaults(req)
-        assert effective["enable_thinking"] is True
-        assert effective["presence_penalty"] == GLOBAL_SAMPLER_FLOOR["presence_penalty"]
-
-    def test_request_thinking_false_suppresses_overlay(self, mock_mlx):  # noqa: ARG001
-        """Claim: request enable_thinking=False beats a thinking-on model
-        config -- no loop penalty rides a non-thinking generation."""
-        from heylook_llm.providers.mlx_provider import MLXProvider
-
-        provider = MLXProvider(
-            model_id="think-model",
-            config={
-                "model_path": "/fake",
-                "vision": False,
-                "enable_thinking": True,
-            },
-            verbose=False,
-        )
-        req = ChatRequest(
-            messages=[ChatMessage(role="user", content="hi")],
-            enable_thinking=False,
-        )
-        effective = provider._apply_model_defaults(req)
-        assert effective["presence_penalty"] == 0.0
-        assert effective["enable_thinking"] is False
+        for key, want in expected.items():
+            if isinstance(want, bool):
+                assert effective[key] is want, key
+            else:
+                assert effective[key] == want, key
 
     def test_vendor_generation_config_layer(self, mock_mlx, tmp_path):  # noqa: ARG001
         """Claim: the model dir's generation_config.json supplies per-model
@@ -261,44 +250,6 @@ class TestApplyModelDefaults:
         assert effective["temperature"] == 1.0
         assert effective["top_k"] == 64
         assert effective["top_p"] == 0.95
-
-    def test_models_toml_overrides_vendor(self, mock_mlx, tmp_path):  # noqa: ARG001
-        """Claim: operator fields in models.toml stay above the vendor layer."""
-        import json
-
-        from heylook_llm.providers.mlx_provider import MLXProvider
-
-        (tmp_path / "generation_config.json").write_text(
-            json.dumps({"temperature": 1.0})
-        )
-        provider = MLXProvider(
-            model_id="vendor-model",
-            config={"model_path": str(tmp_path), "vision": False,
-                    "temperature": 0.3},
-            verbose=False,
-        )
-        req = ChatRequest(messages=[ChatMessage(role="user", content="hi")])
-        effective = provider._apply_model_defaults(req)
-        assert effective["temperature"] == 0.3
-
-    def test_config_overrides_thinking_defaults(self, mock_mlx):  # noqa: ARG001
-        from heylook_llm.providers.mlx_provider import MLXProvider
-
-        provider = MLXProvider(
-            model_id="think-model",
-            config={
-                "model_path": "/fake",
-                "vision": False,
-                "enable_thinking": True,
-                "temperature": 0.3,  # override thinking default
-            },
-            verbose=False,
-        )
-        req = ChatRequest(
-            messages=[ChatMessage(role="user", content="hi")],
-        )
-        effective = provider._apply_model_defaults(req)
-        assert effective["temperature"] == 0.3
 
 
 @pytest.mark.unit
@@ -337,41 +288,40 @@ class TestContinuationTemplate:
             continuing=continuing)
         return tok.encode(prompt) if isinstance(prompt, str) else prompt
 
-    def test_continuing_leaves_the_turn_open(self, mock_mlx):
-        tok = self._Tok()
-        self._apply(tok, True, mock_mlx)
-        kwargs = tok.calls[-1]
-        assert kwargs["continue_final_message"] is True
-        assert kwargs["add_generation_prompt"] is False
+    _ABSENT = object()
 
-    def test_not_continuing_never_passes_the_kwarg(self, mock_mlx):
-        # continuing=False here is the resolved EXPLICIT opt-out
+    @pytest.mark.parametrize("reject, continuing, expected", [
+        ((), True, {"continue_final_message": True, "add_generation_prompt": False}),
+        # continuing=False is the resolved EXPLICIT opt-out
         # (continue_final_message=false): the trailing assistant turn renders
-        # closed and a FRESH generation prompt opens -- "reply to it", the
-        # only meaning "never continue" can coherently have. (Auto mode never
-        # reaches this branch with a trailing assistant message.)
-        tok = self._Tok()
-        self._apply(tok, False, mock_mlx)
+        # closed and a FRESH generation prompt opens -- "reply to it", the only
+        # meaning "never continue" can coherently have. (Auto mode never reaches
+        # this branch with a trailing assistant message.)
+        ((), False, {"continue_final_message": _ABSENT, "add_generation_prompt": True}),
+        # a wrapper that rejects enable_thinking must retry WITHOUT it but WITH
+        # continue_final_message -- dropping both silently renders a closed turn
+        (("enable_thinking",), True,
+         {"continue_final_message": True, "enable_thinking": _ABSENT}),
+        # a stack that cannot continue refuses loudly
+        (("continue_final_message",), True, "refuses"),
+    ], ids=["continuing_leaves_the_turn_open", "not_continuing_never_passes_the_kwarg",
+            "enable_thinking_fallback_keeps_continuation",
+            "unsupported_continuation_refuses_loudly"])
+    def test_template_kwargs(self, mock_mlx, reject, continuing, expected):
+        tok = self._Tok(reject=reject)
+        if expected == "refuses":
+            from heylook_llm.providers.base import InvalidGenerationRequest
+
+            with pytest.raises(InvalidGenerationRequest, match="cannot continue"):
+                self._apply(tok, continuing, mock_mlx)
+            return
+        self._apply(tok, continuing, mock_mlx)
         kwargs = tok.calls[-1]
-        assert "continue_final_message" not in kwargs
-        assert kwargs["add_generation_prompt"] is True
-
-    def test_enable_thinking_fallback_keeps_continuation(self, mock_mlx):
-        # A wrapper that rejects enable_thinking must retry WITHOUT it but
-        # WITH continue_final_message -- dropping both would silently render
-        # a closed turn.
-        tok = self._Tok(reject={"enable_thinking"})
-        self._apply(tok, True, mock_mlx)
-        kwargs = tok.calls[-1]
-        assert kwargs["continue_final_message"] is True
-        assert "enable_thinking" not in kwargs
-
-    def test_unsupported_continuation_refuses_loudly(self, mock_mlx):
-        from heylook_llm.providers.base import InvalidGenerationRequest
-
-        tok = self._Tok(reject={"continue_final_message"})
-        with pytest.raises(InvalidGenerationRequest, match="cannot continue"):
-            self._apply(tok, True, mock_mlx)
+        for key, want in expected.items():
+            if want is self._ABSENT:
+                assert key not in kwargs, key
+            else:
+                assert kwargs[key] is want, key
 
 
 @pytest.mark.unit
@@ -577,15 +527,6 @@ class TestUnload:
         assert not hasattr(mock_mlx_provider, "processor")
         assert mock_mlx_provider._strategies == {}
 
-    def test_unload_immediate_when_idle(self, mock_mlx_provider):
-        mock_mlx_provider.model = create_mock_model()
-        mock_mlx_provider.processor = create_mock_processor()
-
-        start = time.time()
-        mock_mlx_provider.unload()
-        elapsed = time.time() - start
-        assert elapsed < 0.5
-
     def test_unload_waits_for_active_generations(self, mock_mlx_provider):
         """unload() should wait for active generations to finish."""
         mock_mlx_provider.model = create_mock_model()
@@ -655,31 +596,20 @@ class TestCreateChatCompletion:
         with pytest.raises(InvalidGenerationRequest, match="text-only"):
             list(mock_mlx_provider.create_chat_completion(req))
 
-    def test_generation_gate_released_after_error(self, mock_mlx_provider):
-        """The generation gate must release even after errors, so the next
-        queued request can run instead of deadlocking."""
-        mock_mlx_provider.model = create_mock_model()
-        mock_mlx_provider.processor = create_mock_processor()
-        mock_mlx_provider._compile_strategies()
+    def _check_gate_free(provider):
+        # the next queued request can run instead of deadlocking
+        assert provider._gen_gate.busy is False
+        provider.check_capacity()  # no raise
 
-        req = ChatRequest(
-            messages=[ChatMessage(role="user", content="hi")],
-        )
+    def _check_counter_zero(provider):
+        assert provider._active_generations == 0
 
-        # Whether the mocked generation completes or raises, the generator's
-        # finally must run: gate released, no deadlock for the next request.
-        from heylook_llm.providers.base import GenerationFailed
-        try:
-            list(mock_mlx_provider.create_chat_completion(req))
-        except GenerationFailed:
-            pass
-
-        # Slot should be free, and capacity available again.
-        assert mock_mlx_provider._gen_gate.busy is False
-        mock_mlx_provider.check_capacity()  # no raise
-
-    def test_active_generation_counter_decremented(self, mock_mlx_provider):
-        """_active_generations should return to 0 after generation."""
+    @pytest.mark.parametrize("check", [_check_gate_free, _check_counter_zero],
+                             ids=["generation_gate_released_after_error",
+                                  "active_generation_counter_decremented"])
+    def test_state_is_released_after_the_generation(self, mock_mlx_provider, check):
+        """Whether the mocked generation completes or raises, the generator's
+        finally must run: gate released and the active counter back to 0."""
         mock_mlx_provider.model = create_mock_model()
         mock_mlx_provider.processor = create_mock_processor()
         mock_mlx_provider._compile_strategies()
@@ -691,8 +621,8 @@ class TestCreateChatCompletion:
         try:
             list(mock_mlx_provider.create_chat_completion(req))
         except GenerationFailed:
-            pass  # mock strategy may error; the counter must reset either way
-        assert mock_mlx_provider._active_generations == 0
+            pass  # the mock strategy may error; the state must reset either way
+        check(mock_mlx_provider)
 
 
 @pytest.mark.unit
@@ -771,71 +701,70 @@ class TestPerRequestAbortEvent:
 
         provider._strategies = {"text": _FakeStrategy()}
 
-    def test_strategy_receives_the_passed_abort_event(self, mock_mlx_provider):
-        from heylook_llm.providers.abort import AbortEvent
+    def _check_passed_through(provider, passed, seen):
+        assert seen == passed
 
-        seen = []
-        self._inject_capturing_strategy(mock_mlx_provider, seen)
-        ev = AbortEvent()
-        req = ChatRequest(messages=[ChatMessage(role="user", content="hi")])
-        list(mock_mlx_provider.create_chat_completion(req, abort_event=ev))
-        assert seen == [ev]
-
-    def test_each_call_gets_a_distinct_default_event_no_shared_state(self, mock_mlx_provider):
-        seen = []
-        self._inject_capturing_strategy(mock_mlx_provider, seen)
-        req = ChatRequest(messages=[ChatMessage(role="user", content="hi")])
-        list(mock_mlx_provider.create_chat_completion(req))
-        list(mock_mlx_provider.create_chat_completion(req))
-
+    def _check_distinct_defaults(provider, passed, seen):
         assert seen[0] is not None and seen[1] is not None
         assert seen[0] is not seen[1]  # per-request, not one shared event
-        # The shared provider-level abort event must be gone.
-        assert not hasattr(mock_mlx_provider, "_abort_event")
+        # the shared provider-level abort event must be gone
+        assert not hasattr(provider, "_abort_event")
 
-    def test_disconnect_of_one_request_does_not_abort_another(self, mock_mlx_provider):
-        """A's event being set must not be visible through B's event."""
+    def _check_isolated(provider, passed, seen):
+        # A's event being set must not be visible through B's event
+        seen[1].set()  # B aborts
+        assert seen[0].is_set() is False  # A unaffected
+
+    # own_events: per call, pass a fresh AbortEvent (True) or none (False)
+    @pytest.mark.parametrize("own_events, check", [
+        ((True,), _check_passed_through),
+        ((False, False), _check_distinct_defaults),
+        ((True, True), _check_isolated),
+    ], ids=["strategy_receives_the_passed_abort_event",
+            "each_call_gets_a_distinct_default_event_no_shared_state",
+            "disconnect_of_one_request_does_not_abort_another"])
+    def test_abort_event_is_per_request(self, mock_mlx_provider, own_events, check):
         from heylook_llm.providers.abort import AbortEvent
 
         seen = []
         self._inject_capturing_strategy(mock_mlx_provider, seen)
-        ev_a, ev_b = AbortEvent(), AbortEvent()
         req = ChatRequest(messages=[ChatMessage(role="user", content="hi")])
-        list(mock_mlx_provider.create_chat_completion(req, abort_event=ev_a))
-        list(mock_mlx_provider.create_chat_completion(req, abort_event=ev_b))
-
-        seen[1].set()  # B aborts
-        assert seen[0].is_set() is False  # A unaffected
+        passed = []
+        for own in own_events:
+            if own:
+                ev = AbortEvent()
+                passed.append(ev)
+                list(mock_mlx_provider.create_chat_completion(req, abort_event=ev))
+            else:
+                list(mock_mlx_provider.create_chat_completion(req))
+        check(mock_mlx_provider, passed, seen)
 
 
 @pytest.mark.unit
 class TestCheckCapacity:
     """check_capacity() applies backpressure (503) via the generation gate."""
 
-    def test_idle_provider_has_capacity(self, mock_mlx_provider):
-        mock_mlx_provider.check_capacity()  # no raise
-
-    def test_raises_model_busy_when_queue_full(self, mock_mlx):  # noqa: ARG002
-        from heylook_llm.providers.mlx_provider import MLXProvider
+    @pytest.mark.parametrize("hold_the_gate", [False, True],
+                             ids=["idle_provider_has_capacity",
+                                  "raises_model_busy_when_queue_full"])
+    def test_capacity_answers_through_the_gate(self, mock_mlx_provider, hold_the_gate):
         from heylook_llm.providers.common.generation_gate import (
             GenerationGate, ModelBusyError,
         )
 
-        provider = MLXProvider(
-            model_id="busy",
-            config={"model_path": "/fake", "vision": False},
-            verbose=False,
-        )
+        if not hold_the_gate:
+            mock_mlx_provider.check_capacity()  # no raise
+            return
         # Inject an isolated single-flight gate (the real gate is a process
         # singleton shared across providers; isolate it for a deterministic test).
-        provider._gen_gate = GenerationGate(max_waiting=0)
-        provider._gen_gate.acquire()  # simulate an in-flight generation
+        mock_mlx_provider._gen_gate = GenerationGate(max_waiting=0)
+        mock_mlx_provider._gen_gate.acquire()  # simulate an in-flight generation
         try:
             with pytest.raises(ModelBusyError) as exc:
-                provider.check_capacity()
+                mock_mlx_provider.check_capacity()
             assert "MODEL_BUSY" in str(exc.value)
         finally:
-            provider._gen_gate.release()
+            mock_mlx_provider._gen_gate.release()
 
     def test_config_sets_queue_depth(self, mock_mlx):  # noqa: ARG002
         import heylook_llm.providers.mlx_provider as mp
@@ -850,67 +779,6 @@ class TestCheckCapacity:
             verbose=False,
         )
         assert provider._gen_gate.max_waiting == 3
-
-
-@pytest.mark.unit
-class TestApplyModelDefaultsGetattr:
-    """Verify _apply_model_defaults uses getattr instead of model_dump()."""
-
-    def test_seed_from_request(self, mock_mlx_provider):
-        """Seed should be extracted from request via getattr."""
-        req = ChatRequest(
-            messages=[ChatMessage(role="user", content="hi")],
-            seed=42,
-        )
-        effective = mock_mlx_provider._apply_model_defaults(req)
-        assert effective["seed"] == 42
-
-    def test_none_fields_excluded(self, mock_mlx_provider):
-        """Fields that are None on the request should not override defaults."""
-        req = ChatRequest(
-            messages=[ChatMessage(role="user", content="hi")],
-        )
-        effective = mock_mlx_provider._apply_model_defaults(req)
-        # temperature is not set on request, so default should apply
-        assert effective["temperature"] == GLOBAL_SAMPLER_FLOOR["temperature"]
-
-    def test_all_scalar_fields_extracted(self, mock_mlx_provider):
-        """All 9 scalar fields should be extractable from request."""
-        req = ChatRequest(
-            messages=[ChatMessage(role="user", content="hi")],
-            temperature=0.5,
-            top_p=0.9,
-            top_k=10,
-            min_p=0.05,
-            max_tokens=256,
-            repetition_penalty=1.2,
-            presence_penalty=0.5,
-            enable_thinking=True,
-            seed=123,
-        )
-        effective = mock_mlx_provider._apply_model_defaults(req)
-        assert effective["temperature"] == 0.5
-        assert effective["top_p"] == 0.9
-        assert effective["top_k"] == 10
-        assert effective["min_p"] == 0.05
-        assert effective["max_tokens"] == 256
-        assert effective["repetition_penalty"] == 1.2
-        assert effective["presence_penalty"] == 0.5
-        assert effective["enable_thinking"] is True
-        assert effective["seed"] == 123
-
-
-@pytest.mark.unit
-class TestNoContentCache:
-    """Verify _content_cache has been removed."""
-
-
-    def test_detect_images_no_caching(self, mock_mlx_provider):
-        """_detect_images_optimized should work without caching."""
-        messages = [ChatMessage(role="user", content="hello")]
-        # Call twice -- should work fine without cache
-        assert mock_mlx_provider._detect_images_optimized(messages) is False
-        assert mock_mlx_provider._detect_images_optimized(messages) is False
 
 
 @pytest.mark.unit

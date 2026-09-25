@@ -92,13 +92,16 @@ def test_the_frontend_routes_do_not_shadow_the_api(client):
     assert client.get("/js/app.js").status_code == 200
     assert client.get("/css/app.css").status_code == 200
 
-
-def test_api_and_docs_still_win_over_the_catch_all(client):
-    # The catch-all is registered after every router, so ordering alone
-    # protects these. Pinned because the protection is positional, and a
-    # route added below it would be shadowed with no error.
+    # The API and the docs still win over the frontend routes, which are
+    # registered after every router, so ordering alone protects these. Pinned
+    # because the protection is positional, and a route added below would be
+    # shadowed with no error. `/v1/models` (exact GET) also shares a prefix
+    # with `/v1/models/{id}/load` (POST with extra segments); that route must
+    # not shadow the listing every client discovers ids from.
     assert client.get("/openapi.json").status_code == 200
-    assert client.get("/v1/models").status_code == 200
+    resp = client.get("/v1/models")
+    assert resp.status_code == 200
+    assert isinstance(resp.json()["data"], list)
 
 
 def test_assets_are_revalidated(client):

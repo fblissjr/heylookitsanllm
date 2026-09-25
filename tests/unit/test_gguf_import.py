@@ -40,34 +40,25 @@ def importer():
 # ---------------------------------------------------------------------------
 
 
+# Only a primary .gguf makes a dir an importable GGUF model.
+# - primary_detected: if this regresses, a plain GGUF model dir (just the
+#   primary file) stops being recognized as importable at all.
+# - mmproj_only / mtp_only: a dir with ONLY a companion sidecar (projector or
+#   drafter, no primary weight) is not a servable model.
+# - imatrix_gguf_file: imatrix calibration data uses ".gguf_file", NOT
+#   ".gguf" -- if this ever matched, calibration blobs would be models.
 @pytest.mark.unit
-class TestIsGGUFModel:
-    def test_primary_gguf_detected(self, importer, tmp_path):
-        # If this regresses, a plain GGUF model dir (just the primary file)
-        # stops being recognized as importable at all.
-        _write_bytes(tmp_path / "model-a.gguf", 1000)
-        assert importer._is_gguf_model(tmp_path)
-
-    def test_mmproj_only_is_not_primary(self, importer, tmp_path):
-        # A dir with ONLY an mmproj sidecar (no primary weight) must not be
-        # treated as a servable GGUF model -- mmproj is a companion file.
-        _write_bytes(tmp_path / "mmproj-F16.gguf", 1000)
-        assert not importer._is_gguf_model(tmp_path)
-
-    def test_mtp_only_is_not_primary(self, importer, tmp_path):
-        # Same reasoning for a bare drafter sidecar with no primary model.
-        _write_bytes(tmp_path / "mtp-model-a.gguf", 1000)
-        assert not importer._is_gguf_model(tmp_path)
-
-    def test_imatrix_gguf_file_extension_is_not_gguf(self, importer, tmp_path):
-        # imatrix calibration data uses ".gguf_file", NOT ".gguf" -- if this
-        # ever matched, calibration blobs would be misdetected as models.
-        _write_bytes(tmp_path / "imatrix_unsloth.gguf_file", 1000)
-        assert not importer._is_gguf_model(tmp_path)
-
-    def test_non_gguf_dir_not_detected(self, importer, tmp_path):
-        (tmp_path / "readme.txt").write_text("hi")
-        assert not importer._is_gguf_model(tmp_path)
+@pytest.mark.parametrize("filename, expected", [
+    ("model-a.gguf", True),
+    ("mmproj-F16.gguf", False),
+    ("mtp-model-a.gguf", False),
+    ("imatrix_unsloth.gguf_file", False),
+    ("readme.txt", False),
+], ids=["primary_detected", "mmproj_only_not_primary", "mtp_only_not_primary",
+        "imatrix_gguf_file_not_gguf", "non_gguf_dir"])
+def test_is_gguf_model(importer, tmp_path, filename, expected):
+    _write_bytes(tmp_path / filename, 1000)
+    assert importer._is_gguf_model(tmp_path) is expected
 
 
 # ---------------------------------------------------------------------------
@@ -98,19 +89,20 @@ class TestAssistantCheckpointSkipped:
         ids = [m["id"] for m in found]
         assert d.name not in ids
 
-    def test_regular_mlx_dir_with_safetensors_still_detected(self, importer, tmp_path):
-        # Regression guard: the assistant-checkpoint refusal must not
-        # collaterally swallow legitimate MLX checkpoints.
+    # Regression guard: the assistant-checkpoint refusal must not
+    # collaterally swallow legitimate MLX checkpoints, with or without an
+    # `architectures` list.
+    @pytest.mark.parametrize("config", [
+        {"architectures": ["LlamaForCausalLM"], "model_type": "llama"},
+        {"model_type": "llama"},
+    ], ids=["with_architectures", "model_type_only"])
+    def test_regular_mlx_dir_with_safetensors_still_detected(self, importer, tmp_path, config):
         d = tmp_path / "real-mlx-model"
         d.mkdir()
-        (d / "config.json").write_text(
-            json.dumps({"architectures": ["LlamaForCausalLM"], "model_type": "llama"})
-        )
+        (d / "config.json").write_text(json.dumps(config))
         _write_bytes(d / "model.safetensors", 1000)
         found = importer.scan_directory(str(tmp_path))
-        ids = [m["id"] for m in found]
-        assert "real-mlx-model" in ids
-        assert next(m for m in found if m["id"] == "real-mlx-model")["provider"] == "mlx"
+        assert [(m["id"], m["provider"]) for m in found] == [("real-mlx-model", "mlx")]
 
 
 # ---------------------------------------------------------------------------
@@ -289,29 +281,24 @@ class TestCreateGGUFEntry:
         entry = importer._create_gguf_entry(d)
         assert entry["config"]["model_path"] == str(d / "big-00001-of-00002.gguf")
 
-    def test_mmproj_preference_f16_over_bf16_and_f32(self, importer, tmp_path):
-        d = _make_gguf_dir(
-            tmp_path, mmproj=["mmproj-BF16.gguf", "mmproj-F16.gguf", "mmproj-F32.gguf"]
-        )
-        entry = importer._create_gguf_entry(d)
-        assert entry["config"]["mmproj_path"] == str(d / "mmproj-F16.gguf")
-        assert "vision" in entry["config"]["modalities"]
-
-    def test_mmproj_preference_bf16_over_f32_when_no_f16(self, importer, tmp_path):
-        d = _make_gguf_dir(tmp_path, mmproj=["mmproj-BF16.gguf", "mmproj-F32.gguf"])
-        entry = importer._create_gguf_entry(d)
-        assert entry["config"]["mmproj_path"] == str(d / "mmproj-BF16.gguf")
-
-    def test_mmproj_arbitrary_name_used_when_no_known_precision(self, importer, tmp_path):
-        d = _make_gguf_dir(tmp_path, mmproj=["mmproj-custom.gguf"])
-        entry = importer._create_gguf_entry(d)
-        assert entry["config"]["mmproj_path"] == str(d / "mmproj-custom.gguf")
-
-    def test_no_mmproj_means_text_only_modality(self, importer, tmp_path):
-        d = _make_gguf_dir(tmp_path)
-        entry = importer._create_gguf_entry(d)
-        assert entry["config"]["modalities"] == ["text"]
-        assert "mmproj_path" not in entry["config"]
+    # Projector choice: F16 > BF16 > F32 > any other mmproj name; a chosen
+    # projector adds vision, none leaves the entry text-only.
+    @pytest.mark.parametrize("mmproj, expected", [
+        (["mmproj-BF16.gguf", "mmproj-F16.gguf", "mmproj-F32.gguf"], "mmproj-F16.gguf"),
+        (["mmproj-BF16.gguf", "mmproj-F32.gguf"], "mmproj-BF16.gguf"),
+        (["mmproj-custom.gguf"], "mmproj-custom.gguf"),
+        (None, None),
+    ], ids=["f16_over_bf16_and_f32", "bf16_over_f32_without_f16", "arbitrary_name_when_no_known_precision",
+            "no_mmproj_text_only"])
+    def test_mmproj_choice(self, importer, tmp_path, mmproj, expected):
+        d = _make_gguf_dir(tmp_path, mmproj=mmproj)
+        config = importer._create_gguf_entry(d)["config"]
+        if expected is None:
+            assert "mmproj_path" not in config
+            assert config["modalities"] == ["text"]
+        else:
+            assert config["mmproj_path"] == str(d / expected)
+            assert "vision" in config["modalities"]
 
     def test_imatrix_file_never_treated_as_model_or_sidecar(self, importer, tmp_path):
         d = _make_gguf_dir(tmp_path, mmproj=["mmproj-F16.gguf"], imatrix=True)
@@ -325,26 +312,6 @@ class TestCreateGGUFEntry:
         gguf_entries = [m for m in found if m["provider"] == "gguf"]
         assert len(gguf_entries) == 1
         assert gguf_entries[0]["id"] == "my-gguf-model"
-
-
-# ---------------------------------------------------------------------------
-# What a SCAN RESULT reports -- the importer's findings have to survive the
-# trip through ModelService into the admin API, or the Models page can only
-# ever show what an MLX safetensors dir happens to expose.
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-class TestMLXDetectionRegression:
-    def test_mlx_dir_still_detected(self, importer, tmp_path):
-        d = tmp_path / "plain-mlx-model"
-        d.mkdir()
-        (d / "config.json").write_text(json.dumps({"model_type": "llama"}))
-        _write_bytes(d / "model.safetensors", 5_000)
-        found = importer.scan_directory(str(tmp_path))
-        assert len(found) == 1
-        assert found[0]["provider"] == "mlx"
-        assert found[0]["id"] == "plain-mlx-model"
 
 
 # ---------------------------------------------------------------------------

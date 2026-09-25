@@ -28,17 +28,22 @@ ASSISTANT_LAST = [{"role": "user", "content": "hi"}, {"role": "assistant", "cont
 
 @pytest.mark.unit
 class TestIsContinuation:
-    def test_auto_trailing_assistant_continues(self):
-        assert _req(ASSISTANT_LAST).is_continuation() is True
+    """Auto = a trailing assistant message continues; an explicit flag wins
+    either way (True continues any role, False never continues)."""
 
-    def test_auto_trailing_user_does_not(self):
-        assert _req(USER_LAST).is_continuation() is False
-
-    def test_explicit_true_continues_any_role(self):
-        assert _req(USER_LAST, flag=True).is_continuation() is True
-
-    def test_explicit_false_never_continues(self):
-        assert _req(ASSISTANT_LAST, flag=False).is_continuation() is False
+    @pytest.mark.parametrize(
+        "messages, flag, expected",
+        [
+            (ASSISTANT_LAST, None, True),
+            (USER_LAST, None, False),
+            (USER_LAST, True, True),
+            (ASSISTANT_LAST, False, False),
+        ],
+        ids=["auto-trailing-assistant-continues", "auto-trailing-user-does-not",
+             "explicit-true-continues-any-role", "explicit-false-never-continues"],
+    )
+    def test_is_continuation(self, messages, flag, expected):
+        assert _req(messages, flag=flag).is_continuation() is expected
 
 
 class _PrefillingTemplate:
@@ -120,31 +125,32 @@ class TestThinkingResume:
         # a user-role continuation is never a thinking resume
         assert not self._req([{"role": "user", "content": "q"}], flag=True).resumes_thinking()
 
-    def test_append_after_an_already_open_block(self):
+    # The resume appends the family's opener unless the prompt already ends
+    # in it. Qwen3.5+: the generation prompt already ends in an open <think>;
+    # Qwen3: the model emits <think> itself, so the opener is added.
+    # v1.79.63: gemma re-opens <|channel>thought, harmony the analysis
+    # channel; the matching parser is armed to start inside it.
+    @pytest.mark.parametrize(
+        "cases",
+        [
+            [("think", "<|im_start|>assistant\n<think>\n", "  so far",
+              "<|im_start|>assistant\n<think>\nso far"),
+             ("think", "<|im_start|>assistant\n", "so far",
+              "<|im_start|>assistant\n<think>\nso far")],
+            [("gemma", "<|turn>model\n", "so far", "<|turn>model\n<|channel>thought\nso far"),
+             ("harmony", "<|start|>assistant", "so far",
+              "<|start|>assistant<|channel|>analysis<|message|>so far")],
+        ],
+        ids=["append-after-an-already-open-block", "channel-families-reopen-their-own-channel"],
+    )
+    def test_resume_appends_the_familys_opener(self, cases):
         from types import SimpleNamespace
         from heylook_llm.providers.mlx_provider import _append_thinking_resume
-        info = SimpleNamespace(has_thinking_markers=True, has_harmony_structure=False,
-                               has_gemma_channel_structure=False)
-        # Qwen3.5+: the generation prompt already ends in an open <think>
-        out = _append_thinking_resume("<|im_start|>assistant\n<think>\n", "  so far", info)
-        assert out == "<|im_start|>assistant\n<think>\nso far"
-        # Qwen3: the model emits <think> itself, so the opener is added
-        out = _append_thinking_resume("<|im_start|>assistant\n", "so far", info)
-        assert out == "<|im_start|>assistant\n<think>\nso far"
-
-    def test_channel_families_reopen_their_own_channel(self):
-        # v1.79.63: gemma re-opens <|channel>thought, harmony the analysis
-        # channel; the matching parser is armed to start inside it.
-        from types import SimpleNamespace
-        from heylook_llm.providers.mlx_provider import _append_thinking_resume
-        gemma = SimpleNamespace(has_thinking_markers=False, has_harmony_structure=False,
-                                has_gemma_channel_structure=True)
-        assert _append_thinking_resume("<|turn>model\n", "so far", gemma) \
-            == "<|turn>model\n<|channel>thought\nso far"
-        harmony = SimpleNamespace(has_thinking_markers=False, has_harmony_structure=True,
-                                  has_gemma_channel_structure=False)
-        assert _append_thinking_resume("<|start|>assistant", "so far", harmony) \
-            == "<|start|>assistant<|channel|>analysis<|message|>so far"
+        for family, prompt, trace, expected in cases:
+            info = SimpleNamespace(has_thinking_markers=family == "think",
+                                   has_harmony_structure=family == "harmony",
+                                   has_gemma_channel_structure=family == "gemma")
+            assert _append_thinking_resume(prompt, trace, info) == expected, family
 
     def test_a_template_with_no_thinking_structure_refuses_loudly(self):
         from types import SimpleNamespace
@@ -173,69 +179,44 @@ class TestContinuationKeepsTheSeamSpace:
     and the space in " need" is real. The context manager seeds the buffer
     so the trim never fires, and restores the factory afterwards."""
 
-    class _SpmLike:
-        # The shape of mlx-lm's SPMStreamingDetokenizer trim: a leading space
-        # is dropped only while `text` is empty.
-        def __init__(self, tok):
-            self.reset()
+    # Driven through the real source (detokenizer_source picks the vendored
+    # SPMStreamingDetokenizer from tokenizer.json's decoder), since a rename
+    # of the prototype attribute would silently stop the seeding.
+    @pytest.mark.parametrize(
+        "continuing, raises, expected",
+        [
+            (False, False, ("need", " the")),
+            (True, False, (" need", " the")),
+            (True, True, None),
+        ],
+        ids=["fresh-turn-still-trims", "continuation-keeps-the-first-space",
+             "restored-even-when-the-generation-raises"],
+    )
+    def test_seam_space(self, tmp_path, continuing, raises, expected):
+        import json
+        from heylook_llm.providers.common.generation_core import (
+            continuation_detokenizer, detokenizer_source)
+        from heylook_llm.providers.common.lm_detokenizer import SPMStreamingDetokenizer
 
-        def reset(self):
-            self.text = ""
-            self.offset = 0
-            self.tokens = []
-
-        def add_token(self, piece):
-            if not self.text and piece.startswith(" "):
-                piece = piece[1:]
-            self.text += piece
-
-        @property
-        def last_segment(self):
-            seg = self.text[self.offset:]
-            self.offset = len(self.text)
-            return seg
-
-    class _Wrapper:
-        def __init__(self, cls):
-            self._detokenizer = cls(self)
-
-        @property
-        def detokenizer(self):
-            import copy
-            detok = copy.copy(self._detokenizer)
-            detok.reset()
-            return detok
-
-    def _run(self, continuing):
-        from heylook_llm.providers.common.generation_core import continuation_detokenizer
-        tok = self._Wrapper(self._SpmLike)
-        with continuation_detokenizer(tok, continuing):
-            d = tok.detokenizer   # what stream_generate does, once
-            d.reset()
-            d.add_token(" need")
-            first = d.last_segment
-            d.add_token(" the")
-            second = d.last_segment
-        return tok, first, second
-
-    def test_fresh_turn_still_trims(self):
-        tok, first, second = self._run(continuing=False)
-        assert (first, second) == ("need", " the")
-        assert type(tok._detokenizer) is self._SpmLike
-
-    def test_continuation_keeps_the_first_space_and_restores_the_factory(self):
-        tok, first, second = self._run(continuing=True)
-        assert (first, second) == (" need", " the")
-        assert "\x00" not in first + second
-        assert type(tok._detokenizer) is self._SpmLike  # restored in finally
-
-    def test_restored_even_when_the_generation_raises(self):
-        from heylook_llm.providers.common.generation_core import continuation_detokenizer
-        tok = self._Wrapper(self._SpmLike)
-        with pytest.raises(RuntimeError):
-            with continuation_detokenizer(tok, True):
-                raise RuntimeError("mid-generation")
-        assert type(tok._detokenizer) is self._SpmLike
+        (tmp_path / "tokenizer.json").write_text(json.dumps({"decoder": _SPM_DECODER}))
+        source = detokenizer_source(_FakeSpmTokenizer(), tmp_path)
+        prototype = source._detokenizer
+        assert type(prototype) is SPMStreamingDetokenizer
+        if raises:
+            with pytest.raises(RuntimeError):
+                with continuation_detokenizer(source, continuing):
+                    raise RuntimeError("mid-generation")
+        else:
+            with continuation_detokenizer(source, continuing):
+                d = source.detokenizer   # what stream_generate does, once
+                d.reset()
+                d.add_token(1)
+                first = d.last_segment
+                d.add_token(2)
+                second = d.last_segment
+            assert (first, second) == expected
+            assert "\x00" not in first + second
+        assert source._detokenizer is prototype  # restored in finally
 
     def test_a_read_only_text_detokenizer_is_left_alone(self):
         """The runtime shape on the mlx-vlm path: a raw HF tokenizer wrapped
@@ -271,6 +252,24 @@ class TestContinuationKeepsTheSeamSpace:
         assert _seedable(SPMStreamingDetokenizer)
         assert _seedable(BPEStreamingDetokenizer)
         assert not _seedable(NaiveStreamingDetokenizer)
+
+
+_SPM_DECODER = {"type": "Sequence", "decoders": [
+    {"type": "Replace", "pattern": {"String": "\u2581"}, "content": " "},
+    {"type": "ByteFallback"}, {"type": "Fuse"},
+    {"type": "Strip", "content": " ", "start": 1, "stop": 0}]}
+
+
+class _FakeSpmTokenizer:
+    """A raw-HF-tokenizer stand-in the vendored SPM detokenizer can build its
+    token map from: id 1 is "\u2581need", id 2 is "\u2581the"."""
+    _tokens = ["<unk>", "\u2581need", "\u2581the"]
+
+    def __len__(self):
+        return len(self._tokens)
+
+    def convert_ids_to_tokens(self, ids):
+        return [self._tokens[i] for i in ids]
 
 
 class _FakeHfForDetok:

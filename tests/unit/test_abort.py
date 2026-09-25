@@ -10,40 +10,24 @@ from heylook_llm.providers.abort import AbortEvent
 class TestAbortEvent:
     """AbortEvent basic behavior."""
 
-    def test_initial_state_is_clear(self):
+    # ops applied in order to a fresh event -> is_set() afterwards; the repr
+    # rows check the state word instead.
+    @pytest.mark.parametrize("ops, expect_set, repr_word", [
+        ((), False, None),
+        (("set",), True, None),
+        (("set", "clear"), False, None),
+        (("set", "set"), True, None),
+        (("clear", "clear"), False, None),
+        ((), None, "clear"),
+        (("set",), None, "set"),
+    ], ids=["initial_state_is_clear", "set_makes_is_set_true", "clear_resets_after_set",
+            "multiple_sets_are_idempotent", "multiple_clears_are_idempotent",
+            "repr_clear", "repr_set"])
+    def test_state(self, ops, expect_set, repr_word):
         abort = AbortEvent()
-        assert not abort.is_set()
-
-    def test_set_makes_is_set_true(self):
-        abort = AbortEvent()
-        abort.set()
-        assert abort.is_set()
-
-    def test_clear_resets_after_set(self):
-        abort = AbortEvent()
-        abort.set()
-        abort.clear()
-        assert not abort.is_set()
-
-    def test_multiple_sets_are_idempotent(self):
-        abort = AbortEvent()
-        abort.set()
-        abort.set()
-        assert abort.is_set()
-
-    def test_multiple_clears_are_idempotent(self):
-        abort = AbortEvent()
-        abort.clear()
-        abort.clear()
-        assert not abort.is_set()
-
-    def test_repr_clear(self):
-        abort = AbortEvent()
-        assert "clear" in repr(abort)
-
-    def test_repr_set(self):
-        abort = AbortEvent()
-        abort.set()
-        assert "set" in repr(abort)
-
-
+        for op in ops:
+            getattr(abort, op)()
+        if repr_word is not None:
+            assert repr_word in repr(abort)
+        else:
+            assert abort.is_set() is expect_set

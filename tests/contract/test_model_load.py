@@ -55,15 +55,6 @@ class TestModelLoadWarm:
         assert resp.status_code == 400
 
 
-    def test_listing_still_resolves(self, client):
-        """`/v1/models` (exact GET) and `/v1/models/{id}/load` (POST with
-        extra segments) share a prefix; the new route must not shadow the
-        OpenAI-compatible listing every client discovers ids from."""
-        resp = client.get("/v1/models")
-        assert resp.status_code == 200
-        assert isinstance(resp.json()["data"], list)
-
-
 class TestBusyIsBackpressureNotBreakage:
     """MODEL_BUSY must answer 503, not 500.
 
@@ -94,16 +85,18 @@ class TestBusyIsBackpressureNotBreakage:
         monkeypatch.setattr(router, "get_provider", boom)
         return client.post("/v1/models/test-mlx-model/load")
 
-    def test_busy_is_503(self, client, monkeypatch):
-        assert self._busy(client, monkeypatch).status_code == 503
-
-    def test_busy_carries_the_shared_envelope(self, client, monkeypatch):
-        """Same body shape and headers as the inference routes, because it is
-        literally the same function -- asserted so a future hand-rolled copy
-        here has to disagree with a test."""
+    def test_busy_is_503_with_the_shared_envelope_and_the_routers_reason(self, client, monkeypatch):
+        """503, with the same body shape and headers as the inference routes,
+        because it is literally the same function -- asserted so a future
+        hand-rolled copy here has to disagree with a test. The eviction-blocked
+        cause names which model is busy and what to do about it; collapsing it
+        to a generic queue-full sentence was the defect busy_response was
+        created to fix."""
         resp = self._busy(client, monkeypatch)
+        assert resp.status_code == 503
         assert resp.json()["error"]["code"] == "model_overloaded"
         assert resp.headers.get("Retry-After") == "1"
+        assert "is generating" in resp.json()["error"]["message"]
 
     def test_busy_echoes_the_request_id(self, client, monkeypatch):
         """A correlator that only sees responses must be able to match the
@@ -119,12 +112,6 @@ class TestBusyIsBackpressureNotBreakage:
         assert (resp.status_code, resp.headers.get("X-Request-ID")) == (503, "corr-42")
         resp = client.post("/v1/models/test-mlx-model/load", headers={"X-Request-ID": "bad id!"})
         assert "X-Request-ID" not in resp.headers
-
-    def test_busy_keeps_the_reason_the_router_gave(self, client, monkeypatch):
-        """The eviction-blocked cause names which model is busy and what to do
-        about it; collapsing it to a generic queue-full sentence was the defect
-        busy_response was created to fix."""
-        assert "is generating" in self._busy(client, monkeypatch).json()["error"]["message"]
 
     def test_a_real_load_failure_is_still_500(self, client, monkeypatch):
         """The 503 must not swallow the case this route's 500 is FOR."""

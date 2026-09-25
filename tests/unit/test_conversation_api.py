@@ -25,42 +25,112 @@ async def conn():
 # Conversation CRUD
 # ---------------------------------------------------------------------------
 
+# Create / update round-trip title, model_id, system_prompt, params and the
+# preset stamp; fields an update does not write are untouched. Each row is
+# checked on the call's own result AND on a fresh get.
+# Rows: (create kwargs, update kwargs or None, expected fields, fields that
+# must equal their created value).
+# - preset stamps: new-document preset inheritance -- a document can START as
+#   a preset, which is an explicit apply, so the stamp is written at creation
+#   and must round-trip (not just echo in the create response).
+# - params: per-conversation sampler settings (a JSON blob) keep tuning with
+#   the conversation, next to system_prompt, on the server; types survive.
+_ROUND_TRIP_ROWS = [
+    pytest.param({"title": "Test Chat", "model_id": "llama-3"}, None,
+                 {"title": "Test Chat", "model_id": "llama-3", "messages": []}, (),
+                 id="create_and_get"),
+    pytest.param({"title": "Inherited", "applied_preset_id": "preset-123"}, None,
+                 {"applied_preset_id": "preset-123"}, (),
+                 id="create_with_applied_preset_stamps"),
+    pytest.param({"title": "Plain"}, None, {"applied_preset_id": None}, (),
+                 id="create_without_preset_stays_unstamped"),
+    pytest.param({"title": "Original"}, {"title": "Renamed", "system_prompt": "Be helpful."},
+                 {"title": "Renamed", "system_prompt": "Be helpful."}, ("model_id",),
+                 id="update"),
+    pytest.param({"title": "Test", "model_id": "llama-3"}, {"model_id": None},
+                 {"model_id": None}, ("title",), id="clear_model_id"),
+    pytest.param({"title": "c"}, None, {"params": {}}, (),
+                 id="create_defaults_to_empty_params"),
+    pytest.param({"title": "c", "params": {"temperature": 1.0, "top_p": 0.9, "top_k": 40,
+                                           "seed": None, "enable_thinking": True}}, None,
+                 {"params": {"temperature": 1.0, "top_p": 0.9, "top_k": 40,
+                             "seed": None, "enable_thinking": True}}, (),
+                 id="params_round_trip_types"),
+    pytest.param({"title": "c", "params": {"temperature": 1.0}},
+                 {"params": {"temperature": 0.5, "top_k": 20}},
+                 {"params": {"temperature": 0.5, "top_k": 20}}, (),
+                 id="update_params"),
+    pytest.param({"title": "c", "system_prompt": "be terse", "params": {"temperature": 1.0}},
+                 {"params": {"temperature": 0.2}},
+                 {"params": {"temperature": 0.2}}, ("system_prompt",),
+                 id="update_params_independent_of_system_prompt"),
+]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize("create, update, expected, untouched", _ROUND_TRIP_ROWS)
+async def test_conversation_round_trip(conn, create, update, expected, untouched):
+    conv = await db.create_conversation(conn, **create)
+    assert conv["id"]
+    result = conv
+    if update is not None:
+        result = await db.update_conversation(conn, conv["id"], **update)
+        assert result is not None
+    fetched = await db.get_conversation(conn, conv["id"])
+    assert fetched is not None
+    for got in (result, fetched):
+        for key, value in expected.items():
+            assert got[key] == value, key
+        for key in untouched:
+            assert got[key] == conv[key], f"{key} changed but was not written"
+
+
+async def _update_missing_conversation(conn):
+    return await db.update_conversation(conn, "nonexistent", title="Nope")
+
+
+async def _delete_missing_conversation(conn):
+    return await db.delete_conversation(conn, "ghost")
+
+
+async def _get_missing_conversation(conn):
+    return await db.get_conversation(conn, "nope")
+
+
+async def _clone_missing_conversation(conn):
+    return await db.clone_conversation(conn, "ghost")
+
+
+async def _append_to_missing_conversation(conn):
+    return await db.append_message(conn, "ghost", role="user", content="Hello?")
+
+
+async def _update_missing_message(conn):
+    conv = await db.create_conversation(conn)
+    return await db.update_message(conn, conv["id"], "ghost", content="Nope")
+
+
+# Every store op on a missing conversation or message id answers None/False,
+# never raises. The route's 404 for a missing clone id is a row of
+# test_clone_route.
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize("op, expected", [
+    pytest.param(_update_missing_conversation, None, id="update_nonexistent"),
+    pytest.param(_delete_missing_conversation, False, id="delete_nonexistent"),
+    pytest.param(_get_missing_conversation, None, id="get_nonexistent"),
+    pytest.param(_clone_missing_conversation, None, id="clone_nonexistent_returns_none"),
+    pytest.param(_append_to_missing_conversation, None,
+                 id="append_to_nonexistent_conversation"),
+    pytest.param(_update_missing_message, None, id="update_nonexistent_message"),
+])
+async def test_missing_id(conn, op, expected):
+    assert await op(conn) is expected
+
+
 @pytest.mark.unit
 class TestConversationCRUD:
-    @pytest.mark.asyncio
-    async def test_create_and_get(self, conn):
-        conv = await db.create_conversation(conn, title="Test Chat", model_id="llama-3")
-        assert conv["title"] == "Test Chat"
-        assert conv["model_id"] == "llama-3"
-        assert conv["messages"] == []
-        assert conv["id"]
-
-        fetched = await db.get_conversation(conn, conv["id"])
-        assert fetched is not None
-        assert fetched["title"] == "Test Chat"
-        assert fetched["messages"] == []
-
-    @pytest.mark.asyncio
-    async def test_create_with_applied_preset_stamps(self, conn):
-        # New-document preset inheritance: a document can START as a preset,
-        # which is an explicit apply, so the stamp is written at creation and
-        # must round-trip (not just echo in the create response).
-        conv = await db.create_conversation(
-            conn, title="Inherited", applied_preset_id="preset-123"
-        )
-        assert conv["applied_preset_id"] == "preset-123"
-        fetched = await db.get_conversation(conn, conv["id"])
-        assert fetched is not None
-        assert fetched["applied_preset_id"] == "preset-123"
-
-    @pytest.mark.asyncio
-    async def test_create_without_preset_stays_unstamped(self, conn):
-        conv = await db.create_conversation(conn, title="Plain")
-        assert conv["applied_preset_id"] is None
-        fetched = await db.get_conversation(conn, conv["id"])
-        assert fetched is not None
-        assert fetched["applied_preset_id"] is None
-
     @pytest.mark.asyncio
     async def test_list_ordered_by_updated(self, conn):
         c1 = await db.create_conversation(conn, title="First")
@@ -70,94 +140,6 @@ class TestConversationCRUD:
         assert len(convs) == 2
         assert convs[0]["id"] == c2["id"]
         assert convs[1]["id"] == c1["id"]
-
-    @pytest.mark.asyncio
-    async def test_update(self, conn):
-        conv = await db.create_conversation(conn, title="Original")
-        updated = await db.update_conversation(
-            conn, conv["id"], title="Renamed", system_prompt="Be helpful."
-        )
-        assert updated is not None
-        assert updated["title"] == "Renamed"
-        assert updated["system_prompt"] == "Be helpful."
-        # model_id unchanged
-        assert updated["model_id"] == conv["model_id"]
-
-    @pytest.mark.asyncio
-    async def test_clear_model_id(self, conn):
-        conv = await db.create_conversation(conn, title="Test", model_id="llama-3")
-        updated = await db.update_conversation(conn, conv["id"], model_id=None)
-        assert updated is not None
-        assert updated["model_id"] is None
-        assert updated["title"] == "Test"
-
-    @pytest.mark.asyncio
-    async def test_update_nonexistent(self, conn):
-        result = await db.update_conversation(conn, "nonexistent", title="Nope")
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_delete(self, conn):
-        conv = await db.create_conversation(conn, title="Doomed")
-        assert await db.delete_conversation(conn, conv["id"]) is True
-        assert await db.get_conversation(conn, conv["id"]) is None
-
-    @pytest.mark.asyncio
-    async def test_delete_nonexistent(self, conn):
-        assert await db.delete_conversation(conn, "ghost") is False
-
-    @pytest.mark.asyncio
-    async def test_get_nonexistent(self, conn):
-        assert await db.get_conversation(conn, "nope") is None
-
-    @pytest.mark.asyncio
-    async def test_clone_default_title(self, conn):
-        conv = await db.create_conversation(
-            conn,
-            title="Design Talk",
-            model_id="qwen-3",
-            system_prompt="Be concise",
-            params={"temperature": 0.4},
-            applied_preset_id="preset-abc",
-        )
-        m1 = await db.append_message(conn, conv["id"], role="user", content="Hello")
-        m2 = await db.append_message(conn, conv["id"], role="assistant", content="Hi!", thinking="Thinking...")
-
-        cloned = await db.clone_conversation(conn, conv["id"])
-        assert cloned is not None
-        assert cloned["id"] != conv["id"]
-        assert cloned["title"] == "Copy of Design Talk"
-        assert cloned["model_id"] == "qwen-3"
-        assert cloned["system_prompt"] == "Be concise"
-        assert cloned["params"] == {"temperature": 0.4}
-        assert cloned["applied_preset_id"] == "preset-abc"
-        assert len(cloned["messages"]) == 2
-
-        # Check message clone properties
-        cm1, cm2 = cloned["messages"]
-        assert cm1["id"] != m1["id"]
-        assert cm1["role"] == "user"
-        assert cm1["content"] == "Hello"
-        assert cm1["position"] == 0
-
-        assert cm2["id"] != m2["id"]
-        assert cm2["role"] == "assistant"
-        assert cm2["content"] == "Hi!"
-        assert cm2["thinking"] == "Thinking..."
-        assert cm2["position"] == 1
-
-        # Check fetch of cloned conversation
-        fetched = await db.get_conversation(conn, cloned["id"])
-        assert fetched is not None
-        assert fetched["title"] == "Copy of Design Talk"
-        assert len(fetched["messages"]) == 2
-
-    @pytest.mark.asyncio
-    async def test_clone_custom_title(self, conn):
-        conv = await db.create_conversation(conn, title="Original")
-        cloned = await db.clone_conversation(conn, conv["id"], title="Branched Chat")
-        assert cloned is not None
-        assert cloned["title"] == "Branched Chat"
 
     @pytest.mark.asyncio
     async def test_clone_with_media_blobs(self, conn):
@@ -184,11 +166,6 @@ class TestConversationCRUD:
         assert blob == ("image/png", b"heylook")
 
     @pytest.mark.asyncio
-    async def test_clone_nonexistent_returns_none(self, conn):
-        result = await db.clone_conversation(conn, "ghost")
-        assert result is None
-
-    @pytest.mark.asyncio
     async def test_clone_independence_after_delete(self, conn):
         conv = await db.create_conversation(conn, title="Parent")
         await db.append_message(conn, conv["id"], role="user", content="msg")
@@ -203,81 +180,125 @@ class TestConversationCRUD:
         assert len(fetched["messages"]) == 1
         assert fetched["messages"][0]["content"] == "msg"
 
+    # Clone deep-copies fields and messages under new ids; the title defaults
+    # to 'Copy of X' or takes the given one.
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("clone_kwargs, expected_title", [
+        pytest.param({}, "Copy of Design Talk", id="clone_default_title"),
+        pytest.param({"title": "Branched Chat"}, "Branched Chat", id="clone_custom_title"),
+    ])
+    async def test_clone_copy(self, conn, clone_kwargs, expected_title):
+        conv = await db.create_conversation(
+            conn,
+            title="Design Talk",
+            model_id="qwen-3",
+            system_prompt="Be concise",
+            params={"temperature": 0.4},
+            applied_preset_id="preset-abc",
+        )
+        m1 = await db.append_message(conn, conv["id"], role="user", content="Hello")
+        m2 = await db.append_message(conn, conv["id"], role="assistant", content="Hi!", thinking="Thinking...")
+
+        cloned = await db.clone_conversation(conn, conv["id"], **clone_kwargs)
+        assert cloned is not None
+        assert cloned["id"] != conv["id"]
+        assert cloned["title"] == expected_title
+        assert cloned["model_id"] == "qwen-3"
+        assert cloned["system_prompt"] == "Be concise"
+        assert cloned["params"] == {"temperature": 0.4}
+        assert cloned["applied_preset_id"] == "preset-abc"
+        assert len(cloned["messages"]) == 2
+
+        # Check message clone properties
+        cm1, cm2 = cloned["messages"]
+        assert cm1["id"] != m1["id"]
+        assert cm1["role"] == "user"
+        assert cm1["content"] == "Hello"
+        assert cm1["position"] == 0
+
+        assert cm2["id"] != m2["id"]
+        assert cm2["role"] == "assistant"
+        assert cm2["content"] == "Hi!"
+        assert cm2["thinking"] == "Thinking..."
+        assert cm2["position"] == 1
+
+        # Check fetch of cloned conversation
+        fetched = await db.get_conversation(conn, cloned["id"])
+        assert fetched is not None
+        assert fetched["title"] == expected_title
+        assert len(fetched["messages"]) == 2
+
 
 # ---------------------------------------------------------------------------
 # Message CRUD
 # ---------------------------------------------------------------------------
 
+# Append and update round-trip content and thinking independently; positions
+# increase from 0. Rows: (append kwargs in order, expected fields on each
+# append's result, update kwargs for the last message or None, expected fields
+# on the update's result, contents a fresh get must list or None).
+_MESSAGE_ROWS = [
+    pytest.param(
+        [{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Hi there"}],
+        [{"position": 0, "role": "user", "content": "Hello"}, {"position": 1}],
+        None, None, ["Hello", "Hi there"],
+        id="append_and_retrieve",
+    ),
+    pytest.param(
+        [{"role": "assistant", "content": "Answer", "thinking": "Let me think..."}],
+        [{"thinking": "Let me think..."}], None, None, None,
+        id="append_with_thinking",
+    ),
+    pytest.param(
+        [{"role": "user", "content": "Original"}], [{}],
+        {"content": "Edited"}, {"content": "Edited"}, None,
+        id="update_content",
+    ),
+    pytest.param(
+        [{"role": "assistant", "content": "Answer", "thinking": "Old thinking"}], [{}],
+        {"thinking": "New thinking"}, {"thinking": "New thinking", "content": "Answer"}, None,
+        id="update_thinking_only",
+    ),
+    pytest.param(
+        [{"role": "assistant", "content": "Answer", "thinking": "Some thinking"}], [{}],
+        {"thinking": None}, {"thinking": None, "content": "Answer"}, None,
+        id="clear_thinking",
+    ),
+    pytest.param(
+        [{"role": "user", "content": f"msg{i}"} for i in range(5)],
+        [{"position": i} for i in range(5)], None, None, None,
+        id="position_auto_increment",
+    ),
+]
+
+
 @pytest.mark.unit
 class TestMessageCRUD:
     @pytest.mark.asyncio
-    async def test_append_and_retrieve(self, conn):
+    @pytest.mark.parametrize(
+        "appends, expected_appended, update, expected_updated, fetched_contents",
+        _MESSAGE_ROWS,
+    )
+    async def test_message_round_trip(
+        self, conn, appends, expected_appended, update, expected_updated, fetched_contents
+    ):
         conv = await db.create_conversation(conn)
-        m1 = await db.append_message(conn, conv["id"], role="user", content="Hello")
-        m2 = await db.append_message(conn, conv["id"], role="assistant", content="Hi there")
-
-        assert m1 is not None
-        assert m1["position"] == 0
-        assert m1["role"] == "user"
-        assert m1["content"] == "Hello"
-
-        assert m2 is not None
-        assert m2["position"] == 1
-
-        fetched = await db.get_conversation(conn, conv["id"])
-        assert fetched is not None
-        assert len(fetched["messages"]) == 2
-        assert fetched["messages"][0]["content"] == "Hello"
-        assert fetched["messages"][1]["content"] == "Hi there"
-
-    @pytest.mark.asyncio
-    async def test_append_to_nonexistent_conversation(self, conn):
-        result = await db.append_message(conn, "ghost", role="user", content="Hello?")
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_append_with_thinking(self, conn):
-        conv = await db.create_conversation(conn)
-        msg = await db.append_message(
-            conn, conv["id"], role="assistant", content="Answer", thinking="Let me think..."
-        )
-        assert msg is not None
-        assert msg["thinking"] == "Let me think..."
-
-    @pytest.mark.asyncio
-    async def test_update_content(self, conn):
-        conv = await db.create_conversation(conn)
-        msg = await db.append_message(conn, conv["id"], role="user", content="Original")
-        assert msg is not None
-
-        updated = await db.update_message(conn, conv["id"], msg["id"], content="Edited")
-        assert updated is not None
-        assert updated["content"] == "Edited"
-
-    @pytest.mark.asyncio
-    async def test_update_thinking_only(self, conn):
-        conv = await db.create_conversation(conn)
-        msg = await db.append_message(
-            conn, conv["id"], role="assistant", content="Answer", thinking="Old thinking"
-        )
-        assert msg is not None
-
-        updated = await db.update_message(conn, conv["id"], msg["id"], thinking="New thinking")
-        assert updated is not None
-        assert updated["thinking"] == "New thinking"
-        assert updated["content"] == "Answer"  # Unchanged
-
-    @pytest.mark.asyncio
-    async def test_clear_thinking(self, conn):
-        conv = await db.create_conversation(conn)
-        msg = await db.append_message(
-            conn, conv["id"], role="assistant", content="Answer", thinking="Some thinking"
-        )
-        assert msg is not None
-        updated = await db.update_message(conn, conv["id"], msg["id"], thinking=None)
-        assert updated is not None
-        assert updated["thinking"] is None
-        assert updated["content"] == "Answer"
+        msgs = []
+        for kwargs, expected in zip(appends, expected_appended, strict=True):
+            m = await db.append_message(conn, conv["id"], **kwargs)
+            assert m is not None
+            for key, value in expected.items():
+                assert m[key] == value, key
+            msgs.append(m)
+        if update is not None:
+            updated = await db.update_message(conn, conv["id"], msgs[-1]["id"], **update)
+            assert updated is not None
+            for key, value in expected_updated.items():
+                assert updated[key] == value, key
+        if fetched_contents is not None:
+            fetched = await db.get_conversation(conn, conv["id"])
+            assert fetched is not None
+            assert [m["content"] for m in fetched["messages"]] == fetched_contents
 
     @pytest.mark.asyncio
     async def test_update_no_fields_raises(self, conn):
@@ -286,87 +307,6 @@ class TestMessageCRUD:
         assert msg is not None
         with pytest.raises(ValueError, match="No updatable fields"):
             await db.update_message(conn, conv["id"], msg["id"])
-
-    @pytest.mark.asyncio
-    async def test_update_nonexistent_message(self, conn):
-        conv = await db.create_conversation(conn)
-        result = await db.update_message(conn, conv["id"], "ghost", content="Nope")
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_truncate_after_position(self, conn):
-        conv = await db.create_conversation(conn)
-        await db.append_message(conn, conv["id"], role="user", content="msg0")
-        await db.append_message(conn, conv["id"], role="assistant", content="msg1")
-        await db.append_message(conn, conv["id"], role="user", content="msg2")
-        await db.append_message(conn, conv["id"], role="assistant", content="msg3")
-
-        # Truncate after position 1 -- should delete msg2 and msg3
-        deleted = await db.truncate_messages_after(conn, conv["id"], after_position=1)
-        assert deleted == 2
-
-        fetched = await db.get_conversation(conn, conv["id"])
-        assert fetched is not None
-        assert len(fetched["messages"]) == 2
-        assert fetched["messages"][0]["content"] == "msg0"
-        assert fetched["messages"][1]["content"] == "msg1"
-
-    @pytest.mark.asyncio
-    async def test_truncate_preserves_earlier_messages(self, conn):
-        conv = await db.create_conversation(conn)
-        await db.append_message(conn, conv["id"], role="user", content="keep")
-        await db.append_message(conn, conv["id"], role="assistant", content="also keep")
-
-        # Truncate after position 5 -- nothing to delete
-        deleted = await db.truncate_messages_after(conn, conv["id"], after_position=5)
-        assert deleted == 0
-
-        fetched = await db.get_conversation(conn, conv["id"])
-        assert fetched is not None
-        assert len(fetched["messages"]) == 2
-
-    @pytest.mark.asyncio
-    async def test_cascade_delete(self, conn):
-        """Deleting a conversation should delete all its messages."""
-        conv = await db.create_conversation(conn)
-        await db.append_message(conn, conv["id"], role="user", content="Hello")
-        await db.append_message(conn, conv["id"], role="assistant", content="Hi")
-
-        await db.delete_conversation(conn, conv["id"])
-
-        # Verify messages are gone (check directly -- DuckDB store cascades
-        # explicitly, no FK ON DELETE CASCADE)
-        count = await conn.run(
-            lambda c: c.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
-        )
-        assert count == 0
-
-    @pytest.mark.asyncio
-    async def test_position_auto_increment(self, conn):
-        conv = await db.create_conversation(conn)
-        msgs = []
-        for i in range(5):
-            m = await db.append_message(conn, conv["id"], role="user", content=f"msg{i}")
-            msgs.append(m)
-
-        positions = [m["position"] for m in msgs]
-        assert positions == [0, 1, 2, 3, 4]
-
-    @pytest.mark.asyncio
-    async def test_position_after_truncate_and_reappend(self, conn):
-        """After truncating, new messages should continue from the right position."""
-        conv = await db.create_conversation(conn)
-        await db.append_message(conn, conv["id"], role="user", content="msg0")
-        await db.append_message(conn, conv["id"], role="assistant", content="msg1")
-        await db.append_message(conn, conv["id"], role="user", content="msg2")
-
-        # Truncate after position 0
-        await db.truncate_messages_after(conn, conv["id"], after_position=0)
-
-        # New message should get position 1
-        msg = await db.append_message(conn, conv["id"], role="assistant", content="new msg1")
-        assert msg is not None
-        assert msg["position"] == 1
 
     @pytest.mark.asyncio
     async def test_append_updates_conversation_timestamp(self, conn):
@@ -388,36 +328,8 @@ class TestMessageCRUD:
 class TestConversationParams:
     """Per-conversation sampler settings (params) -- JSON blob, unifies the
     'settings in browser vs server' split by keeping tuning with the conversation
-    (next to system_prompt) on the server."""
-
-    @pytest.mark.asyncio
-    async def test_create_defaults_to_empty_params(self, conn):
-        conv = await db.create_conversation(conn, title="c")
-        assert conv["params"] == {}
-        assert (await db.get_conversation(conn, conv["id"]))["params"] == {}
-
-    @pytest.mark.asyncio
-    async def test_params_round_trip_types(self, conn):
-        p = {"temperature": 1.0, "top_p": 0.9, "top_k": 40, "seed": None, "enable_thinking": True}
-        conv = await db.create_conversation(conn, title="c", params=p)
-        assert conv["params"] == p
-        assert (await db.get_conversation(conn, conv["id"]))["params"] == p
-
-    @pytest.mark.asyncio
-    async def test_update_params(self, conn):
-        conv = await db.create_conversation(conn, title="c", params={"temperature": 1.0})
-        updated = await db.update_conversation(conn, conv["id"], params={"temperature": 0.5, "top_k": 20})
-        assert updated["params"] == {"temperature": 0.5, "top_k": 20}
-        assert (await db.get_conversation(conn, conv["id"]))["params"] == {"temperature": 0.5, "top_k": 20}
-
-    @pytest.mark.asyncio
-    async def test_update_params_independent_of_system_prompt(self, conn):
-        conv = await db.create_conversation(conn, title="c", system_prompt="be terse",
-                                            params={"temperature": 1.0})
-        await db.update_conversation(conn, conv["id"], params={"temperature": 0.2})
-        got = await db.get_conversation(conn, conv["id"])
-        assert got["system_prompt"] == "be terse"     # untouched
-        assert got["params"] == {"temperature": 0.2}
+    (next to system_prompt) on the server. Round trips are rows of
+    test_conversation_round_trip."""
 
     @pytest.mark.asyncio
     async def test_list_omits_params_and_prompt_but_the_body_carries_them(self, conn):
@@ -450,36 +362,37 @@ class TestConversationCloneEndpoints:
         application.state.db = conn
         return application
 
+    # POST /clone -> 201 with the store's result, custom title honoured, 404
+    # for a missing id. Rows: (source title or None for no conversation,
+    # message contents to append, request body, status, expected title,
+    # expected cloned message contents or None).
     @pytest.mark.asyncio
-    async def test_clone_endpoint_default(self, app, conn):
-        conv = await db.create_conversation(conn, title="Chat to clone")
-        await db.append_message(conn, conv["id"], role="user", content="hello")
+    @pytest.mark.parametrize("title, contents, body, status, expected_title, expected_contents", [
+        pytest.param("Chat to clone", ["hello"], None, 201, "Copy of Chat to clone", ["hello"],
+                     id="clone_endpoint_default"),
+        pytest.param("Original Chat", [], {"title": "My Cloned Chat"}, 201, "My Cloned Chat",
+                     None, id="clone_endpoint_custom_title"),
+        pytest.param(None, [], None, 404, None, None, id="clone_endpoint_404_nonexistent"),
+    ])
+    async def test_clone_route(
+        self, app, conn, title, contents, body, status, expected_title, expected_contents
+    ):
+        conv_id = "nonexistent-id"
+        if title is not None:
+            conv = await db.create_conversation(conn, title=title)
+            conv_id = conv["id"]
+            for content in contents:
+                await db.append_message(conn, conv_id, role="user", content=content)
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            res = await client.post(f"/v1/conversations/{conv['id']}/clone")
-            assert res.status_code == 201
+            kwargs = {"json": body} if body is not None else {}
+            res = await client.post(f"/v1/conversations/{conv_id}/clone", **kwargs)
+            assert res.status_code == status
+            if status != 201:
+                return
             data = res.json()
-            assert data["title"] == "Copy of Chat to clone"
-            assert data["id"] != conv["id"]
-            assert len(data["messages"]) == 1
-            assert data["messages"][0]["content"] == "hello"
-
-    @pytest.mark.asyncio
-    async def test_clone_endpoint_custom_title(self, app, conn):
-        conv = await db.create_conversation(conn, title="Original Chat")
-
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            res = await client.post(f"/v1/conversations/{conv['id']}/clone", json={"title": "My Cloned Chat"})
-            assert res.status_code == 201
-            data = res.json()
-            assert data["title"] == "My Cloned Chat"
-
-    @pytest.mark.asyncio
-    async def test_clone_endpoint_404_nonexistent(self, app):
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            res = await client.post("/v1/conversations/nonexistent-id/clone")
-            assert res.status_code == 404
-
+            assert data["title"] == expected_title
+            assert data["id"] != conv_id
+            if expected_contents is not None:
+                assert [m["content"] for m in data["messages"]] == expected_contents

@@ -84,44 +84,74 @@ def test_every_sampled_field_has_a_sample_value():
     )
 
 
+def _declared_rows():
+    """One row per declared `arg` field: set that field alone, expect its
+    declared flag followed by the sample value (a bare flag: the flag alone)."""
+    rows = []
+    for field, flag in sorted(_declared_args().items()):
+        if field == "model_path":
+            rows.append(pytest.param(
+                {}, [], id=f"{field}-{flag}",
+                marks=pytest.mark.skip(reason="identity; emitted as -m and never optional")))
+            continue
+        value = SAMPLE_VALUES[field]
+        rows.append(pytest.param(
+            {field: value}, [(flag, None if isinstance(value, bool) else str(value))],
+            id=f"{field}-{flag}"))
+    return rows
+
+
+# Set a field; the flag it declares must appear in the argv, followed by the
+# value (a flag present with the wrong value is as broken as one missing).
+# Catches both halves of a drift: the builder omitting a configured field, and
+# the metadata naming a different spelling than the builder writes (an alias
+# counts as different -- a derived emitter would produce a different command
+# line). The two hand-written rows set several memory/lifecycle knobs at once
+# and a chat template override.
 @pytest.mark.unit
-@pytest.mark.parametrize("field,flag", sorted(_declared_args().items()))
-def test_declared_flag_is_the_one_actually_emitted(field, flag):
-    """Set one field; the flag it declares must appear in the argv.
+@pytest.mark.parametrize("config, expected", _declared_rows() + [
+    pytest.param({"n_gpu_layers_draft": 0, "cache_ram_mb": 32768,
+                  "sleep_idle_seconds": 120, "load_mode": "mmap+mlock"},
+                 [("-ngld", "0"), ("-cram", "32768"),
+                  ("--sleep-idle-seconds", "120"), ("-lm", "mmap+mlock")],
+                 id="memory_and_lifecycle_flags"),
+    pytest.param({"chat_template_path": "/tmp/qwen38-official.jinja"},
+                 [("--chat-template-file", "/tmp/qwen38-official.jinja")],
+                 id="chat_template_override"),
+])
+def test_declared_flag_is_emitted_with_its_value(config, expected):
+    argv = _build_argv({"model_path": MODEL, **config})
+    pairs = list(zip(argv, argv[1:]))
+    for flag, value in expected:
+        assert flag in argv, (
+            f"{config} declares arg={flag!r} but _build_args emitted "
+            f"{[a for a in argv if a.startswith('-')]!r}. Either the builder "
+            f"does not emit it, or the two disagree on the spelling."
+        )
+        if value is not None:
+            assert (flag, value) in pairs, (
+                f"{flag} is emitted but not followed by {value!r}")
 
-    Catches both halves of a drift: the builder omitting a configured field,
-    and the metadata naming a different spelling than the builder writes (an
-    alias counts as different -- a derived emitter would produce a different
-    command line).
-    """
-    if field == "model_path":
-        pytest.skip("identity; emitted as -m and never optional")
-    config = {"model_path": MODEL, field: SAMPLE_VALUES[field]}
-    argv = _build_argv(config)
-    assert flag in argv, (
-        f"`{field}` declares arg={flag!r} but _build_args emitted "
-        f"{[a for a in argv if a.startswith('-')]!r}. Either the builder "
-        f"does not emit it, or the two disagree on the spelling."
-    )
 
-
+# An explicit falsy value that is a real setting is emitted, never swallowed
+# by a truthiness check (the builder uses `is not None`; these went through
+# `if cfg.get(x)` once).
+# - -ngld 0: the drafter entirely off the GPU.
+# - -cram 0: disable the prompt cache; -cram -1: unlimited.
+# - --spec-draft-p-min 0.0: keep every draft, AND llama.cpp's default, so
+#   truthiness would make an explicit 0.0 indistinguishable from unset.
+# - -ncmoe 0: offload no layers, an explicit choice distinct from unset.
 @pytest.mark.unit
-def test_the_value_lands_next_to_the_flag():
-    """A flag present with the wrong value is as broken as one missing."""
-    argv = _build_argv({"model_path": MODEL, "ctx_size": 4096})
-    assert argv[argv.index("--ctx-size") + 1] == "4096"
-
-
-@pytest.mark.unit
-def test_zero_is_emitted_not_swallowed():
-    """0 is MEANINGFUL for -ngld (keep the drafter off the GPU) and -cram
-    (disable the prompt cache), so a truthiness check would drop it. The
-    builder uses `is not None` for exactly this; pin it."""
-    argv = _build_argv(
-        {"model_path": MODEL, "n_gpu_layers_draft": 0, "cache_ram_mb": 0}
-    )
-    assert argv[argv.index("-ngld") + 1] == "0"
-    assert argv[argv.index("-cram") + 1] == "0"
+@pytest.mark.parametrize("field, flag, value", [
+    ("n_gpu_layers_draft", "-ngld", 0),
+    ("cache_ram_mb", "-cram", 0),
+    ("cache_ram_mb", "-cram", -1),
+    ("spec_draft_p_min", "--spec-draft-p-min", 0.0),
+    ("n_cpu_moe", "-ncmoe", 0),
+], ids=["ngld_zero", "cram_zero", "cram_minus_one", "p_min_zero", "ncmoe_zero"])
+def test_explicit_falsy_value_is_emitted_not_swallowed(field, flag, value):
+    argv = _build_argv({"model_path": MODEL, field: value})
+    assert argv[argv.index(flag) + 1] == str(value)
 
 
 @pytest.mark.unit
@@ -135,46 +165,23 @@ def test_extra_args_are_appended_last():
     assert argv[-2:] == ["--ctx-size", "9999"]
 
 
+# `-cmoe` is a bare, presence-signalled flag. True adds exactly one token:
+# llama.cpp takes NO argument after it, and a value would be read as a
+# positional and fail at spawn -- a load failure, not a misconfiguration. The
+# length delta is checked rather than the following token, because the flag
+# can land last in argv and a value starting with "-" would slip past a token
+# check. False adds nothing, or 'expert offload off' would silently mean 'all
+# experts on CPU'.
 @pytest.mark.unit
-def test_cpu_moe_is_a_bare_flag_with_no_value():
-    """`-cmoe` takes NO argument in llama.cpp. Emitting a value after it would
-    make llama-server read the next token as a positional and fail at spawn --
-    a load failure, not a misconfiguration."""
+@pytest.mark.parametrize("value, added", [(True, 1), (False, 0)], ids=["true_bare_flag", "false_emits_nothing"])
+def test_cpu_moe_is_a_bare_flag(value, added):
     base = _build_argv({"model_path": MODEL})
-    with_flag = _build_argv({"model_path": MODEL, "cpu_moe": True})
-    # Exactly one token longer: the flag itself and nothing else. Checking the
-    # length delta rather than the following token, because the flag can land
-    # last in argv (nothing to inspect) and a value that happened to start with
-    # "-" would slip past a token check.
-    assert len(with_flag) == len(base) + 1, (
-        f"-cmoe should add exactly one token; added {len(with_flag) - len(base)}: "
-        f"{[a for a in with_flag if a not in base]}"
+    argv = _build_argv({"model_path": MODEL, "cpu_moe": value})
+    assert len(argv) == len(base) + added, (
+        f"-cmoe should add exactly {added} token(s); added {len(argv) - len(base)}: "
+        f"{[a for a in argv if a not in base]}"
     )
-    assert "-cmoe" in with_flag
-
-
-@pytest.mark.unit
-def test_cpu_moe_false_emits_nothing():
-    """A bare flag is presence-signalled: False must not emit `-cmoe`, or
-    'expert offload off' would silently mean 'all experts on CPU'."""
-    assert "-cmoe" not in _build_argv(
-        {"model_path": MODEL, "cpu_moe": False}
-    )
-
-
-@pytest.mark.unit
-def test_p_min_zero_is_emitted_not_swallowed():
-    """0.0 is a real setting (keep every draft) AND llama.cpp's default, so
-    truthiness would make an explicit 0.0 indistinguishable from unset."""
-    argv = _build_argv({"model_path": MODEL, "spec_draft_p_min": 0.0})
-    assert argv[argv.index("--spec-draft-p-min") + 1] == "0.0"
-
-
-@pytest.mark.unit
-def test_n_cpu_moe_zero_is_emitted_not_swallowed():
-    """0 = offload no layers, an explicit choice distinct from unset."""
-    argv = _build_argv({"model_path": MODEL, "n_cpu_moe": 0})
-    assert argv[argv.index("-ncmoe") + 1] == "0"
+    assert ("-cmoe" in argv) is value
 
 
 @pytest.mark.unit

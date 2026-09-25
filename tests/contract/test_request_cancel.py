@@ -48,13 +48,6 @@ class TestCancelEndpoint:
         assert r.json()["cancelled"] == 2
         assert first.is_set() and second.is_set()
 
-    def test_the_route_is_published_in_the_schema(self, client):
-        """A cancel endpoint nobody can discover is a cancel endpoint nobody
-        uses -- and this repo's integration guide points clients at
-        /openapi.json as authoritative."""
-        schema = client.get("/openapi.json").json()
-        assert "delete" in schema["paths"]["/v1/requests/{request_id}"]
-
     def test_the_registry_is_left_clean(self, client):
         before = set(get_request_registry().live_ids())
         with track_request("temp", AbortEvent()):

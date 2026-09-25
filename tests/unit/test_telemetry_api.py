@@ -48,22 +48,26 @@ class TestIngest:
         assert err["message"] == "boom"
         assert err["route"] == "/chat"
 
+    # What cannot be ingested is skipped, never a 4xx; `accepted` counts only
+    # what was written. Each row: request body, accepted count, types written.
+    @pytest.mark.parametrize(
+        "body, accepted, written",
+        [
+            # an event with no type is skipped; its typed sibling still lands
+            ({"events": [{"level": "info", "nope": 1}, {"type": "ok", "a": 1}]},
+             1, ["ok"]),
+            # a non-list events body is rejected gracefully
+            ({"events": "nope"}, 0, []),
+        ],
+        ids=["events_without_type_skipped", "non_list_body_rejected_gracefully"],
+    )
     @pytest.mark.asyncio
-    async def test_events_without_type_skipped(self, client):
+    async def test_unusable_events_are_skipped(self, client, body, accepted, written):
         c, tmp = client
-        res = await c.post("/v1/telemetry/events", json={"events": [
-            {"level": "info", "nope": 1},   # no type -> skipped
-            {"type": "ok", "a": 1},
-        ]})
-        assert res.json()["accepted"] == 1
-        assert [r["type"] for r in _events(tmp)] == ["ok"]
-
-    @pytest.mark.asyncio
-    async def test_non_list_body_rejected_gracefully(self, client):
-        c, _ = client
-        res = await c.post("/v1/telemetry/events", json={"events": "nope"})
+        res = await c.post("/v1/telemetry/events", json=body)
         assert res.status_code == 200
-        assert res.json()["accepted"] == 0
+        assert res.json()["accepted"] == accepted
+        assert [r["type"] for r in _events(tmp)] == written
 
     @pytest.mark.asyncio
     async def test_oversized_field_truncated(self, client):
