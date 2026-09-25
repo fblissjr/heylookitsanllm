@@ -369,13 +369,13 @@ wrapper in `utils.js`. Backend suite green; `bun run e2e:render` green.
 
 ## Observability follow-ups (2026-08-19, from the startup-record review)
 
-- [ ] **Pre-warm load telemetry is dropped** (P3): a `--model-id` startup
+- [x] **Pre-warm load telemetry is dropped -- FIXED v2.0.166** (P3): the pre-warm now runs from the lifespan after settings (`ModelRouter.prewarm_startup_model`); it was worse than stated, the constructor ran before the memory manager existed, so the load was recorded at no level at all. a `--model-id` startup
   load runs in server.py BEFORE the lifespan resolves `observability_level`
   from the DB, so with telemetry enabled the most expensive load of the run
   is missing from events.jsonl/model_events.jsonl while every later load is
   recorded. Same pre-configure class as the fixed startup-record bug; fix =
   resolve settings (or replay the load event) before/after the pre-warm.
-- [ ] **No test pins the lifespan ordering** (P3): log_startup_info must run
+- [x] **No test pins the lifespan ordering -- DONE v2.0.166** (`tests/contract/test_startup_order.py`: settings, then the startup record, then the pre-warm, through the real lifespan) (P3): log_startup_info must run
   AFTER apply_runtime_settings in api.py's lifespan; both unit tests call it
   directly with the level already set, so a refactor moving it back beside
   MemoryManager construction regresses silently. Needs a contract test that

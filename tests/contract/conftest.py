@@ -174,6 +174,9 @@ class MockRouter:
     # a stand-in has no caches worth warming.
     warm_model_facts_on_load = False
 
+    def prewarm_startup_model(self):
+        """The lifespan's `--model-id` pre-warm; the mock has none to load."""
+
     def warm_model_facts(self):
         pass
 

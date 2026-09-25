@@ -66,13 +66,14 @@ _SRC = pathlib.Path(__file__).resolve().parents[2] / "src" / "heylook_llm"
 _BROAD = {"Exception", "BaseException", "RuntimeError"}
 
 # The one site that may swallow, with a rationale that INVALIDATES ITSELF if it
-# stops being true. `ModelRouter.__init__` pre-warms `--model-id` at startup:
-# nothing else can be generating while the router is being constructed, so
-# MODEL_BUSY is unreachable there, and a failed pre-warm must not take the
-# process down. The exemption is keyed on the enclosing function being
-# `__init__` -- move that call into anything that serves a request and the
-# exemption stops matching rather than silently covering it.
-_STARTUP_ONLY = ("router.py", "__init__")
+# stops being true. `ModelRouter.prewarm_startup_model` pre-warms `--model-id`
+# from the app lifespan, before the server accepts a request (v2.0.166; it was
+# `__init__` until then): nothing else can be generating yet, so MODEL_BUSY is
+# unreachable there, and a failed pre-warm must not take the process down. The
+# exemption is keyed on the enclosing function -- move that call into anything
+# that serves a request and the exemption stops matching rather than silently
+# covering it.
+_STARTUP_ONLY = ("router.py", "prewarm_startup_model")
 
 
 def _lets_model_busy_out(node: ast.Try) -> bool:

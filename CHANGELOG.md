@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.166]
+
+### Fixed
+
+- **The `--model-id` startup load is recorded.** It ran inside
+  `ModelRouter`'s constructor, before the lifespan attached the memory
+  manager and resolved the observability level, so the most expensive load
+  of a run was the one load no telemetry recorded at any level. The router
+  now records the validated model at construction and
+  `prewarm_startup_model()` loads it from the lifespan, after settings and
+  the startup record (the server still accepts no request until it is done).
+- GGUFModelConfig.enable_thinking said "Unset = off"; unset follows the
+  thinking capability, as the cascade does.
+
+### Added
+
+- `tests/contract/test_startup_order.py`: settings, then the startup record,
+  then the pre-warm, through the real lifespan (closes the "no test pins the
+  lifespan ordering" TODO).
+- Checks: unit + contract green (1451).
+
 ## [2.0.165]
 
 Pruning pass, the owner-approved second pass: tests that mirrored the

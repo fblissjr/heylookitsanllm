@@ -1219,17 +1219,16 @@ class GGUFModelConfig(BaseModel):
     # for gemma-4/Qwen3.6/DeepSeek-V4 -- and with extra="forbid" and no field
     # here there was then NO way to ask for that back. The only remaining
     # route was a named sampler, which dragged a presence_penalty change in
-    # with it -- and named samplers are gone (v2.0.30). None = unset = off.
+    # with it -- and named samplers are gone (v2.0.30). None = unset = follow
+    # the thinking capability (the cascade's last layer since v1.79.62).
     enable_thinking: Optional[bool] = Field(
         default=None,
         description=(
             "Per-model thinking default, the counterpart to "
             "`supports_thinking` above, which only describes CAPABILITY. "
-            "Unset = off. Reaches llama-server as a chat_template_kwargs "
-            "entry. It exists because unset started meaning OFF everywhere in "
-            "v1.50.0 -- before that a gguf model inherited its template's own "
-            "default, and with extra=\"forbid\" there was then no way to ask "
-            "for that back."),
+            "Unset = follow the capability: a model whose template has a "
+            "thinking switch thinks. Reaches llama-server as a "
+            "chat_template_kwargs entry, always as an explicit bool."),
         json_schema_extra={"effect": EFFECT_PER_REQUEST})
     # Per-model repetition control, the MLX config's counterpart. Added in
     # v2.0.32 with the removal of the automatic thinking overlay: that overlay

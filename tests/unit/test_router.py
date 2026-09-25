@@ -109,6 +109,10 @@ class TestModelRouter(unittest.TestCase):
             log_level=logging.INFO,
             initial_model_id='model2-llama',
         )
+        # Recorded at construction, loaded by the lifespan once telemetry is
+        # wired (v2.0.166).
+        self.assertNotIn('model2-llama', router.providers)
+        router.prewarm_startup_model()
         self.assertIn('model2-llama', router.providers)
 
     def test_healthy_config_logs_no_warning(self):

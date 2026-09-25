@@ -126,14 +126,26 @@ class ModelRouter:
         if not initial_model_to_load:
             logging.info("No startup model requested. Models will be loaded on first request.")
 
-        if initial_model_to_load:
-            try:
-                logging.info(f"Pre-warming initial model: {initial_model_to_load}")
-                self.get_provider(initial_model_to_load)
-                logging.info(f"Successfully pre-warmed model: {initial_model_to_load}")
-            except Exception as e:
-                logging.error(f"Failed to pre-warm initial model '{initial_model_to_load}': {e}")
-                logging.warning(f"Continuing without pre-warming. Model '{initial_model_to_load}' will be loaded on first request.")
+        # Loaded by prewarm_startup_model(), which the app lifespan calls
+        # AFTER the memory manager is attached and the observability settings
+        # are applied. Loading here, in the constructor, ran before either
+        # existed, so the most expensive load of a run was the one load no
+        # telemetry ever recorded (TODO, 2026-08-19).
+        self.startup_model: Optional[str] = initial_model_to_load
+
+    def prewarm_startup_model(self) -> None:
+        """Load the validated `--model-id` model, once. Never raises: a
+        failed pre-warm leaves the server up, the model loads on demand."""
+        model_id, self.startup_model = getattr(self, "startup_model", None), None
+        if not model_id:
+            return
+        try:
+            logging.info(f"Pre-warming initial model: {model_id}")
+            self.get_provider(model_id)
+            logging.info(f"Successfully pre-warmed model: {model_id}")
+        except Exception as e:
+            logging.error(f"Failed to pre-warm initial model '{model_id}': {e}")
+            logging.warning(f"Continuing without pre-warming. Model '{model_id}' will be loaded on first request.")
 
     def _load_config(self, config_path: str) -> AppConfig:
         """Load configuration from TOML, fold in discovered models, validate.

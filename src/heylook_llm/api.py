@@ -96,6 +96,11 @@ async def lifespan(app: FastAPI):
     # and skip the record even when telemetry is enabled.
     memory_manager.log_startup_info()
 
+    # The `--model-id` pre-warm, now that telemetry is wired: its load is
+    # recorded like every later one. Off the event loop; startup waits for it
+    # as it always did (the load used to run before uvicorn started).
+    await asyncio.to_thread(router.prewarm_startup_model)
+
     # Warm the model-list derivation off the request path (router.py,
     # warm_model_facts), now and after every config reload.
     router.warm_model_facts_on_load = True
