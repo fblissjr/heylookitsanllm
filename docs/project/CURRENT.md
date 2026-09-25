@@ -16,7 +16,8 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
-| unit + contract | green (1438 passed) | v2.0.168 |
+| unit + contract | green (1438 passed) | v2.0.170 |
+| v2.0.170 pin move (mlx-vlm `990a0287`) | smoke 92/92 on gpt-oss-20b / Qwen3.5-0.8B / unsloth Qwen3.8-27B GGUF; parity ok on Qwen3.5-0.8B (near-tie as before); chain probe clean on Qwen3.5-0.8B, Qwen3-0.6B, gpt-oss-20b (two near-ties). Record in `internal/claude/pin_990a0287/` | v2.0.170 |
 | `tests/smoke/` on `improve/2026-09-24` | green on all three arms (mlx-text Qwen3-0.6B, mlx-vision Qwen3.5-0.8B, gguf Qwen3.8-27B); the new system-prompt and back-to-A reuse checks fail on the base commit | improve/2026-09-24, merged as v2.0.121 |
 | `bun run e2e:render` (model-free) | 98/98, including the thinking-depth control check | v2.0.95 |
 | v2.0.166 live pass (mrpurple) | smoke 85/85 on the same three arms plus 39/39 on mlx-vision with Qwen3.8-27B-4bit (depth); vlm_parity_probe ok on Qwen3.5-0.8B (image case a NEAR-TIE at margin 0.0, as at v2.0.124); response_format 15/15 on Qwen3.5-0.8B, Qwen3.8-27B MLX and the unsloth GGUF (gpt-oss refused by design); live probe 51/52 over eight models (the miss: Qwen3.5-0.8B's thinking-off arithmetic, a model answer, not the path); e2e render 100, chat 53, pages 32; vendor libs current. Record in `internal/claude/release_2026-09-25/mrpurple/` | v2.0.166 |

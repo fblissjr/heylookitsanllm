@@ -30,6 +30,12 @@ is left, each with the recommendation the owner was given:
   The "no GZipMiddleware" private-structure assertion was deleted too (owner,
   v2.0.169): starlette 1.7 already excludes `text/event-stream` from
   GZipMiddleware, so its behavioural replacement could not fail.
+- [ ] **MLX: send a message's real text/image interleaving (new, 2026-09-25).**
+  `vlm_inputs.content_for_template` sends every image first, then the text
+  flattened. Since mlx-vlm 990a0287 (#2362) explicit markers keep their place,
+  so passing the user's own block order would render "text, image, text" as
+  sent, which is what gguf already does. Owner call; check with
+  `vlm_parity_probe` and the eval bank's vision tasks.
 - [ ] **Tools / function calling:** 422 until a client needs them (owner call).
 - [ ] **Notebook images:** later (owner call); audio waits for a model that
   supports it.

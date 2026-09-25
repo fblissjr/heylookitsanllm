@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.170]
+
+- **mlx-vlm pin moved to upstream main `990a028763b2f8c605329f29ae4e747f9285902d`**
+  (from `ac737ef3`, 14 commits; `coderef/mlx-vlm` matches). Upstream brings:
+  explicit image markers keep their place in a message (#2362; heylook sends
+  images first, so the 14 families that used to append now prepend, none of
+  them served here); sampling fixes for small top-p and very low temperature
+  (a positive temperature below 0.01 is clamped to 0.01); a gpt-oss processor
+  that attaches a harmony response template (heylook's streaming harmony
+  split does not use it); qwen3_5 MoE text; quantized-KV and Qwen3-VL fixes.
+- `scripts/chain_probe.py`: the in-process mode sends back the reply CONTENT
+  (split by the routes' parser) as the history turn, not the raw provider
+  text; gpt-oss's template refused raw harmony text with channel tags. The
+  probe failed the same way on the old pin.
+- Docs: media placement (sharp_edges, `vlm_inputs.content_for_template`)
+  describes the new upstream behaviour; TODO.md gains "send a message's real
+  text/image interleaving" (owner call).
+- Checks on the new pin: unit + contract 1438 passed; `vlm_parity_probe` ok on
+  Qwen3.5-0.8B (image case a near-tie at margin 0.0, as before);
+  `chain_probe` Qwen3.5-0.8B and Qwen3-0.6B match and reuse on every hop,
+  gpt-oss-20b reuses on every hop with two near-ties; `tests/smoke/` 92/92 on
+  gpt-oss-20b, Qwen3.5-0.8B and the unsloth Qwen3.8-27B GGUF, including the
+  v2.0.168 checks on every arm. Uncovered: thinking and vision on mlx-text,
+  depth on mlx-vision (the depth-capable Qwen3.8-27B-4bit not re-run), audio
+  on gguf. Records in `internal/claude/pin_990a0287/`.
+
 ## [2.0.169]
 
 - Tests: the "no GZipMiddleware" assertion in the frontend-mount contract

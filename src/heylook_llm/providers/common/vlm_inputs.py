@@ -74,11 +74,13 @@ def content_for_template(text: str, num_images: int):
     arrived adjacent, in load order. The bytes were always in context; what was
     wrong was which turn they were announced in.
 
-    The marker is BARE on purpose. mlx-vlm re-derives each message's content
-    from the extracted text plus the COUNT, emitting markers in that model's
-    own order (llava appends, qwen3_5 prepends), so this function never has to
-    know the per-model shape, and a multi-MB data URI never enters the template
-    call.
+    The marker is BARE on purpose: a multi-MB data URI never enters the
+    template call, and mlx-vlm builds the per-model marker shape itself. Since
+    mlx-vlm 990a0287 (#2362) it keeps explicit markers WHERE THEY ARE in the
+    content list, so images render before the text on every model; before it,
+    mlx-vlm re-derived the order per model (llava appended, qwen3_5
+    prepended). No served family changed (qwen3_5, qwen3_vl and gemma4 already
+    prepended).
 
     Text-only messages keep travelling as a plain string, so a conversation
     with no images renders byte-identically to before this change.

@@ -75,7 +75,7 @@ def http_asker():
                                    headers={"Content-Type": "application/json"})
         b = json.loads(urllib.request.urlopen(r, timeout=900).read())
         text = "".join(x.get("text") or "" for x in b["content"] if x.get("type") == "text")
-        return text, (b.get("performance") or {}).get("cache"), None
+        return text, (b.get("performance") or {}).get("cache"), None, text
 
     def clear():
         r = urllib.request.Request(a.server + "/v1/cache/clear", method="POST",
@@ -91,6 +91,7 @@ def inproc_asker():
     from _inproc import load_provider, near_tie_verdict
 
     from heylook_llm.config import ChatRequest
+    from heylook_llm.reasoning_parser import parse_reasoning, parser_factory_for
 
     provider, name, on_worker = load_provider(a.model, json.loads(a.config))
     if name != "mlx":
@@ -104,15 +105,21 @@ def inproc_asker():
             "messages": [{"role": "system", "content": SYSTEM}, *messages]})
 
     def ask(messages):
+        # Compared on the provider's RAW text (stricter), but the history turn
+        # is the reply CONTENT, split by the parser the routes use: the split
+        # happens above the provider, and a raw harmony reply fed back as
+        # assistant content is refused by gpt-oss's template.
         def go():
+            req = request(messages)
             text, cache, tokens = "", None, []
-            for c in provider.create_chat_completion(request(messages)):
+            for c in provider.create_chat_completion(req):
                 text += c.text or ""
                 if c.token is not None:
                     tokens.append(int(c.token))
                 if getattr(c, "cache", None) is not None:
                     cache = asdict(c.cache)
-            return text, cache, tokens
+            reply, _ = parse_reasoning(text, parser_factory_for(provider, req)())
+            return text, cache, tokens, reply
         return on_worker(go)
 
     def judge(messages, fresh_tokens, restored_tokens):
@@ -131,17 +138,17 @@ ask, judge, evict = http_asker() if a.server else inproc_asker()
 
 def run_hop(label, msgs, prime):
     evict()
-    fresh, fcache, ftoks = ask(msgs)
+    fresh, fcache, ftoks, reply = ask(msgs)
     if prime is not None:
         evict()                         # or the restore is of this same prompt
         ask(prime)                      # prime the cache with the previous hop
-    restored, rcache, rtoks = ask(msgs)
+    restored, rcache, rtoks, _ = ask(msgs)
     hop = {"hop": label, "match": fresh == restored, "fresh_cache": fcache,
            "restored_cache": rcache, "fresh": fresh, "restored": restored}
     if not hop["match"]:
         hop.update(judge(msgs, ftoks, rtoks) if judge else
                    {"verdict": "MISMATCH", "why": "over HTTP: rerun in-process for a tie verdict"})
-    return hop, fresh
+    return hop, reply
 
 
 questions = ["Name one planet.", "How far is it from the sun, roughly?",

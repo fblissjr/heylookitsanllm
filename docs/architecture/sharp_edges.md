@@ -1235,10 +1235,16 @@ attribute onto the last user turn. So passing flattened strings plus a bare
 `num_images=` total, which is what `vlm_inputs` did until v2.0.18, attributed
 nothing and moved every image to the final user message. Text-only messages
 still travel as a plain string, so that is the blast radius. The marker is
-bare because mlx-vlm re-derives each message's content from text + count in
-the model's own order (llava appends, qwen prepends). Verified at the rendered
-prompt on gemma4 + qwen3_vl: identical token multiset before and after, only
-the marker's turn moves.
+bare so no data URI enters the template call. Until mlx-vlm 990a0287, mlx-vlm
+re-derived each message's content from text + count in the model's own order
+(llava appended, qwen prepended). Since #2362 it keeps explicit markers in
+place, so heylook's images-then-text order is what renders, on every family.
+Compared across mlx-vlm's model table on 2026-09-25: 14 of the families that
+used to append now prepend; none of them is served here (qwen3_5, qwen3_vl
+and gemma4 already prepended). The same change would let heylook send a
+user's real text/image interleaving; it does not yet (TODO.md). Verified at
+the rendered prompt on gemma4 + qwen3_vl in v2.0.18: identical token multiset
+before and after, only the marker's turn moves.
 
 The role gate is upstream and triple-layered (`_content_media_count` skips
 non-user, the surplus reallocates, and `_format_list_with_image` re-tests

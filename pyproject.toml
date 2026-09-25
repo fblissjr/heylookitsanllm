@@ -117,7 +117,7 @@ override-dependencies = ["transformers>=5.15.0"]
 # CHANGELOG. The pre-commit guard still blocks a git pin by default;
 # committing one is HEYLOOK_ALLOW_CHANNEL_COMMIT=1, so the act stays
 # deliberate. `mlx` itself is a PyPI release, not pinned here.
-mlx-vlm = { git = "https://github.com/Blaizzy/mlx-vlm", rev = "ac737ef3ad1bb576eb8d641965a325282d7e047e" }
+mlx-vlm = { git = "https://github.com/Blaizzy/mlx-vlm", rev = "990a028763b2f8c605329f29ae4e747f9285902d" }
 
 # ── Pytest ──────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
