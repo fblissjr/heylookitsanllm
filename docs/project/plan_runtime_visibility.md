@@ -1,6 +1,6 @@
 # Plan: runtime visibility and one behaviour across engines
 
-last updated: 2026-09-24 (APPROVED by the owner). Shipped: W0 (v2.0.107 - v2.0.122), W1 (v2.0.136), W12 (done 2026-09-25, stay Python), W2, W3, W4, W5 (spec reporting completed by `engine.speculative`, v2.0.120), W7, W8, W9, W13. In progress: W10 (stages shipped through v2.0.121, qwen3_5 vision features v2.0.135; the per-image vision key is open). Open: W6 (only if W5 shows budget skips), W14 (gated).
+last updated: 2026-09-25 (APPROVED by the owner; W2, W3, W4, W7 and W13 extended v2.0.143 - v2.0.166, each marked "Extended 2026-09-25"). Shipped: W0 (v2.0.107 - v2.0.122), W1 (v2.0.136), W12 (done 2026-09-25, stay Python), W2, W3, W4, W5 (spec reporting completed by `engine.speculative`, v2.0.120), W7, W8, W9, W13. In progress: W10 (stages shipped through v2.0.121, qwen3_5 vision features v2.0.135; the per-image vision key is open). Open: W6 (only if W5 shows budget skips), W14 (gated).
 
 ## Context
 
@@ -145,6 +145,22 @@ change; the thinking and depth answers already come from detection), and the
 e2e check with a real model pair (replaced by a model-free render check plus
 the live smoke rows, since both depth vocabularies need large models).
 
+**Extended 2026-09-25 (v2.0.143, v2.0.159).** Owner rule for WHICH template
+the controls come from: the one the engine's own ladder puts in force, so a
+`chat_template.jinja` beside the weights decides over a GGUF's embedded
+template (then on/off only if none offers depth), and on MLX over
+`tokenizer_config.json`. `engine.thinking.template` names that copy, and each
+template-view source carries what it would offer. A group of equivalent
+words is named by the word the template normalizes to (`set effort =
+'low'`), else its first use after the variable's first mention (an unrelated
+`enable_thinking != 'false'` once named a level `false`). The UI changed from
+the text below: ONE thinking control (owner-approved mockup) -- Model default
+/ Off / On / the template's own levels -- replacing the switch row and the
+depth dropdown, writing the same two stored keys. `depth.off` lists the
+values that render the same prompt as the switch set to false (detected by
+rendering), which the control folds into Off. `engine.thinking.budget`
+reports whether a budget can be enforced (see W7).
+
 **Owner decision (2026-09-23): no hardcoded thinking levels.** The controls
 show what the in-force template offers, in its own spellings. There is no
 heylook scale, no step-to-value mapping and no clamping, and no value is
@@ -244,6 +260,16 @@ translated between models. Detail and reasoning:
 
 ### W3. Templates: every copy visible, copy-to-override, lint (shipped v2.0.94 + v2.0.99)
 
+**Extended 2026-09-25.** On MLX the vision path renders the PROCESSOR's
+template, which transformers fills from a legacy `chat_template.json`; auto
+now installs a `chat_template.jinja` winner there too, so the vision render,
+thinking detection, the preview and `stale` agree (v2.0.164; not when the
+jinja lacks media handling and the .json has it). The prompt preview
+highlights the model's own added tokens from its tokenizer files (`markers`,
+v2.0.163) instead of a hand-kept pattern; a store-unstripped "show special
+tokens" was set aside (TODO.md, next-session list, for why and what is
+open).
+
 As built: `chat_template_files.template_sources` lists every copy with its
 provenance read from huggingface_hub's per-file download record (a small
 file's etag is its git blob SHA-1, so "modified since download" is a hash
@@ -287,6 +313,11 @@ Extends the existing template panel (`GET/PUT/DELETE
   overrides, so a re-download cannot revert them.
 
 ### W4. Image geometry on the API (shipped v2.0.101 + v2.0.103)
+
+**Extended 2026-09-25 (v2.0.163).** "Fit" is labelled by direction: "Full
+res" when the engine's own size costs more than the staged 2048px copy (Qwen
+on MLX, dynamic resolution), "Shrink" when less. An e2e check pins that a
+staged photo is capped and priced with the engine's own answer.
 
 Frontend (owner, 2026-09-24): the cost badge on by default, plus "Fit",
 which resizes the original to the engine's own target once, client-side. The
@@ -445,6 +476,11 @@ One change from this section as first written: MLX uses mlx-vlm's own
 instead of a heylook logits processor, following upstream. It forces one
 close token, so harmony gets no budget on MLX (`thinking_budget_markers`);
 the `thinking_budget` capability says where it applies.
+
+**Extended 2026-09-25 (v2.0.147).** `engine.thinking.budget` is
+`{enforced, reason}`: MLX's own marker check, and unknown on gguf, where
+llama-server finds the end tags per request and exposes no static answer;
+the panel's budget row says "may not be enforced" there.
 
 - The Messages API already has `thinking.budget_tokens`. heylook honours it:
   - on gguf as llama-server's per-request `reasoning_budget_tokens`;
@@ -760,6 +796,14 @@ track, not a server speedup, and mlx-swift-lm has the small vision families it
 would need.
 
 ### W13. One engine contract (shipped v2.0.73 - v2.0.77; capability inference moves with W2)
+
+**Extended 2026-09-25.** New slots and facts: `engine.decoding` (`mode`,
+`request_fields`; observed at load on MLX, so a masked-diffusion model's
+panel offers only the fields its engine reads, v2.0.147); per-row
+`sampler_sources` (which layer each sampler default came from, v2.0.163).
+gguf `vision`/`audio` capabilities need the projector (v2.0.147). Still not
+done: moving the per-engine capability branches out of `capabilities.py`
+into the describers.
 
 **The goal.** Every engine answers the same questions through its provider,
 and everything else consumes one shape. Today's single request type,
