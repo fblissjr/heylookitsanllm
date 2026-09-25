@@ -763,9 +763,12 @@ model-level test passes whether or not any route binds the model it tests.
 
 `/v1/models` keeps the OpenAI list shape because v3 and external clients read
 `data`; that is a shape, not a wire. Still targeting the removed route and
-pending port (owner: small potatoes, port later): `apps/batch-labeler`,
-`tests/eval`, `scripts/benchmark.py`'s OpenAI arms, and one measurement script
-in the owner's other project.
+pending port (owner: small potatoes, port later): `scripts/benchmark.py`'s
+OpenAI arms and one measurement script in the owner's other project
+(`tests/eval` was ported in v2.0.71, `apps/batch-labeler` in v2.0.153; the
+labeler's own suite had stayed green against the dead route for months, which
+is why `tests/contract/test_batch_labeler_wire.py` now checks its payload and
+parser against the server's own classes).
 
 ### Messages wire conformance
 
@@ -795,7 +798,12 @@ fixing one left the other emitting `"length"` for a commit. The whole per-path
 suite stayed green throughout: per-path behavioural tests are structurally
 blind to cross-path divergence, which is why `TestStopReasonHasOneMapper`
 asserts the shared mapper is the only writer rather than asserting either
-path's output.
+path's output. v2.0.153 removed the second copy instead of policing it: both
+routes stream through `messages_api.translate_stream` (the finish-reason
+rename, the cancel rule, stop sequences), and
+`test_every_messages_stream_runs_the_one_loop` fails when a route builds a
+translator without it. Each route still owns its own ending: Messages closes
+the grammar; the conversation route also persists and emits heylook_saved.
 
 An aborted generate run reports `max_tokens`, not `end_turn`: Anthropic has no
 cancellation value and `end_turn` positively asserts the model finished.

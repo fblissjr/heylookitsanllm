@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.153]
+
+### Changed
+
+- **One streaming loop for both Messages-grammar routes.** `/v1/messages`
+  and the conversation generate route (chat) each had their own
+  chunk-to-SSE loop around the shared translator; they now both stream
+  through `messages_api.translate_stream`: the finish-reason rename, the
+  cancel rule and stop sequences live once. Each route still owns its ending
+  (Messages closes the grammar; the conversation route persists and emits
+  heylook_saved). The cancel rule on the conversation route now overrides
+  only the default `end_turn`, like `/v1/messages`, so an engine's own
+  `max_tokens` or a matched stop sequence is kept.
+  `test_every_messages_stream_runs_the_one_loop` replaces the check that
+  existed to catch the two copies drifting.
+
+### Added
+
+- **`stop_sequences` on `POST /v1/conversations/{id}/generate`** (per
+  request, same rules as `/v1/messages`): the stream, the stop reason and the
+  persisted row are all cut before the match. Not a stored param and not in
+  the chat panel yet.
+- Checks: unit + contract green; `bun run e2e:chat` 53/53.
+
 ## [2.0.152]
 
 Release checks for v2.0.143 - v2.0.151 (the v2.0.143 - v2.0.151 frontend,

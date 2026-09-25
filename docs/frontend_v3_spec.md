@@ -322,8 +322,9 @@ Phase 3b; chat uses its conversation-scoped sibling below; the OpenAI-compatible
   thinking, the same on every engine (applied at the Messages boundary,
   `stop_sequences.py`, not handed to llama-server, whose `stop` also matches reasoning):
   `stop_reason: "stop_sequence"` and `stop_sequence: "<the match>"` on the response or
-  the `message_delta`, and the generation is ended between tokens. Only `/v1/messages`
-  takes it; the conversation generate route does not. `max_tokens` is deliberately OPTIONAL unlike Anthropic's:
+  the `message_delta`, and the generation is ended between tokens. The conversation
+  generate route takes the same field per request (v2.0.153) and persists the reply cut
+  where the stream was; it is not a stored param. `max_tokens` is deliberately OPTIONAL unlike Anthropic's:
   absent = the server-side sampler cascade's default (a hard schema default
   here silently overrode the cascade for every client that omitted it).
   `show_special_tokens` was REMOVED in v2.0.38 and is a 422, not a silent
@@ -434,7 +435,8 @@ Phase 3b; chat uses its conversation-scoped sibling below; the OpenAI-compatible
 Phase 1; the server-side saga that replaces the client-orchestrated
 truncate→stream→persist sequences):**
 - `POST /{id}/generate` `{mode:"append"|"regenerate"|"continue",
-  message_id?, user_content?, overrides?}` → SSE stream.
+  message_id?, user_content?, overrides?, stop_sequences?}` → SSE stream (the same
+  loop as `/v1/messages`, `messages_api.translate_stream`, since v2.0.153).
   - The server builds the provider request FROM THE STORE: the conversation's
     `system_prompt`, `params` (sampler bag, cap-gated keys dropped for the
     target model), `model_id`, and message rows (media blocks the model can't

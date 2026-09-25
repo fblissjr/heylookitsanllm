@@ -14,6 +14,7 @@ import logging
 import time
 import uuid
 from contextlib import closing
+from dataclasses import dataclass, field
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, HTTPException, Request
@@ -680,6 +681,107 @@ async def _non_stream_messages(
 # Streaming handler
 # ---------------------------------------------------------------------------
 
+@dataclass
+class StreamOutcome:
+    """What one streamed generation ended as, for the route that owns it.
+
+    ``translate_stream`` fills it; each route decides its own ending from it
+    (Messages closes the grammar, the conversation route also persists)."""
+    full_text: str = ""
+    pre_thinking: list = field(default_factory=list)
+    # "invalid" (a request guard fired at the first advance) or "failed"
+    # (the engine failed mid-stream); None when the run ended normally.
+    error: str | None = None
+    error_message: str | None = None
+    # Cancelled by the client or the stop route -- NOT ended by a stop
+    # sequence, which ends the generation through the same abort signal.
+    aborted: bool = False
+
+
+async def translate_stream(generator, translator, telemetry, outcome, *,
+                           http_request, abort_event, log_prefix: str,
+                           abort_on_disconnect: bool = True) -> AsyncGenerator[str, None]:
+    """THE provider-chunk -> Messages-SSE loop, shared by /v1/messages and the
+    conversation generate route.
+
+    It was two copies until v2.0.153, and they drifted: each renamed the
+    provider's finish_reason on its own (TestStopReasonHasOneMapper exists
+    because one kept emitting "length" for a release after the other was
+    fixed), and each had its own cancel rule. It yields the block events and
+    in-band error events, and never flushes or closes the message: the
+    caller does, because the two routes end differently.
+    """
+    from heylook_llm.streaming_utils import async_generator_with_abort, control_frame
+
+    try:
+        async for chunk in async_generator_with_abort(
+                generator, http_request, abort_event,
+                abort_on_disconnect=abort_on_disconnect, log_prefix=log_prefix):
+            # Marker guard FIRST: keepalive is the grammar's own `ping`,
+            # progress the namespaced heylook_progress.
+            frame = control_frame(chunk)
+            if frame:
+                yield frame
+                continue
+            # The provider speaks OpenAI's finish_reason vocabulary; the ONE
+            # mapper renames it at this boundary.
+            chunk_finish = getattr(chunk, "finish_reason", None)
+            if chunk_finish:
+                translator.stop_reason = to_stop_reason(chunk_finish)
+            telemetry.absorb(chunk)
+            translator.prompt_tokens = telemetry.prompt_tokens
+            translator.completion_tokens = telemetry.completion_tokens
+            translator.cache = telemetry.cache
+            # Pre-split reasoning (chunk.thinking) goes straight to the
+            # thinking block; the parser only ever sees chunk.text.
+            chunk_thinking = getattr(chunk, "thinking", None)
+            if chunk_thinking:
+                outcome.pre_thinking.append(chunk_thinking)
+                for event_str in translator.process_presplit_thinking(chunk_thinking):
+                    yield event_str
+            if not chunk.text:
+                continue
+            outcome.full_text += chunk.text
+            for event_str in translator.process_chunk(
+                    chunk.text, token_id=getattr(chunk, "token", None)):
+                yield event_str
+            # A stop sequence matched: end the generation between tokens.
+            # The loop keeps draining (the translator drops what follows), so
+            # the provider's own finally still runs in order.
+            if translator.stopped and abort_event is not None and not abort_event.is_set():
+                abort_event.set()
+    except InvalidGenerationRequest as e:
+        # Request-shape guards fire at the first advance, after headers --
+        # typed in-band as the CLIENT error it is (invalid_request_error).
+        outcome.error, outcome.error_message = "invalid", str(e)
+        yield translator._sse("error", {
+            "type": "error",
+            "error": {"type": "invalid_request_error", "message": str(e)},
+        })
+        return
+    except GenerationFailed as e:
+        # Mid-stream failure: headers already sent -- an error event, never
+        # content.
+        outcome.error, outcome.error_message = "failed", str(e)
+        yield translator._sse("error", {
+            "type": "error",
+            "error": {"type": "api_error", "message": str(e)},
+        })
+        return
+
+    # A cancelled run must not report the model's own end. It stops between
+    # tokens, so the last chunk carries no finish_reason and `stop_reason`
+    # would stay at `end_turn`, which asserts completion. `max_tokens` is the
+    # closest spec value for "stopped early, not by the model's choice"
+    # (Anthropic has no cancellation reason: there it is a dropped
+    # connection). Only over the default: an engine's own `length` or a
+    # matched stop sequence is the more specific truth.
+    if abort_event is not None and abort_event.is_set() and not translator.stopped:
+        outcome.aborted = True
+        if translator.stop_reason == "end_turn":
+            translator.stop_reason = "max_tokens"
+
+
 async def _stream_messages(
     generator,
     msg_request: MessageCreateRequest,
@@ -702,86 +804,18 @@ async def _stream_messages(
         stop_sequences=msg_request.stop_sequences,
     )
 
-    # Resolve abort event from provider (if MLX provider with abort support)
-    # abort_event is the per-request signal passed in by the route.
-
-    from heylook_llm.streaming_utils import async_generator_with_abort, control_frame
-
     # message_start
     yield translator.message_start_event()
 
-    telemetry = ChunkTelemetry()  # per-chunk counters/rates tagged by the engine (mlx-lm or llama-server)
-    try:
-        async for chunk in async_generator_with_abort(generator, http_request, abort_event, log_prefix=f"[MESSAGES {request_id[:12]}] "):
-            # Marker guard FIRST: keepalive is the grammar's own `ping`,
-            # progress the namespaced heylook_progress.
-            frame = control_frame(chunk)
-            if frame:
-                yield frame
-                continue
-            # Capture provider metadata. The provider speaks OpenAI's
-            # finish_reason vocabulary; renaming it at this boundary is what
-            # keeps "length" off an Anthropic-shaped message_delta.
-            chunk_finish = getattr(chunk, "finish_reason", None)
-            if chunk_finish:
-                translator.stop_reason = to_stop_reason(chunk_finish)
-            telemetry.absorb(chunk)
-            # The translator owns the token counts it reports in its own
-            # message_delta/usage events.
-            translator.prompt_tokens = telemetry.prompt_tokens
-            translator.completion_tokens = telemetry.completion_tokens
-            translator.cache = telemetry.cache
-
-            # Pre-split reasoning (chunk.thinking) goes straight to the
-            # thinking block; the parser only ever sees chunk.text.
-            chunk_thinking = getattr(chunk, "thinking", None)
-            if chunk_thinking:
-                for event_str in translator.process_presplit_thinking(chunk_thinking):
-                    yield event_str
-
-            if not chunk.text:
-                continue
-
-            token_id = getattr(chunk, "token", None)
-
-            for event_str in translator.process_chunk(chunk.text, token_id=token_id):
-                yield event_str
-            # A stop sequence matched: end the generation between tokens.
-            # The loop keeps draining (the translator drops what follows), so
-            # the provider's own finally still runs in order.
-            if translator.stopped and abort_event is not None and not abort_event.is_set():
-                abort_event.set()
-
-    except InvalidGenerationRequest as e:
-        # Provider request-validation guards fire at first next(), after
-        # headers flushed -- type the in-band event as the CLIENT error it is
-        # (Anthropic's invalid_request_error), not an api_error.
-        yield translator._sse("error", {
-            "type": "error",
-            "error": {"type": "invalid_request_error", "message": str(e)},
-        })
+    telemetry = ChunkTelemetry()  # per-chunk counters/rates tagged by the engine
+    outcome = StreamOutcome()
+    async for event_str in translate_stream(
+            generator, translator, telemetry, outcome,
+            http_request=http_request, abort_event=abort_event,
+            log_prefix=f"[MESSAGES {request_id[:12]}] "):
+        yield event_str
+    if outcome.error:
         return
-
-    except GenerationFailed as e:
-        # Mid-stream failure: headers already sent -- Anthropic-style error
-        # event, never content.
-        yield translator._sse("error", {
-            "type": "error",
-            "error": {"type": "api_error", "message": str(e)},
-        })
-        return
-
-    # Same rule as the non-streaming path above and as
-    # conversation_generate_api: a cancelled stream must not report the
-    # model's own end. An aborted run stops between tokens, so the last chunk
-    # carries no finish_reason and `stop_reason` would stay at its `end_turn`
-    # default -- a consumer keying on the shared Messages grammar could not
-    # tell a cancelled turn from a completed one. Only overridden when the
-    # provider said nothing: a real `length`/`stop_sequence` from the engine
-    # is a more specific truth and keeps priority.
-    if (abort_event is not None and abort_event.is_set()
-            and translator.stop_reason == "end_turn"):
-        translator.stop_reason = "max_tokens"
 
     # Flush parser
     for event_str in translator.flush():

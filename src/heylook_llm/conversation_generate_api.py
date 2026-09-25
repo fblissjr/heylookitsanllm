@@ -45,11 +45,11 @@ import asyncio
 import logging
 import time
 import uuid
-from typing import AsyncGenerator, Literal, cast
+from typing import Annotated, AsyncGenerator, List, Literal, Optional, cast
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, StringConstraints, ValidationError
 from starlette.background import BackgroundTask
 
 from heylook_llm import db
@@ -58,7 +58,8 @@ from heylook_llm.providers.contract import thinking_controls
 from heylook_llm.thinking_controls import check_depth
 from heylook_llm.config import ChatMessage, ChatRequest
 from heylook_llm.db import get_db as _get_db
-from heylook_llm.messages_api import StreamingEventTranslator
+from heylook_llm.messages_api import StreamOutcome, StreamingEventTranslator, translate_stream
+from heylook_llm.stop_sequences import MAX_STOP_SEQUENCE_CHARS, MAX_STOP_SEQUENCES, truncate as truncate_at_stop
 from heylook_llm.schema.converters import to_stop_reason
 from heylook_llm.samplers import REQUEST_SAMPLER_FIELDS
 from heylook_llm.optimizations import fast_json as json
@@ -205,6 +206,13 @@ class GenerateRequest(BaseModel):
     # (same allowlist + cap gates). May carry "model" to generate with a
     # model other than the conversation's stamped one.
     overrides: dict = Field(default_factory=dict)
+    # The /v1/messages field, applied the same way (stop_sequences.py): the
+    # reply is cut before the first match, never the thinking, and the
+    # persisted row is cut where the stream was. Per request, not a stored
+    # param: a document's `params` is the sampler bag.
+    stop_sequences: Optional[List[Annotated[str, StringConstraints(
+        min_length=1, max_length=MAX_STOP_SEQUENCE_CHARS)]]] = Field(
+        default=None, max_length=MAX_STOP_SEQUENCES)
 
 class PromptPreviewRequest(BaseModel):
     """What the generate saga WOULD send, rendered instead of run.
@@ -638,7 +646,7 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
             model_id=model_id, mode=body.mode,
             saved_user_row=saved_user_row, continue_row=continue_row,
             commit_after=commit_after, dropped=dropped,
-            make_parser=make_parser,
+            make_parser=make_parser, stop_sequences=body.stop_sequences,
             perf_ctx=perf_ctx, started=started, release=_release_claim,
         )))
         return StreamingResponse(
@@ -847,6 +855,7 @@ async def _stream_generate(conn, conv_id, generator, http_request, *,
                            provider, abort_event, model_id, mode,
                            saved_user_row, continue_row, commit_after,
                            dropped, make_parser, perf_ctx,
+                           stop_sequences=None,
                            started=None, release=None) -> AsyncGenerator[str, None]:
     if started is not None:
         started["flag"] = True  # the finally below owns _ACTIVE from here on
@@ -856,15 +865,13 @@ async def _stream_generate(conn, conv_id, generator, http_request, *,
     # rendered. Every input is the request's own answer (parser_factory_for),
     # never re-derived from the row here.
     translator = StreamingEventTranslator(
-        message_id, model_id, thinking_parser=make_parser())
-
-    from heylook_llm.streaming_utils import async_generator_with_abort, control_frame
+        message_id, model_id, thinking_parser=make_parser(),
+        stop_sequences=stop_sequences)
 
     yield translator.message_start_event()
 
     telemetry = ChunkTelemetry()
-    full_text = ""
-    pre_thinking_parts: list[str] = []
+    outcome = StreamOutcome()
     end_reason = "complete"
     error_message: str | None = None
     persisted = False
@@ -872,9 +879,12 @@ async def _stream_generate(conn, conv_id, generator, http_request, *,
     def split_final():
         # A FRESH parser over the accumulated text: parser output is
         # chunk-invariant (TestParserInvariants), so this equals what the
-        # translator streamed.
-        content, thinking = parse_reasoning(full_text, make_parser())
-        return content, merge_presplit_thinking(pre_thinking_parts, thinking)
+        # translator streamed -- cut at the stop sequence the same way
+        # (stop_sequences.truncate is the filter's one-shot form).
+        content, thinking = parse_reasoning(outcome.full_text, make_parser())
+        if stop_sequences:
+            content, _ = truncate_at_stop(content, stop_sequences)
+        return content, merge_presplit_thinking(outcome.pre_thinking, thinking)
 
     async def persist():
         content, thinking = split_final()
@@ -897,69 +907,21 @@ async def _stream_generate(conn, conv_id, generator, http_request, *,
         return row
 
     try:
-        try:
-            async for chunk in async_generator_with_abort(
-                    generator, http_request, abort_event,
-                    abort_on_disconnect=False,
-                    log_prefix=f"[CONV-GEN {conv_id[:8]}] "):
-                frame = control_frame(chunk)  # marker guard FIRST
-                if frame:
-                    yield frame
-                    continue
-                chunk_finish = getattr(chunk, "finish_reason", None)
-                if chunk_finish:
-                    # Same boundary rename as /v1/messages: this route speaks
-                    # the Messages SSE grammar, so the provider's OpenAI
-                    # finish_reason must not reach the wire. This was the
-                    # SECOND copy of that passthrough and it outlived the fix
-                    # to the first by one commit -- both now call the shared
-                    # mapper, so the two routes cannot disagree again.
-                    translator.stop_reason = to_stop_reason(chunk_finish)
-                telemetry.absorb(chunk)
-                translator.prompt_tokens = telemetry.prompt_tokens
-                translator.cache = telemetry.cache
-                translator.completion_tokens = telemetry.completion_tokens
-                chunk_thinking = getattr(chunk, "thinking", None)
-                if chunk_thinking:
-                    pre_thinking_parts.append(chunk_thinking)
-                    for event_str in translator.process_presplit_thinking(chunk_thinking):
-                        yield event_str
-                if not chunk.text:
-                    continue
-                full_text += chunk.text
-                for event_str in translator.process_chunk(
-                        chunk.text, token_id=getattr(chunk, "token", None)):
-                    yield event_str
-        except InvalidGenerationRequest as e:
-            # Request-shape guards fire on first advance, after headers --
-            # typed in-band, nothing generated, nothing to persist.
-            yield translator._sse("error", {
-                "type": "error",
-                "error": {"type": "invalid_request_error", "message": str(e)},
-            })
-            return
-        except GenerationFailed as e:
-            end_reason = "error"
-            error_message = str(e)
-            yield translator._sse("error", {
-                "type": "error",
-                "error": {"type": "api_error", "message": str(e)},
-            })
-            # fall through: a partial that exists is persisted, not vanished
-
-        if abort_event.is_set() and end_reason == "complete":
+        async for event_str in translate_stream(
+                generator, translator, telemetry, outcome,
+                http_request=http_request, abort_event=abort_event,
+                abort_on_disconnect=False,
+                log_prefix=f"[CONV-GEN {conv_id[:8]}] "):
+            yield event_str
+        if outcome.error == "invalid":
+            return  # nothing generated, nothing to persist
+        if outcome.error == "failed":
+            # a partial that exists is persisted, not vanished
+            end_reason, error_message = "error", outcome.error_message
+        elif outcome.aborted:
+            # heylook_saved says "aborted"; the shared loop already made the
+            # SSE grammar say so too (max_tokens, never end_turn).
             end_reason = "aborted"
-            # Say so in the SSE grammar too, not only in heylook_saved. A
-            # cancelled generation was emitting `end_turn` -- which positively
-            # asserts the model finished its turn -- on the same stream whose
-            # heylook_saved.end_reason said "aborted". A consumer keying on
-            # the shared Messages grammar (the spec tells them this route
-            # speaks it) could not tell a completed turn from a cancelled one.
-            # `max_tokens` is the closest spec-defined "stopped early for a
-            # reason that is not the model's own end": Anthropic has no
-            # cancellation value because cancellation there is a dropped
-            # connection, not a stop reason.
-            translator.stop_reason = "max_tokens"
 
         for event_str in translator.flush():
             yield event_str

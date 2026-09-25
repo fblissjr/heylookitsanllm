@@ -479,6 +479,24 @@ class TestWireShape:
         assert provider.last_request.temperature == 0.9
 
     @pytest.mark.asyncio
+    async def test_stop_sequences_cut_the_stream_and_the_row_alike(self, ctx):
+        """The one loop gives chat /v1/messages' stop sequences (v2.0.153):
+        the streamed reply, the stop reason and the persisted row all end
+        before the match."""
+        client, store, provider = ctx
+        provider.chunks = ("one two ", "ST", "OP three")
+        conv, _ = await make_conv(store, ("user", "q1"))
+        res = await client.post(f"/v1/conversations/{conv['id']}/generate",
+                                json={"mode": "append", "stop_sequences": ["STOP"]})
+        assert res.status_code == 200
+        events = dict((ev, data) for ev, data in sse_events(res.text))
+        assert events["message_delta"]["delta"] == {"stop_reason": "stop_sequence",
+                                                    "stop_sequence": "STOP"}
+        assert saved_event(res.text)["end_reason"] == "complete"
+        stored = await db.get_conversation(store, conv["id"])
+        assert stored["messages"][-1]["content"] == "one two "
+
+    @pytest.mark.asyncio
     async def test_out_of_range_param_is_400_naming_it(self, ctx):
         """A stored value outside ChatRequest's bounds is the caller's value:
         a 400 naming the field, not the 500 a missing blob gets."""

@@ -613,15 +613,29 @@ def _messages_grammar_routes():
         text = p.read_text()
         if "StreamingEventTranslator" in text and ".stop_reason" in text:
             found.append(str(p.relative_to(_REPO_ROOT)))
-    assert len(found) >= 2, (
-        f"expected at least the two known Messages-grammar routes, found "
-        f"{found} -- if StreamingEventTranslator was renamed, fix this rule "
-        "rather than pinning a list"
+    assert found, (
+        "found no module writing StreamingEventTranslator's stop_reason -- if "
+        "it was renamed, fix this rule rather than pinning a list"
     )
     return found
 
 
 MESSAGES_GRAMMAR_ROUTES = _messages_grammar_routes()
+
+
+def test_every_messages_stream_runs_the_one_loop():
+    """Since v2.0.153 both Messages-grammar routes drive ONE loop
+    (messages_api.translate_stream); the per-route copies are what let
+    stop_reason, cancellation and stop sequences drift apart. Any module that
+    builds a translator must stream through it, and only the loop's own
+    module may write stop_reason."""
+    src = _REPO_ROOT / "src" / "heylook_llm"
+    builders = [p for p in sorted(src.rglob("*.py"))
+                if "StreamingEventTranslator(" in p.read_text()]
+    assert len(builders) >= 2, f"expected both routes to build a translator, found {builders}"
+    for p in builders:
+        assert "translate_stream(" in p.read_text(), f"{p.name} streams outside the shared loop"
+    assert MESSAGES_GRAMMAR_ROUTES == ["src/heylook_llm/messages_api.py"], MESSAGES_GRAMMAR_ROUTES
 
 
 class TestStopReasonHasOneMapper:
