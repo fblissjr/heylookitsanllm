@@ -240,7 +240,7 @@ When assembling spawn arguments in [`_build_args()`](../../src/heylook_llm/provi
 Note that `--jinja` is **not** passed by heylook. It is on by default in the `llama-server` builds this project targets, and the provider relies on that default for the pre-split `reasoning_content` deltas -- it is not a flag in the spawn argv.
 
 The same holds for several flags that matter and are deliberately inherited rather than passed:
-- **`-fa` (flash attention)**: left at llama-server's `auto`, which resolves on under Metal for the head dimensions served here. The vision tower inherits it, which is why forcing it off is a loss for image requests. There is no config field for it yet; the [runtime visibility plan](../project/plan_runtime_visibility.md)'s W1 adds one, defaulting to auto.
+- **`-fa` (flash attention)**: left at llama-server's `auto`, which resolves on under Metal for the head dimensions served here. The vision tower inherits it, which is why forcing it off is a loss for image requests. The `flash_attn` field (`on`/`off`, unset = auto) exists to test a new architecture, not to tune; the admin row shows what auto resolved to (§5.3).
 - **`--cache-reuse`**: left off. It does not matter for vision models either way, because llama-server disables it whenever an mmproj is loaded (and context shift with it).
 - **`--reasoning-preserve`**: left at its default, on. Past reasoning stays in the rendered history, which keeps the prompt prefix stable from turn to turn (§4.6).
 - **Checkpoint and SWA flags** (`-ctxcp`, `-cms`, `--swa-full`): left at llama-server's defaults.
@@ -421,7 +421,7 @@ flowchart TD
     AutoDetect --> DefaultModelConfig["Derived Model Configuration"]
     
     DefaultModelConfig --> TomlConfig["heylook.toml Explicit [[models]] Overrides"]
-    TomlConfig --> AdminAPI["Admin Reload Endpoint (POST /v1/admin/models/{id}/reload?ctx_size=N)"]
+    TomlConfig --> AdminAPI["Admin Reload Endpoint (POST /v1/admin/models/{id}/reload, body: load settings)"]
     AdminAPI --> RunningProcess["Spawned llama-server Process Arguments"]
 ```
 
@@ -440,9 +440,10 @@ When scanning directories (`model_importer.py`):
    - Thinking: Scans embedded `tokenizer.chat_template` for `enable_thinking`.
    - Native Context: Reads `<arch>.context_length`.
 
-### 5.3. Admin Reload & Dynamic Context Sizing
-Context size can be adjusted dynamically in the Chat and Models UI:
-1. **Endpoint**: `POST /v1/admin/models/{id}/reload?ctx_size=N` ([`admin_api.py`](../../src/heylook_llm/admin_api.py)).
-2. **Persistence First**: If `ctx_size` is provided, it is persisted to `heylook.toml` via `ModelService.update_config` before reloading. Passing `ctx_size=0` resets the model to **Auto** (`-c 0`).
-3. **No-Op Avoidance**: the comparison is against the **stored** `ctx_size` in `heylook.toml`, not against the context the process is actually running. If the requested value matches what is stored and nothing else is stale, the warm model stays resident. The consequence is worth holding: a model running at Auto has *no* stored value, so asking for the exact size it happens to be running still counts as a change and restarts it.
-4. **UI Integration**: the Chat page uses [`context-select.js`](../../frontend/js/context-select.js) for a dropdown of context sizes up to the model's native ceiling. **Choosing a value does not reload anything** -- it reveals the Load/Reload button, and the chosen size is sent *with* that load when you press it.
+### 5.3. Admin Reload & Load Settings
+The load settings (plan W1) are the config fields tagged `load_setting` (`config.load_setting_fields`; for gguf `ctx_size` and `flash_attn`). They can be changed from the Chat page's load panel and from the Models page's editor:
+1. **Endpoint**: `POST /v1/admin/models/{id}/reload` with a JSON body of load settings ([`admin_api.py`](../../src/heylook_llm/admin_api.py)). A key that is not a load setting of the model's provider is a 400 naming the ones it has.
+2. **Persistence First**: each value is persisted to the model's `model.heylook.toml` via `ModelService.update_config` before reloading. `null` resets a setting to **Auto**: the key is dropped, never written (`ctx_size` then means `-c 0`, `flash_attn` llama-server's own `auto`).
+3. **No-Op Avoidance**: the comparison is against the **stored** values, not against what the process is actually running. If every requested value matches what is stored and nothing else is stale, the warm model stays resident. The consequence is worth holding: a model running at Auto has *no* stored value, so asking for the exact size it happens to be running still counts as a change and restarts it.
+4. **UI Integration**: the Chat page's [`load-panel.js`](../../frontend/js/load-panel.js) renders one control per load setting beside the model select: [`context-select.js`](../../frontend/js/context-select.js) for context sizes up to the model's native ceiling, and a select per other field whose first option is Auto, labelled with what auto resolved to. **Choosing a value does not reload anything** -- it reveals the Load/Reload button, and the choices are sent *with* that load when you press it.
+5. **Flash attention's auto**: llama-server decides it at load (libllama's device probe, or forced on by a quantized V cache). The provider reads that decision off llama-server's output (`SpawnLog`, fed by the same pump as the cache witness) and reports it as the `flash_attn` setting's `auto`, with provenance `observed`.

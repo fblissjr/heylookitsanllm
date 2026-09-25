@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.136]
+
+Plan W1: load settings.
+
+### Changed (breaking, API)
+
+- **`POST /v1/admin/models/{id}/reload` takes the load settings as a JSON
+  body** (`{"ctx_size": 65536, "flash_attn": null}`), replacing the
+  `?ctx_size=N` query. The body takes exactly the provider's fields tagged
+  `load_setting` (`config.load_setting_fields`), and a key that is not one is
+  a 400 naming the ones the model has. `null` is Auto (the stored key is
+  dropped); `ctx_size` no longer takes 0 for Auto. The only callers were
+  chat's Load/Reload and the contract tests, both moved. Spec §4 updated.
+
+### Added
+
+- **`flash_attn`** on gguf models (`on`/`off`; unset = llama-server's auto,
+  which stays the default and is never written). Emitted as `-fa`. The
+  admin row's `engine.settings.flash_attn` reports what auto resolved to,
+  read off llama-server's output (`SpawnLog`, provenance `observed`).
+- **`load_setting`** on `/v1/admin/model-options` fields (gguf `ctx_size`,
+  `flash_attn`).
+- **Chat's load panel** (`frontend/js/load-panel.js`): beside the model
+  select, the context select plus one select per other load setting,
+  generated from the option schema. Auto comes first and is labelled with
+  what auto resolved to ("flash attn: auto (on)"), and choosing it is the
+  reset. Load/Reload sends every choice in the reload body. The models page
+  keeps its schema-driven editor, which now offers `flash_attn` too.
+
+### Verified
+
+- Unit and contract suites green; `bun run e2e:render` 100/100, including a
+  new check that the panel offers flash attention at phone width and sends
+  both choices in the reload body.
+- Not run: `tests/smoke/` and the gguf e2e (no server was up; none spawned).
+  The observed flash-attention auto is checked against libllama's log lines
+  (`llama-context.cpp` `resolve_fused_ops`), not yet on a live spawn.
+
 ## [2.0.135]
 
 ### Fixed

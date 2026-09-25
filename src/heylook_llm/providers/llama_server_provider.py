@@ -158,14 +158,41 @@ def _llama_system_config_paths() -> list[Path]:
     user_dir = Path(xdg) if xdg else Path.home() / ".config"
     return [Path("/etc/llama.cpp/config.ini"), user_dir / "llama.cpp" / "config.ini"]
 
-def _pump_output(stream, tee, witness: CacheWitness) -> None:
+def flash_attn_from_log(line: str) -> Optional[str]:
+    """"on"/"off" when a llama-server log line settles flash attention, else
+    None. Under auto, libllama's device probe logs "Flash Attention enabled"
+    or "... not supported, set to disabled" (llama-context.cpp
+    ``resolve_fused_ops``); a quantized V cache or tensor split forces it on,
+    and Grok forces it off, each with its own line."""
+    if "Flash Attention enabled" in line or "enabling flash_attn since" in line:
+        return "on"
+    if "Flash Attention not supported" in line or "flash_attn is not compatible" in line:
+        return "off"
+    return None
+
+
+class SpawnLog:
+    """Load facts only llama-server's own log states, read off the pump.
+    The first flash-attention line is the target model's context; a drafter
+    or the projector may log their own after it."""
+
+    def __init__(self) -> None:
+        self.flash_attn: Optional[str] = None
+
+    def note_line(self, line: str) -> None:
+        if self.flash_attn is None:
+            self.flash_attn = flash_attn_from_log(line)
+
+
+def _pump_output(stream, tee, *sinks) -> None:
     """Drain llama-server's output pipe for the life of the process.
 
     Always drained, whatever the observability level: a pipe nobody reads
     fills and then blocks llama-server mid-write. Each line goes to the log
-    file when file logging was on at spawn (``tee``), and to the cache
-    witness, which keeps only the cache events it recognizes. Nothing here
-    may raise out of the loop: a dead pump is a wedged server.
+    file when file logging was on at spawn (``tee``), and to each sink's
+    ``note_line`` (the cache witness, which keeps only the cache events it
+    recognizes, and the ``SpawnLog``). Nothing here may raise out of the
+    loop: a dead pump is a wedged server.
     """
     try:
         for raw in iter(stream.readline, b""):
@@ -175,10 +202,12 @@ def _pump_output(stream, tee, witness: CacheWitness) -> None:
                     tee.flush()
                 except Exception:  # noqa: BLE001 - closed at unload; keep draining
                     tee = None
-            try:
-                witness.note_line(raw.decode("utf-8", "replace"))
-            except Exception:  # noqa: BLE001
-                pass
+            line = raw.decode("utf-8", "replace")
+            for sink in sinks:
+                try:
+                    sink.note_line(line)
+                except Exception:  # noqa: BLE001
+                    pass
     except Exception:  # noqa: BLE001 - the stream closed under us at teardown
         pass
     finally:
@@ -224,6 +253,7 @@ class LlamaServerProvider(BaseProvider):
         self._log_handle = None
         # Per process: a respawn starts with empty caches, so a fresh witness.
         self._cache_witness: Optional[CacheWitness] = None
+        self._spawn_log: Optional[SpawnLog] = None
         self._base_url: Optional[str] = None
         # The model's own recommended decode settings, read from the GGUF
         # header once and cached. None = not read yet (the file cannot change
@@ -822,6 +852,10 @@ class LlamaServerProvider(BaseProvider):
         ]
         if cfg.get("ctx_size"):
             args += ["--ctx-size", str(cfg["ctx_size"])]
+        # Unset = llama-server's own auto (its device probe); only an explicit
+        # choice reaches argv.
+        if cfg.get("flash_attn"):
+            args += ["-fa", cfg["flash_attn"]]
         # Batch sizing. `is not None` throughout: an unset field inherits
         # llama-server's own default, and for n_ubatch "unset" means the
         # auto answer load_model resolved (None = inherit, again).
@@ -940,6 +974,7 @@ class LlamaServerProvider(BaseProvider):
         with, read back from fields load_model recorded. No call to the
         process and no lock, so a listing never waits on a generation."""
         from .contract import Fact, Observed
+        from .gguf_describe import flash_attn_setting
 
         ctx = self.running_ctx
         return Observed(
@@ -948,7 +983,11 @@ class LlamaServerProvider(BaseProvider):
                 source="llama-server's /props at ready" if ctx
                 else "llama-server's /props did not report a context size"),
             loaded_template=self.loaded_chat_template,
-            settings=dict(getattr(self, "_load_report", None) or {}),
+            settings={**(getattr(self, "_load_report", None) or {}),
+                      "flash_attn": flash_attn_setting(
+                          self.config.get("flash_attn"),
+                          getattr(getattr(self, "_spawn_log", None), "flash_attn", None),
+                          loaded=True)},
             speculative={"in_force": self._spec_in_force()},
         )
 
@@ -1190,9 +1229,10 @@ class LlamaServerProvider(BaseProvider):
         )
         self._register_proc(self._proc)
         self._cache_witness = CacheWitness()
+        self._spawn_log = SpawnLog()
         threading.Thread(
             target=_pump_output,
-            args=(self._proc.stdout, self._log_handle, self._cache_witness),
+            args=(self._proc.stdout, self._log_handle, self._cache_witness, self._spawn_log),
             name=f"llama-log-{self.model_id}", daemon=True,
         ).start()
         self._base_url = f"http://{host}:{port}"

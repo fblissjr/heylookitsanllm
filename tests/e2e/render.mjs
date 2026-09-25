@@ -351,15 +351,28 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
           id: secondModel.id, loaded: secondModel.loaded ?? true,
           provider: secondModel.provider ?? 'mlx',
           // The engine contract's shape (providers/contract.py), reduced to
-          // the one fact the page reads here.
-          engine: { context: { length: { value: secondModel.context_length ?? null } } },
+          // the facts the page reads here: the context ceiling, and what a
+          // running process's auto flash attention resolved to.
+          engine: {
+            context: { length: { value: secondModel.context_length ?? null } },
+            settings: { flash_attn: { value: 'on', auto: 'on', provenance: 'observed',
+              reason: "auto: llama-server's device probe turned it on (its log)" } },
+          },
           config: {},
         });
       }
       return { models };
     }
     if (url.endsWith('/v1/capabilities')) return { samplers: [], server_version: 'stub' };
-    if (url.endsWith('/v1/admin/model-options')) return { fields: [] };
+    // The option schema's shape, reduced to gguf's load settings (plan W1):
+    // the load panel renders from exactly these flags.
+    if (url.endsWith('/v1/admin/model-options')) {
+      return { providers: { mlx: { fields: [] }, gguf: { fields: [
+        { name: 'ctx_size', load_setting: true, type: 'integer' },
+        { name: 'flash_attn', load_setting: true, type: 'string', enum: ['on', 'off'],
+          description: 'Flash attention.' },
+      ] } } };
+    }
     return {};
   };
 
@@ -2401,6 +2414,30 @@ async function main() {
       await typeCustom('99999999');
       const clamped = await page.$eval('.chat__ctx-select', (el) => el.value);
       assert(clamped === '262144', `expected a clamp to the 262144 ceiling, got ${clamped}`);
+    });
+
+    // Plan W1: the load panel generates a control per load setting beside
+    // the context select, Auto first and labelled with what auto resolved
+    // to, and Load sends every choice in the reload body (null = Auto).
+    await suite.check('the load panel offers flash attention and sends the choices with the load', async () => {
+      const { page, reqs } = ctxm;
+      const fa = await page.$eval('.chat__load-select[data-field="flash_attn"]', (el) => {
+        const r = el.getBoundingClientRect();
+        return { options: [...el.options].map((o) => o.textContent), value: el.value,
+          right: r.right, h: r.height };
+      });
+      assert(fa.options[0] === 'flash attn: auto (on)' && fa.value === '',
+        `flash attention select did not open on auto-with-its-resolution: ${JSON.stringify(fa)}`);
+      assert(fa.h >= 44, `phone touch target under 44px: ${fa.h}px`);
+      await page.select('.chat__load-select[data-field="flash_attn"]', 'off');
+      await page.select('.chat__ctx-select', '');  // context back to Auto
+      await settle(page);
+      await page.$eval('.chat__load-btn', (el) => el.click());
+      const reload = await waitFor(() => reqs.find((r) => r.method === 'POST' && r.url.includes('/reload')),
+        { timeout: 5000, message: 'Load sent no reload' });
+      const body = JSON.parse(reload.postData || 'null');
+      assert(body && body.flash_attn === 'off' && body.ctx_size === null,
+        `reload body was ${reload.postData}`);
     });
 
     await ctxm.page.close();

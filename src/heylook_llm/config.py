@@ -291,6 +291,13 @@ def configurable_fields(cls: type) -> frozenset:
     )
 
 
+def load_setting_fields(cls: type) -> frozenset:
+    """The fields a load panel offers (plan W1): tagged ``load_setting`` on
+    the field, never listed. The reload route takes exactly these."""
+    return frozenset(name for name, field in cls.model_fields.items()
+                     if _extra(field).get("load_setting"))
+
+
 class MLXModelConfig(BaseModel):
     # Runtime-default fields (marked with ``is_runtime_default=True``) flow
     # from heylook.toml into each request's effective_request dict via
@@ -778,7 +785,23 @@ class GGUFModelConfig(BaseModel):
             "lazily, so there is nothing there to size. The admin row reports "
             "`context_length` (the GGUF header ceiling) beside "
             "`context_running` (what the process actually got)."),
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "--ctx-size"},
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "--ctx-size",
+                           "load_setting": True},
+    )
+    # -fa. Unset = auto, and auto is the default that stays (plan W1): forcing
+    # it off made the vision encode markedly slower and nothing faster
+    # (gguf runtime audit, 2026-09-23). "auto" itself is not a value here, so
+    # choosing Auto removes the key rather than writing it.
+    flash_attn: Optional[Literal["on", "off"]] = Field(
+        default=None,
+        description=(
+            "Flash attention. Unset = auto: llama-server probes the device at "
+            "load and turns it on where supported, which is the default and "
+            "stays so -- forcing it off was measured slower. The field exists "
+            "to test a new architecture, not to tune. The admin row shows what "
+            "auto resolved to, read from llama-server's own log."),
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-fa",
+                           "load_setting": True},
     )
     # --spec-draft-p-min: minimum probability for a drafted token to be kept.
     # NOT a minor tuning knob -- it INTERACTS with spec_draft_n_max and the

@@ -1517,3 +1517,29 @@ def test_a_load_failure_without_a_drafter_is_not_retried(monkeypatch):
     with pytest.raises(lsp.LlamaServerLoadExit):
         make_provider().load_model()
     assert calls == [1]
+
+
+def test_flash_attn_reports_what_auto_resolved_to():
+    """Unset flash_attn is llama-server's auto; the row shows what it resolved
+    to, read from its log. The lines are libllama's own
+    (llama-context.cpp resolve_fused_ops and the forced cases); the first one
+    is the target model's context, so a drafter's later line cannot flip it."""
+    from heylook_llm.providers.gguf_describe import flash_attn_setting
+    from heylook_llm.providers.llama_server_provider import SpawnLog
+
+    log = SpawnLog()
+    for line in ("llama_context: flash_attn            = auto\n",
+                 "resolve_fused_ops: Flash Attention enabled\n",
+                 "resolve_fused_ops: Flash Attention not supported, set to disabled\n"):
+        log.note_line(line)
+    assert log.flash_attn == "on"
+    forced = SpawnLog()
+    forced.note_line("llama_init_from_model: enabling flash_attn since it is required for quantized V cache\n")
+    assert forced.flash_attn == "on"
+
+    seen = flash_attn_setting(None, "on", loaded=True)
+    assert (seen.value, seen.auto, seen.provenance) == ("on", "on", "observed")
+    assert flash_attn_setting(None, None, loaded=True).provenance == "unknown"
+    assert flash_attn_setting(None, None, loaded=False).value == "auto"
+    chosen = flash_attn_setting("off", "on", loaded=True)
+    assert (chosen.value, chosen.configured, chosen.provenance) == ("off", "off", "configured")

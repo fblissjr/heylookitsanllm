@@ -1,6 +1,6 @@
 # Plan: runtime visibility and one behaviour across engines
 
-last updated: 2026-09-24 (APPROVED by the owner). Shipped: W0 (v2.0.107 - v2.0.122), W2, W3, W4, W5 (spec reporting completed by `engine.speculative`, v2.0.120), W7, W8, W9, W13. In progress: W10 (stages shipped through v2.0.121, qwen3_5 vision features v2.0.135; the per-image vision key is open). Open: W1, W6 (only if W5 shows budget skips), W12, W14.
+last updated: 2026-09-24 (APPROVED by the owner). Shipped: W0 (v2.0.107 - v2.0.122), W1 (v2.0.136), W2, W3, W4, W5 (spec reporting completed by `engine.speculative`, v2.0.120), W7, W8, W9, W13. In progress: W10 (stages shipped through v2.0.121, qwen3_5 vision features v2.0.135; the per-image vision key is open). Open: W6 (only if W5 shows budget skips), W12, W14.
 
 ## Context
 
@@ -86,7 +86,25 @@ top is making the result explainable from the UI:
 It comes first because W1, W2, W4 and W6 all add derived settings, which
 today's design would freeze into every existing entry.
 
-### W1. Load settings: flash attention and a real load panel
+### W1. Load settings: flash attention and a real load panel (shipped v2.0.136)
+
+**As shipped.** The field, the tag, the reload body and the chat panel below,
+plus one addition: the `flash_attn` setting's `auto` is what llama-server
+actually resolved, read off its output (`SpawnLog`), with provenance
+`observed`. Two deviations, both deliberate:
+- The chat panel is an inline group beside the model select, not a panel
+  behind a toggle. The context select was reported missing on a phone once
+  (2026-09-04, pinned by the render suite), and a toggle would reintroduce
+  that. Value, provenance and auto show in each control's Auto label and
+  title; choosing Auto is the reset.
+- The models page gets no second panel. Its schema-driven editor already
+  offers every load setting (`flash_attn` appeared there with no frontend
+  change) with its effect class and "Reload now", and its engine panel shows
+  each setting's value, auto and provenance. A second editor for the same
+  values would be two places to disagree.
+Not verified live: no server was up for a gguf load, so the observed auto has
+been checked only against libllama's log strings (unit) and the chat panel
+only against a stubbed API (`e2e:render`).
 
 - **Backend.**
   - A `flash_attn` field (`auto|on|off`; unset = auto, never written),
@@ -897,7 +915,8 @@ display touch stored config. So W0 runs in parallel instead of blocking.
    reliable control.
 6. **W4**, backend then frontend resize. It is independent.
 7. **W0**, from Phase 0 onward; it may start in parallel from step 1. Then
-   **W1**, which renders W0's provenance.
+   **W1**, which renders W0's provenance. Both shipped (W0 v2.0.107 - v2.0.122,
+   W1 v2.0.136).
 8. **W6 only if W5 shows budget skips.** The default budget held a
    10k-token conversation on the hybrid model comfortably, because its
    per-token KV is small. So auto-sizing waits for evidence.

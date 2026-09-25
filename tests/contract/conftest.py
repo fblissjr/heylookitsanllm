@@ -55,7 +55,7 @@ TEST_MODELS_DATA = {
         },
         {
             # A gguf row, so routes with a provider branch (context fields on
-            # the admin row, ctx_size on /reload) have both arms reachable.
+            # the admin row, load settings on /reload) have both arms reachable.
             # FakeProvider serves it like any other id; its path does not
             # exist, which is the "header unreadable" case on purpose.
             "id": "test-gguf-model",

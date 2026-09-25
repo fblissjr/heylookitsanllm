@@ -143,7 +143,8 @@ heylookitsanllm/
 │       ├── api.js               # Fetch wrapper for /v1 endpoints
 │       ├── streaming.js         # SSE parser & callback-driven stream client
 │       ├── markdown-stream.js   # Linear-time incremental markdown chunker
-│       ├── context-select.js    # GGUF context picker & reload trigger
+│       ├── load-panel.js        # Load settings beside the model select (plan W1)
+│       ├── context-select.js    # GGUF context picker inside the load panel
 │       ├── model-config.js      # Schema-driven per-model admin editor
 │       ├── preset-bar.js        # Shared preset manager & prompt override guard
 │       └── pages/               # Page controllers: chat, notebook, models, perf

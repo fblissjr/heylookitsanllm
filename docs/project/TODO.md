@@ -87,7 +87,8 @@ Sequencing section carries the reasons):
   build (reopened; the biggest daily win);
 - W2+W3 thinking detection + templates, with W7 thinking budget;
 - W4 image geometry;
-- W0 from Phase 0, then W1 load panel;
+- W0 from Phase 0, then W1 load panel (both shipped; W1 v2.0.136, a live
+  gguf check of the observed flash-attention auto still owed);
 - W6 only if W5 shows budget skips;
 - W11 upstream llama.cpp PRs, optional.
 - W12 profiling (decode overhead + image preprocessing), any time; decides

@@ -35,7 +35,7 @@ import * as drawer from '../settings-drawer.js';
 import { createPresetBar, paintPresetChip } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
 import { createDocumentWriter } from '../document-writer.js';
-import { createContextSelect } from '../context-select.js';
+import { createLoadPanel } from '../load-panel.js';
 import { contextRunning, readFact, renderEngineCompact } from '../engine.js';
 import { paintPromptPreview, paintPromptPreviewError } from '../prompt-preview.js';
 
@@ -225,6 +225,7 @@ export default createPage({
     // AFTER first paint. Until it arrives the select shows plain ids and the
     // not-loaded warning stays silent (an honest "don't know", never a guess).
     refreshLoadedIds(ctx);
+    refreshLoadFields(ctx);
 
     if (s.conversations.length) {
       const remembered = lsRead(LAST_CONV_KEY);
@@ -301,11 +302,15 @@ function buildSkeleton(ctx) {
   }, ['Load']);
   s.loadNowBtn.addEventListener('click', () => loadModelNow(ctx));
 
-  // Context size for the NEXT load of a gguf model (context-select.js owns
-  // the control and its rules); a pick re-decides whether Load/Reload shows.
-  s.ctxSelect = createContextSelect({
+  // Load settings for the NEXT load (plan W1; load-panel.js owns the
+  // controls, context-select.js the context ladder inside it); a pick
+  // re-decides whether Load/Reload shows. The fields are the server's
+  // `load_setting` ones, from the option schema fetched once below.
+  s.loadFields = {};  // provider -> [model-options field with load_setting]
+  s.loadPanel = createLoadPanel({
     currentModelId: () => s.modelSelect.value,
     adminRow: (id) => s.adminRows.get(id),
+    loadFields: (provider) => s.loadFields[provider] ?? [],
     onChange: () => refreshLoadBtn(ctx),
   });
 
@@ -457,7 +462,7 @@ function buildSkeleton(ctx) {
       convsToggle,
       s.modelSelect,
       createEl('div', { class: 'chat__bar-detail' }, [
-        s.ctxSelect.element,
+        s.loadPanel.element,
         s.loadNowBtn,
         s.presetChip,
         s.sysPromptChip,
@@ -559,6 +564,22 @@ function fillModelSelect(ctx) {
 // the previous resident (max_loaded_models=1), so completion is exactly when
 // the dots go stale. No polling: it fights the metrics cache and burns phone
 // battery; these three moments are when the answer actually changes.
+// The option schema's load-setting fields per provider, once per mount (the
+// schema changes only with the server's code). Non-fatal: without it the
+// panel still offers the context size, which is ctx_size's own control.
+async function refreshLoadFields(ctx) {
+  const s = ctx.state;
+  try {
+    const data = await api.adminModelOptions({ signal: ctx.signal });
+    if (!ctx.alive) return;
+    s.loadFields = Object.fromEntries(Object.entries(data.providers ?? {}).map(
+      ([provider, p]) => [provider, (p.fields ?? []).filter((f) => f.load_setting)]));
+  } catch {
+    return;
+  }
+  refreshLoadBtn(ctx);
+}
+
 async function refreshLoadedIds(ctx) {
   const s = ctx.state;
   try {
@@ -591,16 +612,16 @@ async function refreshLoadedIds(ctx) {
 function refreshLoadBtn(ctx) {
   const s = ctx.state;
   const id = s.modelSelect.value;
-  s.ctxSelect.refresh();
-  // Cold: Load pays the load now. Resident with a different context chosen:
-  // Reload restarts the process at the new size -- the one case a loaded
+  s.loadPanel.refresh();
+  // Cold: Load pays the load now. Resident with a different load setting
+  // chosen: Reload restarts the process with it -- the one case a loaded
   // model has a reason to show the button at all.
   const cold = isCold(ctx, id);
-  const changed = s.ctxSelect.changed();
+  const changed = s.loadPanel.changed();
   s.loadNowBtn.textContent = cold ? 'Load' : 'Reload';
   s.loadNowBtn.title = cold
     ? 'Load this model now so the first message does not pay for it'
-    : 'Restart this model with the chosen context size';
+    : 'Restart this model with the chosen load settings';
   s.loadNowBtn.hidden = !((cold || changed) && !s.loadNowBtn.dataset.busy);
   paintEngineChip(ctx);
 }
@@ -633,19 +654,20 @@ async function loadModelNow(ctx) {
   s.loadNowBtn.dataset.busy = '1';
   s.loadNowBtn.disabled = true;
   s.modelSelect.disabled = true;
-  s.ctxSelect.setEnabled(false);
-  // gguf goes through the server-owned reload WITH the context choice (the
-  // server persists it and skips the restart when nothing changed); every
-  // other provider keeps the plain load.
-  const ctxSize = s.ctxSelect.choiceToSend();
-  const restarting = !isCold(ctx, id) && ctxSize != null;
+  s.loadPanel.setEnabled(false);
+  // A model with load settings goes through the server-owned reload WITH
+  // the choices (the server persists them and skips the restart when nothing
+  // changed); a provider with none keeps the plain load.
+  const choices = s.loadPanel.choicesToSend();
+  const restarting = !isCold(ctx, id) && choices != null;
+  const chosen = s.loadPanel.describe(choices);
   showStatus(ctx, restarting
-    ? `Restarting ${id} with ${ctxSize ? formatTokens(ctxSize) : 'auto'} context…`
+    ? `Restarting ${id} with ${chosen || 'auto settings'}…`
     : `Loading ${id}…`);
   let summary = null;
   try {
-    const result = ctxSize != null
-      ? await api.adminReloadModel(id, true, ctxSize)
+    const result = choices != null
+      ? await api.adminReloadModel(id, true, choices)
       : await api.adminLoadModel(id, true);
     if (!ctx.alive) return;
     if (result?.warm_error) {
@@ -663,7 +685,7 @@ async function loadModelNow(ctx) {
     delete s.loadNowBtn.dataset.busy;
     s.loadNowBtn.disabled = false;
     s.modelSelect.disabled = false;
-    s.ctxSelect.setEnabled(true);
+    s.loadPanel.setEnabled(true);
   }
   if (!ctx.alive) return;
   await refreshLoadedIds(ctx);

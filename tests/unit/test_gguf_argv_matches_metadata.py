@@ -19,6 +19,7 @@ from heylook_llm.providers.llama_server_provider import LlamaServerProvider
 # builder's `if cfg.get(...)` guards all fire.
 SAMPLE_VALUES = {
     "ctx_size": 4096,
+    "flash_attn": "off",
     "mmproj_path": "/tmp/mmproj.gguf",
     "chat_template_path": "/tmp/chat_template.jinja",
     "draft_model_path": "/tmp/draft.gguf",

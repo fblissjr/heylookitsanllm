@@ -96,10 +96,10 @@ Three different fields, routinely conflated:
 The chat page's context select offers power-of-two steps from 4K up to
 `engine.context.length`, plus the ceiling itself when it is not a power of two, plus
 the stored value so the panel shows what is in force -- and a `Custom…` number
-input, so the range is not limited to the steps. `Auto` sends 0.
+input, so the range is not limited to the steps. `Auto` sends null.
 
-Picking one **persists**: `POST /v1/admin/models/{id}/reload?ctx_size=N` writes
-it as the model's `ctx_size` through the one config writer and then loads. For a
-discovered model that materializes an entry. It is a spawn-time flag, so it
+Picking one **persists**: `POST /v1/admin/models/{id}/reload` with
+`{"ctx_size": N}` (and the load panel's other settings) writes it as the model's
+`ctx_size` through the one config writer and then loads. It is a spawn-time flag, so it
 takes effect on the next load, and asking is not getting -- `--fit` can still
 trim, which is what `engine.context.running` is for.

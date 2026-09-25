@@ -14,7 +14,9 @@ import logging
 import time
 from dataclasses import asdict
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from typing import Any
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
 from heylook_llm import chat_template_files
 from heylook_llm.auth import require_admin_token
@@ -27,6 +29,7 @@ from heylook_llm.config import (
     ChatTemplateResponse,
     ChatTemplateUpdateRequest,
     configurable_fields,
+    load_setting_fields,
     FitRequest,
     FitResponse,
     ModelStatusResponse,
@@ -330,62 +333,65 @@ def evaluate_model_fit(model_id: str, request: Request, body: FitRequest):
         "Unload then load(+warm) as ONE server-owned operation -- the "
         "browser-driven unload-then-load pair could strand a model unloaded "
         "if the client died between the calls. Same response shape as /load. "
-        "`ctx_size` (gguf only, 400 otherwise) sets the model's context size "
-        "for THIS load and persists it as the model's `ctx_size` config -- "
-        "the same heylook.toml write a PATCH makes, so there is one place the "
-        "value lives. `0` means Auto: drop the stored value and let "
-        "llama-server size the context from the model and device memory. "
-        "When the value is unchanged and the model is already resident with "
-        "nothing stale, this is a plain load (no restart) -- pressing Load "
-        "with the same choice must not throw away a warm process."
+        "The optional JSON body sets the model's load settings for THIS load "
+        "and persists them as its config (the same model.heylook.toml write a "
+        "PATCH makes, so there is one place each value lives): an object of "
+        "`load_setting` fields from /v1/admin/model-options (gguf: `ctx_size`, "
+        "`flash_attn`). `null` means Auto: the stored value is dropped and "
+        "llama-server decides. A key that is not a load setting of the "
+        "model's provider is a 400 that names the ones it has. When every "
+        "value is unchanged and the model is already resident with nothing "
+        "stale, this is a plain load (no restart) -- pressing Load with the "
+        "same choices must not throw away a warm process."
     ),
 )
 async def reload_model(
     model_id: str,
     request: Request,
     warm: bool = False,
-    ctx_size: int | None = Query(
-        default=None, ge=0,
-        description="gguf only. Context size to load with; persisted as the "
-                    "model's `ctx_size`. 0 = Auto (unset, llama-server "
-                    "decides).",
+    settings: dict[str, Any] | None = Body(
+        default=None,
+        description="Load settings to load with, persisted as the model's "
+                    "config; null = Auto (unset).",
+        examples=[{"ctx_size": 65536, "flash_attn": None}],
     ),
 ):
     import asyncio
 
     router = request.app.state.router_instance
-    if ctx_size is not None:
+    if settings:
         # Persist FIRST, through the one config writer, so the reload below
-        # builds the provider from the saved value -- and so a later PATCH,
+        # builds the provider from the saved values -- and so a later PATCH,
         # the models page, and this route can never disagree about what the
-        # model's context is. The provider check reads the merged view (a
-        # discovered model has no heylook.toml entry until this write
-        # materializes one); the stored value reads the service, which is the
-        # file's truth rather than the router's last-loaded snapshot.
+        # model is configured with. The provider check reads the merged view;
+        # the stored values read the service, which is the file's truth
+        # rather than the router's last-loaded snapshot.
         mc = router.app_config.get_model_config(model_id)
         if mc is None:
             raise HTTPException(status_code=400,
                                 detail=f"Model '{model_id}' not found or not enabled")
-        if mc.provider != "gguf":
+        offered = load_setting_fields(PROVIDER_CONFIG_CLASSES[mc.provider])
+        unknown = sorted(set(settings) - offered)
+        if unknown:
             raise HTTPException(
                 status_code=400,
-                detail=f"ctx_size applies to gguf models only; '{model_id}' is "
-                       f"provider '{mc.provider}' (MLX has no fixed context allocation)",
+                detail=f"{', '.join(unknown)}: not a load setting of '{model_id}' "
+                       f"(provider '{mc.provider}'); its load settings are "
+                       f"{', '.join(sorted(offered)) or 'none'}",
             )
         service = _get_service(request)
         written = service.get_config(model_id) or mc
-        stored = written.config.model_dump(exclude_unset=True).get("ctx_size")
-        wanted = ctx_size or None  # 0 -> unset, the heylook.toml spelling of Auto
-        if wanted != stored:
+        stored = written.config.model_dump(exclude_unset=True)
+        changes = {k: v for k, v in settings.items() if v != stored.get(k)}
+        if changes:
             try:
-                await asyncio.to_thread(
-                    service.update_config, model_id, {"config": {"ctx_size": wanted}})
+                await asyncio.to_thread(service.update_config, model_id, {"config": changes})
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
         elif (model_id in router.get_loaded_models()
               and not router.stale_reload_fields(model_id)):
-            # Same value, resident, nothing else pending: a restart would only
-            # pay the load again for an identical process.
+            # Same values, resident, nothing else pending: a restart would
+            # only pay the load again for an identical process.
             return await load_and_warm(router, model_id, warm)
     # Re-read heylook.toml first: the v3 editor flow has already
     # reload_config'd after its PATCH, but a hand-edit of the file has not --
@@ -829,8 +835,10 @@ def _field_options(cls) -> list[dict]:
         # Pass-through hints declared on the field: `description` (what it
         # does and why you would reach for it), `arg` (the flag
         # actually emitted -- pinned to the argv builder by a test), `ui`,
-        # `shape` ("flag" = a bare flag, no value), and `reason` (why a
-        # load_time_only field is not editable, which the class cannot imply).
+        # `shape` ("flag" = a bare flag, no value), `reason` (why a
+        # load_time_only field is not editable, which the class cannot imply),
+        # and `load_setting` (offered by the load panel and taken by
+        # /reload's body, plan W1).
         #
         # These ride the SAME derivation as `effect` on purpose: THIS
         # ENDPOINT IS THE ONLY PLACE THEY ARE PUBLISHED, and docs link here
@@ -844,7 +852,8 @@ def _field_options(cls) -> list[dict]:
         # descriptions never reach it. The classes' own
         # `model_json_schema()` does carry both, which is exactly the trap:
         # checking the model and concluding the WIRE has it.
-        for key in ("description", "arg", "ui", "shape", "reason", "file_only"):
+        for key in ("description", "arg", "ui", "shape", "reason", "file_only",
+                    "load_setting"):
             if key in prop:
                 entry[key] = prop[key]
         out.append(entry)

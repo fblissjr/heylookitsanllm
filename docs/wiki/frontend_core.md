@@ -42,7 +42,8 @@ flowchart TD
     App -->|"#models"| Models["pages/models.js"]
     App -->|"#perf"| Perf["pages/perf.js"]
 
-    Chat --> CtxSelect["context-select.js (GGUF Context Steps)"]
+    Chat --> LoadPanel["load-panel.js (Load Settings)"]
+    LoadPanel --> CtxSelect["context-select.js (GGUF Context Steps)"]
     Chat --> PresetBar["preset-bar.js (Shared Presets)"]
     Chat --> PromptSec["prompt-section.js (System Prompt Override)"]
     Chat --> MStream["markdown-stream.js (Incremental Renderer)"]

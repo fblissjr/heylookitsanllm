@@ -99,17 +99,14 @@ const ROUTES = {
   adminUnloadModel:  ['POST', (id) => `/v1/admin/models/${encodeURIComponent(id)}/unload`],
   // ONE server-owned unload+load(+warm): a browser-driven pair could strand
   // the model unloaded if the tab died between the calls. Load's shape.
-  // `ctxSize` (gguf only, v1.79.61): the context to load with, persisted as
-  // the model's `ctx_size` config by the server -- ONE writer, the same
-  // model.heylook.toml write the models page's editor makes. 0 = Auto (unset). The
-  // server makes the unchanged-and-resident case a plain load, so sending
-  // the same choice again does not restart a warm process.
-  adminReloadModel:  ['POST', (id, warm, ctxSize) => {
-    const q = [];
-    if (warm) q.push('warm=true');
-    if (ctxSize != null) q.push(`ctx_size=${encodeURIComponent(ctxSize)}`);
-    return `/v1/admin/models/${encodeURIComponent(id)}/reload${q.length ? '?' + q.join('&') : ''}`;
-  }],
+  // The optional body (plan W1) is the model's load settings to load with,
+  // {field: value|null} over the provider's `load_setting` fields, persisted
+  // by the server -- ONE writer, the same model.heylook.toml write the models
+  // page's editor makes; null = Auto (unset). The server makes the
+  // unchanged-and-resident case a plain load, so sending the same choices
+  // again does not restart a warm process.
+  adminReloadModel:  ['POST', (id, warm) =>
+    `/v1/admin/models/${encodeURIComponent(id)}/reload${warm ? '?warm=true' : ''}`, true],
   // The [scan] watch folders -- what the server DISCOVERS models from. A model
   // under one of these is served with its settings derived at load, and this list is
   // the only way to add models (import was retired in v2.0.72). PUT reloads

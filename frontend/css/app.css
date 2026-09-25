@@ -643,6 +643,11 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   border-bottom: 1px solid var(--line);
 }
 .chat__bar select { max-width: 16rem; }
+/* The load panel (plan W1): the context select plus one select per other
+   load setting, inline beside the model select. */
+.chat__load,
+.chat__load-extras { display: inline-flex; align-items: center; gap: 0.25rem; }
+.chat__load-select { max-width: 11rem; }
 .chat__ctx { display: inline-flex; align-items: center; gap: 0.25rem; }
 .chat__ctx-select { max-width: 8rem; }
 /* Narrower than the select on purpose: it holds a number, and a box the width
@@ -1089,7 +1094,10 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   .chat__bar-detail::-webkit-scrollbar {
     display: none;
   }
+  .chat__load,
+  .chat__load-extras,
   .chat__ctx { flex: 0 0 auto; }
+  .chat__load-select,
   .chat__ctx-select,
   .chat__ctx-custom {
     flex: 0 0 auto;

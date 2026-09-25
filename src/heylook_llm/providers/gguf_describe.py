@@ -92,6 +92,27 @@ def _template(model_id: str, cfg: dict) -> TemplateFacts:
     )
 
 
+def flash_attn_setting(configured, resolved, *, loaded: bool) -> Setting:
+    """flash_attn's Setting (plan W1). Unset is auto, which llama-server
+    resolves at load; once loaded, ``resolved`` is what its log said
+    (``SpawnLog``), or None when the log never said."""
+    from heylook_llm.config import GGUFModelConfig, field_effect
+
+    effect = field_effect(GGUFModelConfig.model_fields["flash_attn"])
+    if configured:
+        return Setting(value=configured, configured=configured, auto=None,
+                       reason=f"set to {configured} for this model",
+                       provenance="configured", effect=effect)
+    if not loaded:
+        return Setting(value="auto", auto="auto", provenance="derived", effect=effect,
+                       reason="auto: llama-server turns it on at load where the device supports it")
+    if resolved is None:
+        return Setting(value="auto", auto="auto", provenance="unknown", effect=effect,
+                       reason="auto; llama-server's log did not say what it resolved to")
+    return Setting(value=resolved, auto=resolved, provenance="observed", effect=effect,
+                   reason=f"auto: llama-server's device probe turned it {resolved} (its log)")
+
+
 def describe_static(model_id: str, cfg: dict, config_obj: Any, *,
                     written: bool, derived: dict) -> EngineDescription:
     from heylook_llm.capabilities import model_context_length
@@ -134,6 +155,7 @@ def describe_static(model_id: str, cfg: dict, config_obj: Any, *,
     binary, binary_reason = P.binary_report(cfg)
     keep_alive, keep_alive_reason, _ = P.keep_alive_choice(os.environ)
     settings.update({
+        "flash_attn": flash_attn_setting(cfg.get("flash_attn"), None, loaded=False),
         "image_max_tokens": image_cap,
         "metal_keep_alive": Setting(value=keep_alive,
                                     auto=str(P.METAL_RESIDENCY_KEEP_ALIVE_S),
