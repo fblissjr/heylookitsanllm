@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.169]
+
+- Tests: the "no GZipMiddleware" assertion in the frontend-mount contract
+  test removed (owner). It pinned private app structure, and starlette 1.7
+  already excludes `text/event-stream` from GZipMiddleware, the SSE hazard
+  it guarded. The test is now `test_text_assets_are_compressed`.
+
 ## [2.0.168]
 
 Owner calls from the v2.0.167 handoff list, carried out.

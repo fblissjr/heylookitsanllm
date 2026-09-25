@@ -27,11 +27,9 @@ is left, each with the recommendation the owner was given:
   (MLX arms, a server on this machine).
 - [x] **The borderline tests (v2.0.168).** Tautological, call-count and
   private halves dropped, observable halves kept; the owner keeps stayed.
-  One left for the owner: `test_text_assets_are_compressed_and_sse_is_not_touched`
-  still pins "no GZipMiddleware" by private structure, and its proposed
-  behavioural replacement cannot fail (starlette 1.7 excludes
-  `text/event-stream` from GZipMiddleware already). Recommended: delete that
-  one assertion.
+  The "no GZipMiddleware" private-structure assertion was deleted too (owner,
+  v2.0.169): starlette 1.7 already excludes `text/event-stream` from
+  GZipMiddleware, so its behavioural replacement could not fail.
 - [ ] **Tools / function calling:** 422 until a client needs them (owner call).
 - [ ] **Notebook images:** later (owner call); audio waits for a model that
   supports it.

@@ -149,11 +149,11 @@ def test_revalidation_costs_no_body(client):
     assert stale.content
 
 
-def test_text_assets_are_compressed_and_sse_is_not_touched(client):
-    # Compression lives in the frontend handler, NOT in GZipMiddleware: that
-    # middleware wraps every response including the generate endpoint's SSE,
-    # where buffering to a minimum size would sit on the first token. So the
-    # win is scoped to static assets and the streaming path cannot regress.
+def test_text_assets_are_compressed(client):
+    # Compression lives in the frontend handler, scoped to static assets.
+    # There is no "no GZipMiddleware" pin: starlette (1.7) already excludes
+    # text/event-stream from that middleware, so the SSE hazard it guarded
+    # is gone.
     gz = client.get("/js/app.js", headers={"accept-encoding": "gzip"})
     assert gz.headers.get("content-encoding") == "gzip"
     assert "accept-encoding" in gz.headers.get("vary", "").lower()
@@ -161,7 +161,3 @@ def test_text_assets_are_compressed_and_sse_is_not_touched(client):
     assert plain.headers.get("content-encoding") is None
     # Both spellings must deliver the same bytes.
     assert gz.content == plain.content
-    from starlette.middleware.gzip import GZipMiddleware
-    import heylook_llm.api as api
-    assert not any(m.cls is GZipMiddleware for m in api.app.user_middleware), \
-        "GZipMiddleware would wrap the SSE generate endpoint"
