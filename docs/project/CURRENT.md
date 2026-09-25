@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-24, v2.0.129, `main`.
+Last updated: 2026-09-25, v2.0.139, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md), and what each release
@@ -32,7 +32,30 @@ Thinking DEPTH is covered only by pinning `gpt-oss-20b-MXFP4-Q8-mlx`
 `--arm mlx-text --model mlx-text=gpt-oss-20b-MXFP4-Q8-mlx`. No vision model
 advertises `reasoning_effort`.
 
-## Handoff -- start here (end of 2026-09-24)
+## Handoff -- start here (2026-09-25)
+
+**Where things stand.** The runtime-visibility plan's workstreams are all
+shipped or closed except the gated ones (W6 waits on W5 showing budget skips,
+W14 on the steering research track, W11 is optional upstream work) and W10's
+per-image vision key (an accepted known gap). This session, v2.0.135 -
+v2.0.139, owner away, no server up (all live checks in-process):
+- v2.0.135: qwen3_5 image conversations reuse vision features (the reworked
+  form of the loop's reverted change); the cache keys by image content.
+- v2.0.136: **W1 shipped**: `flash_attn`, the `load_setting` tag, `/reload`
+  takes a JSON body (**breaking**: `?ctx_size=N` is gone, null = Auto), chat's
+  load panel. The observed flash-attention auto is not yet checked on a live
+  gguf spawn.
+- v2.0.137: **the Host check** (DNS rebinding). **Owner: a client that reaches
+  the server by a LAN DNS or VPN name needs that name in heylook.toml's
+  top-level `allowed_hosts`** (IP addresses always pass).
+- v2.0.138: every response echoes a valid `X-Request-ID`.
+- v2.0.139: a template file swap marks a loaded model stale.
+- **W12 done: both small, stay Python** (`internal/claude/w12/`).
+- Owed: smoke on all three arms and the gguf/chat e2e for v2.0.135 - .139
+  (release standard); a live gguf load to see `engine.settings.flash_attn`
+  go `observed`.
+
+## Handoff (end of 2026-09-24)
 
 **Where things stand (latest first).** Evening, v2.0.124 - v2.0.129 (`mragents`):
 - v2.0.128: MLX image sources refuse local file paths (data URLs and http(s)

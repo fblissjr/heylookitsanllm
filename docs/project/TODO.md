@@ -195,7 +195,10 @@ a future refactor would fly blind through. Listed most-worth-doing first.
   the send/render half needs a gguf model, which `tests/e2e/suites/chat.mjs`
   already has an arm for. Asymmetric coverage of a shared factory is exactly
   the shape that let paste ship image-only while looking done.
-- [ ] **The Load / Reload button path is untested** (P3). `refreshLoadBtn`,
+- [ ] **Partly covered since v2.0.136**: `e2e:render`'s load-panel check clicks
+  `chat__load-btn` on a cold gguf model and asserts the reload body. Still
+  unchecked: the resident Reload branch, `warm_error` and the
+  `context_running` status line. **The Load / Reload button path is untested** (P3). `refreshLoadBtn`,
   `loadModelNow`, the gguf reload-with-`ctx_size` branch, and the
   `warm_error` / `context_running` status lines: no check references
   `chat__load-btn`. This is the one place the chat page can spend a model
