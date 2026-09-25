@@ -1,6 +1,6 @@
 # Plan: runtime visibility and one behaviour across engines
 
-last updated: 2026-09-24 (APPROVED by the owner). Shipped: W0 (v2.0.107 - v2.0.122), W1 (v2.0.136), W2, W3, W4, W5 (spec reporting completed by `engine.speculative`, v2.0.120), W7, W8, W9, W13. In progress: W10 (stages shipped through v2.0.121, qwen3_5 vision features v2.0.135; the per-image vision key is open). Open: W6 (only if W5 shows budget skips), W12, W14.
+last updated: 2026-09-24 (APPROVED by the owner). Shipped: W0 (v2.0.107 - v2.0.122), W1 (v2.0.136), W12 (done 2026-09-25, stay Python), W2, W3, W4, W5 (spec reporting completed by `engine.speculative`, v2.0.120), W7, W8, W9, W13. In progress: W10 (stages shipped through v2.0.121, qwen3_5 vision features v2.0.135; the per-image vision key is open). Open: W6 (only if W5 shows budget skips), W14 (gated).
 
 ## Context
 
@@ -722,7 +722,17 @@ PE encoders' long fixed system prompts.
   chain discriminates) and `scripts/vlm_parity_probe.py` on vision restores.
 - Under A2, add the text-model check above.
 
-### W12. Profile before any native-code question
+### W12. Profile before any native-code question (done 2026-09-25)
+
+**Outcome: both small; the native-server question closes, stay Python.**
+Decode through heylook runs within a small margin of mlx-vlm's own thinnest
+loop on every served MLX class, tiny text models included, and the Python
+side of each step overlaps the GPU's work on the previous one. Image loading
+plus preprocessing at the frontend's pixel cap is a minority of the vision
+tower's time alone. Data and conditions: `internal/claude/w12/` (local).
+A side observation, not acted on: qwen3_5's tower cost grows much faster than
+pixel count, which is why the client-side pixel cap (owner decision) matters
+for API clients that send uncapped photos.
 
 Independent of W10's outcome, and small. It answers whether a native (Swift
 or C++) piece is ever justified.

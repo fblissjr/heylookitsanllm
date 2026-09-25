@@ -93,8 +93,8 @@ Sequencing section carries the reasons):
   gguf check of the observed flash-attention auto still owed);
 - W6 only if W5 shows budget skips;
 - W11 upstream llama.cpp PRs, optional.
-- W12 profiling (decode overhead + image preprocessing), any time; decides
-  whether any native piece is ever justified.
+- W12 profiling (decode overhead + image preprocessing): DONE 2026-09-25,
+  outcome "both small, stay Python" (plan W12; data in internal/claude/w12/).
 
 ## gguf Continue: does llama-server's prefill render drop a generation prefix? (2026-09-23)
 
