@@ -36,6 +36,7 @@ import io
 import json
 import socket
 import struct
+import subprocess
 import sys
 import threading
 import time
@@ -51,7 +52,7 @@ from typing import Any
 # inserted the rootdir for us. helpers/ is where shared test code already lives
 # (mlx_mock, sse).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from helpers.engines import ARMS, classify, format_coverage, pick_models  # noqa: E402
+from helpers.engines import ARMS, classify, format_coverage, model_size_gb, pick_models  # noqa: E402
 
 GREEN, RED, YELLOW, DIM, RESET = "\x1b[32m", "\x1b[31m", "\x1b[33m", "\x1b[2m", "\x1b[0m"
 
@@ -650,6 +651,95 @@ _CACHE_QUESTION = " ".join(["Consider the escapement, the mainspring, the balanc
                             "wheel and the gear train in turn."] * 16)
 
 
+def _reply_text(body) -> str:
+    return "".join(b.get("text", "") for b in (body or {}).get("content") or []
+                   if b.get("type") == "text")
+
+
+def presence_penalty_checks(server, r, arm, model_id):
+    """A sampler extension field ACTS on the engine, not just arrives.
+
+    Replaced a unit test that read `presence_penalty` off a fake provider's
+    last request (v2.0.168): it proved the field crossed the route and nothing
+    about the engine. Greedy, one seed: the control pair must match, and the
+    penalty must change the reply. A control pair that differs means this
+    engine is not deterministic here, which is uncovered, not a pass.
+
+    Prose, not a list: counting 1 to 30 is so confident that the maximum
+    penalty (2.0) moved no token on Qwen3.5-0.8B (2026-09-25), which is the
+    model being sure, not the penalty missing.
+    """
+    extra = {"max_tokens": 64, "temperature": 0.0, "seed": 7, "thinking": False}
+    prompt = "Write a short paragraph about the sea."
+    replies = []
+    for penalty in (None, None, 2.0):
+        body = dict(extra, **({"presence_penalty": penalty} if penalty else {}))
+        st, resp = _messages_probe(server, model_id, prompt, body)
+        if st != 200:
+            r.check(f"{arm}: presence_penalty A/B ran", False, f"got {st}: {str(resp)[:300]}")
+            return
+        replies.append(_reply_text(resp))
+    if replies[0] != replies[1]:
+        r.skip(f"{arm}: presence_penalty changes the reply",
+               "two identical greedy seeded requests differed -- no A/B is possible on this arm")
+        return
+    r.check(f"{arm}: presence_penalty changes the reply", replies[2] != replies[0],
+            f"same reply with and without the penalty: {replies[0][:120]!r}")
+
+
+def _server_pid(server):
+    """The pid listening on the server's port, when it is on THIS machine."""
+    host = urllib.parse.urlsplit(server)
+    if host.hostname not in ("127.0.0.1", "localhost", "::1"):
+        return None
+    try:
+        out = subprocess.run(["lsof", "-nP", "-t", f"-iTCP:{host.port or 80}", "-sTCP:LISTEN"],
+                             capture_output=True, text=True, timeout=10).stdout.split()
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return int(out[0]) if len(out) == 1 else None
+
+
+def _footprint_bytes(pid):
+    """Physical footprint: Metal buffers count, file-backed pages do not
+    (heylook_llm.process_memory's struct; it reports resident size instead)."""
+    import ctypes
+    from heylook_llm import process_memory as pm
+    if pm._LIBPROC is None:
+        return None
+    info = pm._RusageInfoV2()
+    if pm._LIBPROC.proc_pid_rusage(pid, pm._RUSAGE_INFO_V2, ctypes.byref(info)) != 0:
+        return None
+    return info.ri_phys_footprint
+
+
+def unload_sweep_checks(server, r, arm, model_id):
+    """An explicit unload gives the model's memory back (MLX arms).
+
+    Replaced a unit test that counted a monkeypatched `mx.clear_cache` (v2.0.168).
+    Freed MLX arrays go into MLX's buffer cache, not back to the system, so
+    without the sweep the process footprint stays where it was; with it, the
+    footprint falls by at least half the weights. Needs the server's pid, so
+    only a server on this machine is covered.
+    """
+    pid = _server_pid(server)
+    size_gb = model_size_gb(server, model_id)
+    before = _footprint_bytes(pid) if pid else None
+    if before is None or not size_gb:
+        r.skip(f"{arm}: an unload gives the memory back",
+               "needs a server on this machine and the model's size -- UNCOVERED")
+        return
+    st, body = call(server, "POST", f"/v1/admin/models/{urllib.parse.quote(model_id)}/unload",
+                    timeout=120)
+    if not r.check(f"{arm}: explicit unload", st == 200 and (body or {}).get("status") == "unloaded",
+                   f"got {st}: {body}"):
+        return
+    after = _footprint_bytes(pid) or before
+    fell_gb = (before - after) / 1024 ** 3
+    r.check(f"{arm}: an unload gives the memory back", fell_gb >= size_gb / 2,
+            f"footprint fell {fell_gb:.2f} GiB for a {size_gb:.2f} GB model")
+
+
 def cache_reuse_checks(server, r, arm, model_id, caps):
     """Prompt reuse across requests, live (plan W5; also W10's acceptance).
 
@@ -792,6 +882,7 @@ def arm_checks(server, r, arm, model_id, load_timeout):
     thinking_checks(server, r, arm, model_id, caps, thinking)
     conformance_checks(server, r, arm, model_id, caps)
     cache_reuse_checks(server, r, arm, model_id, caps)
+    presence_penalty_checks(server, r, arm, model_id)
 
     conv_id = None
     try:
@@ -978,6 +1069,10 @@ def arm_checks(server, r, arm, model_id, load_timeout):
     finally:
         if conv_id:
             call(server, "DELETE", f"/v1/conversations/{conv_id}", timeout=60)
+
+    # Last: it unloads the model the checks above ran on.
+    if arm != "gguf":
+        unload_sweep_checks(server, r, arm, model_id)
 
 
 # ---------------------------------------------------------------------------

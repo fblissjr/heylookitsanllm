@@ -14,47 +14,40 @@ from heylook_llm.providers.common.loader_routing import (
 )
 
 
-def _getter(value, calls):
-    def g():
-        calls.append(1)
-        return value
-    return g
+def _getter(value):
+    return lambda: value
 
 
 @pytest.mark.unit
 class TestResolveServesVision:
 
-    def test_no_vision_declared_is_text_and_reads_nothing(self):
-        calls = []
+    def test_no_vision_declared_is_text(self):
         assert resolve_serves_vision(
             {"modalities": ["text", "audio"]},
-            _getter("x", calls), vlm_supports=lambda mt: True) is False
-        assert calls == []                         # no vision -> model_type unread
+            _getter("x"), vlm_supports=lambda mt: True) is False
 
     def test_vision_follows_the_mlx_vlm_registry(self):
         vision = {"modalities": ["text", "vision"]}
         assert resolve_serves_vision(
-            vision, _getter("qwen3_5", []), vlm_supports=lambda mt: True) is True
+            vision, _getter("qwen3_5"), vlm_supports=lambda mt: True) is True
         # mlx-vlm can't run it as a VLM -> text, not a crash at load.
         assert resolve_serves_vision(
-            vision, _getter("some_new_vlm", []), vlm_supports=lambda mt: False) is False
+            vision, _getter("some_new_vlm"), vlm_supports=lambda mt: False) is False
 
     def test_unknown_model_type_trusts_the_declaration(self):
         # config.json unreadable -> model_type None: keep vision rather than
         # degrade a possibly-fine VLM.
-        calls = []
         assert resolve_serves_vision(
             {"modalities": ["text", "vision"]},
-            _getter(None, calls), vlm_supports=lambda mt: False) is True
-        assert calls == [1]
+            _getter(None), vlm_supports=lambda mt: False) is True
 
     def test_legacy_vision_bool_without_modalities(self):
         # The provider accepts raw dicts (no modalities key) -> derive from the
         # legacy vision bool, matching MLXModelConfig._resolve_modalities.
         assert resolve_serves_vision(
-            {"vision": True}, _getter("gemma4", []), vlm_supports=lambda mt: True) is True
+            {"vision": True}, _getter("gemma4"), vlm_supports=lambda mt: True) is True
         assert resolve_serves_vision(
-            {"vision": False}, _getter("x", []), vlm_supports=lambda mt: True) is False
+            {"vision": False}, _getter("x"), vlm_supports=lambda mt: True) is False
 
 
 @pytest.mark.unit

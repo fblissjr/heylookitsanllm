@@ -73,7 +73,7 @@ class TestPrepareVlmInputsParallel:
         prompt, then a bare "role: content" join. A broken template then
         produced a confident answer to a prompt with no template in it -- and,
         on a continuation, silently RESTARTED the message. Continuing or not,
-        the failure now reaches the caller and the tokenizer is never asked."""
+        the failure now reaches the caller."""
         import pytest
         from heylook_llm.providers.common.vlm_inputs import prepare_vlm_inputs_parallel
 
@@ -81,13 +81,11 @@ class TestPrepareVlmInputsParallel:
             raise ValueError("template error")
 
         for continuing in (False, True):
-            processor = MagicMock()
             with pytest.raises(ValueError, match="template error"):
                 prepare_vlm_inputs_parallel(
                     [FakeMessage("user", "hi"), FakeMessage("assistant", "The goat is")],
-                    processor, MagicMock(), MagicMock(), failing_template,
+                    MagicMock(), MagicMock(), MagicMock(), failing_template,
                     continue_final_message=continuing)
-            processor.tokenizer.apply_chat_template.assert_not_called()
 
 
 

@@ -138,7 +138,7 @@ def create_mock_tokenizer():
     return tokenizer
 
 
-def create_mock_processor(with_tokenizer: bool = True):
+def create_mock_processor():
     """Create a mock VLM processor mirroring mlx-vlm's processor shape.
 
     Real mlx-vlm processors expose `.tokenizer` and do NOT have a `_tokenizer`
@@ -152,15 +152,7 @@ def create_mock_processor(with_tokenizer: bool = True):
     """
     processor = MagicMock()
     del processor._tokenizer  # match real processors: no private _tokenizer attr
-    if with_tokenizer:
-        processor.tokenizer = create_mock_tokenizer()
-    else:
-        # Model a processor with NO usable tokenizer. get_tokenizer() falls back
-        # through _tokenizer -> tokenizer -> decode(); a bare MagicMock fabricates
-        # all three, so delete every fallback or get_tokenizer returns the
-        # processor itself instead of None.
-        del processor.tokenizer
-        del processor.decode
+    processor.tokenizer = create_mock_tokenizer()
     return processor
 
 

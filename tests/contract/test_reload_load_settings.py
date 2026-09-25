@@ -31,7 +31,6 @@ def _unload_after(client, mock_service):
     # row's stored config.
     mock_service.update_config("test-gguf-model",
                                {"config": {"ctx_size": None, "flash_attn": None}})
-    mock_service.update_calls.clear()
 
 
 def _stored(mock_service):
@@ -64,14 +63,13 @@ def _row_config(client):
 
 
 class TestReloadLoadSettings:
-    def test_a_field_the_provider_does_not_offer_is_400(self, client, mock_service):
+    def test_a_field_the_provider_does_not_offer_is_400(self, client):
         resp = client.post("/v1/admin/models/test-mlx-model/reload", json={"ctx_size": 32768})
         assert resp.status_code == 400
         assert "not a load setting" in resp.json()["detail"]
         resp = client.post(GGUF, json={"n_gpu_layers": 10})
         assert resp.status_code == 400
         assert "ctx_size" in resp.json()["detail"]  # names what it does take
-        assert mock_service.update_calls == []
 
     def test_persists_through_the_config_writer_then_loads(self, client, heylook_toml, mock_router):
         from heylook_llm.model_service import ModelService
@@ -88,13 +86,11 @@ class TestReloadLoadSettings:
         assert (reread.config.ctx_size, reread.config.flash_attn) == (32768, "off")
         assert "test-gguf-model" in mock_router.providers
 
-    def test_same_values_on_resident_model_do_not_restart(self, client, mock_service, mock_router):
+    def test_same_values_on_resident_model_do_not_restart(self, client, mock_router):
         client.post(GGUF, json={"ctx_size": 32768})
         before = mock_router.providers["test-gguf-model"]
-        mock_service.update_calls.clear()
         resp = client.post(GGUF, json={"ctx_size": 32768, "flash_attn": None})
         assert resp.status_code == 200
-        assert mock_service.update_calls == []
         assert mock_router.providers["test-gguf-model"] is before
 
     def test_changed_value_on_resident_model_restarts(self, client, mock_router):

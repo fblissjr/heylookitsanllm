@@ -33,10 +33,12 @@ The other invariants, in one place:
 * the etag differs per content-coding and `vary` is set on EVERY exit,
   including the 304. One etag across both representations lets a shared cache
   answer an identity request with a gzip body.
-* the gzip cache evicts per PATH, not wholesale. Clearing the dict on each miss
-  meant a ~20-asset page load evicted its own entries, the cache held exactly
-  one, and level-6 compression ran on every load -- on the same event loop that
-  delivers SSE tokens.
+* compression is per request, uncached. The handlers are sync, so gzip runs in
+  anyio's threadpool, off the event loop that delivers SSE tokens; a
+  revalidated asset is a 304 and compresses nothing. The in-memory cache that
+  used to sit here was removed in v2.0.168: a hit was byte-identical to a miss,
+  it saved only a cold load's compression, and it had already cost two bugs
+  (wholesale eviction, then a threadpool race on its dict).
 """
 
 from __future__ import annotations
@@ -57,12 +59,6 @@ _NO_CACHE = {"Cache-Control": "no-cache"}
 # Text assets only, and only above the size where a round trip dominates.
 _GZIP_TYPES = (".js", ".mjs", ".css", ".html", ".json", ".svg")
 _GZIP_MIN = 1024
-
-# Compressed bytes keyed on the same (mtime, size) the etag derives from. The
-# tree is static between edits, so this is a hit after the first request.
-# Bounded by the number of gzip-eligible files (one entry each, older
-# generations of the same path evicted on write), not by traffic.
-_gzip_cache: dict = {}
 
 
 def _asset_etag(stat_result) -> str:
@@ -88,25 +84,7 @@ def _file_response(path, request: Request):
         return Response(status_code=304, headers=headers)
 
     if wants_gzip:
-        key = (str(path), stat_result.st_mtime, stat_result.st_size)
-        body = _gzip_cache.get(key)
-        if body is None:
-            body = _gzip.compress(path.read_bytes(), compresslevel=6)
-            # Evict older generations of THIS FILE, not the whole tree -- see
-            # the module docstring for what clearing it wholesale cost.
-            #
-            # Snapshot the keys and pop defensively: these handlers are sync,
-            # so they run in anyio's THREADPOOL, and two threads missing on a
-            # cold cache raced here. Iterating the live dict raised
-            # "dictionary changed size during iteration" (reproduced under real
-            # uvicorn with 8 concurrent clients on a cold cache -> 500 on a
-            # static asset), and two threads evicting the same generation would
-            # double-delete. Neither could happen while this was `async def` on
-            # one loop; the sync change introduced both.
-            for stale in list(_gzip_cache):
-                if stale[0] == key[0]:
-                    _gzip_cache.pop(stale, None)
-            _gzip_cache[key] = body
+        body = _gzip.compress(path.read_bytes(), compresslevel=6)
         return Response(
             content=body,
             media_type=guess_type(path.name)[0] or "application/octet-stream",

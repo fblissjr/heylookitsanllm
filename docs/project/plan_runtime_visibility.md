@@ -1,6 +1,6 @@
 # Plan: runtime visibility and one behaviour across engines
 
-last updated: 2026-09-25 (APPROVED by the owner; W2, W3, W4, W7 and W13 extended v2.0.143 - v2.0.166, each marked "Extended 2026-09-25"). Shipped: W0 (v2.0.107 - v2.0.122), W1 (v2.0.136), W12 (done 2026-09-25, stay Python), W2, W3, W4, W5 (spec reporting completed by `engine.speculative`, v2.0.120), W7, W8, W9, W13. In progress: W10 (stages shipped through v2.0.121, qwen3_5 vision features v2.0.135; the per-image vision key is open). Open: W6 (only if W5 shows budget skips), W14 (gated).
+last updated: 2026-09-25 (APPROVED by the owner; W2, W3, W4, W7 and W13 extended v2.0.143 - v2.0.166, each marked "Extended 2026-09-25"). Shipped: W0 (v2.0.107 - v2.0.122), W1 (v2.0.136), W12 (done 2026-09-25, stay Python), W2, W3, W4, W5 (spec reporting completed by `engine.speculative`, v2.0.120), W7, W8, W9, W13. W10 shipped (stages through v2.0.121, qwen3_5 vision features v2.0.135); what remains is upstream in mlx-vlm: the per-image vision key (an accepted known gap), Blaizzy/mlx-vlm#2356, and the drafted captures/store-size PR. Open: W6 (only if W5 shows budget skips), W14 (gated).
 
 ## Context
 

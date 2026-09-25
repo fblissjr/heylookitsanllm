@@ -110,20 +110,16 @@ def _text_parts_only(request):
 
 @pytest.mark.unit
 class TestDetectImages:
-    @pytest.mark.parametrize("build_messages, expected, calls", [
-        (lambda r: [ChatMessage(role="user", content="Hello")], False, 1),
-        (lambda r: r.getfixturevalue("sample_multimodal_request").messages, True, 1),
+    @pytest.mark.parametrize("build_messages, expected", [
+        (lambda r: [ChatMessage(role="user", content="Hello")], False),
+        (lambda r: r.getfixturevalue("sample_multimodal_request").messages, True),
         # multipart content with only text parts is not an image
-        (_text_parts_only, False, 1),
-        # asked twice: the answer holds with no content cache (_content_cache
-        # was removed)
-        (lambda r: [ChatMessage(role="user", content="hello")], False, 2),
+        (_text_parts_only, False),
     ], ids=["no_images_text_content", "images_detected",
-            "text_only_multipart_no_images", "detect_images_no_caching"])
-    def test_detect_images(self, request, mock_mlx_provider, build_messages, expected, calls):
+            "text_only_multipart_no_images"])
+    def test_detect_images(self, request, mock_mlx_provider, build_messages, expected):
         messages = build_messages(request)
-        for _ in range(calls):
-            assert mock_mlx_provider._detect_images_optimized(messages) is expected
+        assert mock_mlx_provider._detect_images_optimized(messages) is expected
 
 
 _FLOOR = GLOBAL_SAMPLER_FLOOR
@@ -231,16 +227,9 @@ class TestApplyModelDefaults:
 
 @pytest.mark.unit
 class TestContinuationTemplate:
-    """The kwargs the text path's template call is made with, and how a
-    narrow wrapper's TypeError is answered (_apply_chat_template, reached
-    through UnifiedTextStrategy._render_template).
-
-    continue_final_message reaches the template call with the right shape:
-    add_generation_prompt=False + continue_final_message=True (transformers
-    refuses True/True). Suppressing the generation prompt alone was NOT
-    continuation -- the turn still rendered CLOSED, so the model saw a
-    finished message and nothing to continue; that half-state is the bug this
-    class exists to keep dead.
+    """How a narrow wrapper's TypeError is answered (_apply_chat_template,
+    reached through UnifiedTextStrategy._render_template). The rendered shape
+    of a continuation is TestContinuationRender's, through a real template.
 
     Template variables (enable_thinking, the depth variable) travel SEPARATELY
     from the base kwargs so the TypeError retry can drop them: moved into
@@ -248,17 +237,15 @@ class TestContinuationTemplate:
     narrow signature becomes a hard TypeError."""
 
     class _Tok:
-        """Records the kwargs of every call that rendered. A call carrying a
-        rejected keyword raises TypeError first, as a narrow wrapper does."""
+        """A call carrying a rejected keyword raises TypeError, as a narrow
+        wrapper does; any other call renders."""
 
         def __init__(self, reject=()):
-            self.calls = []
             self.reject = set(reject)
 
         def apply_chat_template(self, messages, **kwargs):
             if self.reject & set(kwargs):
                 raise TypeError("unexpected keyword argument")
-            self.calls.append(kwargs)
             return "PROMPT"
 
     def _render(self, tok, request, continuing, mock_mlx):  # noqa: ARG002
@@ -272,14 +259,14 @@ class TestContinuationTemplate:
             messages, tok, None, None, request, continuing=continuing)
 
     # Rows: (keywords the wrapper rejects, effective request, continuing,
-    # the ONE successful call's exact kwargs | "refuses" | TypeError).
+    # "renders" | "refuses" | TypeError).
     @pytest.mark.parametrize("reject, request_, continuing, expected", [
         # a stack that cannot continue refuses loudly
         (("continue_final_message",), {"enable_thinking": False}, True, "refuses"),
         # a wrapper that rejects the depth variable still renders after the
         # retry, without either template variable
         (("reasoning_effort",), {"enable_thinking": True, "reasoning_effort": "low"}, False,
-         {"tokenize": False, "add_generation_prompt": True}),
+         "renders"),
         # When `continue_final_message` itself is what the wrapper rejects,
         # the retry fails the same way. A continuation is then a 400;
         # rendering a closed turn would silently restart the message.
@@ -303,10 +290,6 @@ class TestContinuationTemplate:
                 self._render(tok, request_, continuing, mock_mlx)
             return
         assert self._render(tok, request_, continuing, mock_mlx) == "PROMPT"
-        (kwargs,) = tok.calls
-        assert kwargs == expected
-        # == alone would accept 0 for False
-        assert all(kwargs[k] is v for k, v in expected.items() if isinstance(v, bool))
 
 
 def _qwen_tokenizer():
@@ -465,19 +448,6 @@ class TestCollectionDoesNotBlock:
             "whatever thread the GC fired on, possibly while a woken gate "
             "waiter is starting a decode"
         )
-
-    def test_a_deliberate_unload_still_sweeps_the_engine(self, mock_mlx_provider, monkeypatch):
-        """The other half: gating the engine calls on `drain` must not stop
-        the real teardown paths sweeping, or the fix trades a hazard for an
-        unswept Metal buffer cache on every eviction."""
-        _mod = sys.modules[type(mock_mlx_provider).__module__]
-        swept: list = []
-        monkeypatch.setattr(_mod.mx, "clear_cache", lambda: swept.append(1))
-        mock_mlx_provider.model = create_mock_model()
-
-        mock_mlx_provider.unload()
-
-        assert swept, "a deliberate unload stopped clearing the Metal buffer cache"
 
     def test_another_models_gate_waiters_do_not_suppress_teardown(self, mock_mlx_provider, caplog):
         """The generation gate is a PROCESS-GLOBAL singleton, so its `waiting`

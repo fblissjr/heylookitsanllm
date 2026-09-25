@@ -325,7 +325,6 @@ class TestSleepWakeTimeout:
         p._base_url = "http://127.0.0.1:1"  # nothing listening
         if sleeping is not None:
             monkeypatch.setattr(p, "_is_sleeping", lambda: sleeping)
-        assert p._is_sleeping() is bool(sleeping)
         assert p._request_timeout() == expected
 
 

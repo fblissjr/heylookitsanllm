@@ -40,26 +40,8 @@ def _gate_with(max_waiting, holders, waiters):
                 gate.release()       # release that waiter's slot
 
 
-def _busy_error_from_a_full_gate():
-    with _gate_with(max_waiting=0, holders=1, waiters=0) as gate:
-        with pytest.raises(ModelBusyError) as exc:
-            gate.check_capacity()
-    return exc.value
-
-
 @pytest.mark.unit
 class TestGenerationGateBasics:
-    @pytest.mark.parametrize("check", [
-        # The API layer maps errors to HTTP 503 via `"MODEL_BUSY" in str(e)`.
-        pytest.param(lambda: "MODEL_BUSY" in str(_busy_error_from_a_full_gate()),
-                     id="model_busy_error_message_contains_marker"),
-        # Routes catch `except RuntimeError as e`.
-        pytest.param(lambda: issubclass(ModelBusyError, RuntimeError),
-                     id="model_busy_is_runtimeerror"),
-    ])
-    def test_model_busy_error(self, check):
-        assert check()
-
     def test_negative_max_waiting_rejected(self):
         with pytest.raises(ValueError):
             GenerationGate(max_waiting=-1)

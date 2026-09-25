@@ -216,7 +216,6 @@ class MockModelService:
 
     def __init__(self):
         self.app_config = AppConfig(**TEST_MODELS_DATA)
-        self.update_calls = []
 
     def list_configs(self):
         return list(self.app_config.models)
@@ -227,7 +226,7 @@ class MockModelService:
 
     def update_config(self, model_id, updates):
         """Apply a config update to the in-memory roster (what the real
-        service writes to models.toml) and record it for assertions."""
+        service writes to models.toml)."""
         from heylook_llm.config import ModelConfig
         for i, mc in enumerate(self.app_config.models):
             if mc.id != model_id:
@@ -244,7 +243,6 @@ class MockModelService:
                     changed.append(key)
             data["config"] = cfg
             self.app_config.models[i] = ModelConfig(**data)
-            self.update_calls.append((model_id, updates))
             return self.app_config.models[i], changed
         raise ValueError(f"Model '{model_id}' not found")
 

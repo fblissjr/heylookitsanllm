@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.168]
+
+Owner calls from the v2.0.167 handoff list, carried out.
+
+- **Removed** the static-asset gzip cache (`frontend_static._gzip_cache`).
+  Gzip stays, compressed per request: the handlers are sync, so it already
+  runs off the event loop, and a revalidated asset is a 304. Its call-count
+  test went with it.
+- **Tests: live replacements, then deletes.** `tests/smoke/` gains two checks:
+  a fixed-seed presence-penalty A/B on every arm (the control pair must
+  match, the penalty must change a prose reply), and "an unload gives the
+  memory back" on the MLX arms (the server's physical footprint falls by at
+  least half the weights; needs a server on this machine, else uncovered).
+  Both green on mlx-vision with Qwen3.5-0.8B (40/40). Deleted the three unit
+  tests they and `vlm_parity_probe` replace.
+- **Tests: the borderline trim** (`internal/claude/prune/second_pass.md`):
+  tautological, call-count and private-structure halves dropped, observable
+  halves kept, the owner keeps untouched; the test-helper-fidelity tests and
+  the helper's unused branch removed. Collected 1451 -> 1438, suite green.
+- **Raw output view: not built** (owner: parity or neither). Findings in
+  sharp_edges.md, "gguf raw output view (not built)"; TODO.md's list
+  corrected (`verbose` is a per-request field and empties when streaming;
+  preserved markers such as `<think>` do show on gguf).
+- Uncovered: the smoke additions ran on mlx-vision only; mlx-text and gguf
+  not run for this change.
+
 ## [2.0.167]
 
 Release checks for v2.0.152 - v2.0.166 (no code change).

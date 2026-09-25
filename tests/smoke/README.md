@@ -1,6 +1,6 @@
 # Live smoke test
 
-last updated: 2026-08-28
+last updated: 2026-09-25
 
 The half of the v3 story the browser suite cannot see.
 
@@ -115,6 +115,21 @@ response that started it: dropping the connection ends the *subscription*
 while the run detaches, finishes, and commits the whole answer. The client
 discloses that as of v1.79.26 — and no stubbed suite can tell whether the
 claim is true.
+
+## Sampler and teardown checks
+
+Two checks replaced unit tests that could only see a fake (v2.0.168):
+
+- **presence_penalty changes the reply** (every arm): greedy, one seed, a
+  prose prompt. The two requests without the penalty must match, or the row
+  is uncovered; the one with the maximum penalty must differ. A counting
+  prompt was too confident for the penalty to move any token.
+- **an unload gives the memory back** (MLX arms, last in the arm since it
+  unloads the model): the server's physical footprint must fall by at least
+  half the weights after `POST /v1/admin/models/{id}/unload`. Freed MLX
+  arrays stay in MLX's buffer cache unless something sweeps it. The server's
+  pid comes from `lsof` on its port, so a server on another machine reports
+  the row as uncovered.
 
 ## Prompt reuse
 

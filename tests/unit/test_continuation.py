@@ -179,6 +179,15 @@ class TestContinuationKeepsTheSeamSpace:
     and the space in " need" is real. The context manager seeds the buffer
     so the trim never fires, and restores the factory afterwards."""
 
+    @staticmethod
+    def _segments(source):
+        d = source.detokenizer   # what stream_generate does, once
+        d.reset()
+        d.add_token(1)
+        first = d.last_segment
+        d.add_token(2)
+        return first, d.last_segment
+
     # Driven through the real source (detokenizer_source picks the vendored
     # SPMStreamingDetokenizer from tokenizer.json's decoder), since a rename
     # of the prototype attribute would silently stop the seeding.
@@ -200,23 +209,18 @@ class TestContinuationKeepsTheSeamSpace:
 
         (tmp_path / "tokenizer.json").write_text(json.dumps({"decoder": _SPM_DECODER}))
         source = detokenizer_source(_FakeSpmTokenizer(), tmp_path)
-        prototype = source._detokenizer
-        assert type(prototype) is SPMStreamingDetokenizer
+        assert type(source.detokenizer) is SPMStreamingDetokenizer
         if raises:
             with pytest.raises(RuntimeError):
                 with continuation_detokenizer(source, continuing):
                     raise RuntimeError("mid-generation")
         else:
             with continuation_detokenizer(source, continuing):
-                d = source.detokenizer   # what stream_generate does, once
-                d.reset()
-                d.add_token(1)
-                first = d.last_segment
-                d.add_token(2)
-                second = d.last_segment
+                first, second = self._segments(source)
             assert (first, second) == expected
             assert "\x00" not in first + second
-        assert source._detokenizer is prototype  # restored in finally
+        # restored in finally: the next fresh turn trims again
+        assert self._segments(source) == ("need", " the")
 
     def test_a_read_only_text_detokenizer_is_left_alone(self):
         """The runtime shape on the mlx-vlm path: a raw HF tokenizer wrapped
@@ -231,16 +235,9 @@ class TestContinuationKeepsTheSeamSpace:
         from heylook_llm.providers.common.lm_detokenizer import NaiveStreamingDetokenizer
 
         wrapper = detokenizer_source(_FakeHfForDetok())
-        assert type(wrapper._detokenizer) is NaiveStreamingDetokenizer
+        assert type(wrapper.detokenizer) is NaiveStreamingDetokenizer
         with continuation_detokenizer(wrapper, True):
-            d = wrapper.detokenizer
-            d.reset()
-            d.add_token(1)
-            first = d.last_segment
-            d.add_token(2)
-            second = d.last_segment
-        assert (first, second) == (" need", " the")
-        assert type(wrapper._detokenizer) is NaiveStreamingDetokenizer
+            assert self._segments(wrapper) == (" need", " the")
 
 
 _SPM_DECODER = {"type": "Sequence", "decoders": [
@@ -371,25 +368,19 @@ class TestContinueFromGenerationPrompt:
 
     def _run(self, prompt, generation):
         from heylook_llm.providers.common.vlm_inputs import continue_from_generation_prompt
-        seen = []
-
-        def render(msgs):
-            seen.append(msgs)
-            return generation
-        return continue_from_generation_prompt(prompt, self.MSGS, render), seen
+        return continue_from_generation_prompt(prompt, self.MSGS, lambda msgs: generation)
 
     def test_dropped_generation_prefix_is_restored(self):
-        out, seen = self._run(self.HISTORY_HEAD + "Mars is", self.GEN)
+        out = self._run(self.HISTORY_HEAD + "Mars is", self.GEN)
         assert out == self.GEN + "Mars is"
-        assert seen == [self.MSGS[:-1]]          # rendered WITHOUT the partial reply
 
     def test_a_render_that_already_matches_is_left_alone(self):
         prompt = self.GEN + "Mars is"
-        assert self._run(prompt, self.GEN)[0] == prompt
+        assert self._run(prompt, self.GEN) == prompt
 
     def test_anything_that_is_not_a_clean_extension_keeps_the_continuation(self):
         # the history render carries thinking the generation prompt lacks
         prompt = self.HISTORY_HEAD + "<ch>thought\nplan</ch>Mars is"
-        assert self._run(prompt, self.GEN)[0] == prompt
+        assert self._run(prompt, self.GEN) == prompt
         # the template rewrote the reply's text
-        assert self._run(self.HISTORY_HEAD + "Mars is.", self.GEN)[0] == self.HISTORY_HEAD + "Mars is."
+        assert self._run(self.HISTORY_HEAD + "Mars is.", self.GEN) == self.HISTORY_HEAD + "Mars is."

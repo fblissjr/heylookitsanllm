@@ -38,7 +38,6 @@
 import inspect
 import re
 import sys
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -47,22 +46,6 @@ import pytest
 from mlx_vlm.utils import prepare_inputs
 from mlx_vlm.prompt_utils import apply_chat_template, MODEL_CONFIG
 from mlx_vlm.models.gemma4 import gemma4 as _gemma4_module
-
-
-
-_SRC_ROOT = Path(__file__).parent.parent.parent / "src" / "heylook_llm"
-
-
-def _source(*parts: str) -> str:
-    """Read one of our own files for a source-text pin. ONE path walk: the
-    second call site arrived with a verbatim copy of the first, parents walk
-    included, which is the hand-copied-constant shape this repo keeps paying
-    for elsewhere."""
-    return _SRC_ROOT.joinpath(*parts).read_text()
-
-
-def _mlx_provider_source() -> str:
-    return _source("providers", "mlx_provider.py")
 
 
 # ---------------------------------------------------------------------------
@@ -302,11 +285,6 @@ class TestVisionFeatureCachePatterns:
         for mod in ("mlx_vlm.models.qwen3_5.qwen3_5", "mlx_vlm.models.gemma4.gemma4"):
             src = inspect.getsource(importlib.import_module(mod).Model.get_input_embeddings)
             assert '"vision_cache"' in src and '"_image_key"' in src, mod
-
-    def test_our_call_site_hands_over_the_cache(self):
-        src = _mlx_provider_source()
-        assert '"_image_key": image_content_key(images)' in src
-        assert "encode_image(" not in src
 
 
 class TestVlmEngineSurface:

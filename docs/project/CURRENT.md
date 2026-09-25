@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-25, v2.0.167, `main`.
+Last updated: 2026-09-25, v2.0.168, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md) (triaged 2026-09-25;
@@ -16,8 +16,8 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
-| unit + contract | green (1619 passed) | v2.0.129 |
-| 2026-09-24 evening, v2.0.129 | `tests/smoke/` gguf arm on Qwen3.8 | `tests/smoke/` on `improve/2026-09-24` | green on all three arms (mlx-text Qwen3-0.6B, mlx-vision Qwen3.5-0.8B, gguf Qwen3.8-27B); the new system-prompt and back-to-A reuse checks fail on the base commit | improve/2026-09-24, merged as v2.0.121 |
+| unit + contract | green (1438 passed) | v2.0.168 |
+| `tests/smoke/` on `improve/2026-09-24` | green on all three arms (mlx-text Qwen3-0.6B, mlx-vision Qwen3.5-0.8B, gguf Qwen3.8-27B); the new system-prompt and back-to-A reuse checks fail on the base commit | improve/2026-09-24, merged as v2.0.121 |
 | `bun run e2e:render` (model-free) | 98/98, including the thinking-depth control check | v2.0.95 |
 | v2.0.166 live pass (mrpurple) | smoke 85/85 on the same three arms plus 39/39 on mlx-vision with Qwen3.8-27B-4bit (depth); vlm_parity_probe ok on Qwen3.5-0.8B (image case a NEAR-TIE at margin 0.0, as at v2.0.124); response_format 15/15 on Qwen3.5-0.8B, Qwen3.8-27B MLX and the unsloth GGUF (gpt-oss refused by design); live probe 51/52 over eight models (the miss: Qwen3.5-0.8B's thinking-off arithmetic, a model answer, not the path); e2e render 100, chat 53, pages 32; vendor libs current. Record in `internal/claude/release_2026-09-25/mrpurple/` | v2.0.166 |
 | v2.0.151 live pass (mrpurple) | smoke 85/85 on gpt-oss-20b / Qwen3.5-0.8B / unsloth Qwen3.8-27B gguf, plus 39/39 on the mlx-vision arm with Qwen3.8-27B-4bit (depth); e2e chat 53/53 and pages 32/32; a live probe over eight models (every template source, every depth value, vision on and off thinking, image-plan, stop_sequences) all green. Record in `internal/claude/release_2026-09-25/mrpurple/results.md` | v2.0.151 |
@@ -35,6 +35,15 @@ Thinking DEPTH is covered by pinning depth-capable models:
 `--model mlx-vision=mlx-community_Qwen3.8-27B-4bit` (39/39 on the vision arm).
 
 ## Handoff -- start here (2026-09-25)
+
+**v2.0.168: the handoff list's owner calls, done.** Raw output view not built
+(parity or neither; gguf findings in sharp_edges.md). Gzip cache removed. The
+3 live-only tests replaced by smoke checks (presence-penalty A/B, unload
+gives memory back; green on mlx-vision, not yet run on mlx-text or gguf) and
+deleted. Borderline trim done (1451 -> 1438). Open owner calls are in
+TODO.md's "Next session" list: one GZipMiddleware assertion, tools, notebook
+images. The runtime-visibility plan has nothing left in-repo except gated
+W6/W14 and optional W11; W10's remainder is upstream in mlx-vlm.
 
 **v2.0.150 - v2.0.167 (`mrpurple` lead, `mrblue`): the three-phase plan the
 owner approved is done.** Phase 1: one Messages-grammar streaming loop for

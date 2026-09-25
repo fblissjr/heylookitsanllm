@@ -21,39 +21,27 @@ def reconstruct_thinking():
 class TestReconstructThinking:
     """Tests for _reconstruct_thinking() helper."""
 
-    # Exact format: <think>\n{thinking}\n</think>\n{content}. The 'thinking'
-    # key is removed via pop() (so the INPUT dict is mutated), other keys
+    # Exact format: <think>\n{thinking}\n</think>\n{content}. Other keys
     # survive, and multi-line thinking is carried verbatim.
     @pytest.mark.parametrize(
         "msg, expected",
         [
             ({"role": "assistant", "content": "reply", "thinking": "reason"},
              {"role": "assistant", "content": "<think>\nreason\n</think>\nreply"}),
-            ({"role": "assistant", "content": "hello", "thinking": "I should say hi"},
-             {"role": "assistant", "content": "<think>\nI should say hi\n</think>\nhello"}),
-            ({"role": "assistant", "content": "answer", "thinking": "let me think"},
-             {"role": "assistant", "content": "<think>\nlet me think\n</think>\nanswer"}),
             ({"role": "assistant", "content": "42",
               "thinking": "Step 1: analyze\nStep 2: compute\nStep 3: conclude"},
              {"role": "assistant", "content":
               "<think>\nStep 1: analyze\nStep 2: compute\nStep 3: conclude\n</think>\n42"}),
             ({"role": "assistant", "content": "hi", "thinking": "r", "name": "bot"},
              {"role": "assistant", "content": "<think>\nr\n</think>\nhi", "name": "bot"}),
-            ({"role": "assistant", "content": "hi", "thinking": "reason"},
-             {"role": "assistant", "content": "<think>\nreason\n</think>\nhi"}),
         ],
-        ids=[
-            "format", "assistant-with-thinking", "prepended-before-content",
-            "multiline", "preserves-other-keys", "mutates-input-dict",
-        ],
+        ids=["format", "multiline", "preserves-other-keys"],
     )
     def test_thinking_format(self, reconstruct_thinking, msg, expected):
-        result = reconstruct_thinking(msg)
-        assert result == expected
-        assert "thinking" not in msg
+        assert reconstruct_thinking(msg) == expected
 
     # Non-assistant roles, and None / empty / missing thinking: content is
-    # unchanged and the key is still popped.
+    # unchanged and no thinking key comes out.
     @pytest.mark.parametrize(
         "msg, expected",
         [

@@ -106,7 +106,6 @@ def test_configurable_fields_exclude_identity_only(provider):
     cls = PROVIDER_CONFIG_CLASSES[provider]
     configurable = configurable_fields(cls)
     assert "model_path" not in configurable
-    assert configurable == frozenset(cls.model_fields) - {"model_path"}
     for name in configurable:
         cls(model_path="/tmp/x.gguf", **{name: cls.model_fields[name].default})
 

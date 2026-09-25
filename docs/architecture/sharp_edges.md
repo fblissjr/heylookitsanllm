@@ -17,7 +17,7 @@ to it, so the headings stay stable as anchors.
   [context](#gguf-context-allocation), [micro-batch and memory](#gguf-micro-batch-and-memory),
   [non-causal images](#gguf-non-causal-images),
   [Metal residency](#gguf-metal-residency-keep-alive),
-  [one engine contract](#one-engine-contract), [speculative decoding](#gguf-speculative-decoding), [binary and build](#llama-server-binary-and-build)
+  [one engine contract](#one-engine-contract), [speculative decoding](#gguf-speculative-decoding), [raw output](#gguf-raw-output-view-not-built), [binary and build](#llama-server-binary-and-build)
 - Thinking and sampling: [on the wire](#thinking-on-the-wire),
   [default and sampler report](#thinking-default-and-the-sampler-report),
   [depth](#thinking-depth), [vendor layer](#vendor-sampling-layer),
@@ -341,6 +341,32 @@ That is structural, no adapter escapes it, magnitude unknown and n=1.
 `--spec-type` is a spawn flag while `lora` is per-request, so one process
 cannot suit both kinds of traffic, but that tradeoff only matters if spec
 decode is a win at all, which is not in evidence.
+
+### gguf raw output view (not built)
+
+Owner decision 2026-09-25: no per-message "Raw" view (every token the model
+emitted, specials included), because gguf cannot match MLX without moving
+generation off the chat endpoint, and the owner's rule was parity or neither.
+
+- MLX could show every generated token's piece with specials (the vendored
+  detokenizer maps ids through `convert_ids_to_tokens`). The stop token is
+  never detokenized and no `GenerationChunk` field carries it.
+- On `/v1/chat/completions`, llama-server renders a token as text only if it
+  is in the template's `preserved_tokens` (so `<think>` shows, EOS and role
+  tokens do not), and its per-family parsers consume structure even with
+  `reasoning_format: "none"`. `--special` is process-global. `verbose` and
+  `return_tokens` are empty of text and ids when streaming, and streamed
+  logprobs skip exactly the frames that carry no text diff: the specials.
+- Only streaming `/completion` gives parity: every partial carries its token
+  id, and a request-body `preserved_tokens` puts every control token in the
+  text. Moving there makes heylook's parser the one reasoning splitter on
+  gguf and drops what the chat layer supplies: reasoning before a
+  `json_schema` grammar, `additional_stops`, `message_delimiters` (KV
+  checkpoint placement), and the chat multimodal path.
+
+Revisit only as a "one parser on both engines" decision, not as a side effect
+of a toggle. Citations into llama.cpp at the build commit, and what was not
+verified, are in the local `internal/claude/raw_view/`.
 
 ### llama-server binary and build
 
@@ -936,7 +962,8 @@ method, `/v3` and `/v2` get their gone-answer for free, and
 Two more things became true only when the handlers went sync (threadpool):
 the gzip cache must not be iterated while mutated (it raised
 `dictionary changed size` -> 500 on a static asset under concurrent cold
-load), and `resolve()` raises `ValueError` on a NUL byte before `is_file()` can
+load; the cache itself was removed in v2.0.168, since compression already runs
+off the event loop and a revalidated asset is a 304), and `resolve()` raises `ValueError` on a NUL byte before `is_file()` can
 swallow it, so `_serve` catches it (`GET /%00` was a 500). Revisit the
 fallback only if the app ever moves to the History API.
 

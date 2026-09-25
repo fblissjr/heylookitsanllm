@@ -74,12 +74,10 @@ class TestAdminEngineRow:
             assert row["config"]["context_length"] == 65536  # stored, so the editor shows it
             assert "context_length" in resp.json()["reload_required_fields"]
         finally:
-            # Leave the roster and the call log as this test found them:
-            # later files assert on both.
+            # Leave the roster as this test found it: later files read it.
             mock_service.update_config("test-mlx-model", {"config": {"context_length": None}})
-            mock_service.update_calls.clear()
 
-    def test_file_only_fields_are_refused_over_http_and_nothing_is_written(self, client, mock_service):
+    def test_file_only_fields_are_refused_over_http_and_nothing_is_written(self, client):
         """A program path, raw argv or a template path over HTTP would let any
         caller of the admin API run a command or read a file; they are set in
         the model's own file only. Each is refused, alongside an allowed key,
@@ -87,13 +85,13 @@ class TestAdminEngineRow:
         from heylook_llm.config import FILE_ONLY_FIELDS
 
         assert FILE_ONLY_FIELDS >= {"server_binary", "extra_args", "chat_template_path"}
-        mock_service.update_calls.clear()
+        before = client.get("/v1/admin/models/test-mlx-model").json()["config"]
         for field in sorted(FILE_ONLY_FIELDS):
             resp = client.patch("/v1/admin/models/test-mlx-model",
                                 json={"config": {field: "x", "max_tokens": 64}})
             assert resp.status_code == 422, (field, resp.text)
             assert field in resp.text
-        assert mock_service.update_calls == []
+        assert client.get("/v1/admin/models/test-mlx-model").json()["config"] == before
 
 
 class TestAdminModelStatus:

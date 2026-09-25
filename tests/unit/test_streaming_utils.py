@@ -203,16 +203,6 @@ class TestControlFrames:
         assert control_frame(object()) is None
 
 
-class TestAbortEventProgressSlot:
-    def test_empty_until_reported_and_cleared_with_the_event(self):
-        ev = AbortEvent()
-        assert ev.prefill_progress() is None
-        ev.set_prefill_progress(3, 9)
-        assert ev.prefill_progress() == (3, 9)
-        ev.clear()
-        assert ev.prefill_progress() is None
-
-
 class TestKeepaliveThroughDecode:
     def test_a_stall_after_the_first_chunk_still_gets_a_keepalive(self, monkeypatch):
         monkeypatch.setattr(streaming_utils, "KEEPALIVE_INTERVAL_S", 0.15)
