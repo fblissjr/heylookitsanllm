@@ -27,7 +27,7 @@ import pytest
 
 from heylook_llm.providers import llama_server_provider as llama_mod
 
-from heylook_llm.config import ChatRequest, ModelConfig, GGUFModelConfig, PROVIDER_CONFIG_CLASSES
+from heylook_llm.config import ChatRequest, GGUFModelConfig, PROVIDER_CONFIG_CLASSES
 from heylook_llm.providers.base import GenerationChunk
 from heylook_llm.samplers import GLOBAL_SAMPLER_FLOOR
 from heylook_llm.providers.llama_server_provider import LlamaServerProvider
@@ -64,35 +64,11 @@ class TestGGUFConfig:
     def test_registry_has_gguf(self):
         assert PROVIDER_CONFIG_CLASSES["gguf"] is GGUFModelConfig
 
-    def test_model_config_builds_gguf(self):
-        mc = ModelConfig.model_validate({
-            "id": "m", "provider": "gguf",
-            "config": {"model_path": "/x/model.gguf", "mmproj_path": "/x/mmproj.gguf"},
-        })
-        assert isinstance(mc.config, GGUFModelConfig)
-        assert mc.config.mmproj_path == "/x/mmproj.gguf"
-
-    def test_extra_fields_forbidden(self):
-        with pytest.raises(Exception):
-            GGUFModelConfig.model_validate({"model_path": "/x.gguf", "surprise": True})
-
-    def test_capability_inference(self):
-        from heylook_llm.capabilities import infer_model_capabilities
-
-        plain = ModelConfig.model_validate(
-            {"id": "m", "provider": "gguf", "config": {"model_path": "/x.gguf"}})
-        assert infer_model_capabilities(plain) == ["chat"]
-
-        vision = ModelConfig.model_validate(
-            {"id": "m", "provider": "gguf",
-             "config": {"model_path": "/x.gguf", "mmproj_path": "/mm.gguf"}})
-        assert "vision" in infer_model_capabilities(vision)
-
-        thinking = ModelConfig.model_validate(
-            {"id": "m", "provider": "gguf",
-             "config": {"model_path": "/x.gguf", "supports_thinking": True}})
-        caps = infer_model_capabilities(thinking)
-        assert "thinking" in caps
+    # Construction through ModelConfig: test_config.py
+    # test_pydantic_construction_round_trip (row gguf_model_config_builds);
+    # extra="forbid": test_config.py test_extra_keys_are_forbidden (row
+    # gguf_extra_fields_forbidden); capabilities: test_audio_content.py
+    # TestCapability::test_inferred_capabilities (the gguf rows).
 
 
 # ---------------------------------------------------------------------------
@@ -100,10 +76,8 @@ class TestGGUFConfig:
 # ---------------------------------------------------------------------------
 
 class TestProviderSurface:
-    def test_provider_name_and_template_info(self):
-        p = make_provider()
-        assert LlamaServerProvider.provider_name == "gguf"
-        assert p.template_info() is None  # llama-server owns templating/split
+    # provider_name and template_info(): test_generation_chunk.py
+    # TestProviderSurface (row gguf_name_and_template_info).
 
     # unload is safe before any load, and forgets the running context the
     # process reported.
@@ -656,12 +630,21 @@ class TestPayload:
         assert payload["chat_template_kwargs"] == expected_kwargs
         assert payload["presence_penalty"] == expected_presence
 
-    def test_multimodal_content_parts_pass_through(self):
-        p = make_provider()
-        content = [
+    # Every content part is forwarded verbatim: llama-server decodes the media
+    # itself (mmproj), so the payload builder must neither mangle nor drop a
+    # part -- an audio part lost here is a silent text-only answer.
+    @pytest.mark.parametrize("content", [
+        pytest.param([
             {"type": "text", "text": "what is this"},
             {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
-        ]
+        ], id="multimodal_content_parts_pass_through"),
+        pytest.param([
+            {"type": "text", "text": "what do you hear?"},
+            {"type": "input_audio", "input_audio": {"data": "UklGRg==", "format": "wav"}},
+        ], id="audio_part_forwards_verbatim"),
+    ])
+    def test_content_parts_pass_through(self, content):
+        p = make_provider()
         payload = p._build_payload(req(messages=[{"role": "user", "content": content}]))
         assert payload["messages"][0]["content"] == content
 

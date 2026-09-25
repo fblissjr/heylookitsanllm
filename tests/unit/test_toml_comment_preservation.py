@@ -216,54 +216,125 @@ class TestBestEffortNeverBlocks:
         assert tc.merge_comments(OLD, fresh) == fresh
 
 
-class TestThroughModelService:
-    @pytest.fixture
-    def config_path(self, tmp_path):
-        weights_a = tmp_path / "weights" / "a"
-        weights_b = tmp_path / "weights" / "b"
-        weights_a.mkdir(parents=True)
-        weights_b.mkdir(parents=True)
-        text = OLD.replace('"/w2"', f'"{weights_b}"').replace('"/w"', f'"{weights_a}"')
-        p = tmp_path / "models.toml"
-        p.write_text(text)
-        return p
+# models.toml files for the scan-edit rows (see the rows' comments).
+_LONG_PATH_BODY = textwrap.dedent(f'''
+    # why this model is pinned
+    [[models]]
+    id = "keep-me"
+    provider = "mlx"
+    enabled = true
+    [models.config]
+    model_path = "{"weights/" + "d" * 80 + "/model"}"
 
-    # Admin patches through ModelService. Rows: (patches applied in order,
-    # comments that must survive, comments that must drop, (model index,
-    # temperature) the written file must parse to and render).
+    [scan]
+    folders = ["a"]
+''')
+
+_SHORT_PATH_BODY = textwrap.dedent('''
+    # short paths inline
+    [[models]]
+    id = "a"
+    provider = "mlx"
+    enabled = true
+    [models.config]
+    model_path = "w"
+
+    [scan]
+    folders = ["a"]
+''')
+
+_SCAN_ONLY_BODY = '''
+# why this folder
+[scan]
+folders = ["a"]
+'''
+
+
+def _old_with_weights(tmp_path):
+    """OLD, with its model paths pointing at real weight folders."""
+    weights_a = tmp_path / "weights" / "a"
+    weights_b = tmp_path / "weights" / "b"
+    weights_a.mkdir(parents=True)
+    weights_b.mkdir(parents=True)
+    return OLD.replace('"/w2"', f'"{weights_b}"').replace('"/w"', f'"{weights_a}"')
+
+
+def _body(text):
+    return lambda tmp_path: text.strip()
+
+
+def _patch(model_id, temperature):
+    return lambda svc: svc.update_config(model_id, {"config": {"temperature": temperature}})
+
+
+def _scan_edit(svc):
+    svc.set_scan_config(folders=["a", "b"])
+
+
+class TestThroughModelService:
+    # Admin writes through ModelService: a comment survives only while its
+    # anchor is untouched. Rows: (the models.toml before, the writes applied in
+    # order, comments that must survive, comments that must drop, whether the
+    # models array must render inline, (model index, temperature) the written
+    # file must parse to and render, or None).
     # - admin_patch: the patched model's neighbourhood note drops with it.
     # - second_patch: comments must survive REPEATED rewrites, not just the
     #   first.
-    @pytest.mark.parametrize("patches, must_keep, must_drop, expected", [
+    # - long path: tomli_w renders the models array as [[models]] only when
+    #   it does not fit on one line, and toml_comments can only carry comments
+    #   onto that form (it counts sections and bails on a mismatch). Real
+    #   entries carry absolute paths, so the fixture path is deliberately long.
+    # - short path: a PRE-EXISTING edge, pinned rather than fixed. The array
+    #   renders inline (`models = [{...}]`), the section count no longer
+    #   matches, and the write degrades to comment-less, loudly by design. A
+    #   fresh minimal file loses its annotations on the first admin write.
+    # - a comment on [scan] itself: documented toml_comments behaviour, not a
+    #   bug. Provenance for a value you edit belongs in the repo's rule files.
+    @pytest.mark.parametrize("old, writes, must_keep, must_drop, renders_inline, expected", [
         pytest.param(
-            [("b", 0.5)],
+            _old_with_weights, [_patch("b", 0.5)],
             ("# banner: what this file is", "# the workhorse", "# local weights"),
             ("# trailing block: describes model b below",),
-            (1, 0.5),
+            False, (1, 0.5),
             id="admin_patch_keeps_other_models_comments",
         ),
         pytest.param(
-            [("b", 0.5), ("b", 0.6)],
+            _old_with_weights, [_patch("b", 0.5), _patch("b", 0.6)],
             ("# the workhorse", "# standalone: why enabled"),
             (),
-            (1, 0.6),
+            False, (1, 0.6),
             id="second_patch_still_carries",
         ),
-        pytest.param([("a", 0.1)], (), (), (0, 0.1),
+        pytest.param(_old_with_weights, [_patch("a", 0.1)], (), (), False, (0, 0.1),
                      id="written_file_is_valid_and_parses_to_patched_values"),
+        pytest.param(_body(_LONG_PATH_BODY), [_scan_edit],
+                     ("# why this model is pinned",), (), False, None,
+                     id="comments_elsewhere_survive_a_scan_edit"),
+        pytest.param(_body(_SHORT_PATH_BODY), [_scan_edit],
+                     (), ("# short paths inline",), True, None,
+                     id="short_entries_render_inline_and_lose_comments"),
+        pytest.param(_body(_SCAN_ONLY_BODY), [_scan_edit],
+                     (), ("# why this folder",), False, None,
+                     id="a_comment_on_scan_itself_is_dropped_when_scan_changes"),
     ])
-    def test_admin_patch_through_the_service(
-        self, config_path, patches, must_keep, must_drop, expected
+    def test_admin_write_through_the_service(
+        self, tmp_path, caplog, old, writes, must_keep, must_drop, renders_inline, expected
     ):
+        config_path = tmp_path / "models.toml"
+        config_path.write_text(old(tmp_path))
         service = ModelService(str(config_path))
-        for model_id, temperature in patches:
-            service.update_config(model_id, {"config": {"temperature": temperature}})
+        for write in writes:
+            write(service)
         text = config_path.read_text()
         for kept in must_keep:
             assert kept in text, f"lost: {kept}"
         for gone in must_drop:
             assert gone not in text, f"comment outlived its anchor: {gone}"
-        index, temperature = expected
-        assert f"temperature = {temperature}" in text
-        data = tomllib.loads(text)
-        assert data["models"][index]["config"]["temperature"] == temperature
+        if renders_inline:
+            assert "models = [" in text and "[[models]]" not in text
+            assert "Comment carry-forward failed" in caplog.text
+        if expected is not None:
+            index, temperature = expected
+            assert f"temperature = {temperature}" in text
+            data = tomllib.loads(text)
+            assert data["models"][index]["config"]["temperature"] == temperature

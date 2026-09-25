@@ -5,9 +5,9 @@ Claims (what breaks if a test is deleted):
 - kwarg tests: thinking depth silently stops reaching MLX models, or reaches
   them under a name the template does not read (plan W2: the variable is the
   template's own, e.g. Muse's reasoning_strength).
-- the retry test: someone moves the depth kwarg into `base_kwargs`, and every
-  request to a model whose tokenizer wrapper has a narrow signature becomes a
-  hard TypeError.
+- the retry rows (test_mlx_provider.py TestContinuationTemplate): someone
+  moves the depth kwarg into `base_kwargs`, and every request to a model whose
+  tokenizer wrapper has a narrow signature becomes a hard TypeError.
 - the vision test: depth works on a text turn and reverts the moment an image
   is attached -- same model, same conversation, no error.
 - the capability rows (test_thinking_capability.py
@@ -22,14 +22,10 @@ from heylook_llm.providers.mlx_provider import vlm_apply_chat_template
 class FakeProcessor:
     """Records what the template was called with."""
 
-    def __init__(self, reject: set[str] | None = None):
+    def __init__(self):
         self.calls: list[dict] = []
-        self.reject = reject or set()
 
     def apply_chat_template(self, messages, **kw):
-        bad = self.reject & set(kw)
-        if bad:
-            raise TypeError(f"unexpected keyword argument {sorted(bad)[0]!r}")
         self.calls.append(kw)
         return "PROMPT"
 
@@ -106,34 +102,3 @@ def test_depth_reaches_the_template_through_the_vision_path():
     assert seen == {"depth": {"reasoning_effort": "low"}}
     # guard the guard: dropped, the call above would pass it as **kw
     assert "depth" in inspect.signature(prepare_vlm_inputs_parallel).parameters
-
-
-@pytest.mark.unit
-class TestTextTemplateRetry:
-    """Template kwargs travel SEPARATELY from base_kwargs so the TypeError
-    fallback can drop them."""
-
-    def test_a_narrow_wrapper_still_renders_after_the_retry(self):
-        from heylook_llm.providers.mlx_provider import _apply_chat_template
-
-        p = FakeProcessor(reject={"reasoning_effort"})
-        out = _apply_chat_template(p, _msgs(), enable_thinking=True,
-                                   depth={"reasoning_effort": "low"}, continuing=False)
-        assert out == "PROMPT"
-        (kwargs,) = p.calls
-        assert "reasoning_effort" not in kwargs and "enable_thinking" not in kwargs
-        assert kwargs["add_generation_prompt"] is True
-
-    def test_a_stack_that_cannot_continue_is_refused_not_restarted(self):
-        """When `continue_final_message` itself is what the wrapper rejects,
-        the retry fails the same way. A continuation is then a 400; rendering
-        a closed turn would silently restart the message."""
-        from heylook_llm.providers.base import InvalidGenerationRequest
-        from heylook_llm.providers.mlx_provider import _apply_chat_template
-
-        with pytest.raises(InvalidGenerationRequest, match="cannot continue"):
-            _apply_chat_template(FakeProcessor(reject={"continue_final_message"}), _msgs(),
-                                 enable_thinking=True, depth=None, continuing=True)
-        with pytest.raises(TypeError):
-            _apply_chat_template(FakeProcessor(reject={"tokenize"}), _msgs(),
-                                 enable_thinking=True, depth=None, continuing=False)

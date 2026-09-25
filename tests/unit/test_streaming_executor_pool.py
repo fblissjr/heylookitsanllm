@@ -34,11 +34,8 @@ def _drain(gen):
     return asyncio.run(run())
 
 
-def test_generation_pinned_to_one_thread():
-    idents = _drain(_thread_ident_gen(5))
-    assert len(idents) == 5
-    assert len(set(idents)) == 1, "all next() calls must run on one thread"
-    assert idents[0] != threading.get_ident()
+# That one generation runs start-to-finish on one worker thread is
+# test_streaming_utils.py TestThreadPinning::test_all_chunks_produced_on_single_thread.
 
 
 def _a_second_generation_reuses_the_worker(first):

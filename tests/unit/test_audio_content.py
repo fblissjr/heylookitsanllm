@@ -10,12 +10,16 @@
 #   (or worse, silent drops if the union ever loosens).
 # - converter test: Messages-API AudioBlock stops bridging to the OpenAI
 #   input_audio shape the gguf provider forwards.
-# - passthrough test: the llama-server payload builder starts mangling or
-#   dropping audio parts.
+# - passthrough: the llama-server payload builder starts mangling or dropping
+#   audio parts (test_llama_server_provider.py
+#   TestPayload::test_content_parts_pass_through, row audio_part_forwards_verbatim).
 # - MLX guard test: audio to an MLX model regresses from a loud
 #   InvalidGenerationRequest to a silent text-only answer.
-# - capability test: gguf models with audio modality stop advertising the
-#   `audio` cap that the frontend/eval gating (7d follow-ups) will rely on.
+# - capability table (infer_model_capabilities over provider, modalities,
+#   mmproj and supports_thinking): gguf models with audio modality stop
+#   advertising the `audio` cap that the frontend/eval gating (7d follow-ups)
+#   will rely on, gguf media stops needing the projector, MLX gains audio, or
+#   a plain gguf entry advertises more than chat.
 
 import pytest
 
@@ -24,12 +28,6 @@ from heylook_llm.config import AudioContentPart, ChatRequest, ModelConfig
 
 AUDIO_PART = {"type": "input_audio", "input_audio": {"data": "UklGRg==", "format": "wav"}}
 TEXT_PART = {"type": "text", "text": "what do you hear?"}
-
-
-def audio_request():
-    return ChatRequest.model_validate({
-        "messages": [{"role": "user", "content": [TEXT_PART, AUDIO_PART]}],
-    })
 
 
 class TestSchema:
@@ -50,15 +48,6 @@ class TestSchema:
         assert part.input_audio.data == content[index]["input_audio"]["data"]
         assert part.input_audio.format == fmt
         assert msg.model_dump(exclude_none=True)["content"][index] == content[index]
-
-
-class TestLlamaPayloadPassthrough:
-    def test_audio_part_forwards_verbatim(self):
-        from heylook_llm.providers.llama_server_provider import LlamaServerProvider
-
-        p = LlamaServerProvider("m", {"model_path": "/fake.gguf"}, False)
-        payload = p._build_payload(audio_request())
-        assert payload["messages"][0]["content"][1] == AUDIO_PART
 
 
 class TestMessagesBridge:
@@ -86,23 +75,34 @@ class TestMessagesBridge:
 
 
 class TestCapability:
-    @pytest.mark.parametrize("provider, config, present, absent", [
+    # Rows: (provider, config, caps that must be present, caps that must be
+    # absent, the exact list or None when only membership is pinned).
+    @pytest.mark.parametrize("provider, config, present, absent, exact", [
+        pytest.param("gguf", {"model_path": "/x.gguf"}, set(), set(), ["chat"],
+                     id="gguf_plain_is_chat_only"),
+        pytest.param("gguf", {"model_path": "/x.gguf", "mmproj_path": "/mm.gguf"},
+                     {"vision"}, set(), None, id="gguf_projector_yields_vision"),
+        pytest.param("gguf", {"model_path": "/x.gguf", "supports_thinking": True},
+                     {"thinking"}, set(), None, id="gguf_supports_thinking_yields_thinking"),
         pytest.param("gguf", {"model_path": "/x.gguf", "mmproj_path": "/mm.gguf",
                               "modalities": ["text", "vision", "audio"]},
-                     {"audio", "vision"}, set(), id="gguf_audio_modality_yields_audio_cap"),
+                     {"audio", "vision"}, set(), None, id="gguf_audio_modality_yields_audio_cap"),
         # `modalities` is descriptive on gguf; llama.cpp runs no image or
         # audio without an mmproj, so a declaration alone advertises nothing.
         pytest.param("gguf", {"model_path": "/x.gguf", "modalities": ["text", "vision", "audio"]},
-                     set(), {"vision", "audio"}, id="gguf_media_needs_the_projector"),
+                     set(), {"vision", "audio"}, None, id="gguf_media_needs_the_projector"),
         # MLX strips audio towers at load; advertising audio would invite
         # requests the provider must 400.
         pytest.param("mlx", {"model_path": "/x", "modalities": ["text", "vision", "audio"]},
-                     set(), {"audio"}, id="mlx_never_gains_audio_cap_from_modalities"),
+                     set(), {"audio"}, None, id="mlx_never_gains_audio_cap_from_modalities"),
     ])
-    def test_media_capabilities(self, provider, config, present, absent):
+    def test_inferred_capabilities(self, provider, config, present, absent, exact):
         mc = ModelConfig.model_validate({"id": "m", "provider": provider, "config": config})
-        caps = set(_infer(mc))
+        inferred = _infer(mc)
+        caps = set(inferred)
         assert present <= caps and not (absent & caps), caps
+        if exact is not None:
+            assert inferred == exact
 
 
 def _infer(mc):

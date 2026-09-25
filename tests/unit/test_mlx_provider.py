@@ -254,74 +254,98 @@ class TestApplyModelDefaults:
 
 @pytest.mark.unit
 class TestContinuationTemplate:
-    """continue_final_message reaches the template call with the right shape:
+    """The kwargs the text path's template call is made with, and how a
+    narrow wrapper's TypeError is answered (_apply_chat_template, reached
+    through UnifiedTextStrategy._render_template).
+
+    continue_final_message reaches the template call with the right shape:
     add_generation_prompt=False + continue_final_message=True (transformers
     refuses True/True). Suppressing the generation prompt alone was NOT
     continuation -- the turn still rendered CLOSED, so the model saw a
     finished message and nothing to continue; that half-state is the bug this
-    class exists to keep dead."""
+    class exists to keep dead.
+
+    Template variables (enable_thinking, the depth variable) travel SEPARATELY
+    from the base kwargs so the TypeError retry can drop them: moved into
+    base_kwargs, every request to a model whose tokenizer wrapper has a
+    narrow signature becomes a hard TypeError."""
 
     class _Tok:
+        """Records the kwargs of every call that rendered. A call carrying a
+        rejected keyword raises TypeError first, as a narrow wrapper does."""
+
         def __init__(self, reject=()):
             self.calls = []
             self.reject = set(reject)
 
         def apply_chat_template(self, messages, **kwargs):
-            self.calls.append(kwargs)
             if self.reject & set(kwargs):
                 raise TypeError("unexpected keyword argument")
+            self.calls.append(kwargs)
             return "PROMPT"
 
-        def encode(self, s):
-            return [1, 2, 3]
-
-    def _apply(self, tok, continuing, mock_mlx):  # noqa: ARG002
+    def _render(self, tok, request, continuing, mock_mlx):  # noqa: ARG002
         from heylook_llm.providers.mlx_provider import UnifiedTextStrategy
 
+        # No template_info: a requested depth rides as `reasoning_effort`.
         strategy = UnifiedTextStrategy(model_id="m")
         messages = [{"role": "user", "content": "hi"},
                     {"role": "assistant", "content": "he"}]
-        # What generation does with the render: encode a string, pass a
-        # token list through (build_prompt + generate in the provider).
-        prompt = strategy._render_template(
-            messages, tok, None, None, {"enable_thinking": False},
-            continuing=continuing)
-        return tok.encode(prompt) if isinstance(prompt, str) else prompt
+        return strategy._render_template(
+            messages, tok, None, None, request, continuing=continuing)
 
-    _ABSENT = object()
-
-    @pytest.mark.parametrize("reject, continuing, expected", [
-        ((), True, {"continue_final_message": True, "add_generation_prompt": False}),
+    # Rows: (keywords the wrapper rejects, effective request, continuing,
+    # the ONE successful call's exact kwargs | "refuses" | TypeError).
+    @pytest.mark.parametrize("reject, request_, continuing, expected", [
+        ((), {"enable_thinking": False}, True,
+         {"enable_thinking": False, "tokenize": False,
+          "add_generation_prompt": False, "continue_final_message": True}),
         # continuing=False is the resolved EXPLICIT opt-out
         # (continue_final_message=false): the trailing assistant turn renders
         # closed and a FRESH generation prompt opens -- "reply to it", the only
         # meaning "never continue" can coherently have. (Auto mode never reaches
         # this branch with a trailing assistant message.)
-        ((), False, {"continue_final_message": _ABSENT, "add_generation_prompt": True}),
+        ((), {"enable_thinking": False}, False,
+         {"enable_thinking": False, "tokenize": False, "add_generation_prompt": True}),
         # a wrapper that rejects enable_thinking must retry WITHOUT it but WITH
         # continue_final_message -- dropping both silently renders a closed turn
-        (("enable_thinking",), True,
-         {"continue_final_message": True, "enable_thinking": _ABSENT}),
+        (("enable_thinking",), {"enable_thinking": False}, True,
+         {"tokenize": False, "add_generation_prompt": False, "continue_final_message": True}),
         # a stack that cannot continue refuses loudly
-        (("continue_final_message",), True, "refuses"),
+        (("continue_final_message",), {"enable_thinking": False}, True, "refuses"),
+        # a wrapper that rejects the depth variable still renders after the
+        # retry, without either template variable
+        (("reasoning_effort",), {"enable_thinking": True, "reasoning_effort": "low"}, False,
+         {"tokenize": False, "add_generation_prompt": True}),
+        # When `continue_final_message` itself is what the wrapper rejects,
+        # the retry fails the same way. A continuation is then a 400;
+        # rendering a closed turn would silently restart the message.
+        (("continue_final_message",), {"enable_thinking": True}, True, "refuses"),
+        # ...but without a continuation the second TypeError is not a refusal
+        (("tokenize",), {"enable_thinking": True}, False, TypeError),
     ], ids=["continuing_leaves_the_turn_open", "not_continuing_never_passes_the_kwarg",
             "enable_thinking_fallback_keeps_continuation",
-            "unsupported_continuation_refuses_loudly"])
-    def test_template_kwargs(self, mock_mlx, reject, continuing, expected):
+            "unsupported_continuation_refuses_loudly",
+            "a_narrow_wrapper_still_renders_after_the_retry",
+            "a_stack_that_cannot_continue_is_refused_not_restarted",
+            "a_retry_failure_without_continuation_stays_a_type_error"])
+    def test_template_kwargs(self, mock_mlx, reject, request_, continuing, expected):
         tok = self._Tok(reject=reject)
         if expected == "refuses":
             from heylook_llm.providers.base import InvalidGenerationRequest
 
             with pytest.raises(InvalidGenerationRequest, match="cannot continue"):
-                self._apply(tok, continuing, mock_mlx)
+                self._render(tok, request_, continuing, mock_mlx)
             return
-        self._apply(tok, continuing, mock_mlx)
-        kwargs = tok.calls[-1]
-        for key, want in expected.items():
-            if want is self._ABSENT:
-                assert key not in kwargs, key
-            else:
-                assert kwargs[key] is want, key
+        if expected is TypeError:
+            with pytest.raises(TypeError):
+                self._render(tok, request_, continuing, mock_mlx)
+            return
+        assert self._render(tok, request_, continuing, mock_mlx) == "PROMPT"
+        (kwargs,) = tok.calls
+        assert kwargs == expected
+        # == alone would accept 0 for False
+        assert all(kwargs[k] is v for k, v in expected.items() if isinstance(v, bool))
 
 
 @pytest.mark.unit

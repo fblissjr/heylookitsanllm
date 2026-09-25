@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.162]
+
+### Changed
+
+- Pruning pass, the last merges: the nine groups whose members sat in two
+  test files (template kwargs, the provider surface, the pinned generation
+  thread, pydantic construction, the capability table, content parts,
+  `max_loaded_models`' default, `extra="forbid"`, TOML comments through the
+  model service), each now one table in one file. Test functions in the 11
+  files 170 -> 156, collected 319 -> 318 (one exact duplicate of the
+  `max_loaded_models` default dropped). Several assertions are stricter than
+  before (exact kwargs, a specific ValidationError, whole-list comparison).
+  Each group was shown able to fail by breaking its behaviour in memory; the
+  local ledger `internal/claude/prune/merge/ledger_5.md` names the break.
+
 ## [2.0.161]
 
 ### Fixed

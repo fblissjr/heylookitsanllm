@@ -16,7 +16,6 @@ from __future__ import annotations
 import logging
 import textwrap
 import time
-import unittest
 from unittest.mock import patch
 
 import pytest
@@ -128,19 +127,3 @@ def test_idle_threshold(make_router, render, loaded, now_ts, unloaded):
         else:
             assert mid in router.providers
             provider.unload.assert_not_called()
-
-
-class TestMaxLoadedModelsDefault(unittest.TestCase):
-    """AppConfig schema default flipped from 2 to 1 in C2. A models.toml that
-    doesn't set ``max_loaded_models`` should default to 1, matching the user's
-    already-explicit value in production."""
-
-    def test_schema_default_is_one(self):
-        from heylook_llm.config import AppConfig
-
-        cfg = AppConfig(models=[])
-        self.assertEqual(cfg.max_loaded_models, 1)
-
-
-if __name__ == "__main__":
-    unittest.main()

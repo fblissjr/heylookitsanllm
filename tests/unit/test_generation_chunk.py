@@ -177,37 +177,51 @@ class TestTelemetryLatch:
 # BaseProvider capability surface
 # ---------------------------------------------------------------------------
 
+def _base_surface():
+    class P(BaseProvider):
+        def load_model(self):
+            pass
+
+        def create_chat_completion(self, request, abort_event=None):
+            yield GenerationChunk()
+
+    return BaseProvider, P("m", {}, False)
+
+
+def _mlx_surface():
+    pytest.importorskip("mlx")  # import gate only
+    from heylook_llm.providers.mlx_provider import MLXProvider
+
+    # An instance needs a model on disk; the class surface is what neutral
+    # code reads.
+    return MLXProvider, None
+
+
+def _gguf_surface():
+    from heylook_llm.providers.llama_server_provider import LlamaServerProvider
+
+    # llama-server owns templating/split, so template_info() is None.
+    return LlamaServerProvider, LlamaServerProvider(
+        "test-gguf", {"model_path": "/fake/model.gguf"}, False)
+
+
 class TestProviderSurface:
-    def test_base_defaults(self):
-        assert BaseProvider.provider_name == ""
-        assert BaseProvider.is_vlm is False
-
-        class P(BaseProvider):
-            def load_model(self):
-                pass
-
-            def create_chat_completion(self, request, abort_event=None):
-                yield GenerationChunk()
-
-        p = P("m", {}, False)
-        assert p.template_info() is None
-
-    def test_abort_event_in_abstract_signature(self):
-        sig = inspect.signature(BaseProvider.create_chat_completion)
-        assert "abort_event" in sig.parameters
-
-    def test_concrete_providers_accept_abort_event(self):
-        mlx = pytest.importorskip("mlx")  # noqa: F841 -- import gate only
-        from heylook_llm.providers.mlx_provider import MLXProvider
-
-        sig = inspect.signature(MLXProvider.create_chat_completion)
-        assert "abort_event" in sig.parameters
-
-    def test_provider_name_set_on_concrete_classes(self):
-        mlx = pytest.importorskip("mlx")  # noqa: F841
-        from heylook_llm.providers.mlx_provider import MLXProvider
-
-        assert MLXProvider.provider_name == "mlx"
+    # One row per provider class: provider_name, the class-level is_vlm
+    # default, abort_event in create_chat_completion's signature (the abstract
+    # one for the base row), and template_info() None where an instance can be
+    # built without a load.
+    @pytest.mark.parametrize("surface, name", [
+        pytest.param(_base_surface, "", id="base_defaults_and_abstract_signature"),
+        pytest.param(_mlx_surface, "mlx", id="mlx_name_and_abort_event"),
+        pytest.param(_gguf_surface, "gguf", id="gguf_name_and_template_info"),
+    ])
+    def test_provider_surface(self, surface, name):
+        cls, instance = surface()
+        assert cls.provider_name == name
+        assert cls.is_vlm is False
+        assert "abort_event" in inspect.signature(cls.create_chat_completion).parameters
+        if instance is not None:
+            assert instance.template_info() is None
 
 
 # ---------------------------------------------------------------------------
@@ -217,15 +231,9 @@ class TestProviderSurface:
 class TestProviderConfigRegistry:
     # That the registry keys match the ModelConfig.provider Literal is
     # test_config_effects_adversarial.py::
-    # test_provider_registry_and_the_provider_literal_stay_in_sync.
-
-    def test_validator_uses_registry(self):
-        from heylook_llm.config import ModelConfig, MLXModelConfig
-
-        mc = ModelConfig.model_validate(
-            {"id": "m", "provider": "mlx", "config": {"model_path": "/tmp/fake"}}
-        )
-        assert isinstance(mc.config, MLXModelConfig)
+    # test_provider_registry_and_the_provider_literal_stay_in_sync; that the
+    # validator builds the registry's class is test_config.py
+    # test_pydantic_construction_round_trip (row validator_uses_registry).
 
     def test_unknown_provider_rejected(self):
         from heylook_llm.config import ModelConfig

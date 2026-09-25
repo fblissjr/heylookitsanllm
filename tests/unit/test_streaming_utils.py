@@ -111,20 +111,19 @@ class TestThreadPinning:
     """
 
     def test_all_chunks_produced_on_single_thread(self):
-        thread_ids = []
-
+        """Every next() of one generation runs on one thread, and that thread
+        is a worker, not the event-loop thread."""
         def thread_recording_gen():
             for i in range(6):
-                thread_ids.append(threading.get_ident())
-                yield i
+                yield i, threading.get_ident()
 
-        gen = thread_recording_gen()
-        chunks = asyncio.run(_collect(async_generator_with_abort(gen, None, None)))
+        chunks = asyncio.run(_collect(
+            async_generator_with_abort(thread_recording_gen(), None, None)))
 
-        assert chunks == [0, 1, 2, 3, 4, 5]
-        assert len(set(thread_ids)) == 1, (
-            f"generation hopped threads: {set(thread_ids)}"
-        )
+        assert [i for i, _ in chunks] == [0, 1, 2, 3, 4, 5]
+        thread_ids = {ident for _, ident in chunks}
+        assert len(thread_ids) == 1, f"generation hopped threads: {thread_ids}"
+        assert threading.get_ident() not in thread_ids, "generation ran on the loop thread"
 
     def test_close_runs_on_same_thread_as_generation(self):
         """close() must run on the pinned worker, not the event-loop thread --

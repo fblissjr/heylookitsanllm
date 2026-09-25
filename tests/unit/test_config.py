@@ -9,6 +9,7 @@ from heylook_llm.config import (
     AppConfig,
     ChatMessage,
     ChatRequest,
+    GGUFModelConfig,
     ImageContentPart,
     ImageUrl,
     MLX_RUNTIME_DEFAULT_FIELDS,
@@ -96,6 +97,23 @@ _CONSTRUCTION_ROWS = [
         ("test-mlx", "mlx", True, "/fake/path"),
         id="mlx_model_config",
     ),
+    # The provider's config class comes from PROVIDER_CONFIG_CLASSES, from the
+    # dict form a models.toml entry arrives in.
+    pytest.param(
+        lambda: ModelConfig.model_validate(
+            {"id": "m", "provider": "mlx", "config": {"model_path": "/tmp/fake"}}),
+        lambda mc: isinstance(mc.config, MLXModelConfig), True,
+        id="validator_uses_registry",
+    ),
+    pytest.param(
+        lambda: ModelConfig.model_validate({
+            "id": "m", "provider": "gguf",
+            "config": {"model_path": "/x/model.gguf", "mmproj_path": "/x/mmproj.gguf"},
+        }),
+        lambda mc: (isinstance(mc.config, GGUFModelConfig), mc.config.mmproj_path),
+        (True, "/x/mmproj.gguf"),
+        id="gguf_model_config_builds",
+    ),
     pytest.param(
         lambda: ModelConfig(id="test", provider="mlx", config={"model_path": "/fake"},
                             capabilities=["chat", "thinking", "vision"]),
@@ -145,6 +163,8 @@ class TestModelConfig:
 @pytest.mark.unit
 class TestAppConfig:
     def test_max_loaded_models_default(self):
+        # The schema default flipped from 2 to 1 with idle unloading (C2): a
+        # models.toml that doesn't set max_loaded_models loads one at a time.
         cfg = AppConfig(models=[])
         assert cfg.max_loaded_models == 1
 
@@ -190,25 +210,32 @@ class TestMLXModelConfigValidation:
     # call site otherwise.
     BASE: ClassVar[dict[str, Any]] = {"model_path": "/fake/model"}
 
-    # extra="forbid": an unknown or retired key fails validation. Each row is
-    # a list of kwargs sets, each refused on its own.
+    # extra="forbid", on both provider config classes: an unknown or retired
+    # key fails validation. Each row is a list of kwargs sets, each refused on
+    # its own.
     # - unknown_key: a typo like `temperatue` must not silently vanish.
     # - quantized_kv_start: dead config (stored and forwarded but never
     #   consumed by _build_cache_config/make_cache), removed outright.
     # - retired_mlx_fields: retired with the mlx-vlm engine (plan W10 stage 3);
     #   an entry still carrying one fails at load rather than doing nothing.
-    @pytest.mark.parametrize("bad_kwargs", [
-        pytest.param([{"temperatue": 0.9}], id="unknown_key_rejected"),
-        pytest.param([{"quantized_kv_start": 1024}], id="quantized_kv_start_removed"),
-        pytest.param([{"loader": "mlx-lm"}, {"cache_type": "quantized"},
+    # - gguf: the same rule on GGUFModelConfig.
+    @pytest.mark.parametrize("config_cls, base, bad_kwargs", [
+        pytest.param(MLXModelConfig, BASE, [{"temperatue": 0.9}], id="unknown_key_rejected"),
+        pytest.param(MLXModelConfig, BASE, [{"quantized_kv_start": 1024}],
+                     id="quantized_kv_start_removed"),
+        pytest.param(MLXModelConfig, BASE,
+                     [{"loader": "mlx-lm"}, {"cache_type": "quantized"},
                       {"kv_bits": 8}, {"draft_model_path": "/d"},
                       {"num_draft_tokens": 3}],
                      id="retired_mlx_fields_are_refused"),
+        pytest.param(GGUFModelConfig, {"model_path": "/x.gguf"}, [{"surprise": True}],
+                     id="gguf_extra_fields_forbidden"),
     ])
-    def test_extra_keys_are_forbidden(self, bad_kwargs):
+    def test_extra_keys_are_forbidden(self, config_cls, base, bad_kwargs):
+        config_cls(**base)  # the base alone validates: the key is what fails
         for kwargs in bad_kwargs:
             with pytest.raises(ValidationError):
-                MLXModelConfig(**self.BASE, **kwargs)
+                config_cls(**base, **kwargs)
 
     def test_max_queue_depth_is_a_real_field(self):
         # The provider reads config["max_queue_depth"]; without a field the

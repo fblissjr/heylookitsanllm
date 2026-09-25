@@ -257,32 +257,6 @@ class TestAdminSurfaceSeesDiscovered:
         assert [c.id for c in svc.list_configs()] == []
         assert svc.get_config("found") is None
 
-_LONG_PATH_BODY = textwrap.dedent(f'''
-    # why this model is pinned
-    [[models]]
-    id = "keep-me"
-    provider = "mlx"
-    enabled = true
-    [models.config]
-    model_path = "{"weights/" + "d" * 80 + "/model"}"
-
-    [scan]
-    folders = ["a"]
-''')
-
-_SHORT_PATH_BODY = textwrap.dedent('''
-    # short paths inline
-    [[models]]
-    id = "a"
-    provider = "mlx"
-    enabled = true
-    [models.config]
-    model_path = "w"
-
-    [scan]
-    folders = ["a"]
-''')
-
 
 @pytest.mark.unit
 class TestScanConfigAccessors:
@@ -316,35 +290,8 @@ class TestScanConfigAccessors:
         with pytest.raises(ValueError, match="0 disables"):
             svc.set_scan_config(scan_interval_seconds=-1)
 
-    # A comment survives a [scan] edit only while its anchor is untouched.
-    # - long path: tomli_w renders the models array as [[models]] only when
-    #   it does not fit on one line, and toml_comments can only carry comments
-    #   onto that form (it counts sections and bails on a mismatch). Real
-    #   entries carry absolute paths, so the fixture path is deliberately long.
-    # - short path: a PRE-EXISTING edge, pinned rather than fixed. The array
-    #   renders inline (`models = [{...}]`), the section count no longer
-    #   matches, and the write degrades to comment-less, loudly by design. A
-    #   fresh minimal file loses its annotations on the first admin write.
-    # - a comment on [scan] itself: documented toml_comments behaviour, not a
-    #   bug. Provenance for a value you edit belongs in the repo's rule files.
-    @pytest.mark.parametrize("body, comment, survives, renders_inline", [
-        pytest.param(_LONG_PATH_BODY, "# why this model is pinned", True, False,
-                     id="comments_elsewhere_survive_a_scan_edit"),
-        pytest.param(_SHORT_PATH_BODY, "# short paths inline", False, True,
-                     id="short_entries_render_inline_and_lose_comments"),
-        pytest.param('\n# why this folder\n[scan]\nfolders = ["a"]\n', "# why this folder",
-                     False, False,
-                     id="a_comment_on_scan_itself_is_dropped_when_scan_changes"),
-    ])
-    def test_a_scan_edit_keeps_comments_only_on_untouched_anchors(
-            self, tmp_path, caplog, body, comment, survives, renders_inline):
-        svc, cfg = self._service(tmp_path, body)
-        svc.set_scan_config(folders=["a", "b"])
-        text = cfg.read_text()
-        assert (comment in text) is survives
-        if renders_inline:
-            assert "models = [" in text and "[[models]]" not in text
-            assert "Comment carry-forward failed" in caplog.text
+    # A comment survives a [scan] edit only while its anchor is untouched:
+    # test_toml_comment_preservation.py TestThroughModelService (the scan rows).
 
 
 @pytest.mark.unit
