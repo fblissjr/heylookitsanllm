@@ -33,7 +33,7 @@ Route modules in src/heylook_llm/:
 │                                # /v1/performance/profile/{time_range}, /v1/cache/clear
 ├── requests_api.py              # Execution cancellation: DELETE /v1/requests/{id}
 ├── telemetry_api.py             # Frontend ingestion: /v1/telemetry/events
-├── frontend_static.py           # Static assets: /, /index.html, /icon.svg, /js/*, /css/*
+├── frontend_static.py           # Static assets: /, /index.html, /icon.svg (+ /favicon.ico), /js/*, /css/*
 └── openapi_doc.py               # Custom OpenAPI schema & documentation narrative
 
 Not every route comes from a *_api.py router: `frontend_static.py`

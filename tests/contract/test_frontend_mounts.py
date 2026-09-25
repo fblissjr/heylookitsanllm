@@ -43,6 +43,8 @@ def test_favicon_is_a_file_not_a_data_uri(client):
     assert r.status_code == 200
     assert "svg" in r.headers["content-type"]
     assert "data:" not in client.get("/").text
+    # Asked for by convention on a response naming no icon (a JSON error).
+    assert client.get("/favicon.ico").content == r.content
 
 
 def test_unknown_paths_404(client):

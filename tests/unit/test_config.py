@@ -1,5 +1,8 @@
 # tests/unit/test_config.py
 """Unit tests for Pydantic config models."""
+import re
+import tomllib
+from pathlib import Path
 from typing import Any, ClassVar
 
 import pytest
@@ -300,23 +303,46 @@ class TestModalitiesDeriveAtLoad:
 
 
 @pytest.mark.unit
-class TestModelsExampleToml:
-    """models.example.toml is the tracked format reference (README points at
-    it). Claim: every entry in it must round-trip the REAL Pydantic
-    validators -- without this anchor, a field rename in config.py rots the
-    example silently and only a future user's copy-paste fails.
+class TestExampleConfigs:
+    """heylook.example.toml and model.heylook.example.toml are the tracked
+    format references (README points at them). Claim: what they show, the
+    commented-out blocks included (those are what gets copied), passes the
+    REAL validators. Without this anchor a field rename in config.py rots the
+    examples silently and only a future user's copy-paste fails.
     """
 
-    def test_example_file_validates(self):
-        import tomllib
-        from pathlib import Path
+    ROOT = Path(__file__).parents[2]
 
-        from heylook_llm.config import AppConfig
+    @staticmethod
+    def _uncommented(text: str) -> str:
+        """The file with every commented-out TOML line (a key, [table] or
+        [[table]]) switched on."""
+        return re.sub(r"^# ?(\s*(\[\[?[a-z.]+\]\]?$|[a-z_]+ = .*$))", r"\1", text, flags=re.M)
 
-        example = Path(__file__).parents[2] / "models.example.toml"
-        with open(example, "rb") as f:
-            data = tomllib.load(f)
-        cfg = AppConfig(**data)
-        assert len(cfg.models) >= 3  # minimal MLX, override MLX, gguf
-        providers = {m.provider for m in cfg.models}
-        assert {"mlx", "gguf"} <= providers
+    def test_server_config_example_validates(self):
+        from heylook_llm.model_registry import served
+        from heylook_llm.settings import SettingsSchema
+
+        text = (self.ROOT / "heylook.example.toml").read_text()
+        data = tomllib.loads(text)
+        app = served(data, [])
+        assert app.allowed_hosts  # a top-level key, not swallowed by [scan]
+        assert app.scan is not None and app.scan.folders
+        SettingsSchema(**data["settings"])
+        full = tomllib.loads(self._uncommented(text))
+        assert {m.provider for m in served(full, []).models} == {"mlx", "gguf"}
+        SettingsSchema(**full["settings"])
+
+    def test_model_file_example_validates(self):
+        text = (self.ROOT / "model.heylook.example.toml").read_text()
+        mlx_part, marker, rest = text.partition("# --- gguf model")
+        gguf_part = marker + rest
+        mlx = tomllib.loads(self._uncommented(mlx_part))
+        gguf = tomllib.loads(self._uncommented(gguf_part))
+        for data in (mlx, gguf):
+            assert not any(isinstance(v, dict) for v in data.values())
+            assert not {"model_path", "id"} & data.keys()
+        MLXModelConfig(model_path="/m", **mlx)
+        unset = gguf.pop("unset")
+        assert set(unset) <= GGUFModelConfig.model_fields.keys()
+        GGUFModelConfig(model_path="/m/w.gguf", **gguf)

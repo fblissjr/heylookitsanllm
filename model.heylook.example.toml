@@ -1,0 +1,42 @@
+# model.heylook.example.toml -- reference for a model's own settings file.
+#
+# Save as model.heylook.toml INSIDE the model's folder (next to config.json,
+# or next to the .gguf). The scan that finds the model reads it and layers it
+# over the config derived from the model's own files, so every field you do
+# not set keeps being derived. The admin UI's Configure panel writes this same
+# file; deleting the file reverts the model to derived defaults.
+#
+# Rules:
+# - Plain top-level keys, named after the engine's config fields. No [table].
+# - model_path and id are not settable: the folder is the model, and its name
+#   is the id.
+# - A relative *_path value is relative to the model folder.
+# - unset = [...] drops a derived field (TOML has no null).
+# - A file that does not parse or validate rejects that model alone; the
+#   server log and the Models page name it.
+#
+# The full field list, with each field's meaning and when a change takes
+# effect: the Models page's Configure panel, or MLXModelConfig /
+# GGUFModelConfig in src/heylook_llm/config.py. Pick the block for the
+# model's engine and delete the other.
+
+# --- MLX model -------------------------------------------------------------
+
+# Sampling defaults (beat generation_config.json; a request field still wins).
+temperature = 0.6
+max_tokens = 8192
+# Serve a vision-capable model as text-only.
+# modalities = ["text"]
+# Thinking default; unset follows the template's capability.
+# enable_thinking = false
+# Unload this model after this many idle seconds (0 = never).
+# unload_after_idle_seconds = 600
+
+# --- gguf model (llama-server subprocess) -----------------------------------
+
+# ctx_size = 32768                       # unset = the model's training context
+# flash_attn = "on"                      # "on"/"off"; unset = llama-server's auto
+# mmproj_path = "mmproj-F16.gguf"        # relative to this folder
+# draft_model_path = "mtp-model.gguf"    # turns speculative decoding on
+# unset = ["draft_model_path"]           # or: turn off a drafter discovery found
+# extra_args = ["--no-mmap"]             # raw llama-server flags; file-only

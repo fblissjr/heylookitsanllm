@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.171]
+
+- **`heylook.example.toml` replaces `models.example.toml`**, which still showed
+  the pre-v2.0.122 file name (a `models.toml` is refused) and the retired
+  `enabled` field. It shows the top-level keys, `allowed_hosts` first (the
+  DNS-rebinding guard's list; a LAN or VPN name the server is reached by),
+  `[scan]`, `[settings]`, and commented `[[models]]` entries.
+- **`model.heylook.example.toml`**: a model's own settings file, one MLX and
+  one gguf block.
+- `tests/unit/test_config.py::TestExampleConfigs` validates both files,
+  commented-out lines included, against the real schema (replaces
+  `TestModelsExampleToml`).
+- `/favicon.ico` serves `icon.svg`: browsers ask for it on a response that
+  names no icon, such as a 403 from the Host check.
+- README, `setup.sh` and `docs/architecture/config.md` point at the new files.
+
 ## [2.0.170]
 
 - **mlx-vlm pin moved to upstream main `990a028763b2f8c605329f29ae4e747f9285902d`**

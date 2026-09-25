@@ -1,0 +1,82 @@
+# heylook.example.toml -- reference for the server config file.
+#
+# Copy to heylook.toml (gitignored) in the directory you start the server
+# from. It was models.toml before v2.0.122; a leftover models.toml is refused
+# by name, never read.
+#
+# heylook.toml is OVERRIDE-ONLY: every model under [scan].folders is served
+# with defaults derived from its own files, so a typical setup needs only the
+# [scan] table. A model's own settings go in model.heylook.toml inside its
+# folder (see model.heylook.example.toml), not here.
+#
+# TOML rule that matters here: top-level keys must come BEFORE the first
+# [table]. A key written after [scan] belongs to [scan], not to the top level.
+
+# --- top-level keys ---------------------------------------------------------
+
+# DNS-rebinding guard (host_check.py). The server answers a request whose Host
+# is an IP address, localhost, or one of this machine's own names (hostname,
+# short name, <short>.local). Any other name gets a 403 until it is listed
+# here: a LAN DNS name, a VPN / tailnet name, a reverse-proxy name. Names only,
+# no scheme, no port (a port in the Host header is ignored). Re-read on a
+# config reload. ["*"] turns the check off.
+allowed_hosts = [
+  "llm-box.example.lan",
+  "llm-box.tail0000.ts.net",
+]
+
+# Models kept loaded at once (LRU eviction). 1 suits Apple Silicon: a second
+# idle model does not add throughput.
+max_loaded_models = 1
+
+# Seconds idle before a loaded model is unloaded; 0 disables it. A model's
+# own unload_after_idle_seconds wins over this.
+idle_unload_seconds = 1800
+
+# --- [scan]: the model registry ---------------------------------------------
+
+[scan]
+# Everything under these folders is served, with no entry needed. The id is
+# the model's folder name. Scanned at startup and on every config reload.
+folders = [
+  "/path/to/models",
+  "/path/to/models/gguf",
+]
+# 0 switches discovery off (nothing under the folders is served). Any other
+# value serves them; it schedules no periodic rescan.
+# scan_interval_seconds = 900
+
+# --- [settings]: operational settings ---------------------------------------
+# Also editable at runtime from the admin UI (/v1/admin/config), which writes
+# this table. Omit a key to take the default.
+
+[settings]
+# File telemetry is opt-in: "off" (default), "minimal", "standard", "debug".
+observability_level = "off"
+observability_retention_days = 30
+# Cap on MLX's buffer cache within a request, in GB. Unset = MLX's default.
+# mlx_cache_limit_gb = 16.0
+
+# --- [[models]]: explicit entries (rarely needed) ---------------------------
+# An entry is served EXACTLY as written and always wins over discovery for the
+# same resolved model_path. It gets NONE of discovery's derived fields
+# (mmproj_path, drafter, ...), so prefer model.heylook.toml in the model's
+# folder. Use an entry only for a model that lives outside every scan folder.
+# `scripts/served_diff.py --against <candidate.toml>` shows what an entry
+# would change before you add it.
+
+# [[models]]
+# id = "my-model-4bit"
+# provider = "mlx"                 # "mlx" or "gguf"
+#
+#   [models.config]
+#   model_path = "/elsewhere/my-model-4bit"
+
+# [[models]]
+# id = "my-gguf-model"
+# provider = "gguf"
+#
+#   [models.config]
+#   model_path = "/elsewhere/my-gguf-model/model-Q4_K_XL.gguf"   # the .gguf FILE
+#   modalities = ["text", "vision"]
+#   mmproj_path = "/elsewhere/my-gguf-model/mmproj-F16.gguf"

@@ -168,7 +168,10 @@ def mount_frontend(app: FastAPI) -> None:
     # is not a scheme. Our markup was well-formed, so the mis-parse was theirs;
     # a plain relative path has nothing left to mis-parse. Measured 2026-09-06:
     # the logged path was byte-for-byte `"/>" + href`.
+    # /favicon.ico serves the same SVG: a browser asks for it by convention
+    # on any response that names no icon (a JSON error page, a 403).
     @app.api_route("/icon.svg", methods=["GET", "HEAD"], include_in_schema=False)
+    @app.api_route("/favicon.ico", methods=["GET", "HEAD"], include_in_schema=False)
     def serve_frontend_icon(request: Request):
         return _serve(FRONTEND_DIR / "icon.svg", request)
 

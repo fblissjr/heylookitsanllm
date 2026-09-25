@@ -122,7 +122,9 @@ Models page, or `PUT /v1/admin/models/scan-config`). Everything under one is
 served with no entry, with its settings derived from the model's own files at
 load time. The scan understands MLX/safetensors dirs and GGUF dirs (mmproj
 projectors and `mtp-*` drafter sidecars auto-paired). A `heylook.toml` entry
-exists only to override something; see `models.example.toml` for the format.
+exists only to override something. Formats: `heylook.example.toml` (the server
+config, including `allowed_hosts` for reaching the server by a LAN or VPN
+name) and `model.heylook.example.toml` (a model's own settings, in its folder).
 
 After hand-editing `heylook.toml` on a running server:
 `curl -X POST http://localhost:8000/v1/admin/reload`.

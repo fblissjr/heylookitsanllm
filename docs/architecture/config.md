@@ -47,8 +47,8 @@ max_loaded_models = 2
 
 # THIN by design (derive-at-load, v1.47+): id + provider + model_path is a
 # complete entry. Anything else you write is an explicit override. Live
-# reference: models.example.toml at the repo root (validated against the
-# real schema by tests/unit/test_config.py::TestModelsExampleToml).
+# reference: heylook.example.toml at the repo root (validated against the
+# real schema by tests/unit/test_config.py::TestExampleConfigs).
 [[models]]
 id = "model-identifier"       # Unique ID for API requests
 provider = "mlx"              # mlx | gguf
@@ -115,7 +115,7 @@ enabled = true
   max_tokens = 8192
 ```
 
-More shapes (GGUF sidecars): `models.example.toml`.
+More shapes: `heylook.example.toml` (server config) and `model.heylook.example.toml` (a model's own settings).
 
 ### MLX Config Fields
 
