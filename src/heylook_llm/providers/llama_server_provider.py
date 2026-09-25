@@ -934,6 +934,15 @@ class LlamaServerProvider(BaseProvider):
             args += ["--sleep-idle-seconds", str(cfg["sleep_idle_seconds"])]
         if cfg.get("load_mode"):
             args += ["-lm", cfg["load_mode"]]
+        # Trace verbosity: libllama's own INFO lines (common/log.cpp maps them
+        # to trace) are the only place llama-server states what an auto
+        # setting resolved to -- flash attention's device probe among them
+        # (SpawnLog). At the default (3) they are not printed and the
+        # observed value stays unknown; found by the first live load after
+        # W1 shipped. Measured 2026-09-25: a few hundred extra lines at load
+        # and a few dozen per request, not per token. Before extra_args, so
+        # an explicit -lv there wins (llama.cpp takes the last occurrence).
+        args += ["-lv", "4"]
         args += list(cfg.get("extra_args") or [])
         return args
 

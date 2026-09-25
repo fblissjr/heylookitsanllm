@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.144]
+
+### Fixed
+
+- **llama-server is spawned at trace verbosity (`-lv 4`)**, so the flash
+  attention setting's auto reports what llama-server resolved it to
+  (`observed`). libllama's own INFO lines, the only place the resolution is
+  stated, map to trace in `common/log.cpp` and were not printed at the
+  default, so v2.0.136's `SpawnLog` never saw them and the setting read
+  `unknown` on every live load (found by the first one). Measured: a few
+  hundred extra lines at load and a few dozen per request, not per token.
+  An explicit `-lv` in `extra_args` still wins.
+
+### Verified (release checks for v2.0.135 - v2.0.144, owner-approved)
+
+- `tests/smoke/` green on all three arms: mlx-text
+  (`gpt-oss-20b-MXFP4-Q8-mlx`, thinking depth covered), mlx-vision
+  (`Qwen3.5-0.8B-MLX-8bit`) and gguf (`JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`),
+  85/85; the gguf arm re-run with trace verbosity 37/37, cache reuse
+  included. Uncovered, named: the on/off thinking switch and vision on the
+  mlx-text model (harmony has no switch; text-only), thinking depth on
+  mlx-vision (no model advertises it; the standing Phase 3 precondition),
+  audio on gguf, and a new-image turn on MLX (the known APC gap).
+- Browser E2E: chat 52/52 and pages 32/32 on `Qwen3.5-0.8B-MLX-8bit` (the
+  new default); on the gguf arm chat 51/51 (one legal skip: a thinking-only
+  reply) and pages 32/32.
+- `scripts/vendor_frontend.py --check`: current (v2.0.142).
+- Live gguf load: `engine.settings.flash_attn` is `on`, provenance
+  `observed`; `/status` reports `requests_active` 0 and `requests_waiting` 0.
+
 ## [2.0.143]
 
 ### Fixed
