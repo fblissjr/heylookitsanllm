@@ -9,17 +9,8 @@
 # 404 for the whole API surface behind it.
 
 
-def test_v2_mount_is_gone(client):
-    # The deletion is the contract: a resurrected /v2 would mean the retired
-    # app grew back a serving path. Still expressible as a status code only
-    # because there is no catch-all fallback -- see test_unknown_paths_404.
-    assert client.get("/v2").status_code == 404
 
 
-def test_v3_mount_is_gone(client):
-    # Same contract, one generation later. The frontend answers at / now.
-    assert client.get("/v3").status_code == 404
-    assert client.get("/v3/js/app.js").status_code == 404
 
 
 def test_index_served_at_root(client):

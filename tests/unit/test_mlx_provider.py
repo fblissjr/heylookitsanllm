@@ -5,7 +5,6 @@ Unit tests for MLXProvider -- the core Apple Silicon provider.
 All tests use the mock_mlx / mock_mlx_provider fixtures from conftest.py
 so they run on any platform without MLX installed.
 """
-import importlib
 import sys
 import threading
 import time
@@ -14,7 +13,7 @@ import pytest
 from heylook_llm.samplers import GLOBAL_SAMPLER_FLOOR
 
 from heylook_llm.config import ChatMessage, ChatRequest
-from helpers.mlx_mock import create_mock_model, create_mock_processor, create_mock_vlm_model
+from helpers.mlx_mock import create_mock_model, create_mock_processor
 
 
 @pytest.mark.unit
@@ -404,30 +403,6 @@ class TestMLXPromptSideMatchesReportedThinking:
                 assert prompt_side == provider.effective_thinking(req), (config, kw)
 
 
-@pytest.mark.unit
-class TestGetMetrics:
-    def test_metrics_with_no_model(self, mock_mlx_provider):
-        """get_metrics should still return something even without a loaded model."""
-        # model is None, so mx.metal calls will use the mock
-        metrics = mock_mlx_provider.get_metrics()
-        assert metrics is not None
-        assert metrics.requests_active == 0
-
-    def test_metrics_active_requests(self, mock_mlx_provider):
-        mock_mlx_provider._active_generations = 3
-        try:
-            metrics = mock_mlx_provider.get_metrics()
-            assert metrics.requests_active == 3
-        finally:
-            # PUT THE COUNTER BACK. BaseProvider.__del__ calls unload(), whose
-            # drain loop polls `time.sleep(0.1)` until the active count reaches
-            # zero or a 30s cap expires -- and nothing here is generating, so a
-            # counter left at 3 burns the whole cap at garbage-collection time.
-            # That single leak was 29s of a 63s suite (289 sleeps, measured),
-            # and `--durations` cannot see one second of it: the stall happens
-            # in __del__ during GC, outside every phase pytest times. The file
-            # reported 2.5s across its 80 duration entries while taking 33.5s.
-            mock_mlx_provider._active_generations = 0
 
 
 @pytest.mark.unit
@@ -587,12 +562,6 @@ class TestCollectionDoesNotBlock:
         )
 
 
-@pytest.mark.unit
-class TestClearCache:
-    def test_clear_cache_calls_manager(self, mock_mlx_provider):
-        mock_mlx_provider.model = create_mock_model()
-        result = mock_mlx_provider.clear_cache()
-        assert result is True
 
 
 @pytest.mark.unit
@@ -935,9 +904,6 @@ class TestApplyModelDefaultsGetattr:
 class TestNoContentCache:
     """Verify _content_cache has been removed."""
 
-    def test_no_content_cache_attribute(self, mock_mlx_provider):
-        """MLXProvider should no longer have _content_cache."""
-        assert not hasattr(mock_mlx_provider, "_content_cache")
 
     def test_detect_images_no_caching(self, mock_mlx_provider):
         """_detect_images_optimized should work without caching."""

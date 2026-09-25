@@ -209,13 +209,3 @@ class TestBothRoutesOnTheGrammarUseTheBuilder:
         assert perf["request_duration_ms"] >= 4900
         assert perf["generation_duration_ms"] < perf["request_duration_ms"]
 
-    def test_total_duration_ms_is_gone(self):
-        """Retired rather than aliased (v1.79.58).
-
-        Two spellings for one value is the defect class v1.79.48 cited when it
-        MOVED the load route instead of aliasing it. "Total" was the
-        ambiguous name -- it meant request arrival in one mode and stream
-        start in the other.
-        """
-        assert "total_duration_ms" not in self._perf()
-        assert "total_duration_ms" not in PerformanceInfo.model_fields

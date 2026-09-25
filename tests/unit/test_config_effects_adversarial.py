@@ -18,7 +18,6 @@ from pydantic import BaseModel, Field as PField
 
 import heylook_llm.model_service as ms
 from heylook_llm.config import (
-    EFFECT_CLASSES,
     EFFECT_IDENTITY,
     ModelConfig,
     PROVIDER_CONFIG_CLASSES,
@@ -173,20 +172,6 @@ def test_an_unclassified_field_never_counts_as_reload_required():
     assert invalid_effects(Unguarded) == {}
 
 
-@pytest.mark.unit
-@pytest.mark.parametrize("provider", PROVIDERS)
-def test_effect_values_are_the_module_constants_not_loose_strings(provider):
-    """Every declared effect is one of the exported constants.
-
-    Belt-and-braces on the typo class: `fields_by_effect` now buckets an
-    unknown value under None, but this names the offender directly.
-    """
-    cls = PROVIDER_CONFIG_CLASSES[provider]
-    for name, f in cls.model_fields.items():
-        effect = field_effect(f)
-        assert effect in EFFECT_CLASSES, (
-            f"{provider}.{name}: effect={effect!r} not in {sorted(EFFECT_CLASSES)}"
-        )
 
 
 @pytest.mark.unit

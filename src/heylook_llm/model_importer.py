@@ -557,10 +557,6 @@ class ModelImporter:
             config_data = self._read_model_config(path)
         return detect_modalities(path, config_data)
 
-    def _is_vision_model(self, path: Path, config_data: Optional[dict] = None) -> bool:
-        """Back-compat shim: vision is one modality of :meth:`detect_modalities`."""
-        return "vision" in self.detect_modalities(path, config_data)
-
     def _create_mlx_entry(self, path: Path, config_data: Optional[dict] = None) -> Optional[dict]:
         """Create a heylook.toml entry for an MLX model."""
         model_id = path.name

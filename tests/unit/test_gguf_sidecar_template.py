@@ -203,17 +203,6 @@ class TestSidecarReachesTheCommandLine:
 
 @pytest.mark.unit
 class TestTheFieldIsClassified:
-    def test_use_sidecar_chat_template_declares_its_effect(self):
-        """Every provider-config field declares when a change takes effect;
-        the reload set, the import allowlist and /v1/admin/model-options all
-        DERIVE from that metadata, so an unclassified field is invisible to
-        three surfaces at once. Spawn-time, like every other template lever
-        here -- llama-server reads it at exec."""
-        from heylook_llm.config import EFFECT_REQUIRES_RELOAD, GGUFModelConfig
-
-        extra = GGUFModelConfig.model_fields["use_sidecar_chat_template"].json_schema_extra
-        assert isinstance(extra, dict)
-        assert extra.get("effect") == EFFECT_REQUIRES_RELOAD
 
     def test_the_provider_reads_the_default_off_the_field(self):
         """No hand-copied literal. The provider also accepts RAW dicts (the

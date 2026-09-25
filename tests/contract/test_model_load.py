@@ -54,19 +54,6 @@ class TestModelLoadWarm:
         resp = client.post("/v1/models/nope/load?warm=true")
         assert resp.status_code == 400
 
-    def test_the_old_admin_path_is_gone(self, client):
-        """The move is a MOVE, not an alias -- two URLs for one operation is
-        the duplication this repo keeps paying for. Pinned so a well-meaning
-        back-compat shim has to argue with a test.
-
-        405, not 404: the admin router's catch-all `/{model_id:path}` still
-        owns that URL for GET/PATCH/DELETE (as model_id="test-mlx-model/load"),
-        so POST is Method Not Allowed. That is the more informative answer and
-        it is asserted as what it is rather than loosened to `in (404, 405)`,
-        which would pass if the route came back.
-        """
-        resp = client.post("/v1/admin/models/test-mlx-model/load")
-        assert resp.status_code == 405
 
     def test_listing_still_resolves(self, client):
         """`/v1/models` (exact GET) and `/v1/models/{id}/load` (POST with

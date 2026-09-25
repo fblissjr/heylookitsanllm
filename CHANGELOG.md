@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.158]
+
+Pruning pass, part 2 (owner ruling 2026-09-25): the listed deletes, 61 tests
+(1646 -> 1585), suite green. Per-test reasons are in the local
+internal/claude/prune/batch_A.md and batch_B.md.
+
+### Removed
+
+- **Tests whose code is gone:** guards pinning the absence of removed routes
+  and names (`/v2` and `/v3` mounts, the old admin load URL, the OpenAI chat
+  routes, `_content_cache`, `total_duration_ms`), the thinking
+  presence-penalty overlay removed in v2.0.32, and the RequestEvent
+  primitive-fields guard whose leak path (`request_events.jsonl`) went in
+  v2.0.157. `ModelImporter._is_vision_model`, a dead back-compat shim whose
+  only caller was its test, goes with it.
+- **Tests that could not fail:** most of test_config_effects.py's field
+  checks (config.py's import-time guards raise first, or the assertion
+  restated the function), two build_llama checks of an expression written
+  in the test itself, two warmup checks of a no-op and of the test's own
+  subclass, and two RequestEvent default checks.
+- **Mock-driven tests a named live check covers:** abort-event thread safety
+  (smoke's stop checks), non-streaming stop reasons through fake chunks,
+  MLX get_metrics and clear_cache on mock models (chain_probe clears before
+  every fresh run), router unload on MagicMock providers, streaming poll
+  latency (e2e chat's delivery check), the checkpoint-capture fake (smoke's
+  repeated-system-prompt reuse), three vlm_inputs tests on MagicMock
+  templates (eval's two-image task, smoke, e2e Save & Continue), the SSE
+  abort fake, and the mlx_perf checks of MLX library behaviour heylook's code
+  does not use. `mlx_perf/test_sync_boundaries.py` and
+  `test_router_unload.py` are left empty and removed.
+- Kept by owner ruling: the three `strip_specials=False` tests, the one piece
+  of show-special-tokens that exists; that feature is coming back.
+
 ## [2.0.157]
 
 Pruning pass, part 1 (owner ruling 2026-09-25): dead product code, deleted

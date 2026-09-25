@@ -19,7 +19,6 @@ import pytest
 
 from heylook_llm.config import (
     EFFECT_APPLIES_LIVE,
-    EFFECT_CLASSES,
     EFFECT_DESCRIPTIVE,
     EFFECT_IDENTITY,
     EFFECT_LOAD_TIME_ONLY,
@@ -28,7 +27,6 @@ from heylook_llm.config import (
     PROVIDER_CONFIG_CLASSES,
     _validate_effect_declarations,
     configurable_fields,
-    field_effect,
     invalid_effects,
     fields_by_effect,
     reload_required_fields,
@@ -39,27 +37,8 @@ from heylook_llm.config import (
 PROVIDERS = sorted(PROVIDER_CONFIG_CLASSES)
 
 
-@pytest.mark.unit
-@pytest.mark.parametrize("provider", PROVIDERS)
-def test_every_field_declares_an_effect(provider):
-    cls = PROVIDER_CONFIG_CLASSES[provider]
-    undeclared = sorted(
-        name for name, f in cls.model_fields.items() if field_effect(f) is None
-    )
-    assert not undeclared, (
-        f"{cls.__name__} fields with no `effect`: {undeclared}. Add "
-        f'json_schema_extra={{"effect": ...}} to the field declaration -- one '
-        f"of {sorted(EFFECT_CLASSES)}."
-    )
 
 
-@pytest.mark.unit
-@pytest.mark.parametrize("provider", PROVIDERS)
-def test_declared_effects_are_valid(provider):
-    cls = PROVIDER_CONFIG_CLASSES[provider]
-    assert not invalid_effects(cls), (
-        f"{cls.__name__} has unknown effect classes: {invalid_effects(cls)}"
-    )
 
 
 @pytest.mark.unit
@@ -125,22 +104,6 @@ def test_applies_live_is_distinct_from_load_time_only():
     assert not (by[EFFECT_APPLIES_LIVE] & reload_required_fields(mlx))
 
 
-@pytest.mark.unit
-@pytest.mark.parametrize("provider", PROVIDERS)
-def test_effects_partition_the_fields_exactly(provider):
-    """No field unclassified, none counted twice, nothing invented."""
-    cls = PROVIDER_CONFIG_CLASSES[provider]
-    by = fields_by_effect(cls)
-    buckets = [names for effect, names in by.items() if effect is not None]
-    union = frozenset().union(*buckets) if buckets else frozenset()
-    total = sum(len(b) for b in buckets)
-
-    assert union == frozenset(cls.model_fields), (
-        f"{cls.__name__}: classified set != model_fields "
-        f"(missing {sorted(frozenset(cls.model_fields) - union)}, "
-        f"extra {sorted(union - frozenset(cls.model_fields))})"
-    )
-    assert total == len(union), f"{cls.__name__}: a field is in two buckets"
 
 
 @pytest.mark.unit
@@ -164,19 +127,6 @@ def test_configurable_fields_exclude_identity_only(provider):
     assert configurable == frozenset(cls.model_fields) - {"model_path"}
 
 
-@pytest.mark.unit
-@pytest.mark.parametrize("provider", PROVIDERS)
-def test_reload_set_covers_identity_and_reload(provider):
-    """Swapping the weights is the strongest form of "needs a reload"."""
-    cls = PROVIDER_CONFIG_CLASSES[provider]
-    by = fields_by_effect(cls)
-    expected = by.get(EFFECT_REQUIRES_RELOAD, frozenset()) | by.get(
-        EFFECT_IDENTITY, frozenset()
-    )
-    assert reload_required_fields(cls) == expected
-    # A per_request field must never demand a reload -- that is the whole
-    # distinction, and getting it wrong makes the UI confirm needlessly.
-    assert not (reload_required_fields(cls) & by.get(EFFECT_PER_REQUEST, frozenset()))
 
 
 @pytest.mark.unit
@@ -267,15 +217,6 @@ def test_gguf_arg_spellings_are_unique_and_plausible():
     )
 
 
-@pytest.mark.unit
-@pytest.mark.parametrize("provider", PROVIDERS)
-def test_load_time_only_fields_are_not_offered_as_reload(provider):
-    """Infrastructure is not a tuning control; it must not prompt a reload."""
-    cls = PROVIDER_CONFIG_CLASSES[provider]
-    load_time = fields_by_effect(cls).get(EFFECT_LOAD_TIME_ONLY, frozenset())
-    assert not (load_time & reload_required_fields(cls))
-    live = fields_by_effect(cls).get(EFFECT_APPLIES_LIVE, frozenset())
-    assert not (live & reload_required_fields(cls))
 
 
 @pytest.mark.unit
@@ -311,14 +252,6 @@ from heylook_llm.config import (  # noqa: E402
 )
 
 
-@pytest.mark.parametrize("provider", PROVIDERS)
-def test_every_field_has_a_description(provider):
-    """/v1/admin/model-options is the only surface that publishes this."""
-    undocumented = sorted(
-        name for name, f in _PCC[provider].model_fields.items()
-        if not (f.description or "").strip()
-    )
-    assert not undocumented, f"{provider} fields with no description: {undocumented}"
 
 
 def test_bad_documentation_fails_at_import_not_just_under_test():

@@ -56,22 +56,3 @@ class TestChunkTelemetryCarriesFinishReason:
         assert t.finish_reason == "length"
 
 
-class TestNonStreamingStopReason:
-    def test_budget_exhausted_reports_max_tokens(self):
-        response = _run_non_stream([
-            _chunk("a lot of "),
-            _chunk("text", finish_reason="length"),
-        ])
-        assert response.stop_reason == "max_tokens"
-
-    def test_natural_stop_reports_end_turn(self):
-        response = _run_non_stream([
-            _chunk("done", finish_reason="stop"),
-        ])
-        assert response.stop_reason == "end_turn"
-
-    def test_missing_reason_defaults_to_end_turn(self):
-        # mlx-lm may report nothing; the model's own end stays the default
-        # (an ABORTED run is the exception, pinned in test_abort_stop_reason)
-        response = _run_non_stream([_chunk("hello")])
-        assert response.stop_reason == "end_turn"

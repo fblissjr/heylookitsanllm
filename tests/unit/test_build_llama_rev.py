@@ -108,23 +108,7 @@ class TestRebuildUsesTheRecordedSha:
     again". A manifest recording rev: "master" must not rebuild whatever
     upstream merged since."""
 
-    def test_rebuild_resolves_the_manifest_to_the_recorded_sha(self, tmp_path, monkeypatch):
-        """Exercises build_llama's OWN selection, not a dict literal here."""
-        import build_llama
-        recorded = "a" * 40
-        monkeypatch.setattr(build_llama, "read_manifest",
-                            lambda d: {"rev": "master", "sha": recorded})
-        m = build_llama.read_manifest(tmp_path)
-        chosen = m.get("sha") or m.get("rev")
-        assert chosen == recorded
-        # a sha must also survive resolution untouched
-        assert build_llama.resolve_fetched_rev(tmp_path, chosen) == recorded
 
-    def test_pre_sha_manifests_still_rebuild(self, tmp_path, monkeypatch):
-        import build_llama
-        monkeypatch.setattr(build_llama, "read_manifest", lambda d: {"rev": "b10362"})
-        m = build_llama.read_manifest(tmp_path)
-        assert (m.get("sha") or m.get("rev")) == "b10362"
 
     def test_main_uses_sha_not_rev_on_rebuild(self):
         """Pins the source line itself: the selection lives in main(), which is

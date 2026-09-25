@@ -270,10 +270,6 @@ class TestModalitiesAndLoader:
             with pytest.raises(ValidationError):
                 MLXModelConfig(**self.BASE, **{field: value})
 
-    def test_modalities_and_loader_not_runtime_defaults(self):
-        # They are model-level metadata, not per-request sampler defaults --
-        # they must not leak into MLX_RUNTIME_DEFAULT_FIELDS.
-        assert "modalities" not in MLX_RUNTIME_DEFAULT_FIELDS
 
 
 @pytest.mark.unit

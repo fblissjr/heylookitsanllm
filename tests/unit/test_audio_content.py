@@ -84,15 +84,6 @@ class TestMessagesBridge:
         assert parts[1].input_audio.data == "UklGRg=="
 
 
-class TestMLXGuard:
-    def test_has_audio_parts_helper(self):
-        from heylook_llm.providers.mlx_provider import _has_audio_parts
-
-        req = audio_request()
-        assert _has_audio_parts(req.messages) is True
-        text_only = ChatRequest.model_validate(
-            {"messages": [{"role": "user", "content": "hi"}]})
-        assert _has_audio_parts(text_only.messages) is False
 
 
 class TestCapability:

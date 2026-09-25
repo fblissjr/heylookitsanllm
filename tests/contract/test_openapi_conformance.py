@@ -84,12 +84,6 @@ class TestOpenAPISchema:
             f"documented but not served: {sorted(published - served)}"
         )
 
-    def test_openai_chat_routes_are_gone(self, schema):
-        """The OpenAI-compatible chat routes were removed in v1.79.66 and must
-        not come back by accident: a page that reappears is a second wire to
-        keep conformant, which is what the removal was for."""
-        for path in ("/v1/chat/completions", "/v1/batch/chat/completions"):
-            assert path not in schema["paths"], f"{path} is served again"
 
     def test_messages_has_post(self, schema):
         """POST /v1/messages is documented as the inference route."""

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -155,29 +154,6 @@ def test_model_event_content_invariant(mm: MemoryManager, tmp_path: Path):
         _assert_no_forbidden_keys(event)
 
 
-def test_request_event_dataclass_has_only_primitive_fields():
-    """Guardrail: RequestEvent must only declare primitive field types.
-
-    A future change that adds a list/dict field to RequestEvent (e.g.
-    `messages_preview: list[str]`) would flow straight through asdict()
-    into request_events.jsonl. This test fails fast if someone tries.
-    """
-    from heylook_llm.perf_collector import RequestEvent
-
-    allowed_types = {int, float, bool, str}
-    for field_info in fields(RequestEvent):
-        ftype = field_info.type
-        if isinstance(ftype, str):
-            # Forward-ref; accept the common primitive names.
-            assert ftype in {"int", "float", "bool", "str"}, (
-                f"RequestEvent.{field_info.name} declares non-primitive "
-                f"type {ftype!r}; request_events.jsonl would leak complex data"
-            )
-        else:
-            assert ftype in allowed_types, (
-                f"RequestEvent.{field_info.name} declares non-primitive "
-                f"type {ftype!r}"
-            )
 
 
 def test_normalize_path_strips_home_prefix():

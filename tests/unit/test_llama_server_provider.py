@@ -681,16 +681,7 @@ class TestPayload:
                 payload["min_p"], payload["repeat_penalty"]) == (0.3, 0.8, 12, 0.05, 1.1)
         assert p._build_payload(req(temperature=0.9))["temperature"] == 0.9
 
-    def test_request_thinking_off_no_penalty(self):
-        p = make_provider()
-        payload = p._build_payload(req(enable_thinking=False))
-        assert payload["presence_penalty"] == 0.0  # floor value, no overlay
-        assert payload["chat_template_kwargs"] == {"enable_thinking": False}
 
-    def test_explicit_presence_penalty_beats_thinking_overlay(self):
-        p = make_provider()
-        payload = p._build_payload(req(enable_thinking=True, presence_penalty=0.3))
-        assert payload["presence_penalty"] == 0.3
 
     def test_the_vendor_layer_reaches_the_payload(self, tmp_path):
         """What replaced the named-sampler layers: the model's OWN published
@@ -837,18 +828,6 @@ class TestSSEAdapter:
         # accepted are llama-server's own counts
         assert (final.spec.drafted, final.spec.accepted) == (12, 5)
 
-    def test_abort_stops_stream(self):
-        class Abort:
-            def __init__(self):
-                self.calls = 0
-
-            def is_set(self):
-                self.calls += 1
-                return self.calls > 2
-
-        p = make_provider()
-        chunks = list(p._stream_chunks(_stream_bytes(*CANNED), abort_event=Abort()))
-        assert len(chunks) < 6  # cut short, never reached the end of the stream
 
     def test_error_frame_raises_instead_of_ending_cleanly(self, monkeypatch):
         # llama-server reports a decode failure INSIDE the stream (the HTTP

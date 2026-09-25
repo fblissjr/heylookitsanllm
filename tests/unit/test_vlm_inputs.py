@@ -9,7 +9,7 @@ Covers:
 - Parallel image loading delegation
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 
 class FakeContentPart:
@@ -54,26 +54,6 @@ class TestPrepareVlmInputsParallel:
         assert prompt == "formatted"
         mock_batch.load_images_parallel.assert_not_called()
 
-    def test_image_url_extraction_object_format(self, mock_mlx):
-        from heylook_llm.providers.common.vlm_inputs import prepare_vlm_inputs_parallel
-
-        messages = [FakeMessage("user", [
-            FakeContentPart("text", text="describe this"),
-            FakeContentPart("image_url", image_url=FakeImageUrl("http://example.com/img.png")),
-        ])]
-        mock_processor = MagicMock()
-        mock_config = MagicMock()
-        mock_batch = MagicMock()
-        mock_batch.load_images_parallel.return_value = [MagicMock()]
-        mock_template_fn = MagicMock(return_value="formatted with image")
-
-        images, prompt, has_images, image_urls = prepare_vlm_inputs_parallel(
-            messages, mock_processor, mock_config, mock_batch, mock_template_fn
-        )
-
-        assert has_images is True
-        assert len(images) == 1
-        mock_batch.load_images_parallel.assert_called_once_with(["http://example.com/img.png"])
 
     def test_thinking_reconstruction(self, mock_mlx):
         from heylook_llm.providers.common.vlm_inputs import prepare_vlm_inputs_parallel
@@ -103,16 +83,6 @@ class TestPrepareVlmInputsParallel:
         assert "my reasoning" in assistant_msg["content"]
         assert "answer" in assistant_msg["content"]
 
-    def test_continuation_reaches_the_template(self, mock_mlx):
-        from heylook_llm.providers.common.vlm_inputs import prepare_vlm_inputs_parallel
-
-        template_fn = MagicMock(return_value="open turn")
-        prepare_vlm_inputs_parallel(
-            [FakeMessage("user", "hi"), FakeMessage("assistant", "The goat is")],
-            MagicMock(), MagicMock(), MagicMock(), template_fn,
-            continue_final_message=True,
-        )
-        assert template_fn.call_args.kwargs["continue_final_message"] is True
 
     def test_a_template_failure_raises_and_nothing_is_rendered_in_its_place(self, mock_mlx):
         """Until v2.0.58 any template exception was swallowed and a ladder
@@ -136,31 +106,6 @@ class TestPrepareVlmInputsParallel:
                     continue_final_message=continuing)
             processor.tokenizer.apply_chat_template.assert_not_called()
 
-    def test_multiple_images(self, mock_mlx):
-        from heylook_llm.providers.common.vlm_inputs import prepare_vlm_inputs_parallel
-
-        messages = [FakeMessage("user", [
-            FakeContentPart("text", text="compare these"),
-            FakeContentPart("image_url", image_url=FakeImageUrl("http://a.com/1.png")),
-            FakeContentPart("image_url", image_url=FakeImageUrl("http://b.com/2.png")),
-        ])]
-        mock_processor = MagicMock()
-        mock_config = MagicMock()
-        mock_batch = MagicMock()
-        mock_batch.load_images_parallel.return_value = [MagicMock(), MagicMock()]
-        mock_template_fn = MagicMock(return_value="formatted")
-
-        images, prompt, has_images, image_urls = prepare_vlm_inputs_parallel(
-            messages, mock_processor, mock_config, mock_batch, mock_template_fn
-        )
-
-        assert len(images) == 2
-        mock_batch.load_images_parallel.assert_called_once_with([
-            "http://a.com/1.png", "http://b.com/2.png"
-        ])
-        # num_images should be passed to template
-        mock_template_fn.assert_called_once()
-        assert mock_template_fn.call_args.kwargs.get('num_images') == 2
 
 
 class TestMediaAttribution:

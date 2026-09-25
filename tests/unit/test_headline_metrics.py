@@ -80,14 +80,6 @@ class TestHeadlineTps:
 # RequestEvent carries native prompt_tps
 # ---------------------------------------------------------------------------
 
-class TestRequestEventPromptTps:
-    def test_field_exists_with_backcompat_default(self):
-        e = RequestEvent(**_base_event_kwargs())
-        assert e.prompt_tps == 0.0
-
-    def test_field_records_value(self):
-        e = RequestEvent(**_base_event_kwargs(), prompt_tps=456.7)
-        assert e.prompt_tps == 456.7
 
 
 # ---------------------------------------------------------------------------

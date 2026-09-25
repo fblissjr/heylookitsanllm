@@ -76,9 +76,3 @@ class TestDetectModalities:
         _write(tmp_path, {"model_type": "x"}, files=["mmproj-model-f16.gguf"])
         assert importer.detect_modalities(tmp_path) == ["text", "vision"]
 
-    def test_is_vision_model_delegates(self, importer, tmp_path):
-        _write(tmp_path, {"model_type": "x", "audio_config": {}})
-        # audio-only multimodal must NOT read as a vision model.
-        assert importer._is_vision_model(tmp_path) is False
-        _write(tmp_path, {"model_type": "x", "vision_config": {}})
-        assert importer._is_vision_model(tmp_path) is True
