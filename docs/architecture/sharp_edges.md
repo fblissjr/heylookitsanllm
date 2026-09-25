@@ -1353,11 +1353,17 @@ things it got wrong until 2026-09-25 (v2.0.135):
   cached features only for models with `encode_image()`, which qwen3_5 lacks,
   so every turn of an image conversation re-ran its tower while every test of
   the cache stayed green on gemma4. qwen3_5 now gets the cache as mlx-vlm's
-  `vision_cache`/`_image_key` kwargs. The kwargs cannot replace the
-  `encode_image` branch outright: lfm2_vl, mimo_v2, minimax_m3_vl, molmo,
-  molmo2 and sam3 have `encode_image()` but do not read `vision_cache`, and
-  the first attempt (reverted on the 2026-09-24 loop branch) would have cost
-  them their caching.
+  `vision_cache`/`_image_key` kwargs, and so does every other model
+  (v2.0.141). v2.0.135 kept heylook's `encode_image` branch on a claim from
+  the 2026-09-24 TODO that lfm2_vl, mimo_v2, minimax_m3_vl, molmo, molmo2
+  and sam3 have `encode_image()` without reading `vision_cache`. An
+  independent review's census of the pinned mlx-vlm (2026-09-25) showed the
+  claim was read off method names, not the `Model` classes: only four models
+  have `Model.encode_image`. gemma4, gemma4_unified and deepseek_v4 read the
+  kwargs themselves, and heylook's pixels-only call was wrong for three of
+  the four (deepseek_v4 takes patches plus a grid, minimax_m3_vl needs
+  `image_grid_thw`, gemma4_unified needs `image_position_ids`). Check a
+  census against the class the call site uses, not a grep for a name.
 - **The key was the image URL.** A web link keeps its URL when the file behind
   it changes, so a URL key served the old picture's features. The key is now
   a hash of each loaded image's pixels (`image_content_key`).

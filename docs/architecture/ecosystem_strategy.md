@@ -126,8 +126,7 @@ The doc also carries the tripwires (next `mlx` core wheel is the load-bearing si
   rule). Now with the corollary: check open PRs and recent main commits first;
   maintenance-mode repos accumulate fixes without releases.
 - **Vision perf is a different regime.** Vision tower cost is attacked by the
-  vision feature cache (encode_image / cached_image_features, or mlx-vlm's
-  vision_cache kwargs for a model without encode_image), NOT by decode
+  vision feature cache (mlx-vlm's vision_cache / _image_key kwargs), NOT by decode
   tricks. Spec decoding and radix don't apply to the pre-filled-cache VLM path
   (radix bypassed, spec prefill incompatible). Don't conflate the two paths
   when reading benchmarks.

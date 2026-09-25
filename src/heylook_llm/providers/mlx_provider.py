@@ -12,7 +12,6 @@ from PIL import Image
 
 from mlx_vlm.utils import load as vlm_load, prepare_inputs as vlm_prepare_inputs
 from mlx_vlm.prompt_utils import apply_chat_template as mlx_vlm_apply_chat_template
-from mlx_vlm.generate.common import generation_stream, wired_limit
 
 from ..config import ChatRequest, ModelMetrics, MLX_RUNTIME_DEFAULT_FIELDS
 from .abort import AbortEvent
@@ -648,11 +647,10 @@ class VLMVisionStrategy:
 
     Vision feature caching, keyed by the content of the request's images
     (``image_content_key``), so a turn with an unchanged image list skips the
-    vision tower. A model with ``encode_image()`` gets heylook's features as
-    ``cached_image_features``; one without it (qwen3_5) is handed the cache
-    as mlx-vlm's ``vision_cache``/``_image_key`` kwargs, the way mlx-vlm's
-    server does, and looks up and stores its own tower output. Both reach the
-    embedding step only (``embed_extras``).
+    vision tower: the model is handed the cache as mlx-vlm's
+    ``vision_cache``/``_image_key`` kwargs, the way mlx-vlm's server does,
+    and looks up and stores its own tower output. They reach the embedding
+    step only (``embed_extras``).
     """
 
     def __init__(self, model_config=None, template_info=None, model_id=None,
@@ -722,28 +720,20 @@ class VLMVisionStrategy:
         if input_ids.ndim == 1:
             input_ids = input_ids[None, :]
 
-        # What the EMBEDDING step takes beside ids/pixels/mask; never the
-        # generator's prompt kwargs.
+        # Vision feature caching, the way mlx-vlm's own server does it: the
+        # model is handed the cache and the request's image key, and looks
+        # up and stores its own tower output (qwen3_5, gemma4, deepseek_v4
+        # and others read these; a model that reads neither ignores them).
+        # They reach the EMBEDDING step only (embed_extras), never the
+        # generator's prompt kwargs. heylook used to run `encode_image`
+        # itself for models that have one, with pixels alone: that skipped
+        # qwen3_5 (no encode_image) and fed deepseek_v4, gemma4_unified and
+        # minimax_m3_vl the wrong arguments; every such model that reads the
+        # cache does so itself (census 2026-09-25, sharp_edges).
         embed_extras = {}
         if pixel_values is not None and images:
-            key = image_content_key(images)
-            if hasattr(model, 'encode_image'):
-                # gemma4, deepseek_v4, lfm2_vl, molmo, ... : heylook runs the
-                # tower and hands the features back. Not all of these read
-                # ``vision_cache``, so the kwargs route would drop their caching.
-                features = self._vision_cache.get(key)
-                if features is None:
-                    with wired_limit(model, [generation_stream]):
-                        features = model.encode_image(pixel_values)
-                        mx.async_eval(features)
-                    self._vision_cache.put(key, features)
-                embed_extras["cached_image_features"] = features
-            else:
-                # qwen3_5 has no encode_image(): until 2026-09-25 it got no
-                # feature caching and re-ran the tower on every turn of an
-                # image conversation. A model that reads neither kwarg
-                # ignores them (mlx-vlm's server passes them to every model).
-                embed_extras = {"vision_cache": self._vision_cache, "_image_key": key}
+            embed_extras = {"vision_cache": self._vision_cache,
+                            "_image_key": image_content_key(images)}
 
         prompt_token_count = int(input_ids.shape[1])
         if self.context_length and prompt_token_count > self.context_length:

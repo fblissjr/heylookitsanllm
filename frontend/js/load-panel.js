@@ -92,18 +92,16 @@ export function createLoadPanel({ currentModelId, adminRow, loadFields, onChange
   }
 
   function choicesToSend() {
-    const fields = fieldsNow();
-    if (!fields.length) return null;
     const out = {};
-    for (const f of fields) {
-      if (f.name === CTX) {
-        const n = ctxSelect.choiceToSend();
-        if (n !== null) out[CTX] = n || null;  // the select's 0 is Auto
-      } else if (selects.has(f.name)) {
-        out[f.name] = selects.get(f.name).value || null;
-      }
+    // The context select gates itself on the provider, so its pick is sent
+    // even while the option schema is unknown (not fetched yet, or the fetch
+    // failed); otherwise a pick shown on screen would load as a plain load.
+    const n = ctxSelect.choiceToSend();
+    if (n !== null) out[CTX] = n || null;  // the select's 0 is Auto
+    for (const f of fieldsNow()) {
+      if (f.name !== CTX && selects.has(f.name)) out[f.name] = selects.get(f.name).value || null;
     }
-    return out;
+    return Object.keys(out).length ? out : null;
   }
 
   function describe(choices) {

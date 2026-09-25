@@ -590,7 +590,7 @@ requests, and cancelling it cancels **every** request sharing it. A client
 that reuses one id and then cancels a single run kills everything it has in
 flight. It is echoed back, and it is how a request is correlated in the
 server's logs. Since v2.0.138 every response echoes a valid id, the busy 503
-and error responses included (they dropped it before); an id outside the
+and 4xx responses included (they dropped it before), except an unhandled 500; an id outside the
 allowed alphabet below is not reflected on those.
 
 ### Cancelling a request

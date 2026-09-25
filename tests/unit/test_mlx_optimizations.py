@@ -94,6 +94,13 @@ class TestVisionFeatureCache:
         assert len(cache) == 0
         assert cache.get("a.jpg") is None
 
+    def test_list_features_count_against_the_byte_cap(self, cache):
+        """deepseek_v4 stores a list of per-image arrays; a list's bytes read
+        as 0 would let it grow past max_bytes unseen."""
+        import mlx.core as mx
+        cache.put("a", [mx.ones((10,)), mx.ones((5,))])
+        assert cache.stats()["bytes"] == 60
+
     def test_empty_key_no_cache(self, cache):
         import mlx.core as mx
         cache.put("", mx.ones((1, 10)))

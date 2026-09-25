@@ -58,8 +58,8 @@ class VisionFeatureCache:
         max_entries: Maximum number of cached image features. Default 20.
         max_bytes: Hard byte ceiling across all cached entries. Default 8 GB.
             Reading ``feature.nbytes`` at insert time is safe because the caller
-            materializes the array first (heylook's encode_image branch, or the
-            model's own ``mx.eval`` before its ``put``).
+            materializes the array first (the model's own ``mx.eval`` before
+            its ``put``).
     """
 
     def __init__(self, max_entries: int = 20, max_bytes: int = 8_000_000_000):
@@ -86,13 +86,16 @@ class VisionFeatureCache:
             self._misses += 1
             return None
 
-    def put(self, key: str, features: mx.array) -> None:
+    def put(self, key: str, features) -> None:
         """Store computed features, evicting LRU entries until both caps hold."""
         if not key:
             return
 
+        # A model may store one array or a list of per-image arrays
+        # (deepseek_v4); both count against the byte cap.
         try:
-            new_bytes = int(features.nbytes)
+            parts = features if isinstance(features, (list, tuple)) else [features]
+            new_bytes = sum(int(f.nbytes) for f in parts)
         except Exception:
             new_bytes = 0
 

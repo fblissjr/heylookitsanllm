@@ -389,9 +389,11 @@ async def reload_model(
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
         elif (model_id in router.get_loaded_models()
-              and not router.stale_reload_fields(model_id)):
+              and not await asyncio.to_thread(router.stale_reload_fields, model_id)):
             # Same values, resident, nothing else pending: a restart would
-            # only pay the load again for an identical process.
+            # only pay the load again for an identical process. Off the loop:
+            # the staleness check reads the template file (a GGUF header for
+            # an embedded one).
             return await load_and_warm(router, model_id, warm)
     # Re-read heylook.toml first: the v3 editor flow has already
     # reload_config'd after its PATCH, but a hand-edit of the file has not --

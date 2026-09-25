@@ -254,32 +254,26 @@ class TestApplyChatTemplate:
 # ---------------------------------------------------------------------------
 
 class TestVisionFeatureCachePatterns:
-    """VLMVisionStrategy.generate caches vision features two ways, chosen by
-    ``hasattr(model, 'encode_image')``: heylook runs ``encode_image`` and
-    passes ``cached_image_features`` (gemma4 and others, not all of which read
-    ``vision_cache``), or hands a model without it the cache as mlx-vlm's
-    ``vision_cache``/``_image_key`` kwargs (qwen3_5, the owner's daily family,
-    which re-ran its tower every turn until 2026-09-25). Pinned on one served
-    model per route."""
+    """VLMVisionStrategy.generate hands every model heylook's cache as
+    mlx-vlm's ``vision_cache``/``_image_key`` kwargs, the way mlx-vlm's server
+    does, and the model looks up and stores its own tower output. Until
+    2026-09-25 heylook ran ``encode_image`` itself where a model had one, with
+    pixels alone; the census below is why that went: every model with
+    ``encode_image`` that caches at all reads the kwargs itself, and the
+    pixels-only call was wrong for deepseek_v4, gemma4_unified and
+    minimax_m3_vl. Pinned on the served families (qwen3_5 has no
+    encode_image; gemma4 has one and still reads the kwargs)."""
 
-    def test_encode_image_route_is_still_real_on_gemma4(self):
-        Model = _gemma4_module.Model
-        assert "pixel_values" in inspect.signature(Model.encode_image).parameters
-        assert "cached_image_features" in inspect.getsource(Model.get_input_embeddings)
-
-    def test_kwargs_route_is_still_real_on_qwen3_5(self):
+    def test_served_families_read_the_cache_kwargs(self):
         import importlib
-        Model = importlib.import_module("mlx_vlm.models.qwen3_5.qwen3_5").Model
-        assert not hasattr(Model, "encode_image"), (
-            "qwen3_5 grew encode_image(); it now takes heylook's own route")
-        src = inspect.getsource(Model.get_input_embeddings)
-        assert '"vision_cache"' in src and '"_image_key"' in src
+        for mod in ("mlx_vlm.models.qwen3_5.qwen3_5", "mlx_vlm.models.gemma4.gemma4"):
+            src = inspect.getsource(importlib.import_module(mod).Model.get_input_embeddings)
+            assert '"vision_cache"' in src and '"_image_key"' in src, mod
 
-    def test_our_call_site_takes_both_routes(self):
+    def test_our_call_site_hands_over_the_cache(self):
         src = _mlx_provider_source()
-        assert "hasattr(model, 'encode_image')" in src
-        assert 'embed_extras["cached_image_features"] = features' in src
-        assert '{"vision_cache": self._vision_cache, "_image_key": key}' in src
+        assert '"_image_key": image_content_key(images)' in src
+        assert "encode_image(" not in src
 
 
 class TestVlmEngineSurface:

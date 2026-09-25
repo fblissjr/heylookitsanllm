@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.141]
+
+Fixes from an independent review of v2.0.135 - v2.0.139.
+
+### Fixed
+
+- **Every MLX vision model gets the feature cache as mlx-vlm's
+  `vision_cache`/`_image_key` kwargs**, as mlx-vlm's server passes them;
+  heylook no longer calls `encode_image` itself. v2.0.135 kept that branch on
+  a TODO claim that six families have `encode_image()` without reading the
+  kwargs. A census of the pinned mlx-vlm showed only four `Model` classes have
+  it: three read the kwargs themselves, and heylook's pixels-only call was
+  wrong for deepseek_v4 (TypeError), minimax_m3_vl (needs `image_grid_thw`)
+  and gemma4_unified (needs `image_position_ids`). No local model is of those
+  three families. `scripts/vlm_parity_probe.py` on gemma-4 (the served family
+  whose route changed) gives the same tokens as before, and warm features
+  equal the cold run. It also diverges from mlx-vlm's own loop, identically
+  before and after: recorded under the gemma-4 vision item in TODO.md.
+- The vision cache counts a list of per-image features (deepseek_v4 stores
+  one) against its byte cap; it counted 0.
+- Chat's load panel sends a context pick even when the option schema has not
+  arrived (or failed); it did a plain load and dropped the pick.
+- `/reload`'s same-values check runs off the event loop (it now reads the
+  template file, a GGUF header for an embedded template).
+- v2.0.138's "every response" was an overclaim: an unhandled 500 is sent by
+  Starlette's outermost error middleware and carries no `X-Request-ID`.
+
 ## [2.0.140]
 
 ### Fixed
@@ -33,8 +60,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Every response echoes the client's `X-Request-ID`** when it has none of
-  its own (`request_registry.RequestIdEchoMiddleware`). The busy 503 from its
+- **Every response echoes the client's `X-Request-ID`** (except an unhandled
+  500, see v2.0.141) when it has none of its own (`request_registry.RequestIdEchoMiddleware`). The busy 503 from its
   four call sites, and error responses generally, dropped it, so a proxy or
   log correlator that sees only responses lost the thread on exactly the
   failures. An id outside `[A-Za-z0-9._:-]{1,128}` is not reflected. Routes

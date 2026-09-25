@@ -516,7 +516,13 @@ sample the first token (`docs/architecture/mlx_provider.md`, `VLMVisionStrategy`
 Verified by token parity against `mlx_vlm.generate.ar.generate_step`
 (`scripts/vlm_parity_probe.py`) on qwen3_5 and qwen3_vl. Open:
 
-- [ ] **gemma-4 vision is UNVERIFIED on the new path** (owner call: "an outlier,
+- [ ] **Measured 2026-09-25, still open**: `scripts/vlm_parity_probe.py` on
+  `gemma-4-26B-A4B-it-heretic-4bit` DIVERGES from mlx-vlm's own loop in every
+  case at an upstream top-1/top-2 margin of 0.5 (four bf16 quanta, not a
+  tie), identically on v2.0.140 and with v2.0.141's cache route, with the
+  prompt matching mlx-vlm's. So it predates the caching change; warm features
+  equal the cold run. Records: `internal/claude/vision_cache/parity_gemma4_*`.
+  **gemma-4 vision is UNVERIFIED on the new path** (owner call: "an outlier,
   another time"). The path is generic, so gemma-4 image requests go through it
   and their output changed with nothing having checked it. Run the parity probe
   on `gemma-4-26b-a4b-it-8bit-mlx`. Two things make gemma-4 the interesting
@@ -851,6 +857,15 @@ they imply is theirs, not a decision here.
 Acted-on findings are in the changelog. These three were judged real and left
 open; each names what would settle it.
 
+- [ ] **Latent false positive in the v2.0.139 check** (P3, review 2026-09-25): on MLX
+  `loaded_chat_template` is read back from the processor, and transformers' processor
+  takes a legacy `chat_template.json` over `chat_template.jinja`, while heylook's
+  ladder ranks jinja first. A VL folder whose two bodies differ would show
+  `chat_template` stale forever (a reload cannot clear it) and `/reload` would never
+  take its plain-load shortcut. The template editor's `stale` has had the same gap.
+  Not live: the two local folders with both files have identical bodies. The real
+  question under it is which body MLX actually renders with; settle that, then make
+  the ladder and the loaded value agree.
 - [x] **Fixed v2.0.139**: `stale_reload_fields` carries `chat_template` when the file a
   respawn would use differs from the loaded template (the editor's own comparison). Was:
   **A sidecar swap is invisible to `stale_reload_fields`** (P2): that
