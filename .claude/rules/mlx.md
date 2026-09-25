@@ -26,7 +26,7 @@ paths:
 - `mx.set_wired_limit(...)` is set at startup; mlx-vlm's `BatchGenerator` holds its own `wired_limit` for stream sync. `vlm_engine` resets peak memory per request (the vision strategy resets before encoding images and tells the engine not to), so `mx.get_peak_memory()` is per request.
 - A model's `.layers` can be a fresh-slice `@property` (pipeline-parallel Qwen3.5/deepseek/glm4_moe). To hook or mutate blocks, use the underlying list on the inner decoder (`inner.layers`/`.h`), not `model.layers`.
 - Recorded tok/s is `vlm_engine`'s generated tokens over decode time, prompt tps the uncached prompt over prefill time; TTFT and tok/s exclude queue-wait (its own `queue_wait_ms` field); trends are success-only. Per-chunk scraping goes through `perf_collector.ChunkTelemetry.absorb()`; add new chunk fields there, not at call sites.
-- Route MemoryManager calls through `memory.safe_mm_call(...)`; use `sampler_summary_from_request` (memory.py) for "what was this configured with".
+- Route MemoryManager calls through `memory.safe_mm_call(...)`.
 
 ## Tokenizers, detokenizer, templates, parsers
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,8 +14,6 @@ from heylook_llm.memory import (
     MemoryManager,
     ModelMetadata,
     _normalize_path_for_log,
-    parse_bool_env,
-    sampler_summary_from_request,
 )
 
 # Content-invariant forbidden-keys set. Any key we find with this name anywhere
@@ -71,19 +68,6 @@ def mm(tmp_path: Path) -> MemoryManager:
     )
 
 
-def testparse_bool_env_defaults_when_unset():
-    assert parse_bool_env(None, True) is True
-    assert parse_bool_env(None, False) is False
-
-
-@pytest.mark.parametrize(
-    "value,expected",
-    [("1", True), ("true", True), ("YES", True), ("0", False), ("false", False), ("", False)],
-)
-def testparse_bool_env_values(value: str, expected: bool):
-    assert parse_bool_env(value, not expected) is expected
-
-
 def test_off_level_silences_streams(mm: MemoryManager, tmp_path: Path):
     """observability_level=off is the master kill switch -- it silences the
     legacy memory.py streams too, so telemetry has a single 'turn it all off'."""
@@ -92,9 +76,7 @@ def test_off_level_silences_streams(mm: MemoryManager, tmp_path: Path):
     mm.register_model_load(
         ModelMetadata("m", "/p", 0, "a", "none", 0, 0), load_duration_ms=1.0
     )
-    mm.log_request_event({"ts": time.time(), "model": "m"})
     assert not (tmp_path / "model_events.jsonl").exists()
-    assert not (tmp_path / "request_events.jsonl").exists()
     assert mm.maybe_log_baseline() is False
 
 
@@ -135,20 +117,6 @@ def test_register_model_unload_emits_event_and_clears_metadata(mm: MemoryManager
     assert "to-evict" not in mm.model_metadata
 
 
-def test_request_event_writes(mm: MemoryManager, tmp_path: Path):
-    mm.log_request_event({
-        "ts": 1000.0,
-        "model": "m",
-        "prompt_tokens": 50,
-        "completion_tokens": 10,
-        "sampler_summary": {"temperature": 0.7},
-    })
-    events = _read_jsonl(tmp_path / "request_events.jsonl")
-    assert len(events) == 1
-    assert events[0]["model"] == "m"
-    assert events[0]["sampler_summary"]["temperature"] == 0.7
-
-
 def test_snapshot_shape_and_content_invariant(mm: MemoryManager):
     mm.model_metadata["m1"] = ModelMetadata("m1", "/p", 123, "arch", "4bit", 7_000_000_000, 8192)
     snapshot = mm.snapshot()
@@ -157,7 +125,6 @@ def test_snapshot_shape_and_content_invariant(mm: MemoryManager):
     for key in (
         "ts", "rss_bytes", "available_ram_bytes", "cpu_percent",
         "mlx_active_bytes", "mlx_peak_bytes", "mlx_cache_bytes",
-        "idle_seconds", "inflight_requests",
     ):
         assert key in snapshot, f"missing key {key}"
 
@@ -167,40 +134,6 @@ def test_snapshot_shape_and_content_invariant(mm: MemoryManager):
     # Content invariant: recursive walk, broad forbidden-key set.
     # prompt_cache / vision_cache are allowed -- they're counter dicts.
     _assert_no_forbidden_keys(snapshot)
-
-
-def test_request_event_content_invariant(mm: MemoryManager, tmp_path: Path):
-    """A typical request-event record must carry no content-bearing keys.
-
-    This covers the higher-risk path: per-request logs are the natural place
-    for a future engineer to sneak in `messages`, `prompt`, or `tool_calls`.
-    """
-    record = {
-        "timestamp": 100.0,
-        "model": "test-model",
-        "success": True,
-        "total_ms": 1500.0,
-        "queue_ms": 5.0,
-        "prompt_tokens": 500,
-        "completion_tokens": 100,
-        "tokens_per_second": 40.0,
-        "had_images": True,
-        "was_streaming": False,
-        "sampler_summary": {"temperature": 0.7, "max_tokens": 512},
-        "peak_memory_gb": 4.2,
-        "kv_cache_bytes": 131072,
-        "cached_tokens": 250,
-        "thinking_tokens": 30,
-        "content_tokens": 70,
-        "stop_reason": "stop",
-        "provider_type": "mlx",
-        "image_count": 2,
-        "cache_hit_rate": 0.5,
-    }
-    mm.log_request_event(record)
-    written = _read_jsonl(tmp_path / "request_events.jsonl")
-    assert len(written) == 1
-    _assert_no_forbidden_keys(written[0])
 
 
 def test_model_event_content_invariant(mm: MemoryManager, tmp_path: Path):
@@ -269,22 +202,6 @@ def test_maybe_log_baseline_respects_interval(tmp_path: Path):
     assert len(events) == 1
 
 
-def test_mark_request_tracks_inflight(mm: MemoryManager):
-    mm.mark_request_start()
-    mm.mark_request_start()
-    snapshot = mm.snapshot()
-    assert snapshot["inflight_requests"] == 2
-
-    mm.mark_request_end()
-    snapshot = mm.snapshot()
-    assert snapshot["inflight_requests"] == 1
-
-    mm.mark_request_end()
-    mm.mark_request_end()  # safe below zero
-    snapshot = mm.snapshot()
-    assert snapshot["inflight_requests"] == 0
-
-
 def test_log_startup_info_writes_when_level_raised(tmp_path: Path):
     # conftest configures level="minimal" per test.
     from heylook_llm.memory import BASELINE_INTERVAL_SECONDS
@@ -311,32 +228,6 @@ def test_log_startup_info_gated_off_leaves_no_footprint(tmp_path: Path):
     assert not log_dir.exists()
 
 
-def test_sampler_summary_drops_none_fields_and_messages():
-    request = SimpleNamespace(
-        temperature=0.7,
-        top_p=None,
-        top_k=40,
-        min_p=None,
-        repetition_penalty=None,
-        presence_penalty=None,
-        max_tokens=512,
-        enable_thinking=True,
-        seed=None,
-        # Content fields that MUST NOT leak into the summary:
-        messages=[{"role": "user", "content": "secret prompt"}],
-        prompt="another secret",
-    )
-    summary = sampler_summary_from_request(request)
-    assert summary == {
-        "temperature": 0.7,
-        "top_k": 40,
-        "max_tokens": 512,
-        "enable_thinking": True,
-    }
-    assert "messages" not in summary
-    assert "prompt" not in summary
-
-
 def test_append_jsonl_tolerates_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     manager = MemoryManager(
         router=_make_router(),
@@ -349,4 +240,5 @@ def test_append_jsonl_tolerates_failure(tmp_path: Path, monkeypatch: pytest.Monk
 
     monkeypatch.setattr("builtins.open", boom)
     # Must not raise
-    manager.log_request_event({"ts": 1.0})
+    manager.register_model_load(
+        ModelMetadata("m", "/p", 0, "a", "none", 0, 0), load_duration_ms=1.0)

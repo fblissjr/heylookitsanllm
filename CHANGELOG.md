@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.157]
+
+Pruning pass, part 1 (owner ruling 2026-09-25): dead product code, deleted
+with its tests. "What breaks" was answered by running the suite, not by
+reading: nothing outside the removed tests referenced any of it.
+
+### Removed
+
+- `memory.py`: `log_request_event` and the `request_events.jsonl` stream it
+  was the only writer of; `mark_request_start`/`mark_request_end`, and with
+  them the baseline snapshot's `inflight_requests` and `idle_seconds` (both
+  were fed only by those two, so they read 0 and "seconds since start");
+  `sampler_summary_from_request`; `parse_bool_env` (its seven tests never ran:
+  their names missed pytest's `test_` prefix).
+- `diagnostic_logger.exception_detail` (no caller).
+- `cache_defaults.py`, the whole module (`weights_size_gb`, no caller).
+- The 12 collected tests of the above (1658 -> 1646). Two surviving tests
+  that used `log_request_event` only as a writer now use
+  `register_model_load`.
+- Rule files updated: mlx.md no longer points at the removed summary helper;
+  registry-config.md's path pattern drops `cache_defaults`.
+
 ## [2.0.156]
 
 ### Fixed

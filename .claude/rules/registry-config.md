@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/heylook_llm/{model_registry,config,router,toml_comments,model_importer,admin_api,config_api,modality_detect,cache_defaults}.py"
+  - "src/heylook_llm/{model_registry,config,router,toml_comments,model_importer,admin_api,config_api,modality_detect}.py"
   - "heylook.toml"
 ---
 

@@ -1,13 +1,11 @@
 """
 Memory & observability telemetry for heylookitsanllm.
 
-Three disk-backed JSONL streams plus a one-shot startup record, written under
+Two disk-backed JSONL streams plus a one-shot startup record, written under
 ``logs/`` (runtime data, gitignored) -- NOT ``internal/log/``, which is for
 human session diaries:
 - logs/memory_baseline.jsonl : periodic resource snapshot (configurable
   interval, default 3600s, disable with 0)
-- logs/request_events.jsonl  : one line per completed request (sampler
-  settings, timings, peak memory, cache hit rate, draft stats, stop reason)
 - logs/model_events.jsonl    : model load/unload events with
   weights_bytes, quantization, param_count, context_length
 - logs/baseline.jsonl        : one-shot startup record with
@@ -51,7 +49,6 @@ except ImportError:
 # session diaries). Overridable via HEYLOOK_LOGS_DIR (shared with the spine).
 DEFAULT_LOG_DIR = Path(os.environ.get("HEYLOOK_LOGS_DIR", "logs"))
 BASELINE_FILE = "memory_baseline.jsonl"
-REQUEST_FILE = "request_events.jsonl"
 MODEL_FILE = "model_events.jsonl"
 STARTUP_FILE = "baseline.jsonl"
 
@@ -104,12 +101,6 @@ def _telemetry_off() -> bool:
 # enough to see drift). A constant since v2.0.122: observability_level is the
 # one logging control, and the per-stream toggles and env overrides retired.
 BASELINE_INTERVAL_SECONDS = 3600
-
-
-def parse_bool_env(value: str | None, default: bool) -> bool:
-    if value is None:
-        return default
-    return value.strip().lower() in ("1", "true", "yes", "on")
 
 
 def _normalize_path_for_log(raw_path: str) -> str:
@@ -228,8 +219,6 @@ class MemoryManager:
 
         self._lock = threading.Lock()
         self._last_baseline_ts = 0.0
-        self._last_request_ts = time.time()
-        self._inflight_requests = 0
         self._process = psutil.Process()
         self._process.cpu_percent(interval=None)
 
@@ -238,18 +227,6 @@ class MemoryManager:
 
         # No eager mkdir: the log dir is created lazily on first actual write
         # (_append_jsonl), so observability_level=off leaves no logs/ footprint.
-
-    # -- request lifecycle -------------------------------------------------
-
-    def mark_request_start(self) -> None:
-        with self._lock:
-            self._inflight_requests += 1
-            self._last_request_ts = time.time()
-
-    def mark_request_end(self) -> None:
-        with self._lock:
-            self._inflight_requests = max(0, self._inflight_requests - 1)
-            self._last_request_ts = time.time()
 
     # -- model lifecycle ---------------------------------------------------
 
@@ -297,14 +274,6 @@ class MemoryManager:
         }
         self._append_jsonl(self.log_dir / MODEL_FILE, record)
 
-    # -- per-request log ---------------------------------------------------
-
-    def log_request_event(self, event: dict) -> None:
-        """Append one per-request record. Caller enforces the content invariant."""
-        if _telemetry_off():
-            return
-        self._append_jsonl(self.log_dir / REQUEST_FILE, event)
-
     # -- periodic maintenance ----------------------------------------------
 
     def tick(self) -> None:
@@ -347,8 +316,6 @@ class MemoryManager:
         cpu_percent = self._process.cpu_percent(interval=None)
 
         with self._lock:
-            inflight = self._inflight_requests
-            last_request_ts = self._last_request_ts
             mode = self.mode
             loaded = [
                 {
@@ -373,9 +340,7 @@ class MemoryManager:
             "loaded_models": loaded,
             "prompt_cache": self._prompt_cache_stats(),
             "vision_cache": self._vision_cache_stats(),
-            "idle_seconds": round(now - last_request_ts, 2),
             "mode": mode,
-            "inflight_requests": inflight,
         }
 
         if mx is not None:
@@ -482,33 +447,3 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
-
-
-def sampler_summary_from_request(request: Any) -> dict:
-    """Extract the sampler knobs from a ChatRequest as a plain dict.
-
-    Only the knobs -- not the messages. Passing in the messages is a content
-    invariant violation; this function is the canonical way to produce the
-    sampler_summary field for a request event.
-    """
-    # Content-free by construction (knob names and their values, never text),
-    # so a knob that changes generation belongs here. reasoning_effort was
-    # missed on the way in: two requests at "low" and "xhigh" produced
-    # identical summaries while their token counts and latency differed by a
-    # lot, and the one field that explained the difference was the absent one.
-    # DERIVED, never hand-copied, and nothing is appended beside it. This list
-    # drifted from its source while it was one: it had gained the RETIRED
-    # `preset` -- a permanently-None getattr, since nothing binds that field --
-    # and never picked up `vision_tokens`. It then kept an appended `sampler`
-    # for exactly as long, past the removal of the named-bundle system in
-    # v2.0.30, which is the same defect a second time in the same statement
-    # that describes it. An append here is a field the cascade does not know
-    # about; if one is ever needed, add it to REQUEST_SAMPLER_FIELDS instead.
-    from heylook_llm.samplers import REQUEST_SAMPLER_FIELDS
-
-    result: dict[str, Any] = {}
-    for name in REQUEST_SAMPLER_FIELDS:
-        value = getattr(request, name, None)
-        if value is not None:
-            result[name] = value
-    return result
