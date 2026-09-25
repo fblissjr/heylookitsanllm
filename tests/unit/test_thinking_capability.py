@@ -132,8 +132,6 @@ class TestThinkingFlagAgreesAcrossSurfaces:
         {},
         {"enable_thinking": True},
         {"enable_thinking": False},
-        {"sampler": "thinking", "enable_thinking": False},
-        {"sampler": "deterministic", "enable_thinking": True},
     ]
 
     # Driven through LlamaServerProvider deliberately: `effective_thinking`

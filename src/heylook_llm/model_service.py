@@ -490,7 +490,7 @@ class ModelService:
 
         if not config_data.get("provider"):
             errors.append("Provider is required")
-        elif config_data["provider"] not in ("mlx", "gguf"):
+        elif config_data["provider"] not in PROVIDER_CONFIG_CLASSES:
             errors.append(f"Unknown provider: {config_data['provider']}")
 
         config = config_data.get("config", {})

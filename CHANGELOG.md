@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.156]
+
+### Fixed
+
+- `ModelService.validate_config` checked the provider against a hand-copied
+  `("mlx", "gguf")`; it now reads `config.PROVIDER_CONFIG_CLASSES`, the one
+  source (AGENTS.md: derive, never hand-copy).
+- Tests the pruning pass found hollow: `test_perf_collector.py`'s
+  hour-over-hour trend check asserted only inside `if len(trends) == 2`, so
+  any other bucketing passed having checked nothing; it now asserts the two
+  buckets first. Two rows of the thinking-capability property still sent
+  the `sampler` field removed in v2.0.30, which `ChatRequest` ignores, so
+  they repeated other rows; dropped.
+
 ## [2.0.155]
 
 ### Added

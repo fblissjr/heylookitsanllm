@@ -229,10 +229,12 @@ class TestTrends:
         profile = c.build_profile("24h")
         trends = profile["trends"]
 
-        if len(trends) == 2:
-            # Second hour should show change relative to first
-            assert trends[1]["response_time_change"] == 1.0  # doubled
-            assert trends[1]["tps_change"] == 1.0  # doubled
+        # Unconditional: an `if len(trends) == 2` guard here let any other
+        # bucketing pass having asserted nothing.
+        assert len(trends) == 2, trends
+        # Second hour should show change relative to first
+        assert trends[1]["response_time_change"] == 1.0  # doubled
+        assert trends[1]["tps_change"] == 1.0  # doubled
 
 
 # ---------------------------------------------------------------------------
