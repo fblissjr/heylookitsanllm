@@ -871,7 +871,7 @@ the model at a temp dir or intercept the PUT.
 MODEL's own template spelling. The server renders the in-force template to find its
 controls and reports them as `engine.thinking` on every model row:
 `{switch: "enable_thinking"|null, depth: {variable, values, aliases, default,
-unknown: "raises"|"ignored"|"verbatim"|"fallback", changes_prefix} | null, template}` — or
+unknown: "raises"|"ignored"|"verbatim"|"fallback", changes_prefix, off} | null, template}` — or
 null when there is no template to judge. `template` names the copy the controls were read
 from, picked by the same ladder the load walks: on gguf an explicit path, the heylook
 override, a `chat_template.jinja` beside the weights, then the template embedded in the
@@ -882,17 +882,20 @@ switch and no depth is on/off (or the model's default) only. Each `sources` entr
 template view carries the same shape under `thinking`: what that copy would offer in force.
 v3 names the source on the depth row ("Levels from ...") and on the switch row when there
 is no depth ("On/off only: ... defines no thinking depth"). `values` are the distinct choices in template order;
-`aliases` map other accepted spellings to them; `unknown: "verbatim"` means the template
+`aliases` map other accepted spellings to them; `off` (v2.0.159) lists the values that render the same prompt as the switch set to false, which v3's single thinking control folds into its Off; `unknown: "verbatim"` means the template
 pastes any word in (gpt-oss, Muse), so any value is accepted. The value is sent under the
 template's OWN variable (`depth.variable`: Muse's `reasoning_strength`, MiniMax's
 `thinking_mode`), whenever set and never gated on thinking being on. A value the model
 does not offer is a **400 before any stream** on `/v1/messages`; the conversation generate
 route drops it from stored params instead (the model runs at its default), as
 `samplerParams(caps, thinking)` does client-side. The `reasoning_effort` capability means
-`engine.thinking.depth` is non-null. v3's control is built from `depth` (a select, or a
-text box with suggestions for a verbatim template); a stored value the model does not
-offer shows as a disabled "(not offered by this model)" option, and `changes_prefix`
-adds the note that changing it mid-conversation re-processes the conversation.
+`engine.thinking.depth` is non-null. Since v2.0.159 v3 shows ONE thinking control
+(`#set-enable_thinking`): Model default / Off / On / `level:<value>` for each value not in
+`off`, writing the same two stored keys (`enable_thinking`, `reasoning_effort`) together.
+Off keeps the stored level. A verbatim template with no switch keeps a text box with
+suggestions (`#set-reasoning_effort`). A stored value the model does not offer shows as a
+disabled "(not offered by this model)" option, and `changes_prefix` adds the note that
+changing it mid-conversation re-processes the conversation.
 
 **Image plan** (v2.0.101, plan W4) `POST /v1/models/{id}/image-plan` `{sizes:[[w,h],...]}`
 (1-16 sizes) → `{model_id, engine, images:[{size, tokens, target}], source}`: what an image

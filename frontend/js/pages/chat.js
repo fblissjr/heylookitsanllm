@@ -30,7 +30,7 @@ import { streamGenerate, stopGenerate } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
 import { MarkdownStream, appendPlainText } from '../markdown-stream.js';
 import { prepareImage, resizeImageTo, blobToBase64, MAX_EDGE_PX } from '../image-prep.js';
-import { samplerParams, snapshotSettings, unrepresentableNote, bindDocumentParams, hydrateDocParams, getSetting, setSetting, onSettingsChange, documentScopeNote, PARAM_META } from '../settings.js';
+import { samplerParams, snapshotSettings, unrepresentableNote, bindDocumentParams, hydrateDocParams, getSetting, setSetting, setSettings, thinkingChoice, onSettingsChange, documentScopeNote, PARAM_META } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 import { createPresetBar, paintPresetChip } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
@@ -371,9 +371,18 @@ function buildSkeleton(ctx) {
   // Toggles the EFFECTIVE state (explicit value, else the model's default):
   // pressed means the next reply thinks. Writing an explicit true/false
   // rather than cycling through "unset" keeps one tap = one visible change;
-  // the drawer's tri-state is where "back to the model default" lives.
+  // the drawer's thinking control is where "back to the model default"
+  // lives. Turning ON from a level that means off (`depth.off`) clears that
+  // level, or the button would claim on while the template stays off; any
+  // other stored level is kept, so on returns to it.
   s.thinkBtn.addEventListener('click', () => {
-    setSetting('enable_thinking', !effectiveThinking(ctx));
+    if (effectiveThinking(ctx)) {
+      setSetting('enable_thinking', false);
+    } else if (thinkingChoice(currentThinking(ctx)) === 'off' && getSetting('enable_thinking') !== false) {
+      setSettings({ enable_thinking: true, reasoning_effort: null });
+    } else {
+      setSetting('enable_thinking', true);
+    }
   });
   ctx.onTeardown(onSettingsChange(ctx.guard(() => refreshThinkBtn(ctx))));
   // "What will the model see?" -- the exact prompt the next Send would
@@ -888,8 +897,12 @@ function currentProvider(ctx) {
 // runs (request > the model's config > capability), read off its answer rather
 // than re-derived.
 function effectiveThinking(ctx) {
+  // A stored level that renders as thinking-off (`depth.off`) is off, the
+  // same answer the drawer's control shows.
+  if (thinkingChoice(currentThinking(ctx), { enable_thinking: getSetting('enable_thinking'),
+    reasoning_effort: getSetting('reasoning_effort') }) === 'off') return false;
   const explicit = getSetting('enable_thinking');
-  if (explicit === true || explicit === false) return explicit;
+  if (explicit === true) return true;
   return currentThinkingDefault(ctx) === true;
 }
 

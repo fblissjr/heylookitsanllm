@@ -219,6 +219,17 @@ def _depth(template, ast, body: str, variable: str, switch_on: dict) -> Optional
             return next((i for i in range(n) if a[i] != b[i]), n)
         changes_prefix = min(diverge(base, o) for o in others) < first_user
 
+    # Values that turn thinking OFF (the unsloth Qwen3.8 override's `none`):
+    # the same prompt as the switch set to false. Found by rendering, like
+    # everything here, so a client can fold them into its "Off" instead of
+    # offering off twice. Empty for a template with no switch to compare to.
+    off: list[str] = []
+    if switch_on:
+        switched_off = _render(template, **{SWITCH: False})
+        if switched_off is not None:
+            off = [spelling for spelling in values
+                   if _render(template, **switch_on, **{variable: spelling}) == switched_off]
+
     return {
         "variable": variable,
         "values": values,
@@ -226,6 +237,7 @@ def _depth(template, ast, body: str, variable: str, switch_on: dict) -> Optional
         "default": default,
         "unknown": unknown,
         "changes_prefix": changes_prefix,
+        "off": off,
     }
 
 

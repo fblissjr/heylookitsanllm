@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.159]
+
+### Changed
+
+- **One thinking control** (owner approved the mockup): the chat and
+  notebook sampler panels show a single Thinking row -- Model default
+  (named, e.g. "(on, auto)"), Off, On, and each depth level the in-force
+  template offers, in its own words -- instead of an on/off/default row and a
+  separate depth row that could contradict each other. It writes the same
+  two stored keys (`enable_thinking`, `reasoning_effort`), so presets and
+  documents are unchanged; Off keeps the stored level, and the composer's
+  thinking button turns back on to it. A template with no switch and a
+  free-word depth (gpt-oss) keeps its text box; a depth-only template
+  (MiniMax) lists its levels.
+- The dead tri-state control path is gone.
+
+### Added
+
+- **`engine.thinking.depth.off`**: the depth values that render the same
+  prompt as the switch set to false (found by rendering, like the rest of
+  detection). The unsloth Qwen3.8 override's and the JonathanColetti
+  sidecar's `none` are the served cases; the control folds them into Off,
+  and a stored off-level reads as off in `effectiveThinking`.
+- Checks: unit + contract green; `e2e:render` 100/100 (the depth check
+  rewritten for the single control), `e2e:chat` 53/53, `e2e:pages` 32/32.
+
 ## [2.0.158]
 
 Pruning pass, part 2 (owner ruling 2026-09-25): the listed deletes, 61 tests

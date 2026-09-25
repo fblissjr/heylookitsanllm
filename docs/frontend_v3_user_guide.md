@@ -388,23 +388,21 @@ shows the new cost. On gemma-4 it usually just shrinks the upload for free. It
 does not appear for llama.cpp models, which do not report the size they
 resize to.
 
-**Thinking** is a three-way choice, not a checkbox: *Model default (on)* or
-*(off)*, *On*, *Off*. Since v1.79.62 a model that can think thinks by default
-unless its models.toml entry says otherwise, and the label tells you which
-way the default falls for the selected model. The thinking button beside the
-composer shows the *effective* state and flips it explicitly. The Advanced
-group these live in is open by default.
-
-**Thinking depth** lists the selected model's own choices, read from its chat
-template, in the template's own words. `auto` leaves the model's own default
-alone and names it. A template that takes any word (gpt-oss) gets a text box
-with its known values as suggestions. A value saved on another model (in a
-preset, say) stays saved but shows as "not offered by this model" and is not
-sent, so the model runs at its default; switching back restores it. Where the
-template puts depth at the top of the prompt, the control notes that changing
-it mid-conversation re-processes the whole conversation. Depth levels are
+**Thinking** is one control, built from the selected model's chat template:
+*Model default* (named: "(on, auto)", "(off)"), *Off*, *On*, and each depth
+level the template offers, in the template's own words. A level that turns
+thinking off (the unsloth Qwen3.8 override's `none`) is folded into *Off*
+rather than listed twice. A model with levels and no on/off switch (MiniMax)
+lists only its levels; a template that takes any word (gpt-oss) gets a text
+box with its known values as suggestions. The row names the template file the
+choices come from, and notes when a change mid-conversation re-processes the
+whole conversation. *Off* remembers the level you had, so the thinking button
+beside the composer, which flips the effective state, turns back on to it. A
+level saved on another model (in a preset, say) stays saved but shows as "not
+offered by this model" and is not sent. Since v1.79.62 a model that can think
+thinks by default unless its own settings say otherwise. Depth levels are
 instructions the model may overrun; the thinking budget below is what bounds
-length.
+length. The Advanced group these live in is open by default.
 
 **Thinking budget** is a hard cap on thinking tokens. Past it the engine
 forces the thinking block shut and the model goes on to answer. Depth levels
@@ -456,12 +454,6 @@ guessable.
 **Send and Stop are one button.** The tooltip now separates "stop what you are
 watching" from "stop the run finishing on the server", but the button face reads
 the same in both cases, and a tooltip is not reachable by touch.
-
-**Thinking depth still offers values a given model will reject.** The control
-now warns that the accepted set differs per model, but it cannot narrow itself:
-the accepted values live in the model's chat template, and for gguf inside the
-GGUF's own metadata, so the backend would have to learn and expose them before
-the UI could.
 
 **The prompt preview cannot show images on MLX.** The vision path renders
 through mlx-vlm and has no text-only render, so the preview shows the text

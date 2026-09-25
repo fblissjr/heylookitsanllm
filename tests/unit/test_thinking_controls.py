@@ -36,6 +36,11 @@ EXPECTED = {
 }
 
 
+# The values that render the same prompt as the switch set to false: a client
+# folds them into its "Off" (the single thinking control, 2026-09-25).
+OFF = {"qwen3_8_jcoletti_sidecar": ["none"], "qwen3_8_unsloth_override": ["none"]}
+
+
 def _controls(name):
     return detect((FIXTURES / f"{name}.jinja").read_text())
 
@@ -52,6 +57,7 @@ def test_detection_matches_the_audit(name):
         return
     assert (depth["variable"], depth["values"], depth["default"], depth["unknown"]) == \
         (variable, values, default, unknown)
+    assert depth["off"] == OFF.get(name, [])
 
 
 @pytest.mark.unit

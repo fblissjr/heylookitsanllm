@@ -3502,48 +3502,62 @@ async function main() {
     // the control built from `engine.thinking`, the wire filter, the
     // disclosure -- against the real settings.js in a real DOM.
     const dp = await openChat(browser, base, {});
-    await suite.check('thinking depth offers the model\'s own values and drops a foreign one at the wire', async () => {
+    await suite.check('one thinking control: Off, On, the model\'s own levels, a foreign one dropped at the wire', async () => {
       const out = await dp.page.evaluate(async () => {
         const s = await import('/js/settings.js');
         const closed = { switch: 'enable_thinking', depth: {
-          variable: 'reasoning_effort', values: ['high', 'max'], aliases: { maximum: 'max' },
-          default: null, unknown: 'ignored', changes_prefix: true } };
+          variable: 'reasoning_effort', values: ['high', 'none', 'max'], aliases: { maximum: 'max' },
+          default: null, unknown: 'ignored', changes_prefix: true, off: ['none'] } };
         const free = { switch: null, depth: {
           variable: 'reasoning_strength', values: ['high'], aliases: {},
-          default: 'high', unknown: 'verbatim', changes_prefix: true } };
+          default: 'high', unknown: 'verbatim', changes_prefix: true, off: [] } };
         const caps = ['thinking', 'reasoning_effort'];
+        const control = (thinking, c = caps) => s.buildSettingsPanel({ caps: c, thinking })
+          .querySelector('#set-enable_thinking, #set-reasoning_effort');
         s.applySettings({ reasoning_effort: 'xhigh' }, { silent: true });
         const panel = s.buildSettingsPanel({ caps, thinking: closed });
-        const sel = panel.querySelector('#set-reasoning_effort');
+        const sel = panel.querySelector('#set-enable_thinking');
         const foreign = {
+          rows: panel.querySelectorAll('#set-reasoning_effort').length,
           options: [...sel.options].map((o) => [o.value, o.disabled, o.textContent]),
           selected: sel.value,
           note: sel.closest('.settings-row').textContent,
           wire: 'reasoning_effort' in s.samplerParams(caps, closed),
-          wireFree: s.samplerParams(caps, free).reasoning_effort,
+          wireFree: s.samplerParams(['reasoning_effort'], free).reasoning_effort,
         };
         s.applySettings({ reasoning_effort: 'maximum' }, { silent: true });
-        const aliasSel = s.buildSettingsPanel({ caps, thinking: closed })
-          .querySelector('#set-reasoning_effort').value;
-        const freePanel = s.buildSettingsPanel({ caps, thinking: free });
-        document.body.append(freePanel);
-        const input = freePanel.querySelector('#set-reasoning_effort');
-        const listed = input.list ? [...input.list.options].map((o) => o.value) : null;
-        freePanel.remove();
+        const aliasSel = control(closed).value;
+        s.applySettings({ enable_thinking: true, reasoning_effort: 'none' }, { silent: true });
+        const offSel = control(closed).value;
+        // Picking a level writes the switch and the depth together.
         s.applySettings({}, { silent: true });
-        return { foreign, aliasSel, tag: input.tagName, listed };
+        const pick = control(closed);
+        pick.value = 'level:high';
+        pick.dispatchEvent(new Event('change'));
+        const picked = s.snapshotSettings();
+        const input = control(free, ['reasoning_effort']);
+        document.body.append(input.closest('.settings-panel'));
+        const listed = input.list ? [...input.list.options].map((o) => o.value) : null;
+        input.closest('.settings-panel').remove();
+        s.applySettings({}, { silent: true });
+        return { foreign, aliasSel, offSel, picked, tag: input.tagName, listed };
       });
       const { foreign } = out;
-      assert(JSON.stringify(foreign.options.slice(0, 3).map((o) => o[0])) === JSON.stringify(['', 'high', 'max']),
-        `options are not auto + the model's own values: ${JSON.stringify(foreign.options)}`);
-      const shown = foreign.options.find((o) => o[0] === 'xhigh');
-      assert(shown && shown[1] && /not offered by this model/.test(shown[2]) && foreign.selected === 'xhigh',
+      assert(foreign.rows === 0, 'the depth still has a row of its own');
+      assert(JSON.stringify(foreign.options.slice(0, 5).map((o) => o[0]))
+        === JSON.stringify(['', 'off', 'on', 'level:high', 'level:max']),
+        `options are not default/Off/On + the model's own levels, off-level folded: ${JSON.stringify(foreign.options)}`);
+      const shown = foreign.options.find((o) => o[0] === 'level:xhigh');
+      assert(shown && shown[1] && /not offered by this model/.test(shown[2]) && foreign.selected === 'level:xhigh',
         `a stored foreign value is not disclosed as not offered: ${JSON.stringify(foreign)}`);
       assert(/re-processes the whole conversation/.test(foreign.note),
         `changes_prefix is not disclosed on the row: ${foreign.note}`);
       assert(!foreign.wire, 'a value the model does not offer rode the wire');
       assert(foreign.wireFree === 'xhigh', 'a verbatim template refused a free-form value');
-      assert(out.aliasSel === 'max', `an alias did not select its spelling: ${out.aliasSel}`);
+      assert(out.aliasSel === 'level:max', `an alias did not select its spelling: ${out.aliasSel}`);
+      assert(out.offSel === 'off', `a level that renders as off did not read as Off: ${out.offSel}`);
+      assert(out.picked.enable_thinking === true && out.picked.reasoning_effort === 'high',
+        `picking a level did not write both keys: ${JSON.stringify(out.picked)}`);
       assert(out.tag === 'INPUT' && JSON.stringify(out.listed) === JSON.stringify(['high']),
         `a verbatim template did not get a text box with its values as suggestions: ${JSON.stringify(out)}`);
     });

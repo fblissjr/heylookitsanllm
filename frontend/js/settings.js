@@ -21,13 +21,17 @@ export const PARAM_META = {
   // knows it), true = on, false = off. The checkbox before it could only say
   // "on" or "unset", so an unset thinking model showed an unticked box while
   // the server had already decided -- and there was no way to ask for OFF.
-  enable_thinking:         { label: 'Thinking', type: 'tristate', section: 'advanced', requiresCap: 'thinking',
-                             defaultLabel: 'Model default', onLabel: 'On', offLabel: 'Off' },
+  // ONE control for the switch and the depth (owner, 2026-09-25): Model
+  // default / Off / On / each of the template's own levels. It writes the
+  // same two keys it always stored, so presets and documents are unchanged;
+  // `reasoning_effort` has no row of its own (`foldedInto`).
+  enable_thinking:         { label: 'Thinking', type: 'thinking', section: 'advanced', requiresCap: 'thinking' },
   // Thinking DEPTH (plan W2): no list of levels lives here. The options are
   // the CURRENT model's own values, detected from its chat template and read
   // off the model row (`engine.thinking.depth`), in the template's spelling.
   // 'auto' = send nothing, the template's own default.
-  reasoning_effort:        { label: 'Thinking depth', type: 'depth', section: 'advanced', requiresCap: 'reasoning_effort' },
+  reasoning_effort:        { label: 'Thinking depth', type: 'depth', section: 'advanced', requiresCap: 'reasoning_effort',
+                             foldedInto: 'enable_thinking' },
   // A hard cap on thinking tokens (plan W7), enforced by the engine: past it
   // the thinking block is forced shut and the reply continues. Offered only
   // where the engine can close the model's thinking format. Empty = no cap.
@@ -51,7 +55,7 @@ function valid(key, v) {
   const meta = PARAM_META[key];
   if (!meta) return false;
   if (meta.type === 'number') return typeof v === 'number' && Number.isFinite(v);
-  if (meta.type === 'tristate') return v === true || v === false;
+  if (meta.type === 'thinking') return v === true || v === false;
   if (meta.type === 'select') return meta.options.includes(v);
   // Validity of a depth VALUE is per model (depthOffered); stored here is any
   // bounded word, so a value from another model survives to be restored.
@@ -133,6 +137,13 @@ export function onSettingsChange(cb) {
 }
 function fireSettingsChange() {
   for (const cb of samplerListeners) { try { cb(); } catch { /* isolate */ } }
+}
+
+// Several keys, ONE change notification: the thinking control writes the
+// switch and the depth together, and two notifications would be two PUTs.
+export function setSettings(values) {
+  Object.assign(cache, values);
+  fireSettingsChange();
 }
 
 export function setSetting(key, value) {
@@ -294,8 +305,6 @@ export function hydrateDocParams(doc) {
 // ---------------------------------------------------------------------------
 
 // Tri-state <select> value spellings: '' = null (model default), 'on', 'off'.
-const TRISTATE_FROM_VALUE = { '': null, on: true, off: false };
-const TRISTATE_TO_VALUE = (v) => (v === true ? 'on' : v === false ? 'off' : '');
 
 // How a resolved model default reads in a placeholder. null/undefined means
 // the page does not know (no model row yet, or a key the server does not
@@ -312,24 +321,9 @@ function defaultText(v) {
 // default comes from, and `enable_thinking` still answers from a different
 // source than the rest. (It also used to depend on the live thinking switch,
 // which is why the indirection exists at all -- see the lookup itself.)
-function bindControl(key, meta, lookup = () => null, thinking = null) {
+function bindControl(key, meta, lookup = () => null, thinking = null, caps = []) {
+  if (meta.type === 'thinking') return bindThinkingControl(lookup, thinking, caps);
   if (meta.type === 'depth') return bindDepthControl(key, lookup, thinking);
-  if (meta.type === 'tristate') {
-    // The default option NAMES the value it stands for when the page knows
-    // it (`modelDefaults[key]`, the admin row's thinking_default) -- a
-    // "model default" that hides whether it means on or off is the exact
-    // mystery the control exists to end. Unknown = plain "Model default".
-    const known = lookup(key);
-    const suffix = known === true ? ' (on)' : known === false ? ' (off)' : '';
-    const sel = createEl('select', { id: `set-${key}`, class: 'input' }, [
-      createEl('option', { value: '' }, [`${meta.defaultLabel}${suffix}`]),
-      createEl('option', { value: 'on' }, [meta.onLabel]),
-      createEl('option', { value: 'off' }, [meta.offLabel]),
-    ]);
-    sel.value = TRISTATE_TO_VALUE(cache[key]);
-    sel.addEventListener('change', () => setSetting(key, TRISTATE_FROM_VALUE[sel.value] ?? null));
-    return sel;
-  }
   if (meta.type === 'select') {
     // '' is the empty option and means "don't send the key at all" -- for
     // reasoning_effort that leaves the model's chat template on its own
@@ -365,6 +359,61 @@ function bindControl(key, meta, lookup = () => null, thinking = null) {
     setSetting(key, v === '' ? null : Number(v));
   });
   return input;
+}
+
+// The one thinking control: Model default / Off / On / each level the
+// template offers, in its own words. Built from `engine.thinking` (the
+// in-force template, rendered): a level that renders the same prompt as the
+// switch set to false (`depth.off`, e.g. the unsloth Qwen3.8 override's
+// `none`) IS Off and is not offered twice. A template that pastes any word in
+// and has no switch (gpt-oss) keeps the free-text box.
+//
+// Off keeps the stored level, so turning thinking back on (here or with the
+// composer button) returns to it.
+export function thinkingChoice(thinking, values = cache) {
+  const depth = thinking?.depth ?? null;
+  const off = new Set(depth?.off ?? []);
+  const stored = values.reasoning_effort ?? null;
+  const canon = stored === null || !depth ? null : (depth.aliases?.[stored] ?? stored);
+  if (values.enable_thinking === false || (canon !== null && off.has(canon))) return 'off';
+  if (canon !== null) return `level:${depthOffered(stored, thinking) ? canon : stored}`;
+  if (values.enable_thinking === true) return 'on';
+  return '';
+}
+
+function bindThinkingControl(lookup, thinking, caps) {
+  // The `thinking` capability IS a detected switch on both engines, and it
+  // is what the server gates enable_thinking on; engine.thinking may be
+  // absent (an older server, a template that could not be judged).
+  const sw = caps.includes('thinking');
+  const depth = caps.includes('reasoning_effort') ? (thinking?.depth ?? null) : null;
+  if (!sw && depth?.unknown === 'verbatim') return bindDepthControl('reasoning_effort', lookup, thinking);
+  const off = new Set(depth?.off ?? []);
+  const levels = (depth?.values ?? []).filter((v) => !off.has(v));
+  const known = lookup('enable_thinking');
+  const described = [known === true ? 'on' : known === false ? 'off' : null,
+    known !== false && depth?.default && !off.has(depth.default) ? depth.default : null]
+    .filter(Boolean).join(', ');
+  const stored = cache.reasoning_effort ?? null;
+  const offered = stored === null || !depth || depthOffered(stored, thinking);
+  const option = (value, label, extra = {}) => createEl('option', { value, ...extra }, [label]);
+  const sel = createEl('select', { id: 'set-enable_thinking', class: 'input' }, [
+    option('', `Model default${described ? ` (${described})` : ''}`),
+    sw ? option('off', 'Off') : null,
+    sw ? option('on', levels.length
+      ? `On (default level${depth?.default && !off.has(depth.default) ? `: ${depth.default}` : ''})` : 'On') : null,
+    ...levels.map((v) => option(`level:${v}`, v)),
+    offered ? null : option(`level:${stored}`, `${stored} (not offered by this model)`, { disabled: true }),
+  ]);
+  sel.value = thinkingChoice(depth ? thinking : null);
+  sel.addEventListener('change', () => {
+    const v = sel.value;
+    if (v === '') setSettings({ enable_thinking: null, reasoning_effort: null });
+    else if (v === 'off') setSettings({ enable_thinking: false });
+    else if (v === 'on') setSettings({ enable_thinking: true, reasoning_effort: null });
+    else setSettings({ ...(sw ? { enable_thinking: true } : {}), reasoning_effort: v.slice('level:'.length) });
+  });
+  return sel;
 }
 
 // The thinking-depth control, built from the model's own values. A template
@@ -431,12 +480,14 @@ function budgetNote(meta, thinking) {
   return `${budget.enforced === false ? 'Not enforced' : 'May not be enforced'}: ${budget.reason}.`;
 }
 
-// The switch row's note when the template offers no depth: thinking is then
-// on, off, or the model's own default, and the reader should know that is the
-// template's answer (which file), not a control the page left out.
-function switchNote(thinking) {
-  if (!thinking?.switch || thinking.depth) return null;
-  return `On/off only: ${thinking.template ?? 'the template'} defines no thinking depth.`;
+// The thinking row's note: which template file the choices come from, and
+// what a mid-conversation change costs (disclosed, never confirmed).
+function thinkingNote(thinking) {
+  if (!thinking) return null;
+  if (thinking.switch && !thinking.depth) {
+    return `On/off only: ${thinking.template ?? 'the template'} defines no thinking depth.`;
+  }
+  return depthNote(thinking);
 }
 
 // The panel's scope line, composed in ONE place so chat and notebook cannot
@@ -486,12 +537,16 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
   };
 
   for (const [key, meta] of Object.entries(PARAM_META)) {
-    if (meta.requiresCap && !caps.includes(meta.requiresCap)) continue;
-    if (Array.isArray(requestFields) && !requestFields.includes(key)) continue;
-    const control = bindControl(key, meta, lookup, thinking);
-    const note = meta.type === 'depth' ? depthNote(thinking)
-      : key === 'enable_thinking' ? switchNote(thinking)
-        : key === 'thinking_budget_tokens' ? budgetNote(meta, thinking) : meta.note;
+    if (meta.foldedInto) continue;  // rendered by the row it folds into
+    // The thinking row stands for both of its keys: a switch-only model and
+    // a depth-only one (MiniMax, gpt-oss) each get it.
+    const keys = [key, ...Object.entries(PARAM_META)
+      .filter(([, m]) => m.foldedInto === key).map(([k]) => k)];
+    if (!keys.some((k) => !PARAM_META[k].requiresCap || caps.includes(PARAM_META[k].requiresCap))) continue;
+    if (Array.isArray(requestFields) && !keys.some((k) => requestFields.includes(k))) continue;
+    const control = bindControl(key, meta, lookup, thinking, caps);
+    const note = meta.type === 'thinking' ? thinkingNote(thinking)
+      : key === 'thinking_budget_tokens' ? budgetNote(meta, thinking) : meta.note;
     // Shown only while the key is overridden, so its presence IS the "you
     // changed this" signal and there is nothing extra on screen otherwise.
     // Not a hover reveal -- state, not pointer -- so DESIGN.md §7's
@@ -509,7 +564,7 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
       'aria-label': `Reset ${meta.label} to the model default`,
     }, ['\u21ba']);
     const row = createEl('div', { class: 'settings-row' }, [
-      createEl('label', { for: `set-${key}` }, [
+      createEl('label', { for: control.id || `set-${key}` }, [
         meta.label,
         note ? createEl('span', { class: 'settings-row__note muted small' }, [note]) : null,
       ]),
@@ -524,7 +579,8 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
       // typed 0 used to light the row accent and offer a reset for a value the
       // server never sees and never applies. Marking is a CLAIM about what the
       // model is running, so it has to be read off the thing that decides it.
-      const overridden = key in samplerParams(caps, thinking);
+      const sent = samplerParams(caps, thinking);
+      const overridden = keys.some((k) => k in sent);
       row.classList.toggle('settings-row--overridden', overridden);
       reset.classList.toggle('settings-row__reset--on', overridden);
     };
@@ -532,7 +588,7 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
     // updated by the time this reads it.
     control.addEventListener('change', () => { sync(); if (key === 'enable_thinking') syncDefaults(); });
     reset.addEventListener('click', () => {
-      setSetting(key, null);
+      setSettings(Object.fromEntries(keys.map((k) => [k, null])));
       if (meta.type === 'checkbox') control.checked = false; else control.value = '';
       sync();
       if (key === 'enable_thinking') syncDefaults();
