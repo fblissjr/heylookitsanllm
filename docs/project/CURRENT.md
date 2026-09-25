@@ -37,6 +37,18 @@ Thinking DEPTH is covered by pinning depth-capable models:
 
 ## Handoff -- start here (2026-09-25)
 
+**Next session (end of 2026-09-25, v2.0.170).** mlx-vlm is pinned to upstream
+main `990a0287`, all checks green (verification table). Agreed order for the
+remaining plan work: W10's upstream items first, each needing the owner's go
+before anything is posted: (1) rebase the drafted captures/store-size PR onto
+`990a0287`, re-check, show the owner, then file from the fork; (2) an issue
+proposing a per-image vision key; (3) a nudge on Blaizzy/mlx-vlm#2356 at most.
+W6 stays parked: its evidence (cache causes) is not persisted anywhere durable
+(perf_collector's in-memory ring, or llama_server logs when file logging is
+on). W11 only on evidence; W14 on the research track. Owner calls open in
+TODO.md: MLX text/image interleaving, tools, notebook images. New gemma-4
+weights exist locally, unconverted; conversion is optional.
+
 **v2.0.168: the handoff list's owner calls, done.** Raw output view not built
 (parity or neither; gguf findings in sharp_edges.md). Gzip cache removed. The
 3 live-only tests replaced by smoke checks (presence-penalty A/B, unload
