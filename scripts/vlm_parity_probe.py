@@ -38,6 +38,9 @@ WHAT CAN FOOL IT, and what the report carries so you can tell:
 - Position state on the language model survives between requests. The probe
   runs vision after TEXT and vision after VISION in the same process; both must
   agree with upstream.
+- The vision feature cache. The last case repeats an image with the prefix
+  cache emptied, so the whole prompt is prefilled from CACHED features; it must
+  equal the cold run, and must record a feature-cache hit or it tested nothing.
 
 Everything runs on ONE worker thread inside the provider's generation stream:
 MLX streams are thread-local and a forward on the main thread is not the
@@ -201,11 +204,29 @@ def _run(args) -> dict:
         rows.append(compare("vision after vision (different image)", ours_b, theirs_b, lps_b,
                             _vision_content(1)))
 
+        # The same image again with the prefix cache emptied and the vision
+        # features kept: the prompt is prefilled in full from CACHED features,
+        # and must match the cold run token for token. A run that records no
+        # feature-cache hit compared nothing and says so.
+        from heylook_llm.providers.common import vlm_engine
+        vcache = provider._strategies["vision"]._vision_cache
+        hits = vcache.stats()["hits"]
+        provider._apc = vlm_engine.make_apc_manager()
+        ours_c = heylook(_vision_content(1))
+        theirs_c, lps_c = upstream()
+        row = compare("same image, cached features, fresh prefix cache", ours_c, theirs_c,
+                      lps_c, _vision_content(1))
+        row["feature_cache_hit"] = vcache.stats()["hits"] > hits
+        row["equals_cold_run"] = ours_c == ours_b
+        rows.append(row)
+
     control_ok = ours_a != ours_b
+    warm = rows[-1]
     return {"model": args.model, "tokens": args.tokens, "prefill_step_size": args.step,
             "negative_control_images_differ": control_ok, "cases": rows,
-            "ok": control_ok and all(r["verdict"] in ("MATCH", "NEAR-TIE")
-                                     and r["prompt_matches_mlx_vlm"] is not False for r in rows)}
+            "ok": control_ok and warm["feature_cache_hit"] and warm["equals_cold_run"]
+            and all(r["verdict"] in ("MATCH", "NEAR-TIE")
+                    and r["prompt_matches_mlx_vlm"] is not False for r in rows)}
 
 
 def main() -> int:

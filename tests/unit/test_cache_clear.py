@@ -13,8 +13,8 @@ from heylook_llm.providers.mlx_provider import MLXProvider
 @pytest.mark.unit
 def test_clearing_the_cache_empties_the_vision_features():
     cache = VisionFeatureCache()
-    cache.put(["data:a"], mx.zeros((2, 2)))
+    cache.put("k", mx.zeros((2, 2)))
     fake = SimpleNamespace(_apc=None, model_id="m",
                            _strategies={"vision": SimpleNamespace(_vision_cache=cache)})
     assert MLXProvider.clear_cache(fake) is True
-    assert cache.get(["data:a"]) is None
+    assert cache.get("k") is None

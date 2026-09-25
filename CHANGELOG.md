@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.135]
+
+### Fixed
+
+- **qwen3_5 image conversations reuse their vision features** (owner yes,
+  2026-09-24; the reworked form of the loop's reverted change). heylook
+  cached features only for models with `encode_image()`, which qwen3_5 lacks,
+  so every turn re-ran the vision tower. A model without it now gets the
+  cache as mlx-vlm's `vision_cache`/`_image_key` kwargs; a model with it keeps
+  heylook's own branch, because lfm2_vl, mimo_v2, minimax_m3_vl, molmo,
+  molmo2 and sam3 have `encode_image()` but do not read `vision_cache`.
+- **The vision feature cache keys by image content**, not URL
+  (`image_content_key`: each loaded image's pixels, in order). A web link
+  whose file changed used to be served the old picture's features. The
+  unreachable pixel-hash and list fallbacks in the cache are gone.
+
+### Verified
+
+- `scripts/vlm_parity_probe.py` on Qwen3.5-0.8B: ok. Its new last case
+  (the same image with the prefix cache emptied, features cached) records a
+  feature-cache hit and equals the cold run token for token; the two cold
+  cases give the same verdicts and margins as the base commit.
+- `scripts/perf_ab.py` on Qwen3.5-0.8B, base vs this change: a fresh image is
+  noise, an image follow-up and a repeated image are better
+  (`internal/claude/vision_cache/ab_0.8b_2026-09-25.json`). The first attempt
+  had been reverted for a cost on the fresh-image turn of this model.
+- Not run: `tests/smoke/` (no server was up; none spawned), the 27B, and
+  the encode_image route live (its only change is the key).
+
+### Changed
+
+- `scripts/perf_ab.py`: the `vision` workload draws a fresh image per
+  request, so it stays cold as the script documents now that features are
+  cached; `vision_repeat` (same image) and `vision_followup` (a text turn
+  after an image) are new.
+
 ## [2.0.134]
 
 ### Changed

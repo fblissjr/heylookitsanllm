@@ -25,7 +25,7 @@ backlog pass*
 
 Record: `internal/claude/improve/archive/runs-2026-09-24/` (report.html has the evidence).
 
-- [ ] **qwen3_5 vision features: owner said yes (2026-09-24), done the reworked way below, in a fresh session.** heylook's vision feature
+- [x] **Done in v2.0.135** (kwargs for models without `encode_image()`, the old branch elsewhere, content keys; parity probe with a warm-features case and a perf A/B, record in `internal/claude/vision_cache/`). **qwen3_5 vision features: owner said yes (2026-09-24), done the reworked way below, in a fresh session.** heylook's vision feature
   cache runs only for models with `encode_image()`; qwen3_5 has none, so every
   turn of an image conversation re-runs the vision tower. Passing the cache as
   mlx-vlm's `vision_cache`/`_image_key` kwargs (as mlx-vlm's server does)

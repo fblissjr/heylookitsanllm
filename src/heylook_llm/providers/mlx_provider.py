@@ -28,7 +28,7 @@ from .common.vlm_inputs import (
 from .common.generation_core import continuation_detokenizer, detokenizer_source
 from .common import vlm_engine
 from .common.batch_vision import BatchVisionProcessor
-from .common.vision_feature_cache import VisionFeatureCache
+from .common.vision_feature_cache import VisionFeatureCache, image_content_key
 from .common.loader_routing import resolve_serves_vision, read_model_type
 from .common.generation_gate import GenerationGate, GenerationCancelled, get_process_gate
 from .common.template_info import (
@@ -646,10 +646,13 @@ class VLMVisionStrategy:
     ``prepare_inputs``, and hands the request to ``vlm_engine`` -- the same
     engine every MLX request runs on, prefix cache included (plan W10).
 
-    Vision feature caching: when a model supports encode_image(), vision
-    encoder outputs are cached by the request's image list and reach the
-    embedding step only (``embed_extras``), so a turn with an unchanged image
-    list skips the vision tower.
+    Vision feature caching, keyed by the content of the request's images
+    (``image_content_key``), so a turn with an unchanged image list skips the
+    vision tower. A model with ``encode_image()`` gets heylook's features as
+    ``cached_image_features``; one without it (qwen3_5) is handed the cache
+    as mlx-vlm's ``vision_cache``/``_image_key`` kwargs, the way mlx-vlm's
+    server does, and looks up and stores its own tower output. Both reach the
+    embedding step only (``embed_extras``).
     """
 
     def __init__(self, model_config=None, template_info=None, model_id=None,
@@ -690,7 +693,7 @@ class VLMVisionStrategy:
         # image: it is an assistant turn, and _non_user_image_roles has
         # already refused media anywhere but a user turn.
         resume = _thinking_resume(request)
-        images, formatted_prompt, _, image_urls = self._prepare_vlm_inputs_parallel(
+        images, formatted_prompt, _, _ = self._prepare_vlm_inputs_parallel(
             request.messages[:-1] if resume is not None else request.messages,
             processor, model.config,
             enable_thinking=True if resume is not None else _resolve_enable_thinking(effective_request),
@@ -716,40 +719,31 @@ class VLMVisionStrategy:
 
         input_ids = inputs["input_ids"]
         pixel_values = inputs.get("pixel_values")
-        mask = inputs.get("attention_mask")
-        # Collect model-specific extras (e.g. image_grid_thw for Qwen)
-        extra_kwargs = {
-            k: v for k, v in inputs.items()
-            if k not in ("input_ids", "pixel_values", "attention_mask")
-        }
-
-        # What the EMBEDDING step takes beside ids/pixels/mask.
-        extras = dict(extra_kwargs)
         if input_ids.ndim == 1:
             input_ids = input_ids[None, :]
 
-        # Vision feature caching: reuse cached vision encoder outputs across turns.
-        # Follows mlx-vlm's generate pattern (now mlx_vlm/generate/ package):
-        # - If model has encode_image(), we can compute and cache vision features
-        # - cached_image_features kwarg bypasses the vision tower in the model's
-        #   get_input_embeddings() method
-        has_encode_image = hasattr(model, 'encode_image')
-        cache_key = image_urls if image_urls else None
-        if has_encode_image and pixel_values is not None:
-            # Try URL-based key first; fall back to pixel content hash for
-            # base64/PIL images that don't have a stable URL.
-            cached_features = self._vision_cache.get(cache_key, pixel_values=pixel_values)
-            if cached_features is not None:
-                extras["cached_image_features"] = cached_features
-                logging.info("[VLM VISION] Using cached vision features (skipping vision encoder)")
+        # What the EMBEDDING step takes beside ids/pixels/mask; never the
+        # generator's prompt kwargs.
+        embed_extras = {}
+        if pixel_values is not None and images:
+            key = image_content_key(images)
+            if hasattr(model, 'encode_image'):
+                # gemma4, deepseek_v4, lfm2_vl, molmo, ... : heylook runs the
+                # tower and hands the features back. Not all of these read
+                # ``vision_cache``, so the kwargs route would drop their caching.
+                features = self._vision_cache.get(key)
+                if features is None:
+                    with wired_limit(model, [generation_stream]):
+                        features = model.encode_image(pixel_values)
+                        mx.async_eval(features)
+                    self._vision_cache.put(key, features)
+                embed_extras["cached_image_features"] = features
             else:
-                # Compute and cache vision features separately
-                with wired_limit(model, [generation_stream]):
-                    features = model.encode_image(pixel_values)
-                    mx.async_eval(features)
-                self._vision_cache.put(cache_key, features, pixel_values=pixel_values)
-                extras["cached_image_features"] = features
-                logging.info("[VLM VISION] Computed and cached vision features")
+                # qwen3_5 has no encode_image(): until 2026-09-25 it got no
+                # feature caching and re-ran the tower on every turn of an
+                # image conversation. A model that reads neither kwarg
+                # ignores them (mlx-vlm's server passes them to every model).
+                embed_extras = {"vision_cache": self._vision_cache, "_image_key": key}
 
         prompt_token_count = int(input_ids.shape[1])
         if self.context_length and prompt_token_count > self.context_length:
@@ -760,11 +754,7 @@ class VLMVisionStrategy:
 
         # The whole request runs on mlx-vlm's engine (plan W10, A2): the
         # prompt, images included, is prefilled there in chunks and restored
-        # from APC across turns. The cached image features reach the
-        # embedding step only (embed_extras), never the generator.
-        embed_extras = {}
-        if "cached_image_features" in extras:
-            embed_extras["cached_image_features"] = extras["cached_image_features"]
+        # from APC across turns.
         raw = {**inputs, "input_ids": input_ids}
         enable_thinking = _resolve_enable_thinking(effective_request)
         reasoning_effort = effective_request.get("reasoning_effort")

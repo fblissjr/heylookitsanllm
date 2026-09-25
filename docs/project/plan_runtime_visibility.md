@@ -1,6 +1,6 @@
 # Plan: runtime visibility and one behaviour across engines
 
-last updated: 2026-09-24 (APPROVED by the owner). Shipped: W0 (v2.0.107 - v2.0.122), W2, W3, W4, W5 (spec reporting completed by `engine.speculative`, v2.0.120), W7, W8, W9, W13. In progress: W10 (stages shipped through v2.0.121; the qwen3_5 vision-feature re-apply is next, see `TODO.md`). Open: W1, W6 (only if W5 shows budget skips), W12, W14.
+last updated: 2026-09-24 (APPROVED by the owner). Shipped: W0 (v2.0.107 - v2.0.122), W2, W3, W4, W5 (spec reporting completed by `engine.speculative`, v2.0.120), W7, W8, W9, W13. In progress: W10 (stages shipped through v2.0.121, qwen3_5 vision features v2.0.135; the per-image vision key is open). Open: W1, W6 (only if W5 shows budget skips), W12, W14.
 
 ## Context
 
@@ -673,10 +673,10 @@ upstream items remain: a restored qwen3_5 request decodes slower than cold
 (Blaizzy/mlx-vlm#2356, filed; picked up when the pin moves), and a PR that
 separates captures from store size and lets a caller name boundaries would
 delete heylook's local capture rule (drafted in the run record, not filed).
-The per-image vision key below is still open. A qwen3_5 vision-feature change
-(pass the cache as mlx-vlm's `vision_cache` kwargs, since qwen3_5 has no
-`encode_image()`) was reverted on the branch for a speed-tolerance breach on
-the small model and waits on the owner (TODO.md).
+The per-image vision key below is still open. qwen3_5's vision features are
+cached since v2.0.135 (mlx-vlm's `vision_cache` kwargs, since qwen3_5 has no
+`encode_image()`; the loop's first attempt was reverted for a speed cost the
+reworked form does not show), keyed by image content.
 
 **Step 2: build the chosen outcome.** In every outcome:
 - **Per-image vision feature cache**, so a new image stops re-encoding the old

@@ -1331,11 +1331,27 @@ code every chat flow (append, follow-up, continue, regenerate, thinking on and
 off) diverged inside the stored tail and took the trim path, which refused, so
 the cost was lost reuse, never a reply decoded from a wrong position.
 
-The vision feature cache is keyed by the request's whole image-URL list joined
-in order, so adding one image to a conversation re-encodes every image in it;
-the pixel-hash fallback in the module is never reached from that caller. A
+The vision feature cache is keyed by the request's whole image list in order,
+so adding one image to a conversation re-encodes every image in it. A
 per-image key is part of W10 of
-[plan_runtime_visibility.md](../project/plan_runtime_visibility.md).
+[plan_runtime_visibility.md](../project/plan_runtime_visibility.md). Two
+things it got wrong until 2026-09-25 (v2.0.135):
+- **It never ran for qwen3_5, the owner's daily vision family.** heylook
+  cached features only for models with `encode_image()`, which qwen3_5 lacks,
+  so every turn of an image conversation re-ran its tower while every test of
+  the cache stayed green on gemma4. qwen3_5 now gets the cache as mlx-vlm's
+  `vision_cache`/`_image_key` kwargs. The kwargs cannot replace the
+  `encode_image` branch outright: lfm2_vl, mimo_v2, minimax_m3_vl, molmo,
+  molmo2 and sam3 have `encode_image()` but do not read `vision_cache`, and
+  the first attempt (reverted on the 2026-09-24 loop branch) would have cost
+  them their caching.
+- **The key was the image URL.** A web link keeps its URL when the file behind
+  it changes, so a URL key served the old picture's features. The key is now
+  a hash of each loaded image's pixels (`image_content_key`).
+The kwargs route has one cost: qwen3_5 syncs (`mx.eval`) on its tower output
+before storing it, so an image-adding turn on a small model starts slightly
+later; each follow-up turn then skips the tower. Record:
+`internal/claude/vision_cache/`.
 
 Since v2.0.86 the live MLX path is mlx-vlm's engine and its prefix cache
 (APC), not the slot (plan W10, A2; the slot, the mlx-lm decode loop and the

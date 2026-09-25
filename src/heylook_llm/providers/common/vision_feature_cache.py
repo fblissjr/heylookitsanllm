@@ -2,17 +2,18 @@
 """
 LRU cache for VLM vision encoder outputs.
 
-Caches projected image features keyed by image URL/path string so that
-multi-turn conversations discussing the same image skip the expensive
-vision tower forward pass (typically 200-500ms per image).
+Caches projected image features keyed by the CONTENT of a request's images, so
+multi-turn conversations discussing the same image skip the vision tower.
 
-Two keying strategies:
-- Primary: image URL/path string (fast, covers the common case)
-- Fallback: SHA-256 of pixel_values bytes (handles base64/PIL images
-  that lack a stable URL). Requires mx.eval() to materialize the array
-  (~2ms for a 1024x1024 image, negligible vs. 200ms+ vision encoding).
+The key is ``image_content_key(images)``: a hash of each loaded image's pixels,
+joined in order. Content, not the URL: a web link keeps its URL when the file
+behind it changes, and a URL key then serves the old picture's features. The
+key still covers the request's whole image list, so a turn that adds an image
+misses (a per-image key is open in plan W10).
 
-Follows the same pattern as mlx-vlm's VisionFeatureCache (vision_cache.py):
+Follows the same pattern as mlx-vlm's VisionFeatureCache (vision_cache.py),
+and answers the ``get(key)`` / ``put(key, features)`` calls a model makes when
+handed the cache as mlx-vlm's ``vision_cache`` kwarg:
 - LRU eviction when max_entries exceeded
 - Cleared on model unload
 
@@ -23,30 +24,30 @@ import hashlib
 import logging
 import threading
 from collections import OrderedDict
-from typing import Any
 
 import mlx.core as mx
 
 
-def _hash_pixel_values(pixel_values: mx.array) -> str:
-    """Compute SHA-256 hash of pixel values for content-based keying.
+def image_content_key(images) -> str:
+    """The cache key for a request's loaded images (PIL), in order.
 
-    Requires the array to be evaluated (materialized). Returns a hex
-    digest string prefixed with 'px:' to distinguish from URL keys.
-
-    Note: mx.eval is MLX's lazy graph materializer, not Python's eval().
+    Hashes each image's mode, size and pixels, so the same picture keys the
+    same whether it arrived as a data URL or a web link, and a changed file
+    behind an unchanged link keys differently.
     """
-    # Ensure array is evaluated before reading bytes
-    mx.async_eval(pixel_values)
-    data = bytes(memoryview(pixel_values))
-    return f"px:{hashlib.sha256(data).hexdigest()[:16]}"
+    parts = []
+    for im in images:
+        h = hashlib.sha256(f"{im.mode}:{im.size}:".encode())
+        h.update(im.tobytes())
+        parts.append(h.hexdigest()[:32])
+    return "|".join(parts)
 
 
 class VisionFeatureCache:
     """LRU cache for vision encoder outputs.
 
     Stores projected image features (mx.array after vision_tower + projector)
-    keyed by image source string or pixel content hash. Thread-safe via lock.
+    keyed by ``image_content_key``. Thread-safe via lock.
 
     Evicts on BOTH caps:
     - count cap (``max_entries``) protects against unbounded growth with tiny features
@@ -57,7 +58,8 @@ class VisionFeatureCache:
         max_entries: Maximum number of cached image features. Default 20.
         max_bytes: Hard byte ceiling across all cached entries. Default 8 GB.
             Reading ``feature.nbytes`` at insert time is safe because the caller
-            materializes the array first (mlx_provider.py:421, mlx-vlm generate.py:662).
+            materializes the array first (heylook's encode_image branch, or the
+            model's own ``mx.eval`` before its ``put``).
     """
 
     def __init__(self, max_entries: int = 20, max_bytes: int = 8_000_000_000):
@@ -70,45 +72,8 @@ class VisionFeatureCache:
         self._hits = 0
         self._misses = 0
 
-    @staticmethod
-    def _make_key(image_source: Any, pixel_values: mx.array | None = None) -> str:
-        """Derive a cache key from an image source.
-
-        For str: use directly (URL or file path).
-        For list of str: join with | separator.
-        Fallback: if image_source yields no key but pixel_values is
-        provided, hash the pixel data for content-based keying.
-        """
-        return VisionFeatureCache._base_key(image_source, pixel_values)
-
-    @staticmethod
-    def _base_key(image_source: Any, pixel_values: mx.array | None = None) -> str:
-        if isinstance(image_source, str):
-            return image_source
-        if isinstance(image_source, list):
-            parts = []
-            for item in image_source:
-                if isinstance(item, str):
-                    parts.append(item)
-                else:
-                    # Non-string in list -- fall through to pixel hash
-                    break
-            else:
-                # All items were strings
-                return "|".join(parts)
-
-        # Fallback: hash pixel values if available
-        if pixel_values is not None:
-            try:
-                return _hash_pixel_values(pixel_values)
-            except Exception:
-                pass
-
-        return ""
-
-    def get(self, image_source: Any, pixel_values: mx.array | None = None) -> mx.array | None:
-        """Look up cached features. Returns None on miss or uncacheable source."""
-        key = self._make_key(image_source, pixel_values)
+    def get(self, key: str) -> mx.array | None:
+        """Look up cached features. Returns None on a miss or an empty key."""
         if not key:
             return None
 
@@ -121,10 +86,8 @@ class VisionFeatureCache:
             self._misses += 1
             return None
 
-    def put(self, image_source: Any, features: mx.array,
-            pixel_values: mx.array | None = None) -> None:
+    def put(self, key: str, features: mx.array) -> None:
         """Store computed features, evicting LRU entries until both caps hold."""
-        key = self._make_key(image_source, pixel_values)
         if not key:
             return
 

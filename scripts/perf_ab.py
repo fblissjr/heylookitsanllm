@@ -68,12 +68,16 @@ FILLER = ("The archive held letters from a lighthouse keeper who wrote every "
 
 # Built-in workloads. `words` is prompt length in words; `gen` the generation
 # cap; `followup` adds a second turn to the SAME conversation (reuse on
-# purpose); `image` attaches a synthetic picture (vision models only).
+# purpose); `image` attaches a synthetic picture (vision models only):
+# "fresh" draws a new one per request (a cold vision tower), "repeat" the same
+# one every time (the vision feature cache hits after warmup).
 WORKLOADS = {
     "short": {"words": 150, "gen": 128},
     "long": {"words": 6000, "gen": 128},
     "followup": {"words": 1500, "gen": 64, "followup": 60},
-    "vision": {"words": 40, "gen": 64, "image": True},
+    "vision": {"words": 40, "gen": 64, "image": "fresh"},
+    "vision_repeat": {"words": 40, "gen": 64, "image": "repeat"},
+    "vision_followup": {"words": 40, "gen": 64, "image": "fresh", "followup": 60},
 }
 
 # metric -> True when higher is better
@@ -221,13 +225,16 @@ def _resolve_config(model_id: str, overrides: dict) -> tuple[str, dict]:
     sys.exit(f"{model_id}: not served (heylook.toml + discovery)")
 
 
-def _image_url() -> str:
+def _image_url(variant: int = 0) -> str:
+    """A synthetic picture; each ``variant`` differs in its pixels, so a
+    content-keyed vision feature cache never matches two variants."""
     import base64
     import io
 
     from PIL import Image, ImageDraw
 
-    im = Image.new("RGB", (768, 768), (30, 120, 200))
+    bg = (30, 120, 200) if variant == 0 else (variant % 251, variant // 251 % 251, 77)
+    im = Image.new("RGB", (768, 768), bg)
     ImageDraw.Draw(im).ellipse((200, 200, 560, 560), fill=(240, 60, 40))
     buf = io.BytesIO()
     im.save(buf, format="PNG")
@@ -318,7 +325,8 @@ def worker(args) -> None:
             nonce += 1
             content = _prompt(nonce, spec["words"])
             if spec.get("image"):
-                content = [{"type": "image_url", "image_url": {"url": _image_url()}},
+                variant = nonce if spec["image"] == "fresh" else 0
+                content = [{"type": "image_url", "image_url": {"url": _image_url(variant)}},
                            {"type": "text", "text": content}]
             messages = [{"role": "user", "content": content}]
             sampler.phase = f"{name}:{rep}"

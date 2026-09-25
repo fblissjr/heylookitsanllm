@@ -249,32 +249,37 @@ class TestApplyChatTemplate:
 
 
 # ---------------------------------------------------------------------------
-# encode_image() / cached_image_features -- vision feature caching pattern
+# vision feature caching: encode_image() / cached_image_features, and the
+# vision_cache / _image_key kwargs for a model without encode_image()
 # ---------------------------------------------------------------------------
 
-class TestEncodeImageCachedFeaturesPattern:
-    """Consumed at src/heylook_llm/providers/mlx_provider.py:415-430
-    (VLMVisionStrategy.generate) + providers/common/vision_feature_cache.py:
-    hasattr(model, 'encode_image') gates computing model.encode_image(pixel_values)
-    once, then passing it back in as the cached_image_features kwarg on later
-    turns. Not every mlx-vlm model implements this pattern (most don't -- it's
-    optional per-architecture); we pin that at least one SHIPPED model class
-    still does, proving the pattern our cache relies on remains real."""
+class TestVisionFeatureCachePatterns:
+    """VLMVisionStrategy.generate caches vision features two ways, chosen by
+    ``hasattr(model, 'encode_image')``: heylook runs ``encode_image`` and
+    passes ``cached_image_features`` (gemma4 and others, not all of which read
+    ``vision_cache``), or hands a model without it the cache as mlx-vlm's
+    ``vision_cache``/``_image_key`` kwargs (qwen3_5, the owner's daily family,
+    which re-ran its tower every turn until 2026-09-25). Pinned on one served
+    model per route."""
 
-    def test_shipped_model_exposes_encode_image_method(self):
+    def test_encode_image_route_is_still_real_on_gemma4(self):
         Model = _gemma4_module.Model
-        assert hasattr(Model, "encode_image")
-        sig = inspect.signature(Model.encode_image)
-        assert "pixel_values" in sig.parameters
+        assert "pixel_values" in inspect.signature(Model.encode_image).parameters
+        assert "cached_image_features" in inspect.getsource(Model.get_input_embeddings)
 
-    def test_shipped_model_get_input_embeddings_reads_cached_image_features(self):
-        src = inspect.getsource(_gemma4_module.Model.get_input_embeddings)
-        assert "cached_image_features" in src
+    def test_kwargs_route_is_still_real_on_qwen3_5(self):
+        import importlib
+        Model = importlib.import_module("mlx_vlm.models.qwen3_5.qwen3_5").Model
+        assert not hasattr(Model, "encode_image"), (
+            "qwen3_5 grew encode_image(); it now takes heylook's own route")
+        src = inspect.getsource(Model.get_input_embeddings)
+        assert '"vision_cache"' in src and '"_image_key"' in src
 
-    def test_our_call_sites_still_reference_the_pattern(self):
+    def test_our_call_site_takes_both_routes(self):
         src = _mlx_provider_source()
         assert "hasattr(model, 'encode_image')" in src
-        assert "cached_image_features" in src
+        assert 'embed_extras["cached_image_features"] = features' in src
+        assert '{"vision_cache": self._vision_cache, "_image_key": key}' in src
 
 
 class TestVlmEngineSurface:

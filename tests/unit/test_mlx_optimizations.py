@@ -2,7 +2,7 @@
 """Tests for MLX server optimizations (v1.26.0).
 
 Covers:
-- VisionFeatureCache: LRU eviction, URL keying, pixel hash fallback, stats
+- VisionFeatureCache: LRU eviction, content keys, stats
 - Keepalive marker: streaming utils sentinel type
 - Cached tokens passthrough: generation_core attaches cached_tokens
 """
@@ -33,17 +33,18 @@ class TestVisionFeatureCache:
         result = cache.get("http://example.com/other.jpg")
         assert result is None
 
-    def test_list_key(self, cache):
-        import mlx.core as mx
-        features = mx.ones((2, 10))
-        cache.put(["img1.jpg", "img2.jpg"], features)
+    def test_content_key_follows_the_pixels_not_the_source(self):
+        """Same picture, same key however it arrived; a changed picture, order,
+        or shape keys differently (a web link whose file changed must miss)."""
+        from PIL import Image
+        from heylook_llm.providers.common.vision_feature_cache import image_content_key
 
-        result = cache.get(["img1.jpg", "img2.jpg"])
-        assert result is not None
-
-        # Different order = different key
-        result = cache.get(["img2.jpg", "img1.jpg"])
-        assert result is None
+        red, red_again = Image.new("RGB", (8, 4), "red"), Image.new("RGB", (8, 4), "red")
+        blue = Image.new("RGB", (8, 4), "blue")
+        assert image_content_key([red]) == image_content_key([red_again])
+        assert image_content_key([red]) != image_content_key([blue])
+        assert image_content_key([red, blue]) != image_content_key([blue, red])
+        assert image_content_key([red]) != image_content_key([Image.new("RGB", (4, 8), "red")])
 
     def test_lru_eviction(self, cache):
         import mlx.core as mx
@@ -93,29 +94,9 @@ class TestVisionFeatureCache:
         assert len(cache) == 0
         assert cache.get("a.jpg") is None
 
-    def test_pixel_hash_fallback(self, cache):
-        """Non-string image source falls back to pixel_values hash."""
-        import mlx.core as mx
-        pixel_values = mx.array([1.0, 2.0, 3.0])
-        features = mx.ones((1, 10))
-
-        # None image_source + pixel_values = pixel hash key
-        cache.put(None, features, pixel_values=pixel_values)
-
-        # Same pixel values should hit
-        result = cache.get(None, pixel_values=pixel_values)
-        assert result is not None
-
-        # Different pixel values should miss
-        other_pixels = mx.array([4.0, 5.0, 6.0])
-        result = cache.get(None, pixel_values=other_pixels)
-        assert result is None
-
     def test_empty_key_no_cache(self, cache):
-        """No URL and no pixel_values means no caching."""
         import mlx.core as mx
-        features = mx.ones((1, 10))
-        cache.put(None, features)  # No pixel_values fallback
+        cache.put("", mx.ones((1, 10)))
         assert len(cache) == 0
 
     def test_update_existing_key(self, cache):
