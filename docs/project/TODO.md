@@ -516,6 +516,9 @@ sample the first token (`docs/architecture/mlx_provider.md`, `VLMVisionStrategy`
 Verified by token parity against `mlx_vlm.generate.ar.generate_step`
 (`scripts/vlm_parity_probe.py`) on qwen3_5 and qwen3_vl. Open:
 
+- **PARKED (owner, 2026-09-25): gemma models on MLX are set aside until new
+  weights arrive; every MLX gemma except diffusiongemma was removed from the
+  model folder.** The two gemma-4 vision items below wait for that.
 - [ ] **Measured 2026-09-25, still open**: `scripts/vlm_parity_probe.py` on
   `gemma-4-26B-A4B-it-heretic-4bit` DIVERGES from mlx-vlm's own loop in every
   case at an upstream top-1/top-2 margin of 0.5 (four bf16 quanta, not a
