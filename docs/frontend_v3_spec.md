@@ -626,7 +626,7 @@ server never receives.
 `context_length` and `context_running`. Same keys on every engine:
 `{runtime, context:{length, running}, template:{origin, path, sha256, running_sha256, prefix_stable},
 settings:{<name>: {value, configured, auto, reason, provenance, effect}},
-cache, thinking, speculative, image, steering}`.
+cache, thinking, speculative, decoding, image, steering}`.
 - Every leaf of `runtime`, `context` and `template` is a Fact
   `{value, provenance, source}`. `provenance` is `derived | configured | observed |
   observed_cached | unknown | not_applicable`; a value whose provenance is `unknown` or
@@ -673,6 +673,18 @@ cache, thinking, speculative, image, steering}`.
   the drafter's header), `in_force` (`unknown` until load; then `observed`: true, or false with
   why -- the fit check dropped the drafter, llama-server could not load it, or none is set).
   MLX: `in_force` false, `not_applicable`.
+- `decoding` (v2.0.147), Facts: `mode` (`autoregressive`, or `diffusion` for a
+  masked-diffusion checkpoint) and `request_fields` (the request fields that engine path
+  reads; null = every sampler field). gguf: autoregressive, null, `derived`. MLX: `unknown`
+  until load (mlx-vlm's own diffusion check on the loaded model), then `observed`; a
+  diffusion model reads `temperature`, `max_tokens`, `enable_thinking` and
+  `reasoning_effort` only (`mlx_provider.DIFFUSION_REQUEST_FIELDS`), and v3's sampler panel
+  hides every other control for it.
+- `thinking.budget` (v2.0.147): `{enforced, reason}` for a model with a thinking switch,
+  else null. MLX `enforced` is heylook's own marker check (the same one behind the
+  `thinking_budget` capability). gguf is `null` = unknown: llama-server finds the thinking
+  end tags per request with its own chat parser and exposes no static answer, so the
+  panel's budget row says the cap may not be enforced.
 - `image`, `steering` are explicit nulls until W4 and W14 report them.
 - No absolute path appears anywhere in `engine` (LAN clients read `/v1/models`); paths
   are basenames. The admin row's `config` still carries full paths.
@@ -880,7 +892,7 @@ residency refresh, for each staged image's size and its original's size: the
 thumbnail shows the staged cost, and "Fit" resizes the original to the
 planned `target` (a model that reports none gets no Fit).
 
-**Models list** `GET /v1/models` → `{data:[{id,provider?,capabilities?,modalities?,thinking_default?,sampler_defaults?,engine?}]}` (enabled models only; `engine` is the contract described under Admin models). `modalities` (v1.34.43) is the model's declared capability set (`["text","vision","audio","video"]`); `capabilities` stays gated to what the server actually serves (image input) -- description != served. Since v1.79.43 the MLX `vision` capability is DERIVED FROM THE LOADER ROUTER (`loader_routing.resolve_serves_vision`), the same answer `MLXProvider`'s image guard reads, so the advertised capability and the 400 cannot disagree. Before that it read the checkpoint's DECLARATION, and a hand-made text-only variant whose directory still carried vision blocks advertised `vision` and was then refused -- a client gating on `capabilities` exactly as this spec instructs got the refusal anyway. (The `loader` field that could force a dual-capable VLM to text was retired in v2.0.88.) NB `modalities` is UNCHANGED by this: the checkpoint still declares what it declares, which is why chat's history-media drop disclosure reads capabilities and not modalities. `thinking` (v1.34.60) is auto-detected from whether the model's chat template references `enable_thinking` (Qwen3 `<think>` blocks, gemma-4 thought channels) -- no `heylook.toml` flag needed; this is what shows/hides the drawer checkbox and composer icon.
+**Models list** `GET /v1/models` → `{data:[{id,provider?,capabilities?,modalities?,thinking_default?,sampler_defaults?,engine?}]}` (enabled models only; `engine` is the contract described under Admin models). `modalities` (v1.34.43) is the model's declared capability set (`["text","vision","audio","video"]`); `capabilities` stays gated to what the server actually serves (image input) -- description != served. On gguf `vision` and `audio` need the projector (`mmproj_path`; v2.0.147): llama.cpp runs no media without one, so a declared-but-unprojected modality advertises nothing. Since v1.79.43 the MLX `vision` capability is DERIVED FROM THE LOADER ROUTER (`loader_routing.resolve_serves_vision`), the same answer `MLXProvider`'s image guard reads, so the advertised capability and the 400 cannot disagree. Before that it read the checkpoint's DECLARATION, and a hand-made text-only variant whose directory still carried vision blocks advertised `vision` and was then refused -- a client gating on `capabilities` exactly as this spec instructs got the refusal anyway. (The `loader` field that could force a dual-capable VLM to text was retired in v2.0.88.) NB `modalities` is UNCHANGED by this: the checkpoint still declares what it declares, which is why chat's history-media drop disclosure reads capabilities and not modalities. `thinking` (v1.34.60) is auto-detected from whether the model's chat template references `enable_thinking` (Qwen3 `<think>` blocks, gemma-4 thought channels) -- no `heylook.toml` flag needed; this is what shows/hides the drawer checkbox and composer icon.
 **Metrics** `GET /v1/system/metrics?force_refresh?` → `{system:{ram_used_gb,ram_available_gb,ram_total_gb,
 cpu_percent}, models:{[id]:{memory_mb,memory_source,context_used,context_capacity,context_percent,
 requests_active,requests_queued}}}` (30s server cache). Every loaded model on both engines

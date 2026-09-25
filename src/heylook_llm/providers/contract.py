@@ -114,13 +114,21 @@ class EngineDescription(BaseModel):
         description="Thinking controls the in-force template offers (plan W2, "
                     "thinking_controls.detect): {switch, depth: {variable, "
                     "values, aliases, default, unknown, changes_prefix}, "
-                    "template}. Values are the template's own spellings; "
+                    "template, budget: {enforced, reason}}. Values are the "
+                    "template's own spellings; "
                     "`template` names the copy they were read from (the same "
                     "ladder the load walks, so a jinja beside the weights beats "
                     "the one embedded in a GGUF). Null when there is no "
                     "template to judge.")
     image: Optional[Dict[str, Any]] = Field(
         default=None, description="Image geometry (plan W4). Null until reported.")
+    decoding: Optional[Dict[str, Fact]] = Field(
+        default=None,
+        description="How the model generates: `mode` (autoregressive, or "
+                    "diffusion for a masked-diffusion checkpoint, which MLX "
+                    "decides at load) and `request_fields` (the request "
+                    "fields that engine path reads; null = every sampler "
+                    "field). A client hides a control whose field is not listed.")
     speculative: Optional[Dict[str, Fact]] = Field(
         default=None,
         description="Speculative decoding: `drafter` (the file, the built-in "
@@ -140,6 +148,7 @@ class Observed:
     settings: Dict[str, Setting] = field(default_factory=dict)
     cache: Dict[str, Fact] = field(default_factory=dict)
     speculative: Dict[str, Fact] = field(default_factory=dict)
+    decoding: Dict[str, Fact] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +291,8 @@ def with_observed(static: EngineDescription, observed: Observed) -> EngineDescri
         desc.cache = {**(desc.cache or {}), **observed.cache}
     if observed.speculative:
         desc.speculative = {**(desc.speculative or {}), **observed.speculative}
+    if observed.decoding:
+        desc.decoding = {**(desc.decoding or {}), **observed.decoding}
     return desc
 
 

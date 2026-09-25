@@ -178,6 +178,12 @@ def describe_static(model_id: str, cfg: dict, config_obj: Any, *,
         settings=settings,
         thinking=_thinking(model_id, cfg),
         speculative=_speculative(cfg, derived, written),
+        decoding={
+            "mode": Fact(value="autoregressive", provenance="derived",
+                         source="llama.cpp decodes token by token"),
+            "request_fields": Fact(provenance="derived",
+                                   source="every sampler field reaches llama-server"),
+        },
     )
 
 
@@ -195,7 +201,17 @@ def _thinking(model_id: str, cfg: dict):
     if controls is None:
         return None
     path, _ = _provider().resolve_chat_template(cfg, model_id, log=False)
-    return {**controls, "template": public_value(path) if path else "embedded in the GGUF"}
+    budget = None
+    if controls.get("switch"):
+        # llama-server finds the thinking end tags per request with its own
+        # chat parser and applies the budget only where it does; it exposes
+        # no static answer (/props' template caps carry none), so this is
+        # unknown rather than a guess at its parser.
+        budget = {"enforced": None, "reason": (
+            "llama-server enforces it only where its chat parser finds this "
+            "template's thinking end tags, which it decides per request")}
+    return {**controls, "template": public_value(path) if path else "embedded in the GGUF",
+            "budget": budget}
 
 
 _KIND_LABEL = {

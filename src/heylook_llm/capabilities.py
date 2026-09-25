@@ -233,12 +233,17 @@ def infer_model_capabilities(model_config, serves_vision: bool | None = None) ->
     # ModelConfig.capabilities override short-circuits this entirely.
     elif provider == "gguf":
         capabilities.append("chat")
+        # Media needs the projector: llama.cpp runs no image or audio without
+        # an mmproj, and `modalities` is descriptive on gguf (it routes
+        # nothing). Declared-but-unprojected media is advertised as nothing,
+        # so an attach button never offers what llama-server cannot take.
         modalities = getattr(config, "modalities", None) or []
-        if getattr(config, "mmproj_path", None) or "vision" in modalities:
+        projector = bool(getattr(config, "mmproj_path", None))
+        if projector:
             capabilities.append("vision")
         if _has_depth(model_config):
             capabilities.append("reasoning_effort")
-        if "audio" in modalities:
+        if projector and "audio" in modalities:
             # gguf only: MLX strips audio towers at load, so the mlx branch
             # above must never emit this cap even when the model declares
             # the modality.

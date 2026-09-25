@@ -86,11 +86,16 @@ function toControlValue(field, value) {
   return String(value);
 }
 
-function defaultLabel(field) {
-  if (field.default == null) return null;
-  if (field.type === 'boolean') return field.default ? 'on' : 'off';
-  if (field.type === 'array' && Array.isArray(field.default)) return field.default.join(', ');
-  return String(field.default);
+// What an unset field resolves to. The model's engine.settings[name].auto is
+// the server's own answer for THIS model (a value discovery derived, one
+// decided at spawn, the vendor sampling layer); the schema default is the
+// fallback for a field the engine report does not carry.
+function defaultLabel(field, setting = null) {
+  const value = setting?.auto ?? field.default;
+  if (value == null) return null;
+  if (field.type === 'boolean' || typeof value === 'boolean') return value ? 'on' : 'off';
+  if (Array.isArray(value)) return value.join(', ');
+  return String(value);
 }
 
 function boundsLabel(field) {
@@ -102,10 +107,10 @@ function boundsLabel(field) {
   return parts.join(', ');
 }
 
-function buildHint(field) {
+function buildHint(field, setting) {
   const bits = [];
   if (field.arg) bits.push(createEl('span', { class: 'cfg-field__arg' }, [field.arg]));
-  const def = defaultLabel(field);
+  const def = defaultLabel(field, setting);
   if (def != null) bits.push(`default ${def}`);
   const bounds = boundsLabel(field);
   if (bounds) bits.push(bounds);
@@ -123,7 +128,7 @@ function buildHint(field) {
 // One control. Selects get an explicit "default" option; free inputs use
 // empty-means-default with the default as placeholder. Everything reports
 // edits into `onEdit(name, rawValue)` immediately -- Save decides what to send.
-function buildControl(field, rawValue, inputId, onEdit) {
+function buildControl(field, rawValue, inputId, onEdit, setting) {
   const disabled = field.effect === 'load_time_only';
 
   if (field.type === 'boolean' || field.enum) {
@@ -132,7 +137,7 @@ function buildControl(field, rawValue, inputId, onEdit) {
     const choices = field.type === 'boolean'
       ? [['true', 'on'], ['false', 'off']]
       : field.enum.map((v) => [String(v), String(v)]);
-    const def = defaultLabel(field);
+    const def = defaultLabel(field, setting);
     const select = createEl('select', { id: inputId, disabled }, [
       createEl('option', { value: '' }, [def != null ? `default (${def})` : 'default']),
       ...choices.map(([v, label]) => createEl('option', { value: v }, [label])),
@@ -148,7 +153,7 @@ function buildControl(field, rawValue, inputId, onEdit) {
       class: 'input cfg-field__lines',
       rows: 3,
       value: rawValue,
-      placeholder: defaultLabel(field) ?? 'default',
+      placeholder: defaultLabel(field, setting) ?? 'default',
       disabled,
     });
     area.addEventListener('input', () => onEdit(field.name, area.value));
@@ -161,7 +166,7 @@ function buildControl(field, rawValue, inputId, onEdit) {
     class: 'input',
     type: isNumeric ? 'number' : 'text',
     value: rawValue,
-    placeholder: defaultLabel(field) ?? 'default',
+    placeholder: defaultLabel(field, setting) ?? 'default',
     disabled,
   });
   if (isNumeric) {
@@ -173,15 +178,15 @@ function buildControl(field, rawValue, inputId, onEdit) {
   return input;
 }
 
-function fieldRow(field, rawValue, idPrefix, onEdit) {
+function fieldRow(field, rawValue, idPrefix, onEdit, setting = null) {
   const inputId = `${idPrefix}-${field.name}`;
   const row = createEl('div', {
     class: `cfg-field${field.effect === 'load_time_only' ? ' cfg-field--fixed' : ''}`,
   }, [
     createEl('label', { class: 'cfg-field__label', for: inputId }, [field.name]),
-    buildControl(field, rawValue, inputId, onEdit),
+    buildControl(field, rawValue, inputId, onEdit, setting),
   ]);
-  const hint = buildHint(field);
+  const hint = buildHint(field, setting);
   if (hint) row.append(hint);
   return row;
 }
@@ -530,14 +535,17 @@ function buildFitMeter({ model, overrides, onGate }) {
       // (re)load the cached entry predates it -- the one moment this line
       // exists for is exactly when the cache is wrong.
       const metrics = await api.systemMetrics(true);
-      const mb = metrics?.models?.[model.id]?.memory_mb;
-      // 0.0 is the collector's measurement-FAILED sentinel, not a reading --
-      // rendering "0.0 GiB measured" would be the opposite of calibration.
+      const reading = metrics?.models?.[model.id];
+      const mb = reading?.memory_mb;
+      // Null is unknown (gguf: the process footprint was unreadable); an
+      // older server sent 0.0 for a failed measurement. Neither is a reading.
       if (!mb) return;
       // Built by the same row() helper as the estimate rows above, so a
-      // restyle can't silently fork this line's markup.
+      // restyle can't silently fork this line's markup. memory_source says
+      // what was measured: gguf's own llama-server process, or on MLX the
+      // whole server's Metal memory, which is not this model's alone.
       observedEl.replaceChildren(
-        ...row('Resident now', gib(mb / 1024), 'measured after load').children);
+        ...row('Resident now', gib(mb / 1024), reading.memory_source ?? 'measured after load').children);
       observedEl.hidden = false;
     } catch { /* stays hidden */ }
   }
@@ -833,7 +841,8 @@ export function createModelConfigEditor({ model, fields: allFields, draft, initi
   const live = fields.filter((f) => LIVE_EFFECTS.has(f.effect) && f.ui !== 'advanced');
   const reload = fields.filter((f) => f.effect === 'requires_reload' && f.ui !== 'advanced');
 
-  const rows = (list) => list.map((f) => fieldRow(f, currentRaw(f), idPrefix, onEdit));
+  const rows = (list) => list.map((f) => fieldRow(f, currentRaw(f), idPrefix, onEdit,
+    model.engine?.settings?.[f.name] ?? null));
 
   const children = [fitMeter.el];
   if (live.length) {

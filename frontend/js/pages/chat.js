@@ -181,6 +181,10 @@ export default createPage({
       modelDefaults: () => ({ enable_thinking: currentThinkingDefault(ctx) }),
       samplerDefaults: () => currentModelRow(ctx)?.sampler_defaults ?? null,
       thinking: () => currentThinking(ctx),
+      // Observed at load (a diffusion model reads few fields), so the admin
+      // row, which residency refreshes keep current, before the models list.
+      requestFields: () => readFact(
+        (s.adminRows.get(s.modelSelect.value) ?? currentModelRow(ctx))?.engine?.decoding?.request_fields),
     });
     ctx.onTeardown(unregisterSettings);
 
@@ -2540,7 +2544,9 @@ async function deleteMessage(ctx, msg) {
 // ---------------------------------------------------------------------------
 
 const MAX_ATTACH_IMAGES = 8;
-const MAX_ATTACH_AUDIO = 2; // server-side gemma cap is 30s/clip; keep the strip sane
+// A UI cap only: the server sets no audio count or length limit (llama.cpp's
+// audio projector decides what a clip costs). Keeps the strip readable.
+const MAX_ATTACH_AUDIO = 2;
 
 
 // Picker dispatch: the input's accept list is capability-driven, but a

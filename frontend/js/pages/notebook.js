@@ -84,6 +84,9 @@ export default createPage({
     const unregisterSettings = drawer.registerSettings({
       caps: () => notebookCaps(ctx),
       thinking: () => notebookThinking(ctx),
+      // engine.decoding.request_fields (observed at load; null = every field).
+      requestFields: () => ctx.state.models.find(
+        (m) => m.id === ctx.state.modelSelect.value)?.engine?.decoding?.request_fields?.value ?? null,
       // The tri-state thinking control labels "Model default" with the
       // server's answer, off the /v1/models row (v1.79.63).
       modelDefaults: () => ({

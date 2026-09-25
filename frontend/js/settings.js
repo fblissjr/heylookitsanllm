@@ -421,6 +421,16 @@ function depthNote(thinking) {
   return notes.join(' ') || null;
 }
 
+// The budget row's note: the server says whether this engine can enforce it
+// (engine.thinking.budget). Unknown (gguf: llama-server decides per request)
+// or false is said on the row, so a cap that may not bite is not presented
+// as a hard one.
+function budgetNote(meta, thinking) {
+  const budget = thinking?.budget;
+  if (!budget || budget.enforced === true) return meta.note;
+  return `${budget.enforced === false ? 'Not enforced' : 'May not be enforced'}: ${budget.reason}.`;
+}
+
 // The switch row's note when the template offers no depth: thinking is then
 // on, off, or the model's own default, and the reader should know that is the
 // template's answer (which file), not a control the page left out.
@@ -453,8 +463,12 @@ export function documentScopeNote(noun, hasActive) {
 // with nothing useful to say. `modelDefaults` is what the current model
 // resolves an UNSET key to, keyed like PARAM_META (today: enable_thinking
 // from the admin row's thinking_default) -- read by the tri-state control.
+// `requestFields` is engine.decoding.request_fields: when the model's engine
+// path reads only some fields (a masked-diffusion model reads temperature,
+// max_tokens and the thinking controls), the rest are not offered. Null = all.
 export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {},
-                                    samplerDefaults = null, thinking = null } = {}) {
+                                    samplerDefaults = null, thinking = null,
+                                    requestFields = null } = {}) {
   const rows = { core: [], advanced: [] };
   const controls = [];
 
@@ -473,9 +487,11 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
 
   for (const [key, meta] of Object.entries(PARAM_META)) {
     if (meta.requiresCap && !caps.includes(meta.requiresCap)) continue;
+    if (Array.isArray(requestFields) && !requestFields.includes(key)) continue;
     const control = bindControl(key, meta, lookup, thinking);
     const note = meta.type === 'depth' ? depthNote(thinking)
-      : key === 'enable_thinking' ? switchNote(thinking) : meta.note;
+      : key === 'enable_thinking' ? switchNote(thinking)
+        : key === 'thinking_budget_tokens' ? budgetNote(meta, thinking) : meta.note;
     // Shown only while the key is overridden, so its presence IS the "you
     // changed this" signal and there is nothing extra on screen otherwise.
     // Not a hover reveal -- state, not pointer -- so DESIGN.md §7's

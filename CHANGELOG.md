@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.147]
+
+Second pass on frontend/backend parity per engine (the part of the
+follow-up list mrpurple owns; gguf metrics were mrblue's v2.0.146).
+
+### Fixed
+
+- **gguf vision and audio capabilities need the projector.** They were
+  granted on `modalities` alone, which is descriptive on gguf; llama.cpp
+  runs no media without an `mmproj`, so a declared-but-unprojected model
+  offered an attach button llama-server could not serve. No served model
+  was affected (every declared-vision gguf model has its projector).
+- **A masked-diffusion MLX model offers only the controls it reads.** New
+  engine slot `decoding`: `mode` and `request_fields`, observed at load
+  (mlx-vlm's own diffusion check). The denoising loop reads temperature,
+  max_tokens and the thinking switch and depth
+  (`mlx_provider.DIFFUSION_REQUEST_FIELDS`); the sampler panel on chat and
+  notebook hides the rest instead of showing knobs that do nothing.
+- **The thinking budget says whether it can bite.** `engine.thinking.budget`
+  is `{enforced, reason}`: MLX's own marker check, and unknown on gguf,
+  where llama-server finds the end tags per request and exposes no static
+  answer. The panel's budget row says "May not be enforced" there.
+- **The config editor's "default (x)" labels are this model's answer**
+  (`engine.settings[name].auto`: values discovery derived, spawn decisions,
+  the vendor sampling layer), with the schema default as the fallback.
+- The models page's "Resident now" line names what was measured
+  (`memory_source`: gguf's own llama-server process, or MLX's whole-server
+  Metal memory) and treats null as unknown.
+- `MAX_ATTACH_AUDIO` cited a server-side audio cap that does not exist; the
+  comment now says it is a UI cap only.
+
+### Added
+
+- Pins for the panel's hand copies, read from `settings.js`: PARAM_META
+  `requiresCap` equals `_CAP_GATED`; every widget min/max stays inside
+  ChatRequest's bounds; the diffusion field names are panel keys.
+- Checks: unit + contract green. Not run: smoke, pages/chat E2E.
+
 ## [2.0.146]
 
 gguf on the perf page and in `/status` (the mrblue half of the 2026-09-25

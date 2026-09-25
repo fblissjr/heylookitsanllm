@@ -108,6 +108,18 @@ class TestCapability:
         assert "audio" in caps
         assert "vision" in caps
 
+    def test_gguf_media_needs_the_projector(self):
+        # `modalities` is descriptive on gguf; llama.cpp runs no image or
+        # audio without an mmproj, so a declaration alone advertises nothing.
+        from heylook_llm.capabilities import infer_model_capabilities
+
+        mc = ModelConfig.model_validate({
+            "id": "m", "provider": "gguf",
+            "config": {"model_path": "/x.gguf", "modalities": ["text", "vision", "audio"]},
+        })
+        caps = infer_model_capabilities(mc)
+        assert "vision" not in caps and "audio" not in caps
+
     def test_mlx_never_gains_audio_cap_from_modalities(self):
         # MLX strips audio towers at load; advertising audio would invite
         # requests the provider must 400.

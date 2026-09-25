@@ -790,6 +790,14 @@ class VLMVisionStrategy:
         )
 
 
+# The request fields DiffusionStrategy.generate reads: the raw temperature and
+# max_tokens, and the thinking switch and depth it renders into the prompt.
+# Every other sampler field is ignored by the denoising loop, and
+# describe_observed publishes this list so a client hides those controls.
+# Edit it with generate() below.
+DIFFUSION_REQUEST_FIELDS = ("temperature", "max_tokens", "enable_thinking", "reasoning_effort")
+
+
 class DiffusionStrategy:
     """Strategy for masked-diffusion LMs (diffusion_gemma and friends).
 
@@ -997,8 +1005,21 @@ class MLXProvider(BaseProvider):
 
     def describe_observed(self):
         """The engine contract's observed half: the template body installed
-        at load, and the prefix cache as built at load (vlm_engine)."""
+        at load, the prefix cache as built at load (vlm_engine), and whether
+        the model decodes by diffusion (_detect_diffusion)."""
         from .contract import Fact, Observed
+
+        decoding = {
+            "mode": Fact(value="diffusion" if self.is_diffusion else "autoregressive",
+                         provenance="observed",
+                         source="mlx-vlm's diffusion check on the loaded model"),
+            "request_fields": Fact(
+                value=list(DIFFUSION_REQUEST_FIELDS) if self.is_diffusion else None,
+                provenance="observed",
+                source=("the denoising loop reads only these; every other sampler "
+                        "field is ignored" if self.is_diffusion
+                        else "every sampler field reaches the sampler")),
+        }
 
         cache = {}
         if self._apc is not None:
@@ -1017,7 +1038,8 @@ class MLXProvider(BaseProvider):
             cache["memory_budget_bytes"] = Fact(
                 value=int(self._apc.memory_max_bytes), provenance="observed",
                 source="mlx-vlm's automatic prefix-cache budget, sized from the Metal working set")
-        return Observed(loaded_template=self.loaded_chat_template, cache=cache)
+        return Observed(loaded_template=self.loaded_chat_template, cache=cache,
+                        decoding=decoding)
 
     def load_model(self):
         model_path = self.config['model_path']

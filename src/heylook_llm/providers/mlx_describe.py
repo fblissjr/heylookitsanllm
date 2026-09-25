@@ -179,6 +179,11 @@ def describe_static(model_id: str, cfg: dict, config_obj: Any, *,
         template=_template(model_id, cfg),
         settings=settings,
         thinking=_thinking(model_id, cfg),
+        decoding={
+            "mode": Fact(provenance="unknown",
+                         source="decided at load: mlx-vlm's own diffusion check on the loaded model"),
+            "request_fields": Fact(provenance="unknown", source="decided at load, with the mode"),
+        },
     )
 
 
@@ -191,11 +196,22 @@ def _thinking(model_id: str, cfg: dict):
     from heylook_llm.providers.common.template_info import SOURCE_FILES
     from heylook_llm.thinking_controls import detect
 
+    from heylook_llm.capabilities import template_supports_thinking_budget
+
     view = chat_template_files.view(model_id, "mlx", cfg)
     controls = detect(view.template)
     if controls is None:
         return None
-    return {**controls, "template": SOURCE_FILES.get(view.origin) or public_value(view.origin)}
+    budget = None
+    if controls.get("switch"):
+        # The same marker check the thinking_budget capability reads.
+        enforced = template_supports_thinking_budget(str(cfg.get("model_path") or ""))
+        budget = {"enforced": enforced, "reason": (
+            "heylook's MLX engine closes the thinking block with one forced token"
+            if enforced else
+            "the template's thinking markers were not found, so no cap can be forced")}
+    return {**controls, "template": SOURCE_FILES.get(view.origin) or public_value(view.origin),
+            "budget": budget}
 
 
 def _cache_static() -> dict:

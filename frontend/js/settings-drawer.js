@@ -122,6 +122,9 @@ export function mountSettingsDrawer(navDesktop, navBottom) {
 //                                           tri-state's "Model default"
 //   thinking?(): engine.thinking | null   -- the model's own thinking controls
 //                                           (plan W2): builds the depth control
+//   requestFields?(): string[] | null    -- engine.decoding.request_fields:
+//                                           the fields this model's engine path
+//                                           reads (null = all); others hide
 //   samplerDefaults?(): {temperature,...}  -- the server's sampler_defaults for
 //                                           the current model; labels every
 //                                           blank field with its real value
@@ -222,6 +225,7 @@ function render() {
       modelDefaults: current?.modelDefaults?.() ?? {},
       samplerDefaults: current?.samplerDefaults?.() ?? null,
       thinking: current?.thinking?.() ?? null,
+      requestFields: current?.requestFields?.() ?? null,
     });
     if (samplers === 'disabled') {
       for (const el of panel.querySelectorAll('input, button')) el.disabled = true;

@@ -65,3 +65,65 @@ class TestSamplerBagRoundTrips:
             f"the panel offers {extra} but the server drops them at _SAMPLER_KEYS, "
             "so the control shows a number that never reaches the model."
         )
+
+
+def _panel_entries() -> dict[str, str]:
+    """PARAM_META's top-level entries, key -> the entry's source text."""
+    src = _SETTINGS_JS.read_text()
+    start = src.index("export const PARAM_META")
+    end = src.index("function emptySettings", start)
+    body = src[start:end]
+    heads = list(re.finditer(r"^\s{2}(\w+):\s*\{", body, re.M))
+    return {m.group(1): body[m.start():(heads[i + 1].start() if i + 1 < len(heads) else len(body))]
+            for i, m in enumerate(heads)}
+
+
+class TestPanelTwins:
+    """The panel's other hand copies of server facts, in a different language,
+    so reading the source is the only tie."""
+
+    def test_requires_cap_is_the_servers_cap_gate(self):
+        """PARAM_META `requiresCap` hides a control; `_CAP_GATED` drops the
+        same key at /generate. A key gated on one side only is either a
+        control that silently does nothing or one hidden for no reason."""
+        from heylook_llm.conversation_generate_api import _CAP_GATED
+
+        panel = {key: m.group(1) for key, text in _panel_entries().items()
+                 if (m := re.search(r"requiresCap:\s*'(\w+)'", text))}
+        assert panel, "parsed no requiresCap out of PARAM_META; this check compares nothing"
+        assert panel == _CAP_GATED
+
+    def test_widget_hints_stay_inside_the_servers_bounds(self):
+        """min/max are widget hints, not validation (settings.js `valid`), and
+        may be narrower than the server's. They must never suggest a value
+        ChatRequest rejects."""
+        from annotated_types import Ge, Gt, Le, Lt
+
+        from heylook_llm.config import ChatRequest
+
+        checked = 0
+        for key, text in _panel_entries().items():
+            field = ChatRequest.model_fields.get(key)
+            if field is None:
+                continue
+            lo = re.search(r"\bmin:\s*([-\d.]+)", text)
+            hi = re.search(r"\bmax:\s*([-\d.]+)", text)
+            for bound in field.metadata:
+                if isinstance(bound, (Ge, Gt)) and lo:
+                    floor = bound.ge if isinstance(bound, Ge) else bound.gt
+                    ok = float(lo.group(1)) >= floor if isinstance(bound, Ge) else float(lo.group(1)) > floor
+                    assert ok, f"{key}: panel min {lo.group(1)} is below the server's {floor}"
+                    checked += 1
+                if isinstance(bound, (Le, Lt)) and hi:
+                    ceil = bound.le if isinstance(bound, Le) else bound.lt
+                    ok = float(hi.group(1)) <= ceil if isinstance(bound, Le) else float(hi.group(1)) < ceil
+                    assert ok, f"{key}: panel max {hi.group(1)} is above the server's {ceil}"
+                    checked += 1
+        assert checked >= 6, f"only {checked} bounds compared; the parse or the schema moved"
+
+    def test_diffusion_fields_are_panel_keys(self):
+        """engine.decoding.request_fields hides every panel control not named
+        in it, so a misspelled name hides a control the model does read."""
+        from heylook_llm.providers.mlx_provider import DIFFUSION_REQUEST_FIELDS
+
+        assert set(DIFFUSION_REQUEST_FIELDS) <= _panel_keys()
