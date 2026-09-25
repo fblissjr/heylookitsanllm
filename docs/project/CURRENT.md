@@ -34,6 +34,14 @@ advertises `reasoning_effort`.
 
 ## Handoff -- start here (2026-09-25)
 
+**v2.0.143 / v2.0.145 (`mrpurple`).** Thinking levels come from the template
+in force, and `engine.thinking.template` says which copy that is (a jinja
+beside the weights, then the GGUF's embedded template or tokenizer_config).
+Level names now come from the template's own normalized words. v2.0.145 fixed
+the gaps that two frontend-vs-backend audits confirmed. Open items from those
+audits, not yet done, are in `internal/log/log_2026-09-25.md` (mrpurple
+section). Smoke and pages/chat E2E were not run for these two releases.
+
 **Where things stand.** The runtime-visibility plan's workstreams are all
 shipped or closed except the gated ones (W6 waits on W5 showing budget skips,
 W14 on the steering research track, W11 is optional upstream work) and W10's
