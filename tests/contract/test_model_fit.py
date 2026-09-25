@@ -84,7 +84,6 @@ class TestFitEndpoint:
         assert body["reclaimable_gb"] == 100.0
         assert body["working_set_gb"] == 80.0
         assert body["kv_headroom_gb"] == pytest.approx(79.0)
-        assert body["estimated"] is False
         assert body["sysctl_suggest_mb"] is None  # under the ceiling: no hint
         ceilings = [line["ceiling"] for line in body["lines"]]
         assert ceilings == ["reclaimable_ram", "metal_working_set"]

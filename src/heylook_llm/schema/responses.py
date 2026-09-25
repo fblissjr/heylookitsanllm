@@ -190,6 +190,10 @@ class MessageResponse(BaseModel):
     # Map through STOP_REASON_FROM_FINISH_REASON (converters.py) rather than
     # assigning a provider value here.
     stop_reason: StopReason = "end_turn"
+    stop_sequence: Optional[str] = Field(
+        default=None,
+        description="The request's stop sequence that ended the reply, when "
+                    "stop_reason is stop_sequence; null otherwise.")
     usage: Usage
     performance: Optional[PerformanceInfo] = None
     metadata: Optional[Dict[str, str]] = Field(

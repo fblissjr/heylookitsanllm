@@ -340,10 +340,6 @@ class FitReport:
     # llama-server's micro-batch instead of the larger auto default, and a
     # decode-time Metal OOM is a real possibility at full context.
     headroom_thin: bool = False
-    # All numbers above are measured (file sizes, device properties, vm_stat).
-    # Flips to True the day a component is approximated (e.g. expert-offload
-    # deltas); the UI renders estimates in a different visual register.
-    estimated: bool = False
 
     @property
     def fits(self) -> bool:

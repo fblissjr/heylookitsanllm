@@ -58,6 +58,9 @@ MESSAGES_ONLY = {
     "thinking": "the Messages spelling of enable_thinking and thinking_budget_tokens "
                 "(see WIRE_ALIASES)",
     "metadata": "Anthropic passthrough; the provider request has no use for it",
+    "stop_sequences": "applied to the reply text at the Messages boundary "
+                      "(stop_sequences.py), the same on every engine; no provider "
+                      "sees it",
 }
 
 # Shared fields whose SHAPE legitimately differs -- the wire's own message and

@@ -1818,7 +1818,3 @@ class FitResponse(BaseModel):
     verdict: str                             # pass | warn | fail (worst line)
     lines: List[FitLineResponse] = Field(default_factory=list)
     sizing_notes: List[str] = Field(default_factory=list)
-    # All numbers are measured today (file sizes, device properties, vm_stat).
-    # Flips when a component becomes an approximation (e.g. offload deltas);
-    # the UI must render estimates in a different visual register.
-    estimated: bool = False

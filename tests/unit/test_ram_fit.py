@@ -70,7 +70,6 @@ class TestReportFields:
         assert report.reclaimable_gb == 100.0
         assert report.working_set_gb == 80.0
         assert report.kv_headroom_gb == pytest.approx(20.0)
-        assert report.estimated is False
 
     def test_sysctl_hint_only_at_os_default(self, monkeypatch):
         # Over the working set with sysctl=0 -> actionable hint. With the

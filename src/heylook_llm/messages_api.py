@@ -49,6 +49,7 @@ from heylook_llm.reasoning_parser import (
     parser_factory_for,
 )
 from heylook_llm.thinking_parser import HybridThinkingParser
+from heylook_llm.stop_sequences import StopSequenceFilter, truncate as truncate_at_stop
 
 messages_router = APIRouter(
     prefix="/v1",
@@ -72,7 +73,8 @@ class StreamingEventTranslator:
                     -> message_delta -> message_stop
     """
 
-    def __init__(self, message_id: str, model: str, thinking_parser=None):
+    def __init__(self, message_id: str, model: str, thinking_parser=None,
+                 stop_sequences=None):
         self.message_id = message_id
         self.model = model
         self.block_index = -1
@@ -88,6 +90,12 @@ class StreamingEventTranslator:
         self.completion_tokens = 0
         self.cache = None  # the request's CacheReport, copied from telemetry
         self.stop_reason: str = "end_turn"
+        # Client stop sequences (stop_sequences.py): matched against the
+        # reply text only. `stopped` tells the route to end the generation;
+        # everything after the match is dropped here, on every engine.
+        self._stop = StopSequenceFilter(stop_sequences) if stop_sequences else None
+        self.stop_sequence: str | None = None
+        self.stopped = False
 
         # Timing
         self.start_time = time.time()
@@ -133,10 +141,24 @@ class StreamingEventTranslator:
 
     def _emit_delta(self, delta_type: str, delta_text: str) -> list[str]:
         """Block bookkeeping shared by parser output and pre-split thinking."""
-        if not delta_text:
+        if not delta_text or self.stopped:
             return []
         events = []
         block_type = "thinking" if delta_type == "thinking" else "text"
+        if self._stop is not None:
+            if block_type == "text":
+                delta_text = self._stop.feed(delta_text)
+                if self._stop.matched is not None:
+                    self.stopped = True
+                    self.stop_sequence = self._stop.matched
+                    self.stop_reason = to_stop_reason("stop_sequence")
+                if not delta_text:
+                    return []
+            elif self.current_block_type == "text":
+                # Text is ending without a match: send what was held back.
+                held = self._stop.flush()
+                if held:
+                    events.append(self._block_delta("text", held))
 
         # Start a new block if type changed
         if block_type != self.current_block_type:
@@ -167,6 +189,14 @@ class StreamingEventTranslator:
         """Flush remaining parser state and close any open block."""
         events = []
         for delta_type, text in self.thinking_parser.flush():
+            if self.stopped:
+                break
+            if text and delta_type != "thinking" and self._stop is not None:
+                text = self._stop.feed(text)
+                if self._stop.matched is not None:
+                    self.stopped = True
+                    self.stop_sequence = self._stop.matched
+                    self.stop_reason = to_stop_reason("stop_sequence")
             if text:
                 block_type = "thinking" if delta_type == "thinking" else "text"
                 if block_type != self.current_block_type:
@@ -174,6 +204,16 @@ class StreamingEventTranslator:
                         events.append(self._block_stop())
                     events.append(self._block_start(block_type))
                 events.append(self._block_delta(block_type, text))
+
+        # The reply ended without a match: the held-back tail is reply text.
+        if self._stop is not None and not self.stopped:
+            held = self._stop.flush()
+            if held:
+                if self.current_block_type != "text":
+                    if self.current_block_type is not None:
+                        events.append(self._block_stop())
+                    events.append(self._block_start("text"))
+                events.append(self._block_delta("text", held))
 
         # Close last block
         if self.current_block_type is not None:
@@ -196,7 +236,8 @@ class StreamingEventTranslator:
             usage["content_tokens"] = self.content_tokens
         return self._sse("message_delta", {
             "type": "message_delta",
-            "delta": {"stop_reason": self.stop_reason},
+            "delta": {"stop_reason": self.stop_reason,
+                      **({"stop_sequence": self.stop_sequence} if self.stop_sequence else {})},
             "usage": usage,
         })
 
@@ -468,6 +509,8 @@ async def _non_stream_messages(
     # `usage.thinking_tokens` / `content_tokens` mean the same thing in both
     # modes. Non-streaming used to leave them null.
     timing_parser = make_parser()
+    stop_watch = (StopSequenceFilter(msg_request.stop_sequences)
+                  if msg_request.stop_sequences else None)
     thinking_start = thinking_end = content_start = None
     seen = {"thinking": 0, "text": 0}
 
@@ -500,6 +543,13 @@ async def _non_stream_messages(
                 for kind, text in timing_parser.process_chunk(chunk.text):
                     if text:
                         _saw(kind, at)
+                        if stop_watch is not None and kind != "thinking":
+                            stop_watch.feed(text)
+                            if (stop_watch.matched is not None and abort_event is not None
+                                    and not abort_event.is_set()):
+                                # End the generation now; the reply is cut at
+                                # the match below, after the one final parse.
+                                abort_event.set()
             at = time.time()
             for kind, text in timing_parser.flush():
                 if text:
@@ -518,6 +568,9 @@ async def _non_stream_messages(
     content_text, thinking = parse_reasoning(full_text, make_parser())
 
     thinking = merge_presplit_thinking(pre_thinking_parts, thinking)
+    matched_stop = None
+    if msg_request.stop_sequences:
+        content_text, matched_stop = truncate_at_stop(content_text, msg_request.stop_sequences)
 
     # Build an OpenAI-shaped dict so we can reuse from_openai_response_dict.
     # mlx-lm's own reason: "length" (budget exhausted) must not read as "stop"
@@ -538,7 +591,9 @@ async def _non_stream_messages(
     # unconditionally would clobber a genuine `length` or stop-sequence when a
     # DELETE lands between the last token and the response build -- and the two
     # halves of one rule quietly disagreeing is worse than either policy.
-    if (abort_event is not None and abort_event.is_set()
+    if matched_stop is not None:
+        finish_reason = "stop_sequence"
+    elif (abort_event is not None and abort_event.is_set()
             and finish_reason == "stop"):
         finish_reason = "length"
     message: dict = {"role": "assistant", "content": content_text}
@@ -588,6 +643,7 @@ async def _non_stream_messages(
         openai_dict,
         metadata=msg_request.metadata,
     )
+    response.stop_sequence = matched_stop
 
     logging.info(
         f"[MESSAGES] {request_id[:12]} completed | "
@@ -643,6 +699,7 @@ async def _stream_messages(
     translator = StreamingEventTranslator(
         message_id, model,
         thinking_parser=make_parser(),
+        stop_sequences=msg_request.stop_sequences,
     )
 
     # Resolve abort event from provider (if MLX provider with abort support)
@@ -689,6 +746,11 @@ async def _stream_messages(
 
             for event_str in translator.process_chunk(chunk.text, token_id=token_id):
                 yield event_str
+            # A stop sequence matched: end the generation between tokens.
+            # The loop keeps draining (the translator drops what follows), so
+            # the provider's own finally still runs in order.
+            if translator.stopped and abort_event is not None and not abort_event.is_set():
+                abort_event.set()
 
     except InvalidGenerationRequest as e:
         # Provider request-validation guards fire at first next(), after

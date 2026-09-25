@@ -4,11 +4,12 @@
 # Inspired by Anthropic Messages API with extensions for heylookitsanllm
 # features (thinking).
 
-from typing import Dict, List, Literal, Optional, Union
+from typing import Annotated, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
 
 from heylook_llm.config import ThinkingDepth
+from heylook_llm.stop_sequences import MAX_STOP_SEQUENCE_CHARS, MAX_STOP_SEQUENCES
 from heylook_llm.schema.content_blocks import InputContentBlock, TextBlock
 
 
@@ -59,6 +60,14 @@ class MessageCreateRequest(BaseModel):
     system: Optional[str] = Field(
         default=None, description="System prompt. Kept out of messages array for clarity."
     )
+    stop_sequences: Optional[List[Annotated[str, StringConstraints(
+        min_length=1, max_length=MAX_STOP_SEQUENCE_CHARS)]]] = Field(
+        default=None, max_length=MAX_STOP_SEQUENCES,
+        description=(
+            "Strings that end the reply when it produces one: the reply is cut "
+            "before the match, stop_reason is stop_sequence and stop_sequence "
+            "names it. Matched on the reply text only, never on thinking, and "
+            "the same way on every engine (heylook_llm/stop_sequences.py)."))
     # Tri-state like every other knob (deliberately unlike Anthropic's
     # required max_tokens): absent = the server-side sampler cascade's
     # default. A hard 1024 default here overrode the cascade for every
@@ -200,6 +209,17 @@ class MessageCreateRequest(BaseModel):
                 "`thinking` (bool) and/or `reasoning_effort` as top-level fields "
                 "instead (pydantic would otherwise DROP it silently and answer "
                 "with the default)")
+        # Not built yet (owner call 2026-09-25: response_format next, tools
+        # when a client needs them). Both engines could serve them, which is
+        # why they are refused loudly rather than dropped: a client asking
+        # for a schema-shaped reply must not get free text with a 200.
+        unbuilt = [k for k in ("tools", "tool_choice", "response_format") if k in data]
+        if unbuilt:
+            raise ValueError(
+                f"{', '.join(unbuilt)} is not supported on this server yet: tool "
+                "use and structured output are not built. Send the request without "
+                "it (pydantic would otherwise DROP it silently and answer with "
+                "free text)")
         if "preset" in data or "sampler" in data:
             raise ValueError(
                 "named sampler bundles were removed in v2.0.30 -- send the "

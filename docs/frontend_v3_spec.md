@@ -315,7 +315,15 @@ Phase 3b; chat uses its conversation-scoped sibling below; the OpenAI-compatible
   request still sending `sampler` (or `preset`) gets a 422 naming the v2.0.30
   removal rather than a silent drop, one sending `chat_template_kwargs` (llama-server's
   spelling) gets a 422 naming `thinking` and `reasoning_effort` (v2.0.86), and one sending `show_special_tokens`
-  gets the same treatment for the v2.0.38 removal (below). `max_tokens` is deliberately OPTIONAL unlike Anthropic's:
+  gets the same treatment for the v2.0.38 removal (below). `tools`, `tool_choice` and
+  `response_format` are a 422 too (v2.0.151): not built yet, and a client asking for a
+  schema-shaped reply must not get free text with a 200. `stop_sequences` (v2.0.151,
+  up to 16 strings of 1-256 chars) cuts the REPLY before the first match, never the
+  thinking, the same on every engine (applied at the Messages boundary,
+  `stop_sequences.py`, not handed to llama-server, whose `stop` also matches reasoning):
+  `stop_reason: "stop_sequence"` and `stop_sequence: "<the match>"` on the response or
+  the `message_delta`, and the generation is ended between tokens. Only `/v1/messages`
+  takes it; the conversation generate route does not. `max_tokens` is deliberately OPTIONAL unlike Anthropic's:
   absent = the server-side sampler cascade's default (a hard schema default
   here silently overrode the cascade for every client that omitted it).
   `show_special_tokens` was REMOVED in v2.0.38 and is a 422, not a silent
@@ -702,7 +710,7 @@ writes heylook.toml (comments survive), then reloads the router, and answers wit
 `{weights_gb, headroom_gb, reclaimable_gb, working_set_gb?, max_buffer_gb?,
 sysctl_wired_mb?, sysctl_suggest_mb?, kv_headroom_gb?, headroom_thin, hard_working_set,
 verdict:"pass"|"warn"|"fail", lines:[{ceiling,verdict,need_gb,have_gb,note}],
-sizing_notes:[], estimated}` — the server-computed memory-fit verdict
+sizing_notes:[]}` — the server-computed memory-fit verdict
 (`heylook_llm.ram_fit`, same computation as `scripts/ram_report.py`). The UI
 RENDERS this and never re-derives fit client-side. `config_overrides` are
 candidate (unsaved) edits over the stored config, `null` = reset-to-default
@@ -715,9 +723,8 @@ the sysctl hint iff present. `headroom_thin` (v2.0.13) = working-set headroom
 under `ram_fit.THIN_HEADROOM_GB`: the gguf provider then spawns with
 llama-server's own micro-batch rather than its 2048 auto value, and a
 decode-time Metal OOM at full context is possible; the panel says both. 404 unknown id; 422 `{field:"model_path",...}` when
-the (overridden) path does not exist. All numbers are measured today;
-`estimated` flips when any component becomes an approximation and estimates
-must render in a different visual register (design doc §5).
+the (overridden) path does not exist. Every number is measured (file sizes,
+device properties, vm_stat); the never-set `estimated` flag was removed in v2.0.151.
 `POST /{id}/load[?warm=true]` → `{status:"loaded",model_id,warmed?,warm_ms?|warm_error?}` (400 unknown id, 500 load failure; `warm=true` additionally runs a 1-token generation through the real generation path -- the canonical readiness call for spawn harnesses, 2026-07-20);
 `POST /{id}/reload[?warm=true]` with an optional JSON body of load settings (added v1.62.0; body v2.0.136) → unload + load(+warm) as ONE
 server-owned operation, exact `load` response shape (shared body, so the warm

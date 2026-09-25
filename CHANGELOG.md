@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.151]
+
+### Added
+
+- **`stop_sequences` on `/v1/messages`** (owner call): up to 16 strings; the
+  reply is cut before the first match, `stop_reason` is `stop_sequence` and
+  `stop_sequence` names it (response and `message_delta`), and the
+  generation is ended between tokens. Matched on the reply text only, never
+  the thinking, and identically on MLX and gguf: it is applied at the
+  Messages boundary (`stop_sequences.py`) rather than handed to
+  llama-server, whose `stop` also matches reasoning and which MLX has no
+  equivalent of. Streaming holds back only a suffix that could still become
+  a match. The conversation generate route does not take it.
+
+### Changed
+
+- **`tools`, `tool_choice` and `response_format` are a 422** on
+  `/v1/messages` instead of being dropped with a 200 (owner call:
+  `response_format` next, tools when a client needs them; both engines
+  could serve them, so the refusal says "not built yet").
+
+### Removed
+
+- The fit report's `estimated` flag (owner call): nothing ever set it and
+  nothing read it; every fit number is measured.
+
 ## [2.0.150]
 
 ### Removed
