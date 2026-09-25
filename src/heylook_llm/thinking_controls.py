@@ -107,6 +107,32 @@ def _associated_literals(ast, variable: str) -> list[str]:
     return [s for s in dict.fromkeys(out) if _LITERAL.match(s)]
 
 
+def _normalized_spellings(ast, group_of: dict[str, str]) -> set[str]:
+    """Words the template normalizes depth to: string constants it assigns to
+    a name that receives words from at least two different depth groups
+    (``set _initial_effort = 'low'`` ... ``= 'xhigh'``). Those are the
+    template's own names for its levels; the words it merely accepts are
+    aliases of them."""
+    from jinja2 import nodes
+
+    by_target: dict[str, list[str]] = {}
+    for assign in ast.find_all(nodes.Assign):
+        target = assign.target
+        name = target.name if isinstance(target, nodes.Name) else (
+            target.attr if isinstance(target, nodes.NSRef) else None)
+        if name is None:
+            continue
+        for const in assign.node.find_all(nodes.Const) if not isinstance(
+                assign.node, nodes.Const) else [assign.node]:
+            if isinstance(const.value, str) and const.value in group_of:
+                by_target.setdefault(name, []).append(const.value)
+    out: set[str] = set()
+    for words in by_target.values():
+        if len({group_of[w] for w in words}) >= 2:
+            out.update(words)
+    return out
+
+
 def _depth(template, ast, body: str, variable: str, switch_on: dict) -> Optional[dict]:
     # None when the template raises without the variable: it then has no
     # default, which is an answer, not a reason to give up.
@@ -136,22 +162,38 @@ def _depth(template, ast, body: str, variable: str, switch_on: dict) -> Optional
         out = _render(template, **switch_on, **{variable: value})
         if out is None:
             continue
-        if unknown in ("ignored", "fallback") and out == garbage:
-            continue
         groups.setdefault(out, []).append(value)
+    canonical = _normalized_spellings(
+        ast, {v: out for out, members in groups.items() for v in members})
+    if unknown in ("ignored", "fallback") and garbage in groups:
+        # The group an unknown word falls into holds every stray literal and
+        # probe, so it is no value -- unless the template names it itself by
+        # normalizing to it (a `medium` it assigns as its own default). Then
+        # it is a level, spelled only by what the template names.
+        named = [v for v in groups.pop(garbage) if v in canonical or v in tied]
+        if named and canonical & set(named):
+            groups[garbage] = named
     if not groups and unknown != "verbatim":
         return None
 
+    # Where a spelling first appears, counting from the variable's first
+    # mention: a word the template also uses for something else earlier
+    # (`enable_thinking != 'false'`) must not name a depth.
+    start = max(body.find(variable), 0)
+
     def first_seen(value: str) -> int:
-        at = body.find(f"'{value}'")
-        at2 = body.find(f'"{value}"')
-        hits = [i for i in (at, at2) if i >= 0]
-        return min(hits) if hits else len(body) + 1
+        hits = [i for q in ("'", '"') for i in (body.find(f"{q}{value}{q}", start),
+                                                body.find(f"{q}{value}{q}")) if i >= 0]
+        after = [i for i in hits if i >= start]
+        return min(after) if after else (min(hits) + len(body) if hits else 2 * len(body) + 1)
 
     values, aliases = [], {}
     default = None
     for out, members in groups.items():
-        spelling = min(members, key=lambda v: (first_seen(v), members.index(v)))
+        # The template's own normalized word names a group ahead of any
+        # alias it accepts for it (`minimal` and `low` both become `low`).
+        spelling = min(members, key=lambda v: (v not in canonical, first_seen(v),
+                                               members.index(v)))
         values.append(spelling)
         for m in members:
             if m != spelling:

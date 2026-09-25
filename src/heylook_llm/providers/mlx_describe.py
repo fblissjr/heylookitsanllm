@@ -184,11 +184,18 @@ def describe_static(model_id: str, cfg: dict, config_obj: Any, *,
 
 def _thinking(model_id: str, cfg: dict):
     """The in-force template's thinking controls (plan W2): rendered from
-    the template, never listed. Null when there is no template to judge."""
+    the template, never listed. Null when there is no template to judge.
+    ``template`` names the file they were read from (the same ladder load()
+    walks: override > chat_template.jinja > tokenizer_config > chat_template.json)."""
     from heylook_llm import chat_template_files
+    from heylook_llm.providers.common.template_info import SOURCE_FILES
     from heylook_llm.thinking_controls import detect
 
-    return detect(chat_template_files.view(model_id, "mlx", cfg).template)
+    view = chat_template_files.view(model_id, "mlx", cfg)
+    controls = detect(view.template)
+    if controls is None:
+        return None
+    return {**controls, "template": SOURCE_FILES.get(view.origin) or public_value(view.origin)}
 
 
 def _cache_static() -> dict:

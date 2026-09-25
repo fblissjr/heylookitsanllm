@@ -819,7 +819,7 @@ and `prefix_note` says where, `null` means it could not be told. It is a warning
 refusal, and the same answer rides `engine.template.prefix_stable`.
 `sources` (v2.0.99, plan W3) lists every copy of the template present, in ladder order:
 `{source, file, sha256, in_force, provenance, download_commit, prefix_stable, prefix_note,
-template}`. `provenance` is `downloaded` (the bytes still hash to huggingface_hub's
+thinking, template}`. `provenance` is `downloaded` (the bytes still hash to huggingface_hub's
 download record) | `modified since download` | `no download record` | `heylook override`
 | `explicit path` | `embedded`. v3 lists them in the template panel with "Start an
 override from this", which puts that copy's body in the editor as an unsaved draft; Save
@@ -842,8 +842,17 @@ the model at a temp dir or intercept the PUT.
 MODEL's own template spelling. The server renders the in-force template to find its
 controls and reports them as `engine.thinking` on every model row:
 `{switch: "enable_thinking"|null, depth: {variable, values, aliases, default,
-unknown: "raises"|"ignored"|"verbatim"|"fallback", changes_prefix} | null}` — or null when
-there is no template to judge. `values` are the distinct choices in template order;
+unknown: "raises"|"ignored"|"verbatim"|"fallback", changes_prefix} | null, template}` — or
+null when there is no template to judge. `template` names the copy the controls were read
+from, picked by the same ladder the load walks: on gguf an explicit path, the heylook
+override, a `chat_template.jinja` beside the weights, then the template embedded in the
+GGUF (`"embedded in the GGUF"`); on MLX the override, `chat_template.jinja`,
+`tokenizer_config.json`, then `chat_template.json`. So a jinja beside the weights decides
+the levels even when the GGUF's own template offers different ones, and a template with a
+switch and no depth is on/off (or the model's default) only. Each `sources` entry of the
+template view carries the same shape under `thinking`: what that copy would offer in force.
+v3 names the source on the depth row ("Levels from ...") and on the switch row when there
+is no depth ("On/off only: ... defines no thinking depth"). `values` are the distinct choices in template order;
 `aliases` map other accepted spellings to them; `unknown: "verbatim"` means the template
 pastes any word in (gpt-oss, Muse), so any value is accepted. The value is sent under the
 template's OWN variable (`depth.variable`: Muse's `reasoning_strength`, MiniMax's

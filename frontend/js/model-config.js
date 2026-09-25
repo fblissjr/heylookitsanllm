@@ -284,8 +284,7 @@ function stabilityNote(view) {
 }
 
 // The in-force template's thinking controls (plan W2), in one line.
-function thinkingSummary(thinking) {
-  if (!thinking) return 'Thinking controls: unknown (no template to judge).';
+function thinkingParts(thinking) {
   const parts = [thinking.switch ? `switch ${thinking.switch}` : 'no thinking switch'];
   const d = thinking.depth;
   if (d) {
@@ -295,7 +294,16 @@ function thinkingSummary(thinking) {
   } else {
     parts.push('no depth control');
   }
-  return `Thinking controls: ${parts.join('; ')}.`;
+  return parts;
+}
+
+// `thinking.template` names the copy the controls were read from: the load's
+// own ladder picks it, so a jinja beside the weights outranks a GGUF's
+// embedded template here exactly as it does at spawn.
+function thinkingSummary(thinking) {
+  if (!thinking) return 'Thinking controls: unknown (no template to judge).';
+  const from = thinking.template ? ` (from ${thinking.template})` : '';
+  return `Thinking controls${from}: ${thinkingParts(thinking).join('; ')}.`;
 }
 
 function buildChatTemplatePanel({ model, draft, onDraftChange }) {
@@ -410,6 +418,9 @@ function buildChatTemplatePanel({ model, draft, onDraftChange }) {
       const facts = [src.provenance + (src.download_commit ? ` @${src.download_commit.slice(0, 8)}` : ''),
         src.sha256.slice(0, 12)];
       if (src.prefix_stable === false) facts.push(`breaks prompt caching: ${src.prefix_note}`);
+      // What this copy would offer in force, so a losing copy's levels (a
+      // GGUF's embedded template under a jinja beside it) are visible too.
+      if (src.thinking) facts.push(`thinking: ${thinkingParts(src.thinking).join('; ')}`);
       const copy = createEl('button', { class: 'btn btn--sm btn--ghost', type: 'button',
         disabled: area.disabled }, ['Start an override from this']);
       copy.addEventListener('click', () => {

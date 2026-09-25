@@ -113,9 +113,12 @@ class EngineDescription(BaseModel):
         default=None,
         description="Thinking controls the in-force template offers (plan W2, "
                     "thinking_controls.detect): {switch, depth: {variable, "
-                    "values, aliases, default, unknown, changes_prefix}}. "
-                    "Values are the template's own spellings. Null when there "
-                    "is no template to judge.")
+                    "values, aliases, default, unknown, changes_prefix}, "
+                    "template}. Values are the template's own spellings; "
+                    "`template` names the copy they were read from (the same "
+                    "ladder the load walks, so a jinja beside the weights beats "
+                    "the one embedded in a GGUF). Null when there is no "
+                    "template to judge.")
     image: Optional[Dict[str, Any]] = Field(
         default=None, description="Image geometry (plan W4). Null until reported.")
     speculative: Optional[Dict[str, Fact]] = Field(

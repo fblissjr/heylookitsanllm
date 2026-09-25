@@ -542,6 +542,19 @@ verbatim and strips only the explicitly-named kwargs, so a narrow
 TokenizerWrapper has to be able to lose it the same way it loses
 `enable_thinking`.
 
+Naming a level (v2.0.143). Detection groups every word that renders the same
+prompt, and one word must name the group. Picking the first quoted occurrence
+anywhere in the body named a level `false` on a Qwen3.8 override, because
+`enable_thinking != 'false'` sits above the effort block; and an `ignored`
+template's own default (`medium`, which an unknown word also falls to) was
+dropped as noise, so the one level the template assigns itself was missing.
+The word the template normalizes to (`set effort = 'low'`) now names its
+group, positions count from the variable's first mention, and the
+unknown-word group survives only when the template names it that way.
+Which template the levels come from is the engine's own ladder, reported as
+`engine.thinking.template`: a jinja beside a GGUF decides over the embedded
+one, never a merge of the two.
+
 ### Vendor sampling layer
 
 The vendor layer is the per-model answer and should normally win (v2.0.23,

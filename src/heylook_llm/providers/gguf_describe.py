@@ -183,11 +183,19 @@ def describe_static(model_id: str, cfg: dict, config_obj: Any, *,
 
 def _thinking(model_id: str, cfg: dict):
     """The in-force template's thinking controls (plan W2): rendered from
-    the template, never listed. Null when there is no template to judge."""
+    the template, never listed. Null when there is no template to judge.
+    ``template`` names the copy they were read from, so a jinja beside the
+    weights and the GGUF's embedded one can be told apart: the ladder that
+    picks the spawn's template picks the controls too."""
     from heylook_llm import chat_template_files
+    from heylook_llm.providers.contract import public_value
     from heylook_llm.thinking_controls import detect
 
-    return detect(chat_template_files.view(model_id, "gguf", cfg).template)
+    controls = detect(chat_template_files.view(model_id, "gguf", cfg).template)
+    if controls is None:
+        return None
+    path, _ = _provider().resolve_chat_template(cfg, model_id, log=False)
+    return {**controls, "template": public_value(path) if path else "embedded in the GGUF"}
 
 
 _KIND_LABEL = {

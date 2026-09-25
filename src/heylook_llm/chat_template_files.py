@@ -315,11 +315,16 @@ def template_sources(model_id: str, provider: str, config: dict,
         is_in_force = not claimed and in_force is not None and body == in_force
         claimed = claimed or is_in_force
         stable, note = prefix_stability(body)
+        from .thinking_controls import detect
         out.append({
             "source": label, "file": path.name if path else None,
             "sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
             "in_force": is_in_force, "provenance": provenance, "download_commit": commit,
-            "prefix_stable": stable, "prefix_note": note, "template": body,
+            "prefix_stable": stable, "prefix_note": note,
+            # What this copy would offer if it were the one in force, so a
+            # jinja that wins and an embedded template that loses can be
+            # compared level for level.
+            "thinking": detect(body), "template": body,
         })
     return out
 

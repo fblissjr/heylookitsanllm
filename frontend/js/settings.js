@@ -412,10 +412,20 @@ function bindDepthControl(key, lookup, thinking) {
 // A note for the depth row: where the depth enters the prompt decides what a
 // mid-conversation change costs (disclosed, never confirmed).
 function depthNote(thinking) {
+  const notes = [];
+  if (thinking?.template) notes.push(`Levels from ${thinking.template}.`);
   if (thinking?.depth?.changes_prefix) {
-    return 'Changing it mid-conversation re-processes the whole conversation.';
+    notes.push('Changing it mid-conversation re-processes the whole conversation.');
   }
-  return null;
+  return notes.join(' ') || null;
+}
+
+// The switch row's note when the template offers no depth: thinking is then
+// on, off, or the model's own default, and the reader should know that is the
+// template's answer (which file), not a control the page left out.
+function switchNote(thinking) {
+  if (!thinking?.switch || thinking.depth) return null;
+  return `On/off only: ${thinking.template ?? 'the template'} defines no thinking depth.`;
 }
 
 // The panel's scope line, composed in ONE place so chat and notebook cannot
@@ -463,7 +473,8 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
   for (const [key, meta] of Object.entries(PARAM_META)) {
     if (meta.requiresCap && !caps.includes(meta.requiresCap)) continue;
     const control = bindControl(key, meta, lookup, thinking);
-    const note = meta.type === 'depth' ? depthNote(thinking) : meta.note;
+    const note = meta.type === 'depth' ? depthNote(thinking)
+      : key === 'enable_thinking' ? switchNote(thinking) : meta.note;
     // Shown only while the key is overridden, so its presence IS the "you
     // changed this" signal and there is nothing extra on screen otherwise.
     // Not a hover reveal -- state, not pointer -- so DESIGN.md §7's

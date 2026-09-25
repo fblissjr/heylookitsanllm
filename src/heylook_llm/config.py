@@ -1712,8 +1712,9 @@ class ChatTemplateResponse(BaseModel):
                      "in ladder order: {source, file, sha256, in_force, provenance "
                      "(downloaded | modified since download | no download record | "
                      "heylook override | explicit path | embedded), download_commit, "
-                     "prefix_stable, prefix_note, template}. An editor can start an "
-                     "override from any of them."))
+                     "prefix_stable, prefix_note, thinking, template}. `thinking` is "
+                     "what that copy would offer in force (engine.thinking's shape). "
+                     "An editor can start an override from any of them."))
     notes: List[str] = Field(default_factory=list)
 
 

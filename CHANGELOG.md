@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.143]
+
+### Fixed
+
+- **Thinking-depth levels are named by the template's own words.** A
+  group of equivalent words is named by the word the template normalizes to
+  (`set effort = 'low'`), else by its first use after the variable's first
+  mention. The unsloth Qwen3.8 override listed `false` as a level (from an
+  unrelated `enable_thinking != 'false'`); it now reads auto, none, xhigh,
+  high, low. The Qwen3.8-Uncensored sidecar's own default `medium` was
+  dropped as noise; it now reads medium (default), none, low, xhigh. Both
+  templates are fixtures in `test_thinking_controls.py`; every earlier
+  fixture reads as before.
+
+### Added
+
+- **`engine.thinking.template`** names the template copy the thinking
+  controls were read from: the engine's own ladder, so a `chat_template.jinja`
+  beside a GGUF decides the levels over the GGUF's embedded template, and on
+  MLX over `tokenizer_config.json`. Each template-view `sources` entry carries
+  `thinking`, what that copy would offer in force.
+- Frontend: the depth row says "Levels from <file>"; a model whose template
+  has a switch and no depth says "On/off only: <file> defines no thinking
+  depth" on the thinking row; the models page's template panel names the
+  source and lists each copy's controls.
+- Not run: `tests/smoke/` and the pages E2E (another session held the GPU);
+  checked in-process against every served model's in-force template.
+
 ## [2.0.142]
 
 ### Changed

@@ -24,6 +24,15 @@ EXPECTED = {
     "muse_glimmer": (None, "reasoning_strength", ["high"], "high", "verbatim"),
     "gpt_oss": (None, "reasoning_effort", ["medium"], "medium", "verbatim"),
     "qwen3_5": ("enable_thinking", None, None, None, None),
+    # Read by hand 2026-09-25, not in the audit. The group a template spells
+    # by the word it normalizes to (`_initial_effort = 'low'`), and a word
+    # used earlier for something else (`enable_thinking != 'false'`) names no
+    # depth; a default the template assigns itself is a level even where an
+    # unknown word also falls to it.
+    "qwen3_8_uncensored_sidecar": ("enable_thinking", "reasoning_effort",
+                                   ["medium", "none", "low", "xhigh"], "medium", "ignored"),
+    "qwen3_8_unsloth_override": ("enable_thinking", "reasoning_effort",
+                                 ["auto", "none", "xhigh", "high", "low"], "auto", "raises"),
 }
 
 
