@@ -382,7 +382,13 @@ function buildChatTemplatePanel({ model, draft, onDraftChange }) {
     const bits = [`In force: ${view.origin}`];
     if (view.override_present) bits.push('your override is on disk');
     originEl.textContent = bits.join(' · ');
-    thinkingEl.textContent = thinkingSummary(model.engine?.thinking);
+    // The view's own in-force copy, not the row's engine.thinking: the row
+    // was fetched with the list, so after a write or revert it describes the
+    // template this panel just replaced.
+    const inForce = (view.sources ?? []).find((src) => src.in_force);
+    thinkingEl.textContent = thinkingSummary(inForce?.thinking
+      ? { ...inForce.thinking, template: inForce.file ?? inForce.source }
+      : model.engine?.thinking);
     renderSources(view.sources ?? []);
 
     // Ordered worst-first: an edit that cannot land at all matters more than
@@ -594,9 +600,13 @@ function buildFitMeter({ model, overrides, onGate }) {
     // compute at full context have little room. Two consequences the reader
     // should hear before Load: heylook spawns with llama-server's own
     // micro-batch (slower prefill), and a decode-time Metal OOM is possible.
+    // The micro-batch clause is gguf's alone (GGUFModelConfig.n_ubatch's
+    // auto); ram_fit reports thin headroom for MLX too.
     if (r.headroom_thin && r.kv_headroom_gb != null) {
       pieces.push(`Thin headroom: ${gib(r.kv_headroom_gb)} left for KV + compute. `
-        + `Spawns with llama-server's default micro-batch (512) instead of 2048; `
+        + (model.provider === 'gguf'
+          ? `Spawns with llama-server's own micro-batch instead of heylook's larger auto one (slower prefill); `
+          : '')
         + `a Metal out-of-memory at full context is possible.`);
     }
 

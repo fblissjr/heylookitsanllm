@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.145]
+
+Frontend and backend held against each other per engine (two read-only
+audits of request fields and the engine surface against what v3 sends and
+shows); the confirmed gaps are fixed here.
+
+### Fixed
+
+- **gguf: `repetition_context_size` reaches llama-server** as
+  `repeat_last_n`. It was resolved by the cascade and then dropped by the
+  payload map, so the panel's "Repetition context" did nothing on any gguf
+  model. No floor sets it, so it goes out only when a layer does. The panel
+  row now says the window differs: the reply only on MLX, the prompt's tail
+  too on llama.cpp.
+- **An explicit `top_k` or `presence_penalty` of 0 is sent.**
+  `samplerParams` dropped both below 1 on the stale idea that the backend
+  treats 0 as unset; 0 is `KNOBS_OFF`, the explicit off that beats a GGUF
+  header's top_k. The notebook (`/v1/messages`) got the model's default
+  while chat's stored params sent the 0, and the panel showed the 0 as not
+  overridden.
+- **`/generate` answers an out-of-range stored value with a 400 naming
+  the field**, not the 500 kept for a missing blob (pydantic's
+  ValidationError is a ValueError and fell into that handler).
+- **Chat offers Reload for a resident model with saved changes pending**
+  (`stale_reload_fields`: a config save, a template file edit). On MLX,
+  which has no load settings, it restarts through the bare reload; a plain
+  load of a resident model does nothing.
+- **The chat engine panel's cache line shows on MLX** (it read
+  `cache.text_reuse`, a key nothing reports; now `reuse_mode`, else `reuse`).
+- **The models page renders `engine.thinking` as its own section**
+  (switch, depth values, default, aliases, unknown-value handling, source
+  template). The generic slot walk marked its words "live" and never drew
+  the depth.
+- The template panel's thinking line reads the view's in-force copy, so it
+  is current right after a template write or revert.
+- The fit panel's thin-headroom micro-batch clause shows only for gguf
+  (ram_fit reports thin headroom for MLX too) and no longer hand-copies the
+  two batch sizes.
+- The models row's `template:` label (MLX's stored `chat_template_source`
+  only) is gone; the row's engine summary already names the in-force
+  template on both engines.
+- Doc drift: `.claude/rules/gguf.md` described reload's removed
+  `?ctx_size=N`; `ctx_size`'s description named the retired
+  `context_length`/`context_running` row fields; spec §4 said unload never
+  errors (409 while generating) and named the retired `effective_loader`.
+- Checks: unit + contract green; `e2e:render` 100/100; the new thinking
+  section, settings notes and compact cache line looked at in a browser on a
+  model-free server. Not run: `tests/smoke/` and the pages/chat E2E for this
+  release (the gguf payload change sends `repeat_last_n` only when set).
+
 ## [2.0.144]
 
 ### Fixed

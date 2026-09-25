@@ -614,15 +614,19 @@ function refreshLoadBtn(ctx) {
   const id = s.modelSelect.value;
   s.loadPanel.refresh();
   // Cold: Load pays the load now. Resident with a different load setting
-  // chosen: Reload restarts the process with it -- the one case a loaded
-  // model has a reason to show the button at all.
+  // chosen, or with saved changes that apply only at the next load (the
+  // admin row's stale_reload_fields: a config save, a template file edit):
+  // Reload restarts the process -- the cases a loaded model has a reason to
+  // show the button at all.
   const cold = isCold(ctx, id);
   const changed = s.loadPanel.changed();
+  const stale = cold ? [] : (s.adminRows.get(id)?.stale_reload_fields ?? []);
   s.loadNowBtn.textContent = cold ? 'Load' : 'Reload';
   s.loadNowBtn.title = cold
     ? 'Load this model now so the first message does not pay for it'
-    : 'Restart this model with the chosen load settings';
-  s.loadNowBtn.hidden = !((cold || changed) && !s.loadNowBtn.dataset.busy);
+    : changed ? 'Restart this model with the chosen load settings'
+      : `Restart this model to apply saved changes (${stale.join(', ')})`;
+  s.loadNowBtn.hidden = !((cold || changed || stale.length) && !s.loadNowBtn.dataset.busy);
   paintEngineChip(ctx);
 }
 
@@ -658,17 +662,22 @@ async function loadModelNow(ctx) {
   // A model with load settings goes through the server-owned reload WITH
   // the choices (the server persists them and skips the restart when nothing
   // changed); a provider with none keeps the plain load.
+  // A resident model with saved changes pending (stale_reload_fields) and no
+  // load settings to send (MLX) restarts through the bare reload: a plain
+  // load of a resident model is a no-op.
   const choices = s.loadPanel.choicesToSend();
-  const restarting = !isCold(ctx, id) && choices != null;
+  const stale = !isCold(ctx, id) && (s.adminRows.get(id)?.stale_reload_fields ?? []).length > 0;
+  const restarting = !isCold(ctx, id) && (choices != null || stale);
   const chosen = s.loadPanel.describe(choices);
-  showStatus(ctx, restarting
-    ? `Restarting ${id} with ${chosen || 'auto settings'}…`
-    : `Loading ${id}…`);
+  showStatus(ctx, !restarting ? `Loading ${id}…`
+    : choices != null ? `Restarting ${id} with ${chosen || 'auto settings'}…`
+      : `Restarting ${id} to apply saved changes…`);
   let summary = null;
   try {
     const result = choices != null
       ? await api.adminReloadModel(id, true, choices)
-      : await api.adminLoadModel(id, true);
+      : stale ? await api.adminReloadModel(id, true)
+        : await api.adminLoadModel(id, true);
     if (!ctx.alive) return;
     if (result?.warm_error) {
       showStatus(ctx, `Loaded, but the warm-up generation failed: ${result.warm_error}`, true);

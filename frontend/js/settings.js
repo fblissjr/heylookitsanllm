@@ -12,7 +12,8 @@ export const PARAM_META = {
   top_k:                   { label: 'Top-k', type: 'number', min: 0, max: 500, step: 1, section: 'core' },
   min_p:                   { label: 'Min-p', type: 'number', min: 0, max: 1, step: 0.01, section: 'advanced' },
   repetition_penalty:      { label: 'Repetition penalty', type: 'number', min: 0.5, max: 2, step: 0.01, section: 'advanced' },
-  repetition_context_size: { label: 'Repetition context', type: 'number', min: 1, max: 8192, step: 1, section: 'advanced' },
+  repetition_context_size: { label: 'Repetition context', type: 'number', min: 1, max: 8192, step: 1, section: 'advanced',
+                             note: 'Tokens the penalties look back over: the reply only on MLX; on gguf (llama.cpp) the prompt\'s tail too.' },
   presence_penalty:        { label: 'Presence penalty', type: 'number', min: 0, max: 2, step: 0.01, section: 'advanced' },
   seed:                    { label: 'Seed', type: 'number', min: 0, max: Number.MAX_SAFE_INTEGER, step: 1, section: 'advanced' },
   // THREE states, not a checkbox (v1.79.62): null = the model's own default
@@ -143,9 +144,8 @@ export function resetSettings() {
   applySettings({});
 }
 
-// Preset capture: every non-null key, raw. Unlike samplerParams() it keeps
-// zeros -- a preset pinning top_k=0 records the user's panel state even
-// though requests omit it.
+// Preset capture: every non-null key, raw (zeros included, as requests
+// send them).
 export function snapshotSettings() {
   const out = {};
   for (const key of Object.keys(PARAM_META)) {
@@ -167,8 +167,11 @@ export function applySettings(params, { silent = false } = {}) {
   return { unusable, unknown };
 }
 
-// Request-body params: the snapshot minus the knobs that are only
-// meaningful when > 0 (backend treats 0 as unset). Pass the CURRENT model's
+// Request-body params: the snapshot, zeros included -- a 0 is the backend's
+// explicit OFF (samplers.KNOBS_OFF) and beats the model's own layers (a GGUF
+// header's top_k of 20, a per-model presence penalty); dropping it handed
+// the notebook's /v1/messages the model default while chat's stored params
+// sent the 0. Pass the CURRENT model's
 // `caps` to also drop capability-gated keys the model doesn't support --
 // the panel hides those controls (requiresCap) but the cache keeps their
 // values, and without this filter a value set on a capable model rides
@@ -177,8 +180,6 @@ export function applySettings(params, { silent = false } = {}) {
 // value (and its control) return.
 export function samplerParams(caps = null, thinking = null) {
   const out = snapshotSettings();
-  if (!(out.top_k > 0)) delete out.top_k;
-  if (!(out.presence_penalty > 0)) delete out.presence_penalty;
   if (caps) {
     for (const [key, meta] of Object.entries(PARAM_META)) {
       if (meta.requiresCap && !caps.includes(meta.requiresCap)) delete out[key];

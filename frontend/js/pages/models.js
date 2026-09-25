@@ -271,9 +271,6 @@ function modelMetaLine(model) {
   // (gguf header / MLX config.json) -- answered for unloaded models too.
   const ceiling = contextCeiling(model);
   if (ceiling) parts.push(`ctx ${formatTokens(ceiling)}`);
-  if (model.config?.chat_template_source) {
-    parts.push(`template: ${model.config.chat_template_source}`);
-  }
   if (model.tags?.length) parts.push(model.tags.join(', '));
   // A discovered model is served exactly like any other -- this is NOT a
   // warning, and it must not read as one. It is here because the config

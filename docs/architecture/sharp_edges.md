@@ -507,9 +507,12 @@ placeholder of a `step=0.01` field.
 
 The panel marks an overridden key (accent label + border) and shows a
 per-field reset, where "overridden" is `key in samplerParams(caps)` and not
-`cache[key] != null`. Those disagree, because `samplerParams` drops a
-`top_k`/`presence_penalty` of 0 and every capability-gated key, so the naive
-test made the panel claim a value the model never receives. The reset hides by
+`cache[key] != null`. Those disagree, because `samplerParams` drops every
+capability-gated key (and, until v2.0.145, a `top_k`/`presence_penalty` of
+0), so the naive test made the panel claim a value the model never receives.
+That zero drop predated `KNOBS_OFF`: once 0 meant an explicit off that beats
+a GGUF header's top_k, dropping it sent the notebook to the model's default
+while chat's stored params sent the 0. The reset hides by
 visibility, keeping its box so a row cannot jog sideways as you edit it.
 
 The `hidden` attribute is the trap that class of control used to fall into:

@@ -49,7 +49,7 @@ from typing import AsyncGenerator, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from starlette.background import BackgroundTask
 
 from heylook_llm import db
@@ -556,6 +556,15 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
                 conv, prompt_rows, caps, model_id, body.overrides,
                 continuing=continue_row is not None, dropped=dropped, media=media,
                 thinking=thinking_controls(model_config))
+        except ValidationError as e:
+            # A stored or override value outside ChatRequest's bounds (the
+            # panel's number boxes hint at a range but do not clamp). Caught
+            # BEFORE ValueError, its base class: it is the caller's value,
+            # not store corruption, and /v1/messages answers the same value
+            # with a 4xx too.
+            bad = "; ".join(f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}"
+                            for err in e.errors())
+            raise HTTPException(status_code=400, detail=f"Invalid sampler setting: {bad}")
         except ValueError as e:  # referenced blob missing = store corruption
             raise HTTPException(status_code=500, detail=str(e))
 

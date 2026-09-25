@@ -51,7 +51,8 @@ const EFFECT_GROUPS = [
   ['descriptive', 'Descriptive'],
 ];
 
-const TOP_FACTS = new Set(['runtime', 'context', 'template', 'settings']);
+// Slots with their own renderer; every other slot goes through slotRows.
+const TOP_FACTS = new Set(['runtime', 'context', 'template', 'settings', 'thinking']);
 
 function formatValue(value) {
   if (value === null || value === undefined) return '—';
@@ -112,6 +113,32 @@ function slotRows(slot) {
   return rows;
 }
 
+// engine.thinking is not made of Facts (plan W2: {switch, depth, template}),
+// so the generic slot walk would mark its words "live" and skip the depth.
+// Every value is derived: rendered from the in-force template.
+function thinkingRows(thinking) {
+  if (!thinking) return [];
+  const from = thinking.template ? `rendered from ${thinking.template}` : 'rendered from the in-force template';
+  const rows = [factRow('switch', thinking.switch ?? 'none', 'derived',
+    thinking.switch ? `${from}: the template reads ${thinking.switch}`
+      : `${from}: the template reads no thinking switch`)];
+  const d = thinking.depth;
+  if (d) {
+    const values = d.unknown === 'verbatim' ? `any word (names ${d.values.join(', ') || 'none'})` : d.values;
+    const aliases = Object.entries(d.aliases ?? {}).map(([a, v]) => `${a} = ${v}`).join(', ');
+    rows.push(factRow(`depth ${d.variable}`, values, 'derived',
+      [`${from}.`, d.default ? `Default ${d.default}.` : 'No value is the default: unset sends nothing.',
+        aliases ? `Also accepted: ${aliases}.` : null,
+        `An unknown value ${d.unknown === 'raises' ? 'raises' : d.unknown === 'verbatim' ? 'is pasted in' : d.unknown === 'fallback' ? 'falls back' : 'is ignored'}.`,
+        d.changes_prefix ? 'Changing it re-processes the whole conversation.' : null,
+      ].filter(Boolean).join(' ')));
+  } else {
+    rows.push(factRow('depth', 'none', 'derived',
+      `${from}: no depth levels${thinking.switch ? ', so thinking is on or off only' : ''}.`));
+  }
+  return rows;
+}
+
 // Speculative decoding in a word, or null when the model has no drafter (no
 // noise on models that cannot draft). `in_force` is the running process's
 // answer: true drafting, false found but not in use (the fit check dropped
@@ -162,6 +189,7 @@ export function renderEngine(engine, { fields = null } = {}) {
     ...slotRows({ context: engine.context || {} }),
   ]));
   sections.push(factSection('Chat template', slotRows(engine.template || {})));
+  sections.push(factSection('Thinking', thinkingRows(engine.thinking)));
 
   // Later workstreams' slots (cache, thinking, image, steering): shown as
   // soon as the server fills one, with no code here naming it.
@@ -199,13 +227,14 @@ export function renderEngine(engine, { fields = null } = {}) {
 // template in force, with the full panel one link away. No settings: the
 // chat sampler panel owns the per-request ones, and everything else lives on
 // the models page. The cache line is the one reuse fact each engine leads
-// with: gguf's reuse class, MLX's text reuse. The spec decode line appears
-// only for a model with a drafter.
+// with: gguf's reuse class, MLX's reuse mode (decided at load) or, unloaded,
+// its reuse. The spec decode line appears only for a model with a drafter.
 export function renderEngineCompact(engine) {
   if (!engine) {
     return createEl('div', { class: 'muted small' }, ['This server reports no engine description.']);
   }
-  const reuse = engine.cache?.reuse_class ?? engine.cache?.text_reuse;
+  const reuse = engine.cache?.reuse_class
+    ?? (readFact(engine.cache?.reuse_mode) != null ? engine.cache.reuse_mode : engine.cache?.reuse);
   const rows = [
     factRow('runtime', engine.runtime?.value, engine.runtime?.provenance, engine.runtime?.source),
     ...slotRows({ context: engine.context || {} }),

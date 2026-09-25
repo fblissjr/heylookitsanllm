@@ -782,9 +782,9 @@ class GGUFModelConfig(BaseModel):
             "ALLOCATION: lowering it genuinely reclaims memory and can make a "
             "model load that otherwise would not, because llama-server sizes "
             "the KV slot up front. MLX has no equivalent -- its cache grows "
-            "lazily, so there is nothing there to size. The admin row reports "
-            "`context_length` (the GGUF header ceiling) beside "
-            "`context_running` (what the process actually got)."),
+            "lazily, so there is nothing there to size. The engine contract "
+            "reports `engine.context.length` (the GGUF header ceiling) beside "
+            "`engine.context.running` (what the process actually got)."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "--ctx-size",
                            "load_setting": True},
     )

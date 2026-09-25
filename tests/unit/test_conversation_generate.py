@@ -479,6 +479,18 @@ class TestWireShape:
         assert res.status_code == 200
         assert provider.last_request.temperature == 0.9
 
+    @pytest.mark.asyncio
+    async def test_out_of_range_param_is_400_naming_it(self, ctx):
+        """A stored value outside ChatRequest's bounds is the caller's value:
+        a 400 naming the field, not the 500 a missing blob gets."""
+        client, store, provider = ctx
+        conv = await db.create_conversation(
+            store, title="t", model_id="fake-model", params={"temperature": 7})
+        res = await client.post(f"/v1/conversations/{conv['id']}/generate",
+                                json={"mode": "append", "user_content": "hi"})
+        assert res.status_code == 400
+        assert "temperature" in res.json()["detail"]
+
 
 @pytest.mark.unit
 class TestCapGating:

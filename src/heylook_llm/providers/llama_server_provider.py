@@ -224,6 +224,10 @@ _PAYLOAD_KEY_MAP = (
     ("top_k", "top_k"),
     ("min_p", "min_p"),
     ("repetition_penalty", "repeat_penalty"),
+    # The penalty window. No floor sets it, so it goes out only when a layer
+    # does; llama.cpp's window counts the prompt's tail too (see
+    # GGUFModelConfig.presence_penalty), MLX's only the reply.
+    ("repetition_context_size", "repeat_last_n"),
     ("presence_penalty", "presence_penalty"),
     ("seed", "seed"),
     # Per-request since llama.cpp's reasoning-budget sampler; applied only
