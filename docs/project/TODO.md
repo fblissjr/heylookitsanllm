@@ -514,7 +514,7 @@ Verified by token parity against `mlx_vlm.generate.ar.generate_step`
 Acted-on findings are in the changelog. These three were judged real and left
 open; each names what would settle it.
 
-- [ ] **Latent false positive in the v2.0.139 check** (P3, review 2026-09-25): on MLX
+- [x] **Latent false positive in the v2.0.139 check -- FIXED v2.0.164** (P3, review 2026-09-25): on MLX
   `loaded_chat_template` is read back from the processor, and transformers' processor
   takes a legacy `chat_template.json` over `chat_template.jinja`, while heylook's
   ladder ranks jinja first. A VL folder whose two bodies differ would show
@@ -523,6 +523,13 @@ open; each names what would settle it.
   Not live: the two local folders with both files have identical bodies. The real
   question under it is which body MLX actually renders with; settle that, then make
   the ladder and the loaded value agree.
+  Settled: the VISION path renders the processor's copy (mlx-vlm's
+  get_chat_template picks the processor first), so it was the .json body. Auto
+  now puts a `chat_template.jinja` winner on a processor holding a different body
+  (`template_info._jinja_outranks_processor`), except when the jinja has no media
+  handling and the processor's copy does; a tokenizer_config winner still leaves
+  the processor alone (it may be the text-only template). The loaded value, the
+  ladder, thinking detection and `stale` now agree.
 - [x] **Fixed v2.0.139**: `stale_reload_fields` carries `chat_template` when the file a
   respawn would use differs from the loaded template (the editor's own comparison). Was:
   **A sidecar swap is invisible to `stale_reload_fields`** (P2): that

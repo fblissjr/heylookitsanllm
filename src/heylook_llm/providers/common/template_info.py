@@ -462,21 +462,25 @@ def install_chat_template(tokenizer, info: ModelTemplateInfo, *, force: bool,
     text-model check still passes. Targeting both is what makes one mechanism
     cover both MLX paths instead of needing a second one.
 
-    The processor is targeted ONLY under force. Auto's contract is "fill a
-    MISSING template, never stomp what the loader chose", and a VLM whose
-    processor holds the vendor template while its tokenizer holds none is
-    exactly the shape auto must leave alone -- extending auto to the processor
-    would rewrite the vendor template of every such model at load.
+    Under auto, the tokenizer only gets a MISSING template ("never stomp what
+    the loader chose"), and the processor is left alone -- a VLM whose
+    processor holds the vendor template while its tokenizer holds none is the
+    shape auto must not rewrite -- with ONE exception: a ``chat_template.jinja``
+    winner goes onto a processor holding a different body, because that body
+    is the lower-ranked legacy ``chat_template.json`` (owner rule: the jinja
+    first). See ``_jinja_outranks_processor`` for the media guard.
 
     Returns True if a template was installed. Never raises.
     """
     if tokenizer is None or not info.chat_template:
         return False
-    if not force and getattr(tokenizer, "chat_template", None):
-        return False
-    candidates = [tokenizer]
-    if force:
+    candidates = []
+    if force or not getattr(tokenizer, "chat_template", None):
+        candidates.append(tokenizer)
+    if force or _jinja_outranks_processor(info, processor):
         candidates.append(processor)
+    if not candidates:
+        return False
     targets: list = []
     for candidate in candidates:
         if candidate is None:
@@ -493,6 +497,36 @@ def install_chat_template(tokenizer, info: ModelTemplateInfo, *, force: bool,
         except (AttributeError, TypeError) as exc:
             logging.debug("could not install chat_template on %r: %s", type(target), exc)
     return installed
+
+
+def _jinja_outranks_processor(info: ModelTemplateInfo, processor) -> bool:
+    """Whether auto must put the ladder's winner on the PROCESSOR too.
+
+    transformers fills ``processor.chat_template`` from a legacy
+    ``chat_template.json``, while the ladder (owner rule: the jinja file
+    first) ranks ``chat_template.jinja`` above it. Left alone, a vision folder
+    whose two copies differ renders its images with the .json body while
+    thinking controls, the preview and ``stale`` all read the jinja -- and a
+    reload can never clear that ``stale`` (TODO, v2.0.139 review).
+
+    Only for a JINJA winner: a tokenizer_config.json template is often the
+    text-only one beside a processor template that handles images, and
+    installing it would cost the model its images. Refused the same way when
+    the jinja itself has no media handling and the processor's copy does --
+    the gguf ladder's guard (LlamaServerProvider._template_handles_media).
+    """
+    held = getattr(processor, "chat_template", None) if processor is not None else None
+    if not held or info.template_source != JINJA or held == info.chat_template:
+        return False
+    from ..llama_server_provider import LlamaServerProvider
+    if (LlamaServerProvider._template_handles_media(held)
+            and not LlamaServerProvider._template_handles_media(info.chat_template)):
+        logging.warning(
+            "template: chat_template.jinja has no media handling and the "
+            "processor's chat_template.json does; keeping the processor's for "
+            "the vision path")
+        return False
+    return True
 
 
 def _read_file(path: Path) -> Optional[str]:

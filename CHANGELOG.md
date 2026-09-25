@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.164]
+
+### Fixed
+
+- **MLX vision renders the template the ladder picked.** transformers fills a
+  vision processor's template from a legacy `chat_template.json`, and the
+  vision path renders the processor's copy first, while the ladder (owner
+  rule: the jinja first) reports `chat_template.jinja`. In a folder whose two
+  copies differ, images rendered with the .json body while thinking
+  controls, the prompt preview and `stale` described the jinja, and `stale`
+  could never clear. Auto now installs a jinja winner on the processor too,
+  except when the jinja has no media handling and the processor's copy does
+  (the gguf ladder's guard); a tokenizer_config winner still leaves the
+  processor alone. No local model changes: the two folders with both files
+  have identical bodies.
+- Checks: unit + contract green for this change (`test_template_install_jinja.py`).
+  The MLX vision path's parity probe runs with the Phase 3 release checks.
+
 ## [2.0.163]
 
 Phase 2, the rest: what the page shows about a turn and its settings.
