@@ -922,6 +922,13 @@ class ModelRouter:
                         status["memory_mb"] = provider.get_memory_usage()
                     except Exception:
                         pass
+                # Busy vs idle, on every engine: the provider's own count of
+                # generations in flight (gguf included; the field was null
+                # for every model before 2026-09-25), and the generation
+                # gate's queue, which is process-wide.
+                status["requests_active"] = provider.active_generations
+                queue = provider.generation_queue_stats() or {}
+                status["requests_waiting"] = queue.get("waiting")
 
         return status
 

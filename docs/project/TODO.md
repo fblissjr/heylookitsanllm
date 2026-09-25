@@ -835,7 +835,10 @@ they imply is theirs, not a decision here.
   classification) while leaving ordinary generation unconstrained. That is a
   different, smaller feature and would have to earn its own case -- not
   inherit this one's.
-- [ ] **`requests_active` is null for gguf, so no client can tell busy from
+- [x] **Fixed v2.0.140**: `/status` reports `requests_active` (the provider's own
+  in-flight count, every engine; it was null for EVERY model, MLX too) and
+  `requests_waiting` (the process-wide gate). Was:
+  **`requests_active` is null for gguf, so no client can tell busy from
   idle** (P3): `GET /v1/admin/models/{id}/status` reports the MLX-side
   generation gate, and llama-server queues its own requests, so the field is
   genuinely null for that provider rather than accidentally unpopulated. The

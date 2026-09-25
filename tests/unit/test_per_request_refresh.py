@@ -148,6 +148,16 @@ class TestPerRequestRefresh(unittest.TestCase):
         # Unloaded models report nothing regardless of saved diffs.
         self.assertEqual(router.stale_reload_fields("m2"), [])
 
+    def test_status_says_busy_or_idle_on_any_engine(self):
+        """/status's requests_active was null for every model; a client told
+        busy from idle by timing a generation, which queued behind the one
+        it was measuring."""
+        router, provider = self._router_with_loaded_provider()
+        self.assertEqual(router.get_model_status("m1")["requests_active"], 0)
+        with provider.generation_active():
+            self.assertEqual(router.get_model_status("m1")["requests_active"], 1)
+        self.assertNotIn("requests_active", router.get_model_status("m2"))
+
     def test_a_template_file_swap_is_stale_though_no_field_moved(self):
         """The template binds at load but lives in a file beside the
         weights; editing it changes what a respawn uses with the config

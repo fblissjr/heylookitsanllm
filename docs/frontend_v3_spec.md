@@ -739,7 +739,10 @@ gated its entire UI on them.
 `POST /v1/models/{id}/load?warm=true` is what v3's Load button sends, so "Loaded" means ready
 rather than merely resident; the page renders `warm_ms` as a note and surfaces
 `warm_error` without calling the load a failure (the model is loaded either way).
-(Backend also exposes status/validate — `/discovered` retired v2.0.118; the sampler roster and
+(`GET /{id}/status` → `{loaded, memory_mb?, requests_active, requests_waiting}`:
+since v2.0.140 `requests_active` is the model's generations in flight on every engine,
+gguf included, and `requests_waiting` the process-wide gate's queue; both null when not
+loaded.) (Backend also exposes status/validate — `/discovered` retired v2.0.118; the sampler roster and
 bulk-default-sampler routes were removed in v2.0.30; out of scope unless a
 trimmed feature needs them.)
 

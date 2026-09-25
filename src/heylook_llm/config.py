@@ -1584,7 +1584,12 @@ class ModelStatusResponse(BaseModel):
     memory_mb: Optional[float] = Field(default=None, description="Memory usage in MB (if loaded)")
     context_used: Optional[int] = Field(default=None, description="Tokens currently in context")
     context_capacity: Optional[int] = Field(default=None, description="Maximum context window")
-    requests_active: Optional[int] = Field(default=None, description="Active requests for this model")
+    requests_active: Optional[int] = Field(
+        default=None, description="Generations in flight on this model (null when not loaded)")
+    requests_waiting: Optional[int] = Field(
+        default=None,
+        description="Requests queued at the generation gate, which is process-wide: "
+                    "they may be for another loaded model (null when not loaded)")
 
 
 class AdminModelResponse(BaseModel):
