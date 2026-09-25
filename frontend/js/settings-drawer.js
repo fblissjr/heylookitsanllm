@@ -125,6 +125,8 @@ export function mountSettingsDrawer(navDesktop, navBottom) {
 //   requestFields?(): string[] | null    -- engine.decoding.request_fields:
 //                                           the fields this model's engine path
 //                                           reads (null = all); others hide
+//   samplerSources?(): {temperature: 'model'|'vendor'|'default', ...}
+//                                           -- where each default came from
 //   samplerDefaults?(): {temperature,...}  -- the server's sampler_defaults for
 //                                           the current model; labels every
 //                                           blank field with its real value
@@ -224,6 +226,7 @@ function render() {
       scope: current?.scope?.() ?? null,
       modelDefaults: current?.modelDefaults?.() ?? {},
       samplerDefaults: current?.samplerDefaults?.() ?? null,
+      samplerSources: current?.samplerSources?.() ?? null,
       thinking: current?.thinking?.() ?? null,
       requestFields: current?.requestFields?.() ?? null,
     });

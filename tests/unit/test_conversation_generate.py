@@ -996,6 +996,12 @@ class TestPromptPreview:
                                   "<|user|>q2 draft\n<|assistant|>")
         assert body["continuation"] is None
         assert body["char_count"] == len(body["prompt"])
+        # The model's own added tokens that occur, longest first; one that
+        # does not occur is not listed.
+        provider.added_tokens = lambda: frozenset({"<|user|>", "<|assistant|>", "<|tool|>"})
+        res = await client.post(f"/v1/conversations/{conv['id']}/prompt",
+                                json={"mode": "append", "user_content": "q2 draft"})
+        assert res.json()["markers"] == ["<|assistant|>", "<|user|>"]
         # nothing persisted
         stored = await db.get_conversation(store, conv["id"])
         assert stored is not None and len(stored["messages"]) == 2

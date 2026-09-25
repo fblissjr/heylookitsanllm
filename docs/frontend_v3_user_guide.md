@@ -380,13 +380,13 @@ model is loaded; before that the badge is a "?" that says so. Models differ a
 lot here: Qwen-family models spend more tokens on a bigger image, gemma-4
 spends the same number whatever the size.
 
-**Fit** appears when the model would resize the image to a different size. It
-resizes your original, once, to exactly that size and aspect ratio, so the
-model does no further resampling, and the badge updates. On a Qwen model that
-is a choice of detail over cost: it can go above the upload cap, and the badge
-shows the new cost. On gemma-4 it usually just shrinks the upload for free. It
-does not appear for llama.cpp models, which do not report the size they
-resize to.
+**Full res** or **Shrink** appears when the model would resize the image to a
+different size; the label says which way, and its tooltip gives the new cost
+beside the current one. It resizes your original, once, to exactly that size
+and aspect ratio, so the model does no further resampling, and the badge
+updates. On a Qwen model on MLX it is usually **Full res**: a choice of detail
+over cost, above the 2048px upload cap. It does not appear for llama.cpp
+models, which do not report the size they resize to.
 
 **Thinking** is one control, built from the selected model's chat template:
 *Model default* (named: "(on, auto)", "(off)"), *Off*, *On*, and each depth

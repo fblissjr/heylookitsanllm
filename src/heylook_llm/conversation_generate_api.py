@@ -235,6 +235,12 @@ class PromptPreviewRequest(BaseModel):
 
 
 class PromptPreviewResponse(BaseModel):
+    markers: list[str] = Field(
+        default_factory=list,
+        description="The model's own added tokens (special or not: turn markers, "
+                    "<think>, tool tags) that occur in `prompt`, longest first -- "
+                    "what a client highlights, read from the model's tokenizer "
+                    "files rather than guessed from a pattern.")
     prompt: str = Field(description="The exact prompt string the model would be fed: "
                                     "special tokens, role markers and thinking blocks "
                                     "as the template renders them. Images in history "
@@ -806,6 +812,8 @@ async def preview_prompt(conv_id: str, request: Request, body: PromptPreviewRequ
         continuation=(None if continue_row is None
                       else "thinking" if chat_request.resumes_thinking() else "content"),
         dropped_media=dropped, unrendered_media=unrendered, char_count=len(prompt),
+        markers=sorted((t for t in provider.added_tokens() if t in prompt),
+                       key=lambda t: (-len(t), t)),
     )
 
 

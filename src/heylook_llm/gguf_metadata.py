@@ -21,6 +21,7 @@ index, which is exactly the part worth not paying for here.
 
 from __future__ import annotations
 
+import functools
 import logging
 import re
 import struct
@@ -470,3 +471,33 @@ def memory_kind(primary: Path) -> Optional[str]:
     if f"{arch}.attention.sliding_window" in meta:
         return "sliding_window"
     return "full_attention"
+
+
+# llama.cpp's llama_token_type: CONTROL (a special token) and USER_DEFINED (an
+# added token that is not special, e.g. Qwen's `<think>`). Together they are
+# the tokens added on top of the vocabulary -- the markers a prompt preview
+# highlights -- the header's counterpart of the MLX side's added_tokens.
+_ADDED_TOKEN_TYPES = frozenset({3, 4})
+
+
+@functools.lru_cache(maxsize=16)
+def _added_tokens(path: str, mtime_ns: int, size: int) -> frozenset[str]:
+    meta = read_metadata(Path(path), {"tokenizer.ggml.tokens", "tokenizer.ggml.token_type"})
+    tokens, types = meta.get("tokenizer.ggml.tokens"), meta.get("tokenizer.ggml.token_type")
+    if not isinstance(tokens, list) or not isinstance(types, list) or len(tokens) != len(types):
+        return frozenset()
+    return frozenset(t for t, kind in zip(tokens, types)
+                     if kind in _ADDED_TOKEN_TYPES and isinstance(t, str) and t)
+
+
+def added_tokens(primary: Path) -> frozenset[str]:
+    """Every added token in the GGUF's own tokenizer, or an empty set.
+
+    Decodes the vocabulary arrays (the one reader here that does), so it is
+    cached per file state (path, mtime, size): a re-downloaded file is read
+    again, an unchanged one never is."""
+    try:
+        st = primary.stat()
+        return _added_tokens(str(primary), st.st_mtime_ns, st.st_size)
+    except (OSError, GGUFMetadataError):
+        return frozenset()

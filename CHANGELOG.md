@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.163]
+
+Phase 2, the rest: what the page shows about a turn and its settings.
+
+### Changed
+
+- **The prompt preview highlights the model's own markers, exactly.** The
+  preview route returns `markers`: the model's added tokens (special or not:
+  turn markers, `<think>`, tool tags) that occur in the rendered prompt, read
+  from its tokenizer files; a GGUF's come from its header (control and
+  user-defined tokens, cached per file state). The frontend's hand-kept
+  special-token regex is gone. This is the owner's "see whether an edit to
+  the thinking block or the reply actually landed" need, on both engines.
+  The store-unstripped "show special tokens" design was set aside after
+  checking what it would show (almost nothing: stop tokens are never
+  decoded, structural markers are consumed by the split, llama-server emits
+  none); the reasons are in TODO.md.
+- **Each sampler default says where it came from.** Model rows carry
+  `sampler_sources` (`model` / `vendor` / `default`), and the panel's
+  placeholders read "0.6 · vendor", "1 · heylook", "0.3 · model file".
+- **"Fit" says which way it goes**: "Full res" when the engine's own size
+  costs more than the staged copy (Qwen on MLX), "Shrink" when less, with
+  both costs in its label.
+
+### Added
+
+- `BaseProvider.added_tokens()` (MLX: the tokenizer files' added tokens;
+  gguf: `gguf_metadata.added_tokens`), `ModelTemplateInfo.added_tokens`.
+- Checks: unit + contract green (`test_sampler_sources.py`, preview markers
+  in `test_conversation_generate.py`); `e2e:render` 100/100, `e2e:chat`
+  53/53 (including the preview-marker check on a real model), `e2e:pages`
+  32/32.
+
 ## [2.0.162]
 
 ### Changed

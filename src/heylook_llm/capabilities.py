@@ -311,6 +311,11 @@ class ModelFacts:
     capabilities: list[str]
     thinking_default: bool
     sampler_defaults: dict
+    # Which layer each sampler default came from (not enable_thinking, which
+    # the thinking control labels itself): "model" (this model's own stored
+    # settings), "vendor" (its generation_config.json or GGUF header), or
+    # "default" (heylook's floor). Same cascade inputs as sampler_defaults.
+    sampler_sources: dict
     engine: EngineDescription
 
 
@@ -390,11 +395,16 @@ def derived_model_facts(model_config, router=None) -> ModelFacts:
             model_config.provider, str(resolved["model_path"]))) or None
     defaults = sampler_defaults(
         resolved, thinking_capable="thinking" in capabilities, vendor=vendor)
+    sources = {
+        key: ("model" if resolved.get(key) is not None
+              else "vendor" if vendor and key in vendor else "default")
+        for key in defaults if key != "enable_thinking"}
     return ModelFacts(
         resolved=resolved,
         capabilities=capabilities,
         thinking_default=default_thinking,
         sampler_defaults=defaults,
+        sampler_sources=sources,
         engine=_engine_with_sampler_answers(
             describe(model_config, router), defaults, resolved,
             thinking_capable="thinking" in capabilities, vendor=vendor),

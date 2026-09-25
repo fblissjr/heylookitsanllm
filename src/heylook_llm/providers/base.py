@@ -284,6 +284,13 @@ class BaseProvider(ABC):
         """
         return getattr(self, "_template_info", None)
 
+    def added_tokens(self) -> frozenset:
+        """Every token the model's tokenizer adds on top of its vocabulary,
+        special or not (turn markers, `<think>`, tool tags): what a prompt
+        preview highlights. From the tokenizer files the template info read;
+        an engine with no template info answers from its own files."""
+        return getattr(self.template_info(), "added_tokens", None) or frozenset()
+
     @property
     def thinking_capable(self) -> bool:
         """Whether this model can think at all -- the served ``thinking``

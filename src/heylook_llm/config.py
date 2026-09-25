@@ -1670,6 +1670,10 @@ class AdminModelResponse(BaseModel):
     # off the thinking switch. The settings panel labels blank fields with
     # these instead of the word "auto".
     sampler_defaults: Dict[str, Any] = Field(default_factory=dict)
+    # Where each of those came from: "model" (this model's own settings),
+    # "vendor" (generation_config.json / the GGUF header) or "default"
+    # (heylook's floor). The panel says so beside the value.
+    sampler_sources: Dict[str, str] = Field(default_factory=dict)
     stale_reload_fields: List[str] = Field(default_factory=list)
     # Not typed as EngineDescription here: config.py sits below the providers
     # package, and the route validates it on the way out (the engine block is

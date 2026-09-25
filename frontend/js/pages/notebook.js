@@ -96,6 +96,8 @@ export default createPage({
       // it will really use (v2.0.21).
       samplerDefaults: () => ctx.state.models.find(
         (m) => m.id === ctx.state.modelSelect.value)?.sampler_defaults ?? null,
+      samplerSources: () => ctx.state.models.find(
+        (m) => m.id === ctx.state.modelSelect.value)?.sampler_sources ?? null,
       samplers: 'enabled',
       scope: () => documentScopeNote('notebook', Boolean(s.activeId)),
       sections: () => [s.presetBar.buildSection(), s.promptSection.element],

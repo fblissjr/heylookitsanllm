@@ -118,6 +118,9 @@ class ModelTemplateInfo:
     """
     chat_template: str = ""
     special_tokens: frozenset[str] = frozenset()
+    # EVERY added token, special or not (`<think>` is an added token with
+    # special: false on Qwen): the markers a prompt preview highlights.
+    added_tokens: frozenset[str] = frozenset()
     template_source: str = AUTO
     has_harmony_structure: bool = False
     has_thinking_markers: bool = False
@@ -239,6 +242,8 @@ def read_template_info(
     tokenizer_json = _read_json(model_dir / "tokenizer.json")
     tokenizer_config = _read_json(model_dir / "tokenizer_config.json")
     special_tokens = _read_special_tokens(model_dir, tokenizer_json, tokenizer_config)
+    added_tokens = _read_special_tokens(model_dir, tokenizer_json, tokenizer_config,
+                                        special_only=False)
     eos_tokens = _read_eos_tokens(model_dir, tokenizer_json, tokenizer_config)
     template, template_source = _read_template(model_dir, source)
 
@@ -297,6 +302,7 @@ def read_template_info(
     return ModelTemplateInfo(
         chat_template=template,
         special_tokens=special_tokens,
+        added_tokens=added_tokens,
         template_source=template_source,
         has_harmony_structure=has_harmony,
         has_thinking_markers=has_thinking,
@@ -576,7 +582,8 @@ def _read_eos_tokens(model_dir: Path, tokenizer_json=None, tokenizer_config=None
     return frozenset(out)
 
 
-def _read_special_tokens(model_dir: Path, tokenizer_json=None, tokenizer_config=None) -> frozenset[str]:
+def _read_special_tokens(model_dir: Path, tokenizer_json=None, tokenizer_config=None,
+                         *, special_only: bool = True) -> frozenset[str]:
     """Union the special-token sets from both tokenizer files.
 
     - ``tokenizer.json`` (the fast-tokenizer's own state) has an
@@ -584,9 +591,10 @@ def _read_special_tokens(model_dir: Path, tokenizer_json=None, tokenizer_config=
     - ``tokenizer_config.json`` has ``added_tokens_decoder`` -- some
       models list specials only here, some list them in both.
 
-    Only tokens with ``"special": true`` count. We never hardcode which
-    tokens the model considers special -- the files are the source of
-    truth.
+    Only tokens with ``"special": true`` count, unless ``special_only`` is
+    False (every added token: the markers a preview highlights). We never
+    hardcode which tokens the model considers special -- the files are the
+    source of truth.
     """
     specials: set[str] = set()
 
@@ -598,7 +606,7 @@ def _read_special_tokens(model_dir: Path, tokenizer_json=None, tokenizer_config=
             for entry in added:
                 if not isinstance(entry, dict):
                     continue
-                if not entry.get("special", False):
+                if special_only and not entry.get("special", False):
                     continue
                 content = entry.get("content")
                 if isinstance(content, str) and content:
@@ -612,7 +620,7 @@ def _read_special_tokens(model_dir: Path, tokenizer_json=None, tokenizer_config=
             for entry in decoder.values():
                 if not isinstance(entry, dict):
                     continue
-                if not entry.get("special", False):
+                if special_only and not entry.get("special", False):
                     continue
                 content = entry.get("content")
                 if isinstance(content, str) and content:

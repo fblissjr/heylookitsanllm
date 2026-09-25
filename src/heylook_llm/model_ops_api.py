@@ -265,6 +265,7 @@ def list_models(request: Request):
                 model_entry["capabilities"] = facts.capabilities
             model_entry["thinking_default"] = facts.thinking_default
             model_entry["sampler_defaults"] = facts.sampler_defaults
+            model_entry["sampler_sources"] = facts.sampler_sources
             # The engine contract: the same object the admin row carries.
             model_entry["engine"] = facts.engine.model_dump()
 

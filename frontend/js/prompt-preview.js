@@ -14,18 +14,21 @@
 
 import { createEl } from './utils.js';
 
-// Special-token spellings across the families this server serves, for
-// HIGHLIGHTING only -- the text is the engine's own render, shown verbatim;
-// the marks just make <|im_start|> stand out from prose. Unmatched markers
-// still show as text, so a family this misses loses nothing but colour.
-const SPECIAL_TOKEN_RE = new RegExp(
-  '(<\\|[^<>\\n]{1,48}\\|>|<\\|[^<>\\n]{1,48}>|<[^<>\\n]{1,48}\\|>|</?think>'
-  + '|<start_of_turn>|<end_of_turn>|<bos>|<eos>|<s>|</s>|\\[INST\\]|\\[/INST\\]|\\[/?THINK\\])', 'g');
-
-export function highlightSpecials(text) {
+// The markers to highlight are the MODEL's own added tokens that occur in the
+// prompt (`markers` on the preview response, read from its tokenizer files),
+// longest first so `</think>` is not read as `<` + `/think>`. The text itself
+// is the engine's render, shown verbatim; a marker list the server could not
+// read leaves the text plain, never guessed at.
+export function highlightSpecials(text, markers = []) {
   const frag = document.createDocumentFragment();
+  if (!markers.length) {
+    frag.append(document.createTextNode(text));
+    return frag;
+  }
+  const escape = (m) => m.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(markers.map(escape).join('|'), 'g');
   let last = 0;
-  for (const m of text.matchAll(SPECIAL_TOKEN_RE)) {
+  for (const m of text.matchAll(re)) {
     if (m.index > last) frag.append(document.createTextNode(text.slice(last, m.index)));
     frag.append(createEl('mark', { class: 'prompt-preview__tok' }, [m[0]]));
     last = m.index + m[0].length;
@@ -44,7 +47,7 @@ export function paintPromptPreview(host, body, onClose) {
       ? 'Continues the response after the closed thinking block'
       : 'The next reply generates after this';
   const pre = createEl('pre', { class: 'prompt-preview__text' });
-  pre.append(highlightSpecials(body.prompt));
+  pre.append(highlightSpecials(body.prompt, body.markers ?? []));
   const children = [
     createEl('div', { class: 'prompt-preview__head' }, [
       createEl('span', { class: 'prompt-preview__title' }, ['What the model will see']),

@@ -321,14 +321,15 @@ function defaultText(v) {
 // default comes from, and `enable_thinking` still answers from a different
 // source than the rest. (It also used to depend on the live thinking switch,
 // which is why the indirection exists at all -- see the lookup itself.)
-function bindControl(key, meta, lookup = () => null, thinking = null, caps = []) {
+function bindControl(key, meta, lookup = () => null, thinking = null, caps = [],
+                     describe = (k) => defaultText(lookup(k))) {
   if (meta.type === 'thinking') return bindThinkingControl(lookup, thinking, caps);
   if (meta.type === 'depth') return bindDepthControl(key, lookup, thinking);
   if (meta.type === 'select') {
     // '' is the empty option and means "don't send the key at all" -- for
     // reasoning_effort that leaves the model's chat template on its own
     // default, which is NOT the same as any of the listed values.
-    const shown = defaultText(lookup(key));
+    const shown = describe(key);
     const sel = createEl('select', { id: `set-${key}`, class: 'input' },
       [createEl('option', { value: '' }, [shown ? `auto (${shown})` : 'auto']),
        ...meta.options.map((o) => createEl('option', { value: o }, [o]))]);
@@ -351,7 +352,7 @@ function bindControl(key, meta, lookup = () => null, thinking = null, caps = [])
     // The model's REAL resolved value, not the word "auto" -- a greyed
     // placeholder already reads as "this is what you get if you leave it
     // alone", and "auto" left the reader to generate something to find out.
-    placeholder: defaultText(lookup(key)) ?? 'auto',
+    placeholder: describe(key) ?? 'auto',
     value: cache[key] ?? '',
   });
   input.addEventListener('change', () => {
@@ -517,9 +518,15 @@ export function documentScopeNote(noun, hasActive) {
 // `requestFields` is engine.decoding.request_fields: when the model's engine
 // path reads only some fields (a masked-diffusion model reads temperature,
 // max_tokens and the thinking controls), the rest are not offered. Null = all.
+// `samplerSources` (the row's `sampler_sources`) names the layer each default
+// came from, shown beside it: "0.6 · vendor" is the model's own published
+// value, "1 · heylook" the server's fallback, "0.3 · model file" this
+// model's own settings.
+const SOURCE_LABEL = { model: 'model file', vendor: 'vendor', default: 'heylook' };
+
 export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {},
-                                    samplerDefaults = null, thinking = null,
-                                    requestFields = null } = {}) {
+                                    samplerDefaults = null, samplerSources = null,
+                                    thinking = null, requestFields = null } = {}) {
   const rows = { core: [], advanced: [] };
   const controls = [];
 
@@ -535,6 +542,11 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
     if (key === 'enable_thinking' || !samplerDefaults) return modelDefaults[key] ?? null;
     return samplerDefaults[key] ?? null;
   };
+  const describe = (key) => {
+    const text = defaultText(lookup(key));
+    const source = SOURCE_LABEL[samplerSources?.[key]];
+    return text !== null && source ? `${text} · ${source}` : text;
+  };
 
   for (const [key, meta] of Object.entries(PARAM_META)) {
     if (meta.foldedInto) continue;  // rendered by the row it folds into
@@ -544,7 +556,7 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
       .filter(([, m]) => m.foldedInto === key).map(([k]) => k)];
     if (!keys.some((k) => !PARAM_META[k].requiresCap || caps.includes(PARAM_META[k].requiresCap))) continue;
     if (Array.isArray(requestFields) && !keys.some((k) => requestFields.includes(k))) continue;
-    const control = bindControl(key, meta, lookup, thinking, caps);
+    const control = bindControl(key, meta, lookup, thinking, caps, describe);
     const note = meta.type === 'thinking' ? thinkingNote(thinking)
       : key === 'thinking_budget_tokens' ? budgetNote(meta, thinking) : meta.note;
     // Shown only while the key is overridden, so its presence IS the "you
@@ -605,9 +617,9 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
   // defect with a delay.
   function syncDefaults() {
     for (const { key, meta, control } of controls) {
-      if (meta.type === 'number') control.placeholder = defaultText(lookup(key)) ?? 'auto';
+      if (meta.type === 'number') control.placeholder = describe(key) ?? 'auto';
       else if (meta.type === 'select') {
-        const shown = defaultText(lookup(key));
+        const shown = describe(key);
         const blank = control.querySelector('option[value=""]');
         if (blank) blank.textContent = shown ? `auto (${shown})` : 'auto';
       }

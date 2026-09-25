@@ -508,6 +508,13 @@ class LlamaServerProvider(BaseProvider):
         from ..config import GGUFModelConfig
         return bool(GGUFModelConfig.model_fields["use_sidecar_chat_template"].default)
 
+    def added_tokens(self) -> frozenset:
+        """The GGUF's own added tokens (control + user-defined), read from the
+        header: llama-server owns the tokenizer, so there is no template info
+        to ask."""
+        from .. import gguf_metadata
+        return gguf_metadata.added_tokens(Path(str(self.config.get("model_path") or "")))
+
     def _resolve_chat_template(self) -> tuple[Optional[str], str]:
         """This provider's own view of the ladder -- see resolve_chat_template."""
         return self.resolve_chat_template(

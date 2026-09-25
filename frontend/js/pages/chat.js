@@ -180,6 +180,7 @@ export default createPage({
       // default (on|off)". Null until the admin rows land.
       modelDefaults: () => ({ enable_thinking: currentThinkingDefault(ctx) }),
       samplerDefaults: () => currentModelRow(ctx)?.sampler_defaults ?? null,
+      samplerSources: () => currentModelRow(ctx)?.sampler_sources ?? null,
       thinking: () => currentThinking(ctx),
       // Observed at load (a diffusion model reads few fields), so the admin
       // row, which residency refreshes keep current, before the models list.
@@ -2904,9 +2905,14 @@ function thumbCost(img) {
 function thumbFit(img, onFit) {
   const fit = img.plan?.fit;
   if (!fit || !onFit) return null;
-  const label = `Fit to ${img.plan.model}: resize to ${fit.w}×${fit.h}, about ${fit.tokens} tokens`;
+  // Say which way it goes: on a dynamic-resolution model (Qwen on MLX) the
+  // engine's own size for a phone photo is LARGER than the staged 2048px
+  // copy, so "Fit" read as "shrink" while it tripled the cost.
+  const up = fit.tokens > img.plan.tokens;
+  const label = `${up ? 'Full resolution' : 'Shrink'} for ${img.plan.model}: resize to `
+    + `${fit.w}×${fit.h}, about ${fit.tokens} tokens (now ${img.plan.tokens})`;
   const b = createEl('button', { class: 'attach-thumb__fit', type: 'button', title: label,
-                                 'aria-label': label }, ['Fit']);
+                                 'aria-label': label }, [up ? 'Full res' : 'Shrink']);
   b.addEventListener('click', () => onFit(img));
   return b;
 }

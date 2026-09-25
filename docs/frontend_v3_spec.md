@@ -529,8 +529,11 @@ truncate→stream→persist sequences):**
 - `POST /{id}/prompt` `{mode, message_id?, user_content?, overrides?,
   edits?:{message_id?,content?,thinking?}}` → `{prompt, model_id, provider,
   mode, continuation:"thinking"|"content"|null, dropped_media, unrendered_media,
-  char_count}`
-  (v1.79.62). The exact string generate would feed the model, rendered by
+  char_count, markers}`
+  (v1.79.62). `markers` (v2.0.163): the model's own added tokens (special or
+  not: turn markers, `<think>`, tool tags) that occur in `prompt`, longest
+  first, read from its tokenizer files (a GGUF's header: control and
+  user-defined tokens). v3 highlights exactly these and nothing else. The exact string generate would feed the model, rendered by
   the model's own engine (llama-server `/apply-template`; the MLX tokenizer's
   template through the same builder generation uses). Same rows, same
   builder, same overrides; `user_content` renders as the next user turn and
@@ -580,7 +583,10 @@ Response bodies are typed in `/openapi.json` (`Preset`, `PresetList`, `PresetDel
 
 **Admin models** (`X-Heylook-Admin-Token`): `GET /v1/admin/models` →
 `{models:[{id,provider,description?,tags,capabilities,config,loaded,source,
-stale_reload_fields,engine,thinking_default,sampler_defaults}], total}`.
+stale_reload_fields,engine,thinking_default,sampler_defaults,sampler_sources}], total}`.
+`sampler_sources` (v2.0.163, also on `/v1/models`) names the layer each sampler default
+came from: `model` (this model's own stored settings), `vendor` (its generation_config.json
+or GGUF header) or `default` (heylook's floor); v3 shows it beside the value.
 `source` (v1.70.0) is `"config"` (a heylook.toml `[[models]]` entry) or `"discovered"`
 (found under `[scan].folders`, served with no entry). NOT derivable from `config`: a
 discovered model's `config` is not empty — it carries what the scanner assigned

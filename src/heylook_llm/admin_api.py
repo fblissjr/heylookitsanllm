@@ -176,6 +176,7 @@ def _model_config_to_response(mc, loaded_ids: set[str], router=None,
         engine=facts.engine.model_dump(),
         thinking_default=facts.thinking_default,
         sampler_defaults=facts.sampler_defaults,
+        sampler_sources=facts.sampler_sources,
     )
 
 

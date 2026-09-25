@@ -243,7 +243,21 @@ wrapper in `utils.js`. Backend suite green; `bun run e2e:render` green.
   `_strip_history_specials` STAYS and is not redundant -- `content` is
   user-updatable, so an edited assistant row can still carry a control token
   that must not re-enter a prompt, which is how its two tests now seed.
-  **THE DESIGN FOR A CORRECT VERSION, deferred not rejected:** store always
+  **2026-09-25, owner: the NEED is seeing the markers, and the prompt preview
+  serves it; the store-unstripped design below was set aside, not built.**
+  Checked before building it: a stop token ends generation without being
+  decoded (vlm_engine), structural markers (`<think>`, channels) are consumed
+  by the routing parser, and llama-server emits no specials without a
+  server-wide `--special` that would change every request. So a stored
+  unstripped reply would show almost nothing. v2.0.163 instead makes the
+  preview's highlighting exact: the route returns `markers`, the model's own
+  added tokens (special or not) that occur in the rendered prompt, read from
+  its tokenizer files (gguf: the header's control + user-defined tokens).
+  Still open, only if the preview proves not enough: a per-message RAW
+  output view on MLX (what the model produced before the split) -- that does
+  need a stored raw copy. The `strip_specials=False` seam and its tests stay
+  for it.
+  **The earlier design, kept for the record:** store always
   UNSTRIPPED and strip at READ (`GET /v1/conversations/{id}` takes the flag,
   `specials_stripper` does the work), which makes the choice genuinely
   render-time and applies it to replies that already exist -- the wart the
