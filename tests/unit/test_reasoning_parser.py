@@ -605,6 +605,12 @@ class TestParserInvariants:
         "Compare x<y and y>z in the expression",
         "<thin some random text with angle brackets",
     ]
+    # Exact feeds of the tests these rows replaced, kept as-is.
+    TOKEN_FREE_SPLITS = [
+        ("hello ", "world"),
+        ("Hello", " world", "!"),
+        ("Hello", " world"),
+    ]
 
     def _parser(self, kind):
         specials = ["<|reserved_200000|>", "<|endoftext|>", "[INST]", "<turn|>"]
@@ -661,9 +667,14 @@ class TestParserInvariants:
         rng = random.Random(20260724)
         for kind in self.CORPUS:
             for text in self.TOKEN_FREE:
-                content, thinking = _collect(self._parser(kind), self._splits(text, rng))
-                assert content == text, f"[{kind}] lost text: {text!r} -> {content!r}"
-                assert thinking == ""
+                # whole (one chunk, as most replaced tests fed it) and chopped
+                for feed in ([text], self._splits(text, rng)):
+                    content, thinking = _collect(self._parser(kind), feed)
+                    assert content == text, f"[{kind}] lost text: {feed!r} -> {content!r}"
+                    assert thinking == ""
+            for chunks in self.TOKEN_FREE_SPLITS:
+                assert _collect(self._parser(kind), list(chunks)) == ("".join(chunks), ""), (
+                    f"[{kind}] pinned split lost text: {chunks}")
 
 
 class TestChannelParsersResumeInsideThinking:

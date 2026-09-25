@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.161]
+
+### Fixed
+
+Two defects an independent review found in the v2.0.160 merges:
+
+- The cascade-delete check (`test_db_blocks.py::test_delete_conversation_deletes_messages`)
+  counted message rows after `clear_all_data`, which empties the table, so it
+  could not fail; with the store's per-conversation `DELETE FROM messages`
+  disabled it still passed. It now counts the conversation's rows in
+  `messages`, `message_stats` and `media_blobs` before anything else runs,
+  and fails with that delete disabled (checked, then restored).
+- The token-free parser rows (`test_reasoning_parser.py`) were fed only as
+  random splits of two or more chunks, while five of the tests they replaced
+  fed the whole text as one chunk and three used an exact split. Every row
+  now also runs as one whole chunk, and the three exact splits are kept as
+  pinned feeds.
+
 ## [2.0.160]
 
 Pruning pass, part 3 (owner ruling 2026-09-25): the merges. Groups of tests

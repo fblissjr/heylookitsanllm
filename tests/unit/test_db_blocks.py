@@ -118,13 +118,15 @@ class TestStructuralInvariants:
         await db.append_message(conn, conv["id"], role="user", content=[IMAGE_BLOCK])
         assert await db.delete_conversation(conn, conv["id"]) is True
         assert await db.get_conversation(conn, conv["id"]) is None
+        # The rows themselves are gone, not just unreachable -- counted BEFORE
+        # anything else empties the tables (the merged version of this check
+        # counted after clear_all_data and could not fail).
+        for table in ("messages", "message_stats", "media_blobs"):
+            count = await conn.run(lambda c, t=table: c.execute(
+                f"SELECT COUNT(*) FROM {t} WHERE conversation_id = ?", (conv["id"],)).fetchone()[0])
+            assert count == 0, f"{table} kept rows of a deleted conversation"
         counts = await db.clear_all_data(conn)
         assert counts["conversations_deleted"] == 0
-        # the message rows themselves are gone, not just unreachable
-        count = await conn.run(
-            lambda c: c.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
-        )
-        assert count == 0
 
     # Rows: (after_position, deleted, contents kept, next append's position).
     # A position past the end deletes nothing and keeps every message.
