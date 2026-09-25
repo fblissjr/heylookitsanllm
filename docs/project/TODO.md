@@ -863,7 +863,9 @@ open; each names what would settle it.
   re-run against the sidecar and CLAUDE.md either confirms or splits the
   claim. Note this compounds the `reasoning_effort` re-check above: both are
   template-dependent and the default flip moved the variable underneath them.
-- [ ] **`_build_args` reaches the filesystem now** (P3): it is documented as
+- [x] **Fixed 2026-09-25**: the drift test's model lives in a directory the module
+  creates (`MODEL`), so no shared `/tmp` file can reach its argv. Was:
+  **`_build_args` reaches the filesystem now** (P3): it is documented as
   pure and exercised by `tests/unit/test_gguf_argv_matches_metadata.py` with
   paths that do not exist. Sidecar discovery probes the model file's parent,
   and that test uses `model_path="/tmp/model.gguf"` -- so a

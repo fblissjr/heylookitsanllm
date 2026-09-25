@@ -10,10 +10,19 @@ model is configured with, and nothing would say so.
 This is the third leg of the same drift the `effect` classification closed for
 the reload set and the import allowlist.
 """
+import tempfile
+from pathlib import Path
+
 import pytest
 
 from heylook_llm.config import PROVIDER_CONFIG_CLASSES
 from heylook_llm.providers.llama_server_provider import LlamaServerProvider
+
+# The model lives in a directory this module owns (two levels deep, so the
+# folder above it is ours too): _build_args probes the model's folder for a
+# chat_template.jinja sidecar, and under a shared /tmp a stray file there would
+# add a --chat-template-file to every case below.
+MODEL = str(Path(tempfile.mkdtemp(prefix="argv-drift-")) / "repo" / "m.gguf")
 
 # A value per field that is (a) valid for the type and (b) TRUTHY, so the
 # builder's `if cfg.get(...)` guards all fire.
@@ -87,7 +96,7 @@ def test_declared_flag_is_the_one_actually_emitted(field, flag):
     """
     if field == "model_path":
         pytest.skip("identity; emitted as -m and never optional")
-    config = {"model_path": "/tmp/model.gguf", field: SAMPLE_VALUES[field]}
+    config = {"model_path": MODEL, field: SAMPLE_VALUES[field]}
     argv = _build_argv(config)
     assert flag in argv, (
         f"`{field}` declares arg={flag!r} but _build_args emitted "
@@ -99,7 +108,7 @@ def test_declared_flag_is_the_one_actually_emitted(field, flag):
 @pytest.mark.unit
 def test_the_value_lands_next_to_the_flag():
     """A flag present with the wrong value is as broken as one missing."""
-    argv = _build_argv({"model_path": "/tmp/m.gguf", "ctx_size": 4096})
+    argv = _build_argv({"model_path": MODEL, "ctx_size": 4096})
     assert argv[argv.index("--ctx-size") + 1] == "4096"
 
 
@@ -109,7 +118,7 @@ def test_zero_is_emitted_not_swallowed():
     (disable the prompt cache), so a truthiness check would drop it. The
     builder uses `is not None` for exactly this; pin it."""
     argv = _build_argv(
-        {"model_path": "/tmp/m.gguf", "n_gpu_layers_draft": 0, "cache_ram_mb": 0}
+        {"model_path": MODEL, "n_gpu_layers_draft": 0, "cache_ram_mb": 0}
     )
     assert argv[argv.index("-ngld") + 1] == "0"
     assert argv[argv.index("-cram") + 1] == "0"
@@ -120,7 +129,7 @@ def test_extra_args_are_appended_last():
     """Raw passthrough must come after the managed flags, so a deliberate
     override wins (llama.cpp takes the last occurrence)."""
     argv = _build_argv(
-        {"model_path": "/tmp/m.gguf", "ctx_size": 4096,
+        {"model_path": MODEL, "ctx_size": 4096,
          "extra_args": ["--ctx-size", "9999"]}
     )
     assert argv[-2:] == ["--ctx-size", "9999"]
@@ -131,8 +140,8 @@ def test_cpu_moe_is_a_bare_flag_with_no_value():
     """`-cmoe` takes NO argument in llama.cpp. Emitting a value after it would
     make llama-server read the next token as a positional and fail at spawn --
     a load failure, not a misconfiguration."""
-    base = _build_argv({"model_path": "/tmp/m.gguf"})
-    with_flag = _build_argv({"model_path": "/tmp/m.gguf", "cpu_moe": True})
+    base = _build_argv({"model_path": MODEL})
+    with_flag = _build_argv({"model_path": MODEL, "cpu_moe": True})
     # Exactly one token longer: the flag itself and nothing else. Checking the
     # length delta rather than the following token, because the flag can land
     # last in argv (nothing to inspect) and a value that happened to start with
@@ -149,7 +158,7 @@ def test_cpu_moe_false_emits_nothing():
     """A bare flag is presence-signalled: False must not emit `-cmoe`, or
     'expert offload off' would silently mean 'all experts on CPU'."""
     assert "-cmoe" not in _build_argv(
-        {"model_path": "/tmp/m.gguf", "cpu_moe": False}
+        {"model_path": MODEL, "cpu_moe": False}
     )
 
 
@@ -157,14 +166,14 @@ def test_cpu_moe_false_emits_nothing():
 def test_p_min_zero_is_emitted_not_swallowed():
     """0.0 is a real setting (keep every draft) AND llama.cpp's default, so
     truthiness would make an explicit 0.0 indistinguishable from unset."""
-    argv = _build_argv({"model_path": "/tmp/m.gguf", "spec_draft_p_min": 0.0})
+    argv = _build_argv({"model_path": MODEL, "spec_draft_p_min": 0.0})
     assert argv[argv.index("--spec-draft-p-min") + 1] == "0.0"
 
 
 @pytest.mark.unit
 def test_n_cpu_moe_zero_is_emitted_not_swallowed():
     """0 = offload no layers, an explicit choice distinct from unset."""
-    argv = _build_argv({"model_path": "/tmp/m.gguf", "n_cpu_moe": 0})
+    argv = _build_argv({"model_path": MODEL, "n_cpu_moe": 0})
     assert argv[argv.index("-ncmoe") + 1] == "0"
 
 
