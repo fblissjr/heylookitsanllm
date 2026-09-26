@@ -150,6 +150,14 @@ export function createPageContext(page, { base, maxTokens }) {
       }
     },
 
+    // The suite's default seed onto whatever document is OPEN, settled. A new
+    // conversation starts blank since v2.0.172 (it no longer inherits the open
+    // one's panel), so a helper that makes one seeds it with this.
+    async seedDefaults(kind = 'conversations') {
+      await ctx.seedPanel(DEFAULT_PARAMS);
+      await ctx.settleParams(kind);
+    },
+
     // Wait for a pending debounced params PUT to land. Bounded and quiet: it is
     // removing a RACE, not asserting a fact, so a document that never appears
     // (no conversation exists yet -- the normal case at the first open of a

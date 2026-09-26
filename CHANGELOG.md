@@ -40,8 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   notebook.
 - Checks: `e2e:render` 102/102 (the thinking check extended to a template
   with a default level and the cap row; new: a new conversation starts blank,
-  Clear stores null). The live `e2e:chat` default-label assertion follows the
-  new wording and was not run. unit + contract green.
+  Clear stores null). Live on Qwen3.5-0.8B-MLX-8bit: `e2e:chat` 53/53,
+  `e2e:pages` 32/32. The chat suite's `newFreshConversation` now seeds each
+  fresh conversation itself (it relied on the inheritance removed here; the
+  disconnect check timed out on a thinking reply without it). unit + contract
+  green.
 
 ## [2.0.171]
 

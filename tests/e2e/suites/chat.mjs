@@ -104,7 +104,10 @@ async function conversationStateById(page, id) {
 // round-trip check read an old text conversation and found 0 image blocks).
 // created_at is immutable, so the newest-created conversation is always the
 // one New just made.
-async function newFreshConversation(page) {
+// Set by runChatSuite: seeds the suite's defaults onto the open document.
+let seedFresh = null;
+
+async function newFreshConversation(page, { seed = true } = {}) {
   await clickByText(page, '.chat__convs-head button', 'New');
   // The conv-item paints at the START of selectConversation; its async
   // hydrate is still in flight then, and hydrateDocParams silently resets
@@ -121,11 +124,13 @@ async function newFreshConversation(page) {
       (a, b) => (a && a.created_at > b.created_at ? a : b), null)?.id ?? null;
   });
   assert(id, 'could not resolve the fresh conversation id server-side');
-  // Nothing to seed here: a new conversation is created with
-  // `params: snapshotSettings()`, so it INHERITS whatever ctx.open() put in the
-  // panel. Seeding the document instead was wrong twice over -- the panel is
-  // sent as `overrides` and layered on top, so it would have won anyway, and
-  // the next panel edit PUTs the whole snapshot and would have erased the seed.
+  // Seeded HERE: since v2.0.172 a conversation made from an open one starts
+  // blank (its preset or nothing), no longer inheriting the panel ctx.open()
+  // seeded -- so without this every fresh conversation ran uncapped with the
+  // model thinking. Through the real drawer, onto the document now open, and
+  // settled before the check touches anything. `seed: false` for a check
+  // whose conversation starts as a preset: seeding would drift it.
+  if (seed) await seedFresh?.();
   return id;
 }
 
@@ -226,6 +231,7 @@ async function measureStreamCadence(page, model, maxTokens) {
 }
 
 export async function runChatSuite({ suite, ctx, config }) {
+  seedFresh = () => ctx.seedDefaults();
   const { page } = ctx;
   await ctx.open('#/chat');
 
@@ -960,7 +966,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     // as the drifted panel. Server-side assertions: the stamp is written at
     // create, not inferred client-side.
     await closeDrawer(page); // the drawer is modal; the New button lives in #app
-    const convId = await newFreshConversation(page);
+    const convId = await newFreshConversation(page, { seed: false });
     const conv = await page.evaluate(async (id) =>
       await (await fetch(`/v1/conversations/${id}`)).json(), convId);
     assert(conv.applied_preset_id, 'new conversation was not stamped with the preset');
