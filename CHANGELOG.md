@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.177]
+
+### Fixed
+
+- **Models page chat template: no dead "Start an override from this"
+  button** (owner report). With no override, the copy in force is already in
+  the editor, so its button changed nothing and Save stayed disabled. That row
+  now says "shown in the editor below; edit it to make an override". An
+  unchanged copy stays unsaveable on purpose: an identical override is how a
+  stale one outlives a newer vendor file. A copy identical to the editor's text
+  says so instead of promising a Save. Each template copy sits in its own box,
+  so its button no longer reads as the next row's.
+- Checks: `e2e:render` 105/105 (new: the in-force copy has no button, another
+  copy loads as a saveable draft).
+
 ## [2.0.176]
 
 ### Changed

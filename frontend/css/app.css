@@ -1383,9 +1383,13 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
 /* the override is hiding a template file the model ships (model-config.js) */
 .cfg-tmpl__origin--warn { color: var(--warn); }
 .cfg-tmpl__sources { list-style: none; margin: 0; padding: 0;
-  display: flex; flex-direction: column; gap: 0.35rem; }
+  display: flex; flex-direction: column; gap: 0.5rem; }
+/* One box per template copy, so its button reads as ITS button: unboxed, each
+   row's button sat directly above the next row's name (2026-09-26). */
 .cfg-tmpl__source { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem;
-  overflow-wrap: anywhere; }
+  overflow-wrap: anywhere; padding: 0.5rem 0.6rem;
+  border: 1px solid var(--line); border-radius: var(--r-ctl); }
+.cfg-tmpl__source--in-force { border-color: var(--accent); }
 .cfg-tmpl__source-name { font-family: var(--mono); }
 .cfg-tmpl__source--in-force .cfg-tmpl__source-name { font-weight: 600; }
 .cfg-tmpl__label { font-size: var(--text-sm); color: var(--ink-muted); }

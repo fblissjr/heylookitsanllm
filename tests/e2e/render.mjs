@@ -355,8 +355,16 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
     // A template view with the operator's override in force over a jinja the
     // model ships (ladder order, as chat_template_files.template_sources).
     if (url.endsWith('/chat-template') && method === 'GET') {
-      const src = (source, file, inForce) => ({ source, file, in_force: inForce, sha256: '0'.repeat(64),
-        provenance: source, download_commit: null, prefix_stable: true, prefix_note: '', thinking: null, template: 'x' });
+      const src = (source, file, inForce, template = 'x') => ({ source, file, in_force: inForce, sha256: '0'.repeat(64),
+        provenance: source, download_commit: null, prefix_stable: true, prefix_note: '', thinking: null, template });
+      // `plainTemplate`: no override, the jinja beside the weights in force.
+      if (remote.plainTemplate) {
+        return { model_id: 'test-model', provider: 'gguf', template: 'JINJA', origin: 'sidecar',
+          override_present: false, override_template: null, writable: true, inert_reason: null, stale: null,
+          refused_shapes: [], prefix_stable: true, prefix_note: '', notes: [], sources: [
+            src('chat_template.jinja beside the .gguf', 'chat_template.jinja', true, 'JINJA'),
+            src('embedded in the GGUF', null, false, 'EMBEDDED')] };
+      }
       return { model_id: 'test-model', provider: 'gguf', template: 'x', origin: 'heylook_override',
         override_present: true, override_template: 'x', writable: true, inert_reason: null, stale: null,
         refused_shapes: [], prefix_stable: true, prefix_note: '', notes: [], sources: [
@@ -3643,6 +3651,32 @@ async function main() {
       assert(out.blank.placeholder === '16384', `placeholder reads ${JSON.stringify(out.blank.placeholder)}`);
       assert(/heylook default/.test(out.blank.label), `the source is not under the name: ${JSON.stringify(out.blank.label)}`);
       assert(!/heylook default/.test(out.set.label), `the source still shows once overridden: ${JSON.stringify(out.set.label)}`);
+    });
+    await suite.check('the template in force offers no no-op override button', async () => {
+      dp.store.remote.plainTemplate = true;
+      const out = await dp.page.evaluate(async () => {
+        const { createModelConfigEditor } = await import('/js/model-config.js');
+        const editor = createModelConfigEditor({ model: { id: 'test-model', config: {}, engine: {} },
+          fields: [], draft: {}, onError() {}, onSaved() {}, onReload() {}, onReset() {} });
+        document.body.append(editor.el);
+        editor.el.querySelector('.cfg-tmpl > summary').click();
+        for (let i = 0; i < 50 && !editor.el.querySelector('.cfg-tmpl__source'); i++) {
+          await new Promise((r) => setTimeout(r, 20));
+        }
+        const rows = [...editor.el.querySelectorAll('.cfg-tmpl__source')].map((li) => ({
+          name: li.querySelector('.cfg-tmpl__source-name').textContent,
+          button: Boolean(li.querySelector('button')) }));
+        // The other copy's button must still load it and enable Save.
+        editor.el.querySelectorAll('.cfg-tmpl__source')[1].querySelector('button').click();
+        const save = [...editor.el.querySelectorAll('button')].find((b) => b.textContent === 'Save template');
+        const result = { rows, body: editor.el.querySelector('.cfg-tmpl__body').value, saveEnabled: !save.disabled };
+        editor.el.remove();
+        return result;
+      });
+      dp.store.remote.plainTemplate = false;
+      assert(out.rows.length === 2 && !out.rows[0].button && out.rows[1].button,
+        `buttons per row: ${JSON.stringify(out.rows)}`);
+      assert(out.body === 'EMBEDDED' && out.saveEnabled, `the other copy did not load as a saveable draft: ${JSON.stringify(out)}`);
     });
     await suite.check('an override hiding the model\'s own template says so', async () => {
       const out = await dp.page.evaluate(async () => {

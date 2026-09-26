@@ -404,7 +404,7 @@ function buildChatTemplatePanel({ model, draft, onDraftChange }) {
     thinkingEl.textContent = thinkingSummary(inForce?.thinking
       ? { ...inForce.thinking, template: inForce.file ?? inForce.source }
       : model.engine?.thinking);
-    renderSources(view.sources ?? []);
+    renderSources(view.sources ?? [], view.override_present);
 
     // Ordered worst-first: an edit that cannot land at all matters more than
     // one that has landed but needs a reload.
@@ -434,7 +434,12 @@ function buildChatTemplatePanel({ model, draft, onDraftChange }) {
   // it is in force, the lint, and "Start an override from this", which puts
   // its body in the editor as an unsaved draft (Save writes the override
   // through the usual validated path; nothing is written until then).
-  function renderSources(sources) {
+  // The in-force copy gets no button while no override exists: the editor
+  // already holds it, so the click changed nothing and Save stayed disabled
+  // (owner, 2026-09-26: "clicking that doesnt do anything"). An unchanged copy
+  // is deliberately not saveable -- an identical override is how a stale one
+  // outlives a newer vendor file.
+  function renderSources(sources, overridePresent) {
     sourcesEl.replaceChildren(...sources.map((src) => {
       const facts = [src.provenance + (src.download_commit ? ` @${src.download_commit.slice(0, 8)}` : ''),
         src.sha256.slice(0, 12)];
@@ -442,12 +447,17 @@ function buildChatTemplatePanel({ model, draft, onDraftChange }) {
       // What this copy would offer in force, so a losing copy's levels (a
       // GGUF's embedded template under a jinja beside it) are visible too.
       if (src.thinking) facts.push(`thinking: ${thinkingParts(src.thinking).join('; ')}`);
-      const copy = createEl('button', { class: 'btn btn--sm btn--ghost', type: 'button',
-        disabled: area.disabled }, ['Start an override from this']);
-      copy.addEventListener('click', () => {
+      const inEditor = src.in_force && !overridePresent;
+      const copy = inEditor
+        ? createEl('span', { class: 'muted small' }, ['shown in the editor below; edit it to make an override'])
+        : createEl('button', { class: 'btn btn--sm btn--ghost', type: 'button',
+          disabled: area.disabled }, ['Start an override from this']);
+      if (!inEditor) copy.addEventListener('click', () => {
         area.value = src.template;
         syncDirty();
-        say(`Editing a copy of ${src.source}. Save to make it this model's override.`);
+        say(eol(src.template) === eol(serverText)
+          ? `${src.source} is identical to what the editor holds; change it to save an override.`
+          : `Editing a copy of ${src.source}. Save to make it this model's override.`);
       });
       return createEl('li', { class: `cfg-tmpl__source${src.in_force ? ' cfg-tmpl__source--in-force' : ''}` }, [
         createEl('span', { class: 'cfg-tmpl__source-name' },
