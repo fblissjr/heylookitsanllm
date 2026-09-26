@@ -17,7 +17,7 @@ to it, so the headings stay stable as anchors.
   [context](#gguf-context-allocation), [micro-batch and memory](#gguf-micro-batch-and-memory),
   [non-causal images](#gguf-non-causal-images),
   [Metal residency](#gguf-metal-residency-keep-alive),
-  [one engine contract](#one-engine-contract), [speculative decoding](#gguf-speculative-decoding), [raw output](#gguf-raw-output-view-not-built), [binary and build](#llama-server-binary-and-build)
+  [one engine contract](#one-engine-contract), [speculative decoding](#gguf-speculative-decoding), [raw output](#gguf-raw-output-view-not-built), [binary and build](#llama-server-binary-and-build), [flash attention default](#gguf-flash-attention-default)
 - Thinking and sampling: [on the wire](#thinking-on-the-wire),
   [default and sampler report](#thinking-default-and-the-sampler-report),
   [depth](#thinking-depth), [vendor layer](#vendor-sampling-layer),
@@ -428,6 +428,37 @@ outside the repo (a fixed dir under the user's home; `dir` /
 or packaged and there is nothing to `submodule init`. Build flags and their
 rationale (why no LTO, no OpenMP, and why `GGML_METAL_NDEBUG` stays off) are
 in `scripts/README.md`.
+
+### gguf flash attention default
+
+Flash attention is OFF by default for gguf (owner call, 2026-09-26), against
+a measurement: the 2026-09-23 audit (§9) found off slower for the vision
+encode, since the tower inherits the flag, and faster for nothing. The owner
+chose off and asked for a re-measure the same day. `-fa` is now always
+passed; `effective_flash_attn` is the one decision, called by the spawn and
+the engine report. A quantized `cache_type_v` is the one exception, and it is
+not a preference: llama.cpp refuses that context with flash attention off
+("quantized V cache requires flash_attn", llama-context.cpp), so forcing off
+there would turn a config choice into a model that cannot load. `auto` became
+an explicit value; `null` on `/reload` means the default, and the load panel
+says "default (off)" rather than "auto".
+
+Two things found on the way, both easy to get wrong again:
+
+- `scripts/perf_ab.py` timed gguf wrong from the start. It began the
+  first-token clock at the first chunk carrying `generation_tokens`, which
+  the gguf provider reports only on its final usage chunk, so every gguf
+  TTFT was the whole wall time and decode rate was null. It now times from
+  the first chunk carrying output. Any gguf record from before 2026-09-26 has
+  the broken timing; the 2026-09-23 audit used its own harness and is not
+  affected.
+- There is no build-time flash attention switch on Metal. llama.cpp's FA
+  options (`GGML_CUDA_FA*`) are CUDA-only; a Metal build always carries the
+  `fa_*.metal` kernels, embedded by `GGML_METAL_EMBED_LIBRARY` and compiled
+  at load, and the `flash-attn` Python package is CUDA-only. `-fa` is the
+  whole lever; a newer upstream Metal kernel is the only other one
+  (`git log <built>..origin/master -- ggml/src/ggml-metal` in the build
+  checkout says whether one exists).
 
 ## Thinking and sampling
 

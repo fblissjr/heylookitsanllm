@@ -40,6 +40,24 @@ is left, each with the recommendation the owner was given:
 - [ ] **Notebook images:** later (owner call); audio waits for a model that
   supports it.
 
+## From the 2026-09-26 settings session (v2.0.172 - v2.0.176)
+
+- [ ] **Flash attention A/B on an idle desktop.** The 2026-09-26 re-measure
+  (`internal/claude/perf/ab_unsloth_Qwen3.8-27B-UD-Q8_K_XL_20260926-155328.json`)
+  is marked contaminated (desktop GPU use before both off arms). Re-run with
+  (`uv run python scripts/perf_ab.py run --model <gguf-id> --arm
+  'on=HEAD:{"flash_attn":"on"}' --arm 'off=HEAD:{"flash_attn":"off"}'
+  --workloads short,long,vision,vision_repeat`) with nothing drawing on the
+  screen, and consider a second gguf model (a SWA one) since the default now
+  covers all of them.
+- [ ] **Models page "override hides chat_template.jinja" line, live.** Only
+  the render suite covers it; a live check writes an override into a model
+  folder (owner's files, ask first), loads the Models page, then reverts.
+- [ ] **Preset section layout.** v2.0.172 clarified it (heading names what
+  the document runs, drift line, Delete) but did not redesign it. If the
+  owner still finds it confusing, next is folding Save as new behind a
+  button.
+
 ## From the 2026-09-24 improvement loop (merged as v2.0.121)
 
 Record: `internal/claude/improve/archive/runs-2026-09-24/` (report.html has the evidence).

@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-26, v2.0.174, `main`.
+Last updated: 2026-09-26, v2.0.176, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md) (triaged 2026-09-25;
@@ -17,6 +17,7 @@ rather than carried forward as green.
 | Suite | Result | As of |
 |---|---|---|
 | unit + contract | green (1439 passed) | v2.0.173 |
+| v2.0.175 / v2.0.176 | unit + contract 1439, e2e render 104/104; flash attention on/off A/B on the Qwen3.8 GGUF contaminated (no verdict; TODO) | v2.0.176 |
 | v2.0.174 e2e on the Qwen3.8 GGUF (gguf arm) | chat 53/53 (cadence skipped, slow arm), pages 32/32; the new live depth-level check passes (levels match detection, a picked level changes the prompt, generates); chat 53/53 on Qwen3.5-0.8B | v2.0.174 |
 | v2.0.173 live pass (settings drawer, override removed on the Qwen3.8 GGUF) | smoke 92/92 on gpt-oss-20b / Qwen3.5-0.8B / unsloth Qwen3.8-27B GGUF (now on its `chat_template.jinja`); e2e chat 53/53, pages 32/32 on Qwen3.5-0.8B; e2e render 103/103 | v2.0.173 |
 | v2.0.170 pin move (mlx-vlm `990a0287`) | smoke 92/92 on gpt-oss-20b / Qwen3.5-0.8B / unsloth Qwen3.8-27B GGUF; parity ok on Qwen3.5-0.8B (near-tie as before); chain probe clean on Qwen3.5-0.8B, Qwen3-0.6B, gpt-oss-20b (two near-ties). Record in `internal/claude/pin_990a0287/` | v2.0.170 |
@@ -37,7 +38,20 @@ Thinking DEPTH is covered by pinning depth-capable models:
 `--model mlx-text=gpt-oss-20b-MXFP4-Q8-mlx` and, since v2.0.151,
 `--model mlx-vision=mlx-community_Qwen3.8-27B-4bit` (39/39 on the vision arm).
 
-## Handoff -- start here (2026-09-25)
+## Handoff -- start here (2026-09-26)
+
+**Settings session (v2.0.172 - v2.0.176, owner-driven).** The sampler
+drawer's thinking control is one knob built from the template, with the token
+cap as its sub-row; new documents start as their preset or blank; the prompt
+box has Clear; an override that hides a model's `chat_template.jinja` says so
+(the Qwen3.8 GGUF's stale override was removed, a copy in
+`internal/archive/chat_templates/`); a blank field's default source sits
+under its name; gguf flash attention is off by default (on for a quantized V
+cache). Live passes are in the table above. Open follow-ups: TODO.md, "From
+the 2026-09-26 settings session". Everything since v2.0.171 is unpushed and
+unsigned (the 1Password agent was down).
+
+## Earlier handoff (2026-09-25)
 
 **Next session (end of 2026-09-25, v2.0.170).** mlx-vlm is pinned to upstream
 main `990a0287`, all checks green (verification table). Agreed order for the
