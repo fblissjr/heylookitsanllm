@@ -303,6 +303,8 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   gap: 0.75rem;
 }
 .settings-row .input { width: 7rem; text-align: right; }
+/* A select names its choice ("Default (medium)"); a number's 7rem cut it off. */
+.settings-row select.input { width: auto; min-width: 7rem; max-width: 12rem; text-align: left; }
 /* a per-field caveat, on its own line under the field's name (settings.js
    PARAM_META `note`) -- the row stays a two-child flex */
 .settings-row__note { display: block; font-weight: 400; line-height: 1.35; }
@@ -352,6 +354,15 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .settings-row--overridden > label { color: var(--accent); font-weight: 600; }
 .settings-row--overridden .input { border-color: var(--accent); }
 
+/* A row that belongs to the one above it (the thinking token cap under
+   Thinking): indented with a rule, so it reads as part of that control
+   rather than a second knob. */
+.settings-row--sub {
+  margin-top: -0.2rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--line);
+}
+
 .settings-panel details { border-top: 1px solid var(--line); padding-top: 0.5rem; }
 .settings-panel summary { cursor: pointer; color: var(--ink-muted); font-size: var(--text-sm); }
 .settings-panel details > div { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem; }
@@ -359,6 +370,10 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 /* drawer lead sections shared by chat + notebook: preset bar + the
    per-document system prompt (prompt-section.js's createPromptSection) */
 .preset-section { display: flex; flex-direction: column; gap: 0.4rem; }
+/* What the document is running, beside the heading (preset-bar.js
+   runningText); the select below browses, so the two can differ. */
+.preset-section__running { font-weight: 400; }
+.preset-section__running::before { content: " · "; }
 /* Wraps, and the select keeps a floor. The row carries four controls since
    Update joined it (v1.79.26), and an ARMED button relabels itself to
    "Overwrite prompt?" -- so at phone width a nowrap row either overflows or
@@ -405,6 +420,7 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   font-size: var(--text-sm);
   user-select: none;
 }
+.sysprompt__actions { display: flex; justify-content: flex-end; margin-top: 0.25rem; }
 .sysprompt-input {
   width: 100%;
   border: none;

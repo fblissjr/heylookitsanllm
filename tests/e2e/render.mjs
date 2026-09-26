@@ -42,7 +42,7 @@ import { fileURLToPath } from 'node:url';
 
 import { launchBrowser } from './lib/browser.mjs';
 import { Suite, printSummary, assert, waitFor, sleep, skip } from './lib/harness.mjs';
-import { openDrawer, closeDrawer, clickByText } from './lib/dom.mjs';
+import { openDrawer, closeDrawer, clickByText, armedClick } from './lib/dom.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const V3_ROOT = process.env.E2E_V3_ROOT
@@ -234,6 +234,9 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
     c2Generating: false, stopDelayMs: 0, cloneDelayMs: 0, bodyDelayMs: 0, bodyReleasedAt: null,
     applied_preset_id: appliedPresetId };
   let cloneCount = 0;
+  // Conversations the page creates (the New button), served back by id so a
+  // check can read what a new conversation was created WITH.
+  const created = new Map();
   const handle = (url, method, postData) => {
     const body = postData ? JSON.parse(postData) : {};
     if (url.endsWith('/v1/models')) {
@@ -311,6 +314,18 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
       return { id, title: 'render suite (copy)', model_id: 'test-model',
         system_prompt: null, applied_preset_id: null, params: {},
         generating: false, messages: [] };
+    }
+    if (url.endsWith('/v1/conversations') && method === 'POST') {
+      const row = { id: `new${created.size + 1}`, title: body.title, model_id: body.model_id ?? null,
+        system_prompt: body.system_prompt ?? null, applied_preset_id: body.applied_preset_id ?? null,
+        params: body.params ?? {}, generating: false, messages: [], updated_at: remote.updated_at };
+      created.set(row.id, row);
+      return row;
+    }
+    const createdRow = created.get(url.match(/\/v1\/conversations\/(new\d+)/)?.[1]);
+    if (createdRow) {
+      if (method === 'PUT') Object.assign(createdRow, body);
+      return { ...createdRow };
     }
     if (url.includes('/v1/conversations/c1')) {
       return { id: 'c1', title: 'render suite', model_id: 'test-model',
@@ -3535,12 +3550,34 @@ async function main() {
         pick.value = 'level:high';
         pick.dispatchEvent(new Event('change'));
         const picked = s.snapshotSettings();
+        // A template WITH a default level (the JonathanColetti sidecar's
+        // shape): no "On" beside it, the level marked, a bare on shown as it.
+        const leveled = { switch: 'enable_thinking', depth: {
+          variable: 'reasoning_effort', values: ['medium', 'none', 'low', 'xhigh'], aliases: {},
+          default: 'medium', unknown: 'ignored', changes_prefix: true, off: ['none'] } };
+        s.applySettings({ enable_thinking: true }, { silent: true });
+        const lv = control(leveled);
+        const withDefault = { options: [...lv.options].map((o) => [o.value, o.textContent]), selected: lv.value };
+        // The token cap sits under Thinking: hidden while thinking is off,
+        // absent where the engine cannot enforce it, a tiny value called out.
+        const capCaps = [...caps, 'thinking_budget'];
+        const capRow = (values, thinking) => {
+          s.applySettings(values, { silent: true });
+          const row = s.buildSettingsPanel({ caps: capCaps, thinking })
+            .querySelector('#set-thinking_budget_tokens')?.closest('.settings-row');
+          return row ? { hidden: row.hidden, text: row.textContent } : null;
+        };
+        const cap = {
+          on: capRow({ enable_thinking: true, thinking_budget_tokens: 3 }, { ...leveled, budget: { enforced: true } }),
+          off: capRow({ enable_thinking: false }, { ...leveled, budget: { enforced: true } }),
+          unenforced: capRow({}, { ...leveled, budget: { enforced: false, reason: 'no' } }),
+        };
         const input = control(free, ['reasoning_effort']);
         document.body.append(input.closest('.settings-panel'));
         const listed = input.list ? [...input.list.options].map((o) => o.value) : null;
         input.closest('.settings-panel').remove();
         s.applySettings({}, { silent: true });
-        return { foreign, aliasSel, offSel, picked, tag: input.tagName, listed };
+        return { foreign, aliasSel, offSel, picked, tag: input.tagName, listed, withDefault, cap };
       });
       const { foreign } = out;
       assert(foreign.rows === 0, 'the depth still has a row of its own');
@@ -3560,8 +3597,56 @@ async function main() {
         `picking a level did not write both keys: ${JSON.stringify(out.picked)}`);
       assert(out.tag === 'INPUT' && JSON.stringify(out.listed) === JSON.stringify(['high']),
         `a verbatim template did not get a text box with its values as suggestions: ${JSON.stringify(out)}`);
+      const wd = out.withDefault;
+      assert(JSON.stringify(wd.options.map((o) => o[0]))
+        === JSON.stringify(['', 'off', 'level:medium', 'level:low', 'level:xhigh']),
+        `with a default level, "On" is still offered beside it: ${JSON.stringify(wd.options)}`);
+      assert(wd.options[0][1] === 'Default (medium)' && wd.options[2][1] === 'medium (default)',
+        `the default is not named in place: ${JSON.stringify(wd.options)}`);
+      assert(wd.selected === 'level:medium', `a stored bare "on" shows as ${wd.selected}, not its level`);
+      assert(out.cap.on && !out.cap.on.hidden && /stops after 3 tokens/.test(out.cap.on.text),
+        `the cap row with thinking on: ${JSON.stringify(out.cap.on)}`);
+      assert(out.cap.off?.hidden === true, `the cap row shows while thinking is off: ${JSON.stringify(out.cap.off)}`);
+      assert(out.cap.unenforced === null, 'the cap row is offered where the engine cannot enforce it');
     });
     await dp.page.close();
+
+    // ---- new documents and the prompt's Clear (2026-09-26) ------------------
+    const nd = await openChat(browser, base, {});
+    await suite.check('a new conversation starts blank, not from the open one', async () => {
+      await nd.page.waitForSelector('.chat__convs-head button');
+      // The open conversation carries a sampler value (the panel is its
+      // params); a New made from it with no preset must not inherit it.
+      await nd.page.evaluate(async () => (await import('/js/settings.js')).setSetting('temperature', 0.3));
+      await clickByText(nd.page, '.chat__convs-head button', 'New');
+      await waitFor(() => nd.reqs.some((r) => r.method === 'POST' && r.url.endsWith('/v1/conversations')),
+        { message: 'New never created a conversation' });
+      const body = JSON.parse(nd.reqs.find((r) => r.method === 'POST' && r.url.endsWith('/v1/conversations')).postData);
+      assert(JSON.stringify(body.params) === '{}' && !body.system_prompt,
+        `the new conversation was created with ${JSON.stringify(body)}`);
+    });
+    await suite.check('Clear empties the system prompt and stores null', async () => {
+      await openDrawer(nd.page);
+      await settle(nd.page);
+      await nd.page.evaluate(() => {
+        const box = document.querySelector('.drawer--open .sysprompt-input');
+        box.value = 'A PROMPT TO CLEAR';
+        box.dispatchEvent(new Event('input', { bubbles: true }));
+        box.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      const clear = await nd.page.$('.drawer--open .sysprompt-clear');
+      await armedClick(clear);
+      await clear.dispose();
+      await waitFor(async () => {
+        const puts = nd.reqs.filter((r) => r.method === 'PUT' && /\/v1\/conversations\/new\d+$/.test(r.url)
+          && r.postData && 'system_prompt' in JSON.parse(r.postData));
+        return puts.length && JSON.parse(puts[puts.length - 1].postData).system_prompt === null;
+      }, { message: 'Clear never stored a null prompt' });
+      const after = await nd.page.$eval('.drawer--open .sysprompt-input', (el) => el.value);
+      assert(after === '', `the box still holds ${JSON.stringify(after)}`);
+      await closeDrawer(nd.page);
+    });
+    await nd.page.close();
 
   } catch (err) {
     fatal = err;

@@ -24,13 +24,14 @@ a different thing.
 
 | Layer | Where it lives | What it is for | Changes when |
 |---|---|---|---|
-| **Global defaults** | your browser (localStorage) | what a brand-new conversation starts from, when no preset is involved | you move a slider with no conversation open |
+| **The draft** | this page, in memory | what the next conversation is created from, when none is open | you move a slider, type a prompt or Apply a preset with no conversation open |
 | **The conversation** | the server, on the conversation row | what actually gets sent to the model | you move a slider with a conversation open |
 | **The preset** | the server, in a named store | a snapshot you can copy into a conversation, or copy a conversation into | only when you press **Save** or **Save as new** |
 
 The system prompt has the same three layers: a draft parked in your browser
 before any conversation exists, the conversation's own prompt, and the prompt a
-preset carries.
+preset carries. **Clear**, under the prompt box, removes the prompt in one step
+(it asks *Clear prompt?* first, because the text is typed work).
 
 **A blank sampler field shows the value it will actually use** (v2.0.21). Leaving
 Top-k empty on a gemma model shows that model's own value in grey, because that is
@@ -49,10 +50,12 @@ removed, and the switch now travels alone.
 Two consequences worth internalising:
 
 - **The sampler panel is the active conversation's settings**, and it says so:
-  under the *Sampling* heading it reads **"Applies to this conversation —
+  under the *Generation* heading it reads **"Applies to this conversation —
   changes save as you make them."** With no conversation open it reads
-  **"Defaults for new conversations."**, because that is what the panel is then
-  — the seed the next new conversation starts from.
+  **"The next conversation you start is created with these."**, because that
+  is what the panel is then: the next conversation is created from exactly
+  what the drawer shows. It starts blank, never from the conversation (or
+  notebook) that was open before.
   Selecting a different conversation replaces every value in the panel with
   that conversation's stored ones. If you had "temperature 1.3" on screen and
   you click another conversation, the 1.3 is not lost — it is still on the
@@ -161,14 +164,16 @@ Read that as: your conversation and this preset have diverged. **Apply** discard
 your changes in favour of the preset's. **Save** discards the preset's in
 favour of yours. There is no merge and no third option.
 
-With **no conversation open** the line changes shape, because the panel is
-then the seed for the next conversation and a selected preset is what that
-conversation actually starts from: *"New conversations start from "p2"."* If
-you have moved a knob it adds that the change does not carry — Save it into
-the preset if you want it to.
+With **no conversation open** a preset you have only selected is not used —
+the next conversation is created from what the drawer shows, so the line says
+*"Not applied — the next conversation starts from what is shown here. Apply
+loads "p2"."* Apply it and it drifts like anywhere else.
 
-Beside the model selector, a chip names the preset the conversation is running
-and appends **(edited)** once anything the preset speaks for has changed.
+The *Preset* heading names what the open conversation is running, which is not
+always what the dropdown shows (the dropdown is for browsing): *Preset · p2*,
+*Preset · p2, edited*, or *Preset · none applied*. Beside the model selector, a
+chip says the same and appends **(edited)** once anything the preset speaks for
+has changed.
 
 ### Delete
 
@@ -179,11 +184,11 @@ settings — they are copies — they simply stop showing a preset name.
 
 ## 3. Conversations
 
-**New conversation** starts from the selected preset if there is one (its
-prompt, its settings, and its stamp). With no preset selected, it inherits the
-sampler panel as it stands but *not* the current conversation's system prompt.
-A prompt typed before any conversation exists is the one exception: it wins over
-a preset, because typing it was the more explicit act.
+**New conversation**, pressed from an open conversation, starts from the
+selected preset if there is one (its prompt, its settings, and its stamp). With
+no preset selected it starts blank: nothing of the open conversation, prompt or
+settings, carries over. With no conversation open it is created from exactly
+what the drawer shows, including a cleared prompt.
 
 **Switching** replaces the panel, the system prompt box, the model selector and
 the message list with the selected conversation's own. Staged attachments are
@@ -388,9 +393,12 @@ updates. On a Qwen model on MLX it is usually **Full res**: a choice of detail
 over cost, above the 2048px upload cap. It does not appear for llama.cpp
 models, which do not report the size they resize to.
 
-**Thinking** is one control, built from the selected model's chat template:
-*Model default* (named: "(on, auto)", "(off)"), *Off*, *On*, and each depth
-level the template offers, in the template's own words. A level that turns
+**Thinking** is one control at the top of the panel, built from the selected
+model's chat template: *Default* (named for what the model does untouched:
+"(medium)", "(on)", "(off)"), *Off*, and each depth level the template offers,
+in the template's own words and order, its default marked "(default)". *On*
+appears only for a template with a switch and no default level; where there is
+one, picking it is the same prompt. A level that turns
 thinking off (the unsloth Qwen3.8 override's `none`) is folded into *Off*
 rather than listed twice. A model with levels and no on/off switch (MiniMax)
 lists only its levels; a template that takes any word (gpt-oss) gets a text
@@ -401,15 +409,19 @@ beside the composer, which flips the effective state, turns back on to it. A
 level saved on another model (in a preset, say) stays saved but shows as "not
 offered by this model" and is not sent. Since v1.79.62 a model that can think
 thinks by default unless its own settings say otherwise. Depth levels are
-instructions the model may overrun; the thinking budget below is what bounds
-length. The Advanced group these live in is open by default.
+instructions the model may overrun; the token cap below is what bounds
+length. The *Advanced* group is folded by default and its heading counts the
+values you have changed inside it.
 
-**Thinking budget** is a hard cap on thinking tokens. Past it the engine
-forces the thinking block shut and the model goes on to answer. Depth levels
-are instructions the model may overrun; the budget is the control that
-actually bounds how long a reply thinks. A cut can cost answer quality, which
-has not been measured. It appears only for models whose thinking format the
-engine can close (not gpt-oss). Empty means no cap.
+**Thinking token cap**, indented under Thinking, is a hard cap on thinking
+tokens, not a level. Past it the engine forces the thinking block shut and the
+model goes on to answer. Depth levels are instructions the model may overrun;
+the cap is the control that actually bounds how long a reply thinks. A cut can
+cost answer quality, which has not been measured. It shows only while the
+model will think, only for models whose thinking format the engine can close
+(not gpt-oss), and says when the engine may not enforce it (llama.cpp decides
+per request; the tooltip gives its reason) or when a value is small enough to
+end the thought at once. Empty means no cap.
 
 ---
 
@@ -485,6 +497,15 @@ unaffected, and so is regenerating.
 ### Closed
 
 Kept as a record rather than deleted, so this section reads as a ledger.
+
+- *Thinking offered three names for one prompt, and the budget read like a
+  level* — closed in v2.0.172: one *Default* entry, the template's levels with
+  its default marked, and the cap as an indented token field that hides while
+  thinking is off.
+- *A new conversation inherited the open one's settings, and a cleared prompt
+  came back from the selected preset* — closed in v2.0.172: new conversations
+  start from their preset or blank, the no-conversation draft is created as
+  shown, and the prompt box has Clear.
 
 - *Apply vs Update — which way does each one point?* — closed in v1.79.62:
   Update is Save, and the drift line names the preset, the knobs and the

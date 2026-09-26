@@ -87,7 +87,7 @@ export default createPage({
       // engine.decoding.request_fields (observed at load; null = every field).
       requestFields: () => ctx.state.models.find(
         (m) => m.id === ctx.state.modelSelect.value)?.engine?.decoding?.request_fields?.value ?? null,
-      // The tri-state thinking control labels "Model default" with the
+      // The thinking control labels its "Default" entry with the
       // server's answer, off the /v1/models row (v1.79.63).
       modelDefaults: () => ({
         enable_thinking: ctx.state.models.find((m) => m.id === ctx.state.modelSelect.value)?.thinking_default ?? null,
@@ -139,6 +139,9 @@ export default createPage({
     if (s.notebooks.length) {
       await selectNotebook(ctx, s.notebooks[0].id);
     } else {
+      // The sampler cache is module state shared with chat: without this the
+      // first notebook started from whatever chat last had open.
+      hydrateDocParams(null);
       renderEditor(ctx);
     }
   },
@@ -351,15 +354,17 @@ async function newNotebook(ctx) {
   const s = ctx.state;
   s.scheduleSave.flush();
   try {
-    // Same new-document preset inheritance as chat's newConversation: the
-    // selected (or stamped) preset is the unit of continuity, and starting-as
-    // is an explicit apply, so it stamps at create.
+    // Same new-document rule as chat's newConversation: from an open
+    // notebook, the selected (or stamped) preset or nothing -- never the
+    // open notebook's own values; with none open, exactly what the drawer
+    // shows.
+    const draft = !s.activeId;
     const preset = s.presetBar.presetForNewDoc();
     const nb = await api.createNotebook({
       title: 'Untitled', content: '',
-      system_prompt: preset?.system_prompt || undefined,
-      params: preset ? { ...(preset.params ?? {}) } : snapshotSettings(),
-      applied_preset_id: preset?.id,
+      system_prompt: (draft ? s.systemPrompt : preset?.system_prompt) || undefined,
+      params: draft ? snapshotSettings() : { ...(preset?.params ?? {}) },
+      applied_preset_id: (draft ? s.appliedPresetId : preset?.id) || undefined,
     });
     if (!ctx.alive) return;
     s.notebooks.unshift(nb);
@@ -394,6 +399,9 @@ async function deleteNotebook(ctx, id) {
     s.modelId = '';
     if (s.notebooks.length) await selectNotebook(ctx, s.notebooks[0].id);
     else {
+      // Chat parity: nothing of the deleted notebook seeds the next one.
+      s.appliedPresetId = null;
+      hydrateDocParams(null);
       s.presetBar.syncIndicator(); // no active doc -> chip clears (chat parity)
       // The prompt widget outlives any single notebook (one instance per
       // mount), so clearing state is not enough -- resync it too, or the

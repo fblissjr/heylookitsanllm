@@ -1202,6 +1202,28 @@ sampler params beside it survived), and `.chat__sysprompt-chip` states what is
 in force, including the "No system prompt" case, which is rendered, not
 hidden.
 
+New documents and the draft (owner report, 2026-09-26: "settings leak
+across", and no way to clear a prompt). Three paths each seeded a new document
+differently. New from an open conversation with no preset copied the open
+one's panel, so its sampler values spread into every new chat. With nothing
+open, the panel held whatever chat or notebook last hydrated (one module
+cache), and the first send took a selected-but-unapplied preset's prompt
+whenever the box was empty, so emptying the box could not mean "no prompt".
+The rule now: from an open document, a new one starts as its preset or blank
+(`presetForNewDoc` answers null with no document open); with none open, the
+drawer IS the next document and it is created from exactly what it shows,
+with Apply as the only way a preset gets in (it stamps the draft). Pages clear
+the panel and the stamp whenever they enter the no-document state, which is
+also what lets `promptState` trust a draft stamp. The prompt box's Clear
+writes null (armed, since it is typed work); the override-box rule for
+presets is unchanged.
+
+The thinking control offered "Model default", "On" and the default level as
+three choices that render one prompt, and the budget row, a bare number beside
+it, was read as a level (a cap of 3 tokens, typed as "level 3"). "On" now
+appears only where there is no default level, and the cap is a sub-row that
+names its unit and hides while thinking is off.
+
 ### Model switching and the config editor
 
 Since v1.54-1.57 the models page edits per-model config (`js/model-config.js`,

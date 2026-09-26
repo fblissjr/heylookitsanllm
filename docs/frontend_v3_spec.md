@@ -896,8 +896,12 @@ does not offer is a **400 before any stream** on `/v1/messages`; the conversatio
 route drops it from stored params instead (the model runs at its default), as
 `samplerParams(caps, thinking)` does client-side. The `reasoning_effort` capability means
 `engine.thinking.depth` is non-null. Since v2.0.159 v3 shows ONE thinking control
-(`#set-enable_thinking`): Model default / Off / On / `level:<value>` for each value not in
+(`#set-enable_thinking`): Default / Off / On / `level:<value>` for each value not in
 `off`, writing the same two stored keys (`enable_thinking`, `reasoning_effort`) together.
+Since v2.0.172 `on` is offered only when `depth.default` is null or folded into `off` (a
+stored bare `enable_thinking: true` otherwise shows as `level:<default>`), and
+`thinking_budget_tokens` is an indented sub-row of that control, hidden while thinking is
+off and absent when `engine.thinking.budget.enforced` is false.
 Off keeps the stored level. A verbatim template with no switch keeps a text box with
 suggestions (`#set-reasoning_effort`). A stored value the model does not offer shows as a
 disabled "(not offered by this model)" option, and `changes_prefix` adds the note that

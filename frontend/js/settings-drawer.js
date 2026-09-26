@@ -9,7 +9,7 @@
 //   ...contribution.sections()   -- page-owned lead sections (chat and
 //                                   notebook: the shared preset bar + their
 //                                   system-prompt editor)
-//   Sampling panel               -- buildSettingsPanel({caps}); 'disabled' renders
+//   Generation panel             -- buildSettingsPanel({caps}); 'disabled' renders
 //                                   it read-only + greedy note; 'hidden' omits it
 //   ...contribution.extras()     -- page-owned trailing controls
 //
@@ -119,7 +119,7 @@ export function mountSettingsDrawer(navDesktop, navBottom) {
 //   modelDefaults?(): {key: value}       -- what the current model resolves
 //                                           an UNSET sampler key to (today:
 //                                           enable_thinking); labels the
-//                                           tri-state's "Model default"
+//                                           thinking control's "Default"
 //   thinking?(): engine.thinking | null   -- the model's own thinking controls
 //                                           (plan W2): builds the depth control
 //   requestFields?(): string[] | null    -- engine.decoding.request_fields:

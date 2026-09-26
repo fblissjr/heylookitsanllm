@@ -242,6 +242,9 @@ export default createPage({
       // so it survives reloads and page trips (the drawer reads
       // s.systemPrompt when it first renders, so setting it here is enough).
       s.systemPrompt = readDraftPrompt();
+      // The sampler cache is module state shared with notebook: without this
+      // the draft started from whatever notebook last had open.
+      hydrateDocParams(null);
       renderMessages(ctx);
     }
     // First paint of the sysprompt chip: the preset-fed funnel above only
@@ -1222,20 +1225,21 @@ async function newConversation(ctx) {
   const s = ctx.state;
   clearPendingAttachments(ctx); // staged attachments belong to the conv they were picked in
   try {
-    // The selected (or stamped) preset is the unit of continuity: a new
-    // conversation STARTS as it -- prompt + params + stamp (starting-as is an
-    // apply, so stamping at create is explicit, not inferred). Without one,
-    // the old rules hold: an active conversation's prompt does NOT leak, and
-    // sampler knobs carry forward from the current panel.
+    // From an open conversation, the selected (or stamped) preset is the
+    // unit of continuity: a new conversation STARTS as it -- prompt + params
+    // + stamp (starting-as is an apply, so stamping at create is explicit,
+    // not inferred). Without one it starts blank: the open conversation's
+    // prompt and sampler values do not leak into it.
+    // With none open, the drawer IS the new conversation: created from
+    // exactly what it shows, the draft's own stamp included.
+    const draft = !s.activeId;
     const preset = s.presetBar.presetForNewDoc();
     const conv = await api.createConversation({
       title: 'New conversation',
       model_id: s.modelSelect.value || undefined,
-      // a prompt drafted before ANY conversation exists still wins over the
-      // preset -- it is the more explicit act
-      system_prompt: (!s.activeId && s.systemPrompt) || preset?.system_prompt || undefined,
-      params: preset ? { ...(preset.params ?? {}) } : snapshotSettings(),
-      applied_preset_id: preset?.id,
+      system_prompt: (draft ? s.systemPrompt : preset?.system_prompt) || undefined,
+      params: draft ? snapshotSettings() : { ...(preset?.params ?? {}) },
+      applied_preset_id: (draft ? s.appliedPresetId : preset?.id) || undefined,
     });
     if (!ctx.alive) return;
     // The draft (if any) just became this conversation's prompt -- it has a
@@ -1308,6 +1312,10 @@ async function deleteConversation(ctx, convId) {
     s.systemPrompt = null;
     if (s.conversations.length) await selectConversation(ctx, s.conversations[0].id);
     else {
+      // The drawer is the next conversation now: nothing of the deleted one
+      // carries, its stamp and sampler values included.
+      s.appliedPresetId = null;
+      hydrateDocParams(null);
       drawer.requestRebuild({ force: true });
       s.presetBar.syncIndicator(); // no active doc -> chip clears
       renderMessages(ctx);
@@ -3127,17 +3135,16 @@ async function send(ctx) {
       return;
     }
     if (!s.activeId) {
-      // a prompt typed (or preset applied) before the first send
-      const preset = s.presetBar.presetForNewDoc();
-      const sentPrompt = s.systemPrompt || preset?.system_prompt;
-      const appliedPresetId = s.appliedPresetId || preset?.id;
+      // The first send creates the conversation from exactly what the drawer
+      // shows: the prompt box, the panel, and the stamp of a preset applied
+      // before it (see presetForNewDoc for why a merely selected one is not).
       const promptBeforeCreate = s.systemPrompt;
       const conv = await api.createConversation({
         title,
         model_id: s.modelSelect.value || undefined,
-        system_prompt: sentPrompt || undefined,
-        params: (!s.appliedPresetId && preset?.params) ? { ...(preset.params ?? {}) } : snapshotSettings(),
-        applied_preset_id: appliedPresetId || undefined,
+        system_prompt: s.systemPrompt || undefined,
+        params: snapshotSettings(),
+        applied_preset_id: s.appliedPresetId || undefined,
       });
       if (!ctx.alive) return;
       writeDraftPrompt(null); // adopted by the conversation this send created

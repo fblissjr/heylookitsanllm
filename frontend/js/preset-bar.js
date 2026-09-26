@@ -107,6 +107,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   let presetId;
   let selectionDoc = null; // the document the explicit pick was made on
   let driftEl = null;    // latest built section's line; detached writes are harmless
+  let runningEl = null;  // the heading's "what this document runs" half
   let previewEl = null;  // read-only view of the SELECTED preset's own prompt
   let previewSummaryEl = null;
   let previewBodyEl = null;
@@ -170,16 +171,24 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   // it describes what the preset is, not what it lacks.
   const presetLabel = (p) => (presetPrompt(p) ? p.name : `${p.name} — settings only`);
 
-  // The preset a NEW document should start from (owner decision 2026-08-11:
-  // the selected preset is the unit of continuity across documents). The
-  // explicit bar selection wins; else the active document's stamp, so the
-  // behavior survives a reload (selection is session state, the stamp is
-  // durable). Returns null when neither exists -- the page then creates the
-  // document exactly as before. Starting-as counts as an apply, so the page
-  // passes the id as applied_preset_id at create.
+  // The preset a NEW document should start from when one is created FROM an
+  // open document (owner decision 2026-08-11: the selected preset is the unit
+  // of continuity across documents). The explicit bar selection wins; else
+  // the active document's stamp, so the behavior survives a reload
+  // (selection is session state, the stamp is durable). Returns null when
+  // neither exists -- the page then starts the document blank, never from
+  // the open document's own values (owner, 2026-09-26: they leaked into
+  // every new chat). Starting-as counts as an apply, so the page passes the
+  // id as applied_preset_id at create.
+  //
+  // With NO document open the page does not ask: the drawer then IS the next
+  // document, and it is created from exactly what the drawer shows -- a
+  // preset reaches it through Apply, like anywhere else. A selected but
+  // unapplied preset used to fill in behind an empty prompt box, which made
+  // "clear the prompt" impossible to mean.
   // (effectiveId already folds the stamp in behind an explicit pick, so
   // selected() alone expresses both halves of that rule.)
-  const presetForNewDoc = () => selected() ?? null;
+  const presetForNewDoc = () => (docId?.() ? (selected() ?? null) : null);
 
   // Resolves true when the list (or the selection's validity) actually
   // changed, so cosmetic repaints can be skipped.
@@ -350,11 +359,10 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   // nothing, so it can neither claim the prompt nor be "modified" from.
   function promptState() {
     const prompt = getPrompt() ?? null;
-    // Same docId guard as indicatorInfo(): a stamp read with no active
-    // document is the PREVIOUS document's (deleting the last conversation
-    // leaves the page's appliedPresetId set), which would label a freshly
-    // typed draft "<old preset> (modified)".
-    const stamped = docId?.() ? presets.find((p) => p.id === getStamp?.()) : null;
+    // With no document open the stamp is the DRAFT's (an Apply before the
+    // first send). The pages clear it whenever they enter that state, so it
+    // is never the previous document's.
+    const stamped = presets.find((p) => p.id === getStamp?.());
     const source = presetPrompt(stamped);
     return {
       prompt,
@@ -401,21 +409,15 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   // (owner report 2026-09-04: "Apply vs update?? this is not good UX"), so
   // each sentence now says what moves where, and which knobs moved.
   //
-  // With NO document open the panel is the seed for the next conversation,
-  // and a selected preset is what that conversation actually starts from
-  // (presetForNewDoc) -- so a drift line there described a copy that would
-  // never happen. That state says what WILL happen instead.
+  // With NO document open the drawer is the next conversation, created from
+  // exactly what it shows (presetForNewDoc), so an unapplied selection says
+  // it will not be used; an applied one drifts like any document.
   function driftLine(preset) {
     const name = `"${preset.name}"`;
     const drift = driftParts(preset);
     const which = drift.fields.length ? ` (${drift.fields.join(', ')})` : '';
-    if (!docId?.()) {
-      let line = `New conversations start from ${name}.`;
-      if (drift.samplers) {
-        line += ` Values changed here do not carry${which} — Save writes them into the preset.`;
-      }
-      if (getPrompt() && drift.prompt) line += ' The prompt typed here wins over the preset\'s.';
-      return line;
+    if (!docId?.() && getStamp?.() !== preset.id && !matchesState(preset)) {
+      return `Not applied — the next conversation starts from what is shown here. Apply loads ${name}.`;
     }
     if (drift.prompt && drift.samplers) {
       return `Prompt and settings differ from ${name}${which} — Apply loads the preset's here; `
@@ -432,8 +434,23 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     return 'Matches current settings.';
   }
 
+  // What the document is RUNNING, in the section heading -- a different
+  // question from the drift line's (which is about the SELECTED preset, and
+  // the select browses). Mixing the two in one place is what made "is this
+  // preset on?" unanswerable without reading every line.
+  function runningText() {
+    const info = indicatorInfo();
+    if (!info) return docId?.() ? 'none applied' : null;
+    return info.edited ? `${info.name}, edited` : info.name;
+  }
+
   function updateDrift() {
     syncIndicator(); // chip tracks the same edits the drift line does
+    if (runningEl) {
+      const text = runningText();
+      if (runningEl.textContent !== (text ?? '')) runningEl.textContent = text ?? '';
+      runningEl.hidden = !text;
+    }
     if (!driftEl) return;
     const preset = selected();
     const next = preset ? driftLine(preset) : '';
@@ -450,6 +467,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     // No early return: with the drawer closed the drift line is gone, but
     // the applied-preset chip still needs the sampler-edit sync.
     if (driftEl && !driftEl.isConnected) driftEl = null;
+    if (runningEl && !runningEl.isConnected) runningEl = null;
     updateDrift();
   })));
 
@@ -461,7 +479,9 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
       // leave whatever the conversation (or the model's own default) uses.
       const incoming = presetPrompt(preset);
       if (incoming) setPrompt(incoming);
-      if (docId?.()) setStamp?.(preset.id);
+      // A draft (no document yet) is stamped too: the page carries it into
+      // the document the first send creates.
+      setStamp?.(preset.id);
       onStatus((incoming
         ? `Preset "${preset.name}" applied.`
         : `Preset "${preset.name}" applied — it carries no system prompt, so this one is unchanged.`)
@@ -495,7 +515,8 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     else presets.unshift(saved);
     pick(saved.id);
     // saving snapshots the current doc state -- the doc IS this preset now
-    if (docId?.()) setStamp?.(saved.id);
+    // (a draft included, as in apply)
+    setStamp?.(saved.id);
     drawer.requestRebuild({ force: true });
     // Same reason apply() calls it: the document now names this preset, and
     // the bar chips are outside the drawer the rebuild above repaints.
@@ -664,7 +685,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
       () => JSON.stringify([effectiveId(), getPrompt() ?? null, shownPrompt]),
     );
     const delBtn = armedConfirm(
-      createEl('button', { class: 'btn btn--sm btn--ghost', disabled: !current }, ['Del']),
+      createEl('button', { class: 'btn btn--sm btn--ghost', disabled: !current, title: 'Delete this preset' }, ['Delete']),
       remove,
       'Confirm?',
       null,
@@ -715,11 +736,12 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     previewEl = createEl('details', { class: 'preset-preview' }, [
       previewSummaryEl, previewBodyEl,
     ]);
+    runningEl = createEl('span', { class: 'preset-section__running muted' });
     paintPreview();
     updateDrift();
 
     return createEl('div', { class: 'preset-section' }, [
-      createEl('h3', {}, ['Preset']),
+      createEl('h3', {}, ['Preset', runningEl]),
       createEl('div', { class: 'preset-row' }, [select, applyBtn, updateBtn, delBtn]),
       driftEl,
       previewEl,

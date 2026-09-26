@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.172]
+
+### Changed
+
+- **Thinking control, one knob** (owner report): one *Default* entry named for
+  what the model does untouched, *Off*, then the template's own levels in its
+  order with its default marked "(default)". *On* is offered only for a
+  template with a switch and no default level; where there is one, *Model
+  default*, *On* and that level rendered the same prompt and read as three
+  choices. A stored bare "on" shows as the default level. Thinking now sits at
+  the top of the panel (heading *Generation*), so *Advanced* is folded by
+  default and its heading counts the values changed inside it.
+- **Thinking token cap** (was *Thinking budget*): an indented sub-row of
+  Thinking, hidden while thinking is off and not offered where the engine
+  reports it cannot enforce one. It says when the engine may not enforce it
+  (the reason in its tooltip) and when a value is small enough to end the
+  thought at once; a bare number beside Thinking was read as a level.
+- **New documents no longer inherit the open one's settings** (owner report,
+  "settings leak across"). New from an open conversation or notebook starts
+  as its preset, or blank. With nothing open the drawer is the draft: the next
+  document is created from exactly what it shows, and only Apply puts a
+  preset in (a merely selected one used to fill an empty prompt box on the
+  first send). Entering the no-document state clears the panel and the stamp,
+  so neither chat nor notebook seeds the other.
+- **Preset heading names what the document is running** (*Preset · p2,
+  edited* / *none applied*), separate from the dropdown, which browses. *Del*
+  reads *Delete*.
+
+### Added
+
+- **Clear** under the system-prompt box: removes the prompt in one step,
+  armed (*Clear prompt?*) because it is typed work. Shared by chat and
+  notebook.
+- Checks: `e2e:render` 102/102 (the thinking check extended to a template
+  with a default level and the cap row; new: a new conversation starts blank,
+  Clear stores null). The live `e2e:chat` default-label assertion follows the
+  new wording and was not run. unit + contract green.
+
 ## [2.0.171]
 
 - **`heylook.example.toml` replaces `models.example.toml`**, which still showed

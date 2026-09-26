@@ -1188,7 +1188,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     await requireCap(page, config.model, 'thinking');
     // v1.79.62: thinking is a tri-state. Unset follows the server's answer
     // for the model (`thinking_default` on the /v1/models row: ON for a
-    // thinking-capable model since v1.79.62), the drawer's "Model default"
+    // thinking-capable model since v1.79.62), the drawer's "Default"
     // option names that value, and the composer button shows the EFFECTIVE
     // state -- each tap writes an explicit true/false to the conversation's
     // params, which is what generate builds from.
@@ -1204,8 +1204,8 @@ export async function runChatSuite({ suite, ctx, config }) {
       return conv.params ?? {};
     }, convId);
 
-    // Start from "Model default": an earlier check may have left an explicit
-    // value in the panel cache, and a fresh conversation snapshots it.
+    // Start from "Default": an earlier check may have left an explicit value
+    // in the conversation's params.
     await openDrawer(page);
     await page.evaluate(() => {
       const sel = document.querySelector('#set-enable_thinking');
@@ -1213,8 +1213,10 @@ export async function runChatSuite({ suite, ctx, config }) {
       sel.value = '';
       sel.dispatchEvent(new Event('change', { bubbles: true }));
     });
+    // "Default (off)" when the model does not think by default; otherwise it
+    // names what it does -- "(on)", or the template's default level.
     const label = await page.$eval('#set-enable_thinking option[value=""]', (o) => o.textContent);
-    assert(label === `Model default (${def ? 'on' : 'off'})`,
+    assert(def ? /^Default \((?!off\))[^)]+\)$/.test(label) : label === 'Default (off)',
       `the default option reads ${JSON.stringify(label)} while thinking_default is ${def}`);
     await closeDrawer(page);
     await waitFor(async () => !('enable_thinking' in await convParams()),

@@ -32,7 +32,7 @@
 //             per drawer render (chat) releases the one it replaces; a page
 //             that keeps one for the mount (notebook) never calls it
 
-import { createEl, autoGrow, debounce } from './utils.js';
+import { createEl, autoGrow, debounce, armedConfirm } from './utils.js';
 
 const normalize = (raw) => raw.trim() || null;
 
@@ -66,7 +66,8 @@ export function createPromptSection(ctx, adapter) {
 
   const currentValue = () => normalize(input.value);
 
-  input.addEventListener('input', () => {
+  // One path for every edit, typed or cleared.
+  function edited() {
     autoGrow(input, 480);
     const value = currentValue();
     // A stale editor (document changed under an unrebuilt/unresynced widget)
@@ -75,7 +76,30 @@ export function createPromptSection(ctx, adapter) {
     if (adapter.owner() === builtFor) adapter.set(value, builtFor);
     schedulePersist(value);
     adapter.onEdit?.();
-  });
+    clearBtn.disabled = !value;
+  }
+  input.addEventListener('input', edited);
+
+  // Clear, in one tap and one confirm (owner, 2026-09-26): select-all-delete
+  // in a box that can hold tens of thousands of characters was the only way
+  // to say "no system prompt". Armed, because the text is typed work. It
+  // writes null, which the store takes as "no prompt" -- and with no
+  // document open the page creates the next one with exactly this box's
+  // content, so a cleared box stays cleared.
+  const clearBtn = armedConfirm(
+    createEl('button', {
+      type: 'button', class: 'btn btn--sm btn--ghost sysprompt-clear',
+      title: 'Remove the system prompt', disabled: !normalize(input.value),
+    }, ['Clear']),
+    () => {
+      input.value = '';
+      edited();
+      schedulePersist.flush(null);
+    },
+    'Clear prompt?',
+    null,
+    () => builtFor,
+  );
   // blur flushes immediately so a follow-up action (preset save/apply, a
   // document switch) can never race the debounce timer.
   input.addEventListener('change', () => schedulePersist.flush(currentValue()));
@@ -96,10 +120,13 @@ export function createPromptSection(ctx, adapter) {
   const element = createEl('details', { class: 'sysprompt', open: true }, [
     createEl('summary', {}, [adapter.label ?? 'System prompt for this document']),
     input,
+    createEl('div', { class: 'sysprompt__actions' }, [clearBtn]),
   ]);
 
   function setValue(value) {
     input.value = value ?? '';
+    clearBtn.disarm();
+    clearBtn.disabled = !normalize(input.value);
     autoGrow(input, 480);
     // this sync IS the document-switch point for a reused instance
     builtFor = adapter.owner();

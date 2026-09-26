@@ -6,6 +6,32 @@
 import { createEl } from './utils.js';
 
 export const PARAM_META = {
+  // THREE states, not a checkbox (v1.79.62): null = the model's own default
+  // (the server's cascade answer, labelled with its value when the page
+  // knows it), true = on, false = off. The checkbox before it could only say
+  // "on" or "unset", so an unset thinking model showed an unticked box while
+  // the server had already decided -- and there was no way to ask for OFF.
+  // ONE control for the switch and the depth (owner, 2026-09-25): Model
+  // default / Off / each of the template's own levels. It writes the
+  // same two keys it always stored, so presets and documents are unchanged;
+  // `reasoning_effort` has no row of its own (`foldedInto`).
+  // Section 'thinking' renders first, above the samplers (owner, 2026-09-26):
+  // it is the control people open the drawer for, and it no longer has to
+  // hold the Advanced group open.
+  enable_thinking:         { label: 'Thinking', type: 'thinking', section: 'thinking', requiresCap: 'thinking' },
+  // Thinking DEPTH (plan W2): no list of levels lives here. The options are
+  // the CURRENT model's own values, detected from its chat template and read
+  // off the model row (`engine.thinking.depth`), in the template's spelling.
+  // 'auto' = send nothing, the template's own default.
+  reasoning_effort:        { label: 'Thinking depth', type: 'depth', section: 'thinking', requiresCap: 'reasoning_effort',
+                             foldedInto: 'enable_thinking' },
+  // A hard cap on thinking tokens (plan W7), enforced by the engine: past it
+  // the thinking block is forced shut and the reply continues. Offered only
+  // where the engine can close the model's thinking format. Empty = no cap.
+  // A sub-row of Thinking (`sub`): shown only while the model will think,
+  // and not at all where the engine says it cannot enforce one.
+  thinking_budget_tokens:  { label: 'Thinking token cap', type: 'number', min: 1, max: 65536, step: 1, section: 'thinking',
+                             requiresCap: 'thinking_budget', sub: true, blank: 'no cap' },
   temperature:             { label: 'Temperature', type: 'number', min: 0, max: 2, step: 0.05, section: 'core' },
   max_tokens:              { label: 'Max tokens', type: 'number', min: 1, max: 65536, step: 1, section: 'core' },
   top_p:                   { label: 'Top-p', type: 'number', min: 0, max: 1, step: 0.01, section: 'core' },
@@ -13,31 +39,14 @@ export const PARAM_META = {
   min_p:                   { label: 'Min-p', type: 'number', min: 0, max: 1, step: 0.01, section: 'advanced' },
   repetition_penalty:      { label: 'Repetition penalty', type: 'number', min: 0.5, max: 2, step: 0.01, section: 'advanced' },
   repetition_context_size: { label: 'Repetition context', type: 'number', min: 1, max: 8192, step: 1, section: 'advanced',
-                             note: 'Tokens the penalties look back over: the reply only on MLX; on gguf (llama.cpp) the prompt\'s tail too.' },
+                             note: 'Tokens the penalties look back over (on gguf, the prompt\'s tail too).' },
   presence_penalty:        { label: 'Presence penalty', type: 'number', min: 0, max: 2, step: 0.01, section: 'advanced' },
   seed:                    { label: 'Seed', type: 'number', min: 0, max: Number.MAX_SAFE_INTEGER, step: 1, section: 'advanced' },
-  // THREE states, not a checkbox (v1.79.62): null = the model's own default
-  // (the server's cascade answer, labelled with its value when the page
-  // knows it), true = on, false = off. The checkbox before it could only say
-  // "on" or "unset", so an unset thinking model showed an unticked box while
-  // the server had already decided -- and there was no way to ask for OFF.
-  // ONE control for the switch and the depth (owner, 2026-09-25): Model
-  // default / Off / On / each of the template's own levels. It writes the
-  // same two keys it always stored, so presets and documents are unchanged;
-  // `reasoning_effort` has no row of its own (`foldedInto`).
-  enable_thinking:         { label: 'Thinking', type: 'thinking', section: 'advanced', requiresCap: 'thinking' },
-  // Thinking DEPTH (plan W2): no list of levels lives here. The options are
-  // the CURRENT model's own values, detected from its chat template and read
-  // off the model row (`engine.thinking.depth`), in the template's spelling.
-  // 'auto' = send nothing, the template's own default.
-  reasoning_effort:        { label: 'Thinking depth', type: 'depth', section: 'advanced', requiresCap: 'reasoning_effort',
-                             foldedInto: 'enable_thinking' },
-  // A hard cap on thinking tokens (plan W7), enforced by the engine: past it
-  // the thinking block is forced shut and the reply continues. Offered only
-  // where the engine can close the model's thinking format. Empty = no cap.
-  thinking_budget_tokens:  { label: 'Thinking budget', type: 'number', min: 1, max: 65536, step: 1, section: 'advanced', requiresCap: 'thinking_budget',
-                             note: 'Hard cap: thinking is cut off here and the answer follows. Empty = no cap.' },
 };
+
+// A thinking cap below this many tokens ends the thought almost as it starts;
+// the row says so rather than refusing (the backend's range is what bounds it).
+const SMALL_THINKING_CAP = 64;
 
 function emptySettings() {
   return Object.fromEntries(Object.keys(PARAM_META).map((k) => [k, null]));
@@ -382,6 +391,12 @@ export function thinkingChoice(thinking, values = cache) {
   return '';
 }
 
+// The options, top to bottom: Default (what the model does untouched, named),
+// Off, then the template's levels in its own order with its default marked.
+// "On" is offered only when there is no default LEVEL to pick: where the
+// template has one, "On", "Model default" and that level rendered the same
+// prompt and read as three different choices (owner, 2026-09-26). A stored
+// bare "on" then shows as the default level it renders as.
 function bindThinkingControl(lookup, thinking, caps) {
   // The `thinking` capability IS a detected switch on both engines, and it
   // is what the server gates enable_thinking on; engine.thinking may be
@@ -391,22 +406,21 @@ function bindThinkingControl(lookup, thinking, caps) {
   if (!sw && depth?.unknown === 'verbatim') return bindDepthControl('reasoning_effort', lookup, thinking);
   const off = new Set(depth?.off ?? []);
   const levels = (depth?.values ?? []).filter((v) => !off.has(v));
+  const defaultLevel = depth?.default && levels.includes(depth.default) ? depth.default : null;
   const known = lookup('enable_thinking');
-  const described = [known === true ? 'on' : known === false ? 'off' : null,
-    known !== false && depth?.default && !off.has(depth.default) ? depth.default : null]
-    .filter(Boolean).join(', ');
+  const described = known === false ? 'off' : (defaultLevel ?? (known === true ? 'on' : null));
   const stored = cache.reasoning_effort ?? null;
   const offered = stored === null || !depth || depthOffered(stored, thinking);
   const option = (value, label, extra = {}) => createEl('option', { value, ...extra }, [label]);
   const sel = createEl('select', { id: 'set-enable_thinking', class: 'input' }, [
-    option('', `Model default${described ? ` (${described})` : ''}`),
+    option('', `Default${described ? ` (${described})` : ''}`),
     sw ? option('off', 'Off') : null,
-    sw ? option('on', levels.length
-      ? `On (default level${depth?.default && !off.has(depth.default) ? `: ${depth.default}` : ''})` : 'On') : null,
-    ...levels.map((v) => option(`level:${v}`, v)),
+    sw && !defaultLevel ? option('on', 'On') : null,
+    ...levels.map((v) => option(`level:${v}`, v === defaultLevel && known !== false ? `${v} (default)` : v)),
     offered ? null : option(`level:${stored}`, `${stored} (not offered by this model)`, { disabled: true }),
   ]);
-  sel.value = thinkingChoice(depth ? thinking : null);
+  const choice = thinkingChoice(depth ? thinking : null);
+  sel.value = choice === 'on' && defaultLevel ? `level:${defaultLevel}` : choice;
   sel.addEventListener('change', () => {
     const v = sel.value;
     if (v === '') setSettings({ enable_thinking: null, reasoning_effort: null });
@@ -466,19 +480,31 @@ function depthNote(thinking) {
   const notes = [];
   if (thinking?.template) notes.push(`Levels from ${thinking.template}.`);
   if (thinking?.depth?.changes_prefix) {
-    notes.push('Changing it mid-conversation re-processes the whole conversation.');
+    notes.push('A change re-processes the whole conversation.');
   }
   return notes.join(' ') || null;
 }
 
-// The budget row's note: the server says whether this engine can enforce it
+// The cap row's note: the server says whether this engine can enforce it
 // (engine.thinking.budget). Unknown (gguf: llama-server decides per request)
-// or false is said on the row, so a cap that may not bite is not presented
-// as a hard one.
-function budgetNote(meta, thinking) {
+// is said on the row, so a cap that may not bite is not presented as a hard
+// one; false never reaches here (the row is not built). A value small enough
+// to end the thought at once is said too -- it reads like a level number.
+function budgetNote(thinking, value) {
+  const notes = [];
+  if (typeof value === 'number' && value < SMALL_THINKING_CAP) {
+    notes.push(`Thinking stops after ${value} token${value === 1 ? '' : 's'}.`);
+  }
   const budget = thinking?.budget;
-  if (!budget || budget.enforced === true) return meta.note;
-  return `${budget.enforced === false ? 'Not enforced' : 'May not be enforced'}: ${budget.reason}.`;
+  if (budget && budget.enforced !== true) notes.push('May not be enforced on this engine.');
+  return notes.join(' ') || null;
+}
+
+// The engine's own reason the cap may not bite, for the note's tooltip: it is
+// a sentence long, and on screen it made the cap the tallest row in the panel.
+function budgetReason(thinking) {
+  const budget = thinking?.budget;
+  return budget && budget.enforced !== true ? budget.reason ?? null : null;
 }
 
 // The thinking row's note: which template file the choices come from, and
@@ -495,20 +521,15 @@ function thinkingNote(thinking) {
 // drift apart on the wording (they differ by a noun). `hasActive` is the
 // difference that actually matters to the reader: with a document open these
 // controls ARE that document's stored params and every edit writes to it;
-// without one they are the browser-side seed the next new document seeds from.
-// Nothing on screen said which, and selecting a document silently replaces
-// every value in the panel -- the root of the "did my settings just change?"
-// confusion (v3 user guide, rough edges).
-// The no-document half is deliberately explicit about TWO things the panel used
-// to leave unsaid: the values are a seed rather than saved state, and the seed
-// is whatever was last loaded ANYWHERE -- chat and notebook share one in-memory
-// cache, so a notebook's params seed a new conversation. Naming it is the
-// chosen answer; scoping the cache per page was priced and declined (it threads
-// a scope through every accessor and the drawer).
+// without one they are the draft the next document is created from, exactly
+// as shown. The draft used to start from whatever was last open (chat and
+// notebook share one in-memory cache), which the old line had to confess;
+// since 2026-09-26 both pages clear it on entering the no-document state, and
+// a new document made from an open one starts from its preset or blank.
 export function documentScopeNote(noun, hasActive) {
   return hasActive
     ? `Applies to this ${noun} — changes save as you make them.`
-    : `Seeds the next ${noun} you start, from whatever was last open. Not saved anywhere yet.`;
+    : `The next ${noun} you start is created with these. Not saved until then.`;
 }
 
 // `scope` is a resolved string (see documentScopeNote) or null for a surface
@@ -524,10 +545,14 @@ export function documentScopeNote(noun, hasActive) {
 // model's own settings.
 const SOURCE_LABEL = { model: 'model file', vendor: 'vendor', default: 'heylook' };
 
+// Whether the Advanced group is open, for the page session (not stored): the
+// drawer rebuilds the panel on every open and every forced repaint.
+let advancedOpen = false;
+
 export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {},
                                     samplerDefaults = null, samplerSources = null,
                                     thinking = null, requestFields = null } = {}) {
-  const rows = { core: [], advanced: [] };
+  const rows = { thinking: [], core: [], advanced: [] };
   const controls = [];
 
   // `samplerDefaults` is ONE bag since v2.0.33. It was `{off,on}` and this
@@ -556,9 +581,15 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
       .filter(([, m]) => m.foldedInto === key).map(([k]) => k)];
     if (!keys.some((k) => !PARAM_META[k].requiresCap || caps.includes(PARAM_META[k].requiresCap))) continue;
     if (Array.isArray(requestFields) && !keys.some((k) => requestFields.includes(k))) continue;
+    // The cap is not offered where the engine says it cannot enforce one: a
+    // field that visibly does nothing is worse than no field.
+    if (key === 'thinking_budget_tokens' && thinking?.budget?.enforced === false) continue;
     const control = bindControl(key, meta, lookup, thinking, caps, describe);
-    const note = meta.type === 'thinking' ? thinkingNote(thinking)
-      : key === 'thinking_budget_tokens' ? budgetNote(meta, thinking) : meta.note;
+    // The cap's note moves with its value (a tiny cap is called out), so it
+    // is recomputed on every sync; the rest are fixed at build.
+    const noteText = meta.type === 'thinking' ? () => thinkingNote(thinking)
+      : key === 'thinking_budget_tokens' ? () => budgetNote(thinking, cache[key]) : () => meta.note ?? null;
+    const noteEl = createEl('span', { class: 'settings-row__note muted small' });
     // Shown only while the key is overridden, so its presence IS the "you
     // changed this" signal and there is nothing extra on screen otherwise.
     // Not a hover reveal -- state, not pointer -- so DESIGN.md §7's
@@ -575,11 +606,8 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
       title: 'Back to the model default',
       'aria-label': `Reset ${meta.label} to the model default`,
     }, ['\u21ba']);
-    const row = createEl('div', { class: 'settings-row' }, [
-      createEl('label', { for: control.id || `set-${key}` }, [
-        meta.label,
-        note ? createEl('span', { class: 'settings-row__note muted small' }, [note]) : null,
-      ]),
+    const row = createEl('div', { class: `settings-row${meta.sub ? ' settings-row--sub' : ''}` }, [
+      createEl('label', { for: control.id || `set-${key}` }, [meta.label, noteEl]),
       // The control and its reset share ONE wrapper: .settings-row is a
       // two-child space-between flex row and a third child re-spaces it.
       createEl('div', { class: 'settings-row__control' }, [control, control.suggestions ?? null, reset]),
@@ -595,20 +623,55 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
       const overridden = keys.some((k) => k in sent);
       row.classList.toggle('settings-row--overridden', overridden);
       reset.classList.toggle('settings-row__reset--on', overridden);
+      const text = noteText();
+      noteEl.hidden = !text;
+      if (noteEl.textContent !== (text ?? '')) noteEl.textContent = text ?? '';
+      if (key === 'thinking_budget_tokens') noteEl.title = budgetReason(thinking) ?? '';
+      // A sub-row stands for its parent's state: the cap means nothing while
+      // the model will not think. Its value stays stored (like Off keeping
+      // the level), so turning thinking back on brings it back.
+      if (meta.sub) row.hidden = thinkingOff();
+      return overridden;
     };
     // Registered AFTER bindControl's own handler, so the cache is already
-    // updated by the time this reads it.
-    control.addEventListener('change', () => { sync(); if (key === 'enable_thinking') syncDefaults(); });
+    // updated by the time this reads it. Every row re-syncs, not just this
+    // one: the thinking choice decides whether the cap row shows at all.
+    control.addEventListener('change', () => { syncAll(); if (key === 'enable_thinking') syncDefaults(); });
     reset.addEventListener('click', () => {
       setSettings(Object.fromEntries(keys.map((k) => [k, null])));
       if (meta.type === 'checkbox') control.checked = false; else control.value = '';
-      sync();
+      syncAll();
       if (key === 'enable_thinking') syncDefaults();
     });
     controls.push({ key, meta, control, sync });
-    sync();
     rows[meta.section].push(row);
   }
+
+  // Whether the next reply will not think: an explicit Off (or a level that
+  // renders as off), or no pick on a model whose own default is off.
+  function thinkingOff() {
+    const choice = thinkingChoice(thinking);
+    return choice === 'off' || (choice === '' && lookup('enable_thinking') === false);
+  }
+
+  // Collapsed by default now that Thinking sits above it (the 2026-09-04
+  // "open" ask was about finding Thinking in here). The summary counts what
+  // is overridden inside, so a folded group never hides that it is in play;
+  // the open state lasts for the session so a repaint does not re-fold it.
+  const advancedSummary = createEl('summary', {}, ['Advanced']);
+  const advanced = rows.advanced.length
+    ? createEl('details', { open: advancedOpen }, [advancedSummary, createEl('div', {}, rows.advanced)])
+    : null;
+  advanced?.addEventListener('toggle', () => { advancedOpen = advanced.open; });
+
+  function syncAll() {
+    let changedInAdvanced = 0;
+    for (const { meta, sync } of controls) {
+      if (sync() && meta.section === 'advanced') changedInAdvanced += 1;
+    }
+    advancedSummary.textContent = changedInAdvanced ? `Advanced · ${changedInAdvanced} changed` : 'Advanced';
+  }
+  syncAll();
 
   // Repaint every placeholder against the current thinking state. Only the
   // keys the overlay moves actually change, but repainting all of them keeps
@@ -617,7 +680,7 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
   // defect with a delay.
   function syncDefaults() {
     for (const { key, meta, control } of controls) {
-      if (meta.type === 'number') control.placeholder = describe(key) ?? 'auto';
+      if (meta.type === 'number') control.placeholder = describe(key) ?? meta.blank ?? 'auto';
       else if (meta.type === 'select') {
         const shown = describe(key);
         const blank = control.querySelector('option[value=""]');
@@ -635,27 +698,20 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
   const resetBtn = createEl('button', { class: 'btn btn--sm btn--ghost' }, ['Clear all overrides']);
   resetBtn.addEventListener('click', () => {
     resetSettings();
-    for (const { meta, control, sync } of controls) {
+    for (const { meta, control } of controls) {
       if (meta.type === 'checkbox') control.checked = false;
       else control.value = ''; // selects + tristates: '' is the unset option
-      sync();
     }
+    syncAll();
     syncDefaults();
   });
 
   return createEl('div', { class: 'settings-panel' }, [
-    createEl('h3', {}, ['Sampling']),
+    createEl('h3', {}, ['Generation']),
     scope ? createEl('div', { class: 'settings-note muted small' }, [scope]) : null,
+    ...rows.thinking,
     ...rows.core,
-    // OPEN by default (owner ask 2026-09-04): thinking and its depth live in
-    // here, and a collapsed group hid the one control people were looking
-    // for. Still a <details> so it can be folded on a short phone screen.
-    rows.advanced.length
-      ? createEl('details', { open: true }, [
-          createEl('summary', {}, ['Advanced']),
-          createEl('div', {}, rows.advanced),
-        ])
-      : null,
+    advanced,
     resetBtn,
   ]);
 }
