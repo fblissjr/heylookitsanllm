@@ -120,10 +120,10 @@ class TestReloadLoadSettings:
         assert (heylook_toml.read_bytes(), heylook_toml.stat().st_mtime_ns) == before
         assert not heylook_toml.with_suffix(".toml.bak").exists()
 
-    @pytest.mark.parametrize("body", [{"ctx_size": 100}, {"flash_attn": "auto"}])
+    @pytest.mark.parametrize("body", [{"ctx_size": 100}, {"flash_attn": "sometimes"}])
     def test_the_config_class_is_the_authority_on_values(self, client, body):
         """The route checks names only; the field's own type refuses a bad
-        value (ctx_size ge=512; "auto" is spelled null, never stored)."""
+        value (ctx_size ge=512; flash_attn is on/off/auto)."""
         resp = client.post(GGUF, json=body)
         assert resp.status_code == 400
         assert next(iter(body)) in resp.json()["detail"]

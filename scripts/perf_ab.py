@@ -31,8 +31,8 @@ HOW IT KEEPS AN A/B HONEST
   inference process, GPU idle), and before round 0 it reads the weights once
   so no arm pays a cold disk read the others skip.
 - Timing is read the same way on every engine, from the provider's own
-  stream: time to first token, and decode rate as (tokens - 1) over the time
-  from first to last token.
+  stream: time to the first chunk carrying output, and decode rate as
+  (tokens - 1) over the time from first to last such chunk.
 - Machine load is RECORDED, not assumed: other inference processes at start
   and end, and GPU utilization before the model loads. `report` refuses to
   call a verdict on a contaminated pair.
@@ -263,10 +263,18 @@ def _timed(provider, request) -> dict:
     for chunk in provider.create_chat_completion(request):
         now = time.perf_counter()
         text += chunk.text or ""
-        if chunk.generation_tokens:
+        # The clock runs off the first chunk that CARRIES generated output
+        # (text or pre-split thinking), not off `generation_tokens`: gguf
+        # reports the count only on its final usage chunk, so keying on it
+        # made every gguf TTFT the whole wall time and its decode rate null
+        # (found 2026-09-26 on the flash-attention A/B). The count still
+        # comes from the provider, at whatever chunk it arrives.
+        if chunk.text or getattr(chunk, "thinking", None):
             if first is None:
                 first = now
-            last, n = now, chunk.generation_tokens
+            last = now
+        if chunk.generation_tokens:
+            n = chunk.generation_tokens
         prompt_tokens = chunk.prompt_tokens or prompt_tokens
         if getattr(chunk, "cache", None) is not None:
             cached = chunk.cache.cached_tokens

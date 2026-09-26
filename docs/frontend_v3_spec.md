@@ -751,10 +751,11 @@ object of the provider's `load_setting` fields from `/v1/admin/model-options`
 (gguf: `ctx_size`, `flash_attn`; MLX has none), e.g. `{"ctx_size": 65536,
 "flash_attn": null}`. Each value is the one to load with, PERSISTED as the model's
 config through the one writer a PATCH uses, so the load panel and the models-page
-editor read the same value; `null` = Auto = drop the stored key (llama-server then
-decides: context from the model fitted to memory, flash attention from its device
+editor read the same value; `null` = the default = drop the stored key (context
+from the model fitted to memory; flash attention OFF since v2.0.176, or on for a
+quantized V cache). `flash_attn` takes `on`, `off` or `auto` (llama-server's device
 probe). A key that is not a load setting of the model's provider is a 400 naming the
-ones it has; a value the field refuses (`ctx_size` under 512, `flash_attn:"auto"`)
+ones it has; a value the field refuses (`ctx_size` under 512, `flash_attn:"sometimes"`)
 is a 400 naming the field. Same values + resident + nothing stale = a plain load, no
 restart. This is what chat's Load/Reload button sends for a gguf model; `/load`
 stays the call for everything else;

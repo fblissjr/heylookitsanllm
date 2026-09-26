@@ -224,10 +224,10 @@ than blocked:
   the model's `ctx_size` so the Models page shows the same number. MLX models
   have no fixed context allocation, so the control does not appear for them.
 - **Flash attention** (gguf models only): a second select beside it, reading
-  "flash attn: auto (on)" once the model has loaded, where the part in
-  brackets is what llama-server's auto chose. Leave it on auto; *on* and
-  *off* exist to test a new architecture. Like the context size, a change
-  shows Reload and is saved with the model. On a desktop, hover it for where
+  "flash attn: default (off)". Off is heylook's default for every gguf model
+  (a model with a quantized V cache gets on, which llama.cpp requires). *on*
+  turns it on, and *auto* lets llama-server's device probe decide. Like the
+  context size, a change shows Reload and is saved with the model. On a desktop, hover it for where
   the value came from; the Models page's engine panel shows the same on any
   device.
 

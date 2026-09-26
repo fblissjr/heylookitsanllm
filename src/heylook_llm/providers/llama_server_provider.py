@@ -158,6 +158,31 @@ def _llama_system_config_paths() -> list[Path]:
     user_dir = Path(xdg) if xdg else Path.home() / ".config"
     return [Path("/etc/llama.cpp/config.ini"), user_dir / "llama.cpp" / "config.ini"]
 
+# ggml's quantized cache types (config.cache_type_v's Literal minus the float
+# ones). A quantized V cache cannot run with flash attention off: llama.cpp
+# refuses the context (llama-context.cpp, "quantized V cache requires
+# flash_attn to be enabled").
+_FLOAT_CACHE_TYPES = frozenset({"f32", "f16", "bf16"})
+
+
+def effective_flash_attn(cfg: dict) -> tuple[str, str]:
+    """The -fa value a spawn passes, and why. The ONE decision: the spawn
+    and the engine report both call it.
+
+    Off unless the model's config says otherwise (owner, 2026-09-26: never on
+    by default for gguf). The one exception is a quantized V cache, which
+    llama.cpp cannot run without it, so the default there is on rather than a
+    model that fails to load. `auto` is an explicit choice (llama-server's own
+    device probe)."""
+    configured = cfg.get("flash_attn")
+    if configured:
+        return configured, f"set to {configured} for this model"
+    ctv = cfg.get("cache_type_v")
+    if ctv and ctv not in _FLOAT_CACHE_TYPES:
+        return "on", f"on: the {ctv} V cache requires it (llama.cpp refuses it off)"
+    return "off", "off: heylook's default for gguf models; set it per model to change"
+
+
 def flash_attn_from_log(line: str) -> Optional[str]:
     """"on"/"off" when a llama-server log line settles flash attention, else
     None. Under auto, libllama's device probe logs "Flash Attention enabled"
@@ -865,10 +890,9 @@ class LlamaServerProvider(BaseProvider):
         ]
         if cfg.get("ctx_size"):
             args += ["--ctx-size", str(cfg["ctx_size"])]
-        # Unset = llama-server's own auto (its device probe); only an explicit
-        # choice reaches argv.
-        if cfg.get("flash_attn"):
-            args += ["-fa", cfg["flash_attn"]]
+        # Always explicit: llama-server's own default is auto (on where the
+        # device supports it), and heylook's is off (effective_flash_attn).
+        args += ["-fa", effective_flash_attn(cfg)[0]]
         # Batch sizing. `is not None` throughout: an unset field inherits
         # llama-server's own default, and for n_ubatch "unset" means the
         # auto answer load_model resolved (None = inherit, again).
@@ -1027,7 +1051,7 @@ class LlamaServerProvider(BaseProvider):
             loaded_template=self.loaded_chat_template,
             settings={**(getattr(self, "_load_report", None) or {}),
                       "flash_attn": flash_attn_setting(
-                          self.config.get("flash_attn"),
+                          self.config,
                           getattr(getattr(self, "_spawn_log", None), "flash_attn", None),
                           loaded=True)},
             speculative={"in_force": self._spec_in_force()},

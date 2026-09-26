@@ -1356,13 +1356,24 @@ def test_a_drafter_load_failure_costs_one_retry_not_the_model(monkeypatch, draft
     assert spawns == [None]
 
 
-def test_flash_attn_reports_what_auto_resolved_to():
-    """Unset flash_attn is llama-server's auto; the row shows what it resolved
-    to, read from its log. The lines are libllama's own
-    (llama-context.cpp resolve_fused_ops and the forced cases); the first one
-    is the target model's context, so a drafter's later line cannot flip it."""
+def test_flash_attn_is_off_unless_set_and_the_report_says_what_the_spawn_did():
+    """Unset flash_attn is OFF (owner, 2026-09-26), except a quantized V
+    cache, which llama.cpp refuses without it. The spawn's argv and the row
+    come from one decision, so they cannot disagree. An explicit `auto` is
+    llama-server's to resolve; the row shows what it resolved to, read from
+    its log. The lines are libllama's own (llama-context.cpp resolve_fused_ops
+    and the forced cases); the first one is the target model's context, so a
+    drafter's later line cannot flip it."""
     from heylook_llm.providers.gguf_describe import flash_attn_setting
     from heylook_llm.providers.llama_server_provider import SpawnLog
+
+    for cfg, want in (({}, "off"), ({"cache_type_v": "f16"}, "off"),
+                      ({"cache_type_v": "q8_0"}, "on"),
+                      ({"cache_type_v": "q8_0", "flash_attn": "off"}, "off"),
+                      ({"flash_attn": "on"}, "on"), ({"flash_attn": "auto"}, "auto")):
+        args = make_provider(**cfg)._build_args(Path("/bin/llama-server"), 1234)
+        assert args[args.index("-fa") + 1] == want, cfg
+        assert flash_attn_setting(cfg, None, loaded=False).value == want, cfg
 
     log = SpawnLog()
     for line in ("llama_context: flash_attn            = auto\n",
@@ -1374,11 +1385,12 @@ def test_flash_attn_reports_what_auto_resolved_to():
     forced.note_line("llama_init_from_model: enabling flash_attn since it is required for quantized V cache\n")
     assert forced.flash_attn == "on"
 
-    seen = flash_attn_setting(None, "on", loaded=True)
-    assert (seen.value, seen.auto, seen.provenance) == ("on", "on", "observed")
-    assert flash_attn_setting(None, None, loaded=True).provenance == "unknown"
-    assert flash_attn_setting(None, None, loaded=False).value == "auto"
-    chosen = flash_attn_setting("off", "on", loaded=True)
+    seen = flash_attn_setting({"flash_attn": "auto"}, "on", loaded=True)
+    assert (seen.value, seen.provenance) == ("on", "observed")
+    assert flash_attn_setting({"flash_attn": "auto"}, None, loaded=True).provenance == "unknown"
+    default = flash_attn_setting({}, "on", loaded=True)
+    assert (default.value, default.provenance) == ("off", "derived")
+    chosen = flash_attn_setting({"flash_attn": "off"}, "on", loaded=True)
     assert (chosen.value, chosen.configured, chosen.provenance) == ("off", "off", "configured")
 
 

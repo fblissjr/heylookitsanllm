@@ -378,12 +378,12 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
           id: secondModel.id, loaded: secondModel.loaded ?? true,
           provider: secondModel.provider ?? 'mlx',
           // The engine contract's shape (providers/contract.py), reduced to
-          // the facts the page reads here: the context ceiling, and what a
-          // running process's auto flash attention resolved to.
+          // the facts the page reads here: the context ceiling, and flash
+          // attention's default (off, derived; gguf_describe.flash_attn_setting).
           engine: {
             context: { length: { value: secondModel.context_length ?? null } },
-            settings: { flash_attn: { value: 'on', auto: 'on', provenance: 'observed',
-              reason: "auto: llama-server's device probe turned it on (its log)" } },
+            settings: { flash_attn: { value: 'off', auto: 'off', provenance: 'derived',
+              reason: "off: heylook's default for gguf models; set it per model to change" } },
           },
           config: {},
         });
@@ -396,7 +396,7 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
     if (url.endsWith('/v1/admin/model-options')) {
       return { providers: { mlx: { fields: [] }, gguf: { fields: [
         { name: 'ctx_size', load_setting: true, type: 'integer' },
-        { name: 'flash_attn', load_setting: true, type: 'string', enum: ['on', 'off'],
+        { name: 'flash_attn', load_setting: true, type: 'string', enum: ['on', 'off', 'auto'],
           description: 'Flash attention.' },
       ] } } };
     }
@@ -2444,8 +2444,9 @@ async function main() {
     });
 
     // Plan W1: the load panel generates a control per load setting beside
-    // the context select, Auto first and labelled with what auto resolved
-    // to, and Load sends every choice in the reload body (null = Auto).
+    // the context select, the default first and labelled with what it is,
+    // and Load sends every choice in the reload body (null = the default).
+    // Flash attention's default is off since 2026-09-26.
     await suite.check('the load panel offers flash attention and sends the choices with the load', async () => {
       const { page, reqs } = ctxm;
       const fa = await page.$eval('.chat__load-select[data-field="flash_attn"]', (el) => {
@@ -2453,17 +2454,17 @@ async function main() {
         return { options: [...el.options].map((o) => o.textContent), value: el.value,
           right: r.right, h: r.height };
       });
-      assert(fa.options[0] === 'flash attn: auto (on)' && fa.value === '',
-        `flash attention select did not open on auto-with-its-resolution: ${JSON.stringify(fa)}`);
+      assert(fa.options[0] === 'flash attn: default (off)' && fa.value === '',
+        `flash attention select did not open on its named default: ${JSON.stringify(fa)}`);
       assert(fa.h >= 44, `phone touch target under 44px: ${fa.h}px`);
-      await page.select('.chat__load-select[data-field="flash_attn"]', 'off');
+      await page.select('.chat__load-select[data-field="flash_attn"]', 'on');
       await page.select('.chat__ctx-select', '');  // context back to Auto
       await settle(page);
       await page.$eval('.chat__load-btn', (el) => el.click());
       const reload = await waitFor(() => reqs.find((r) => r.method === 'POST' && r.url.includes('/reload')),
         { timeout: 5000, message: 'Load sent no reload' });
       const body = JSON.parse(reload.postData || 'null');
-      assert(body && body.flash_attn === 'off' && body.ctx_size === null,
+      assert(body && body.flash_attn === 'on' && body.ctx_size === null,
         `reload body was ${reload.postData}`);
     });
 

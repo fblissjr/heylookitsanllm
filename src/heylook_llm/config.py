@@ -794,18 +794,20 @@ class GGUFModelConfig(BaseModel):
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "--ctx-size",
                            "load_setting": True},
     )
-    # -fa. Unset = auto, and auto is the default that stays (plan W1): forcing
-    # it off made the vision encode markedly slower and nothing faster
-    # (gguf runtime audit, 2026-09-23). "auto" itself is not a value here, so
-    # choosing Auto removes the key rather than writing it.
-    flash_attn: Optional[Literal["on", "off"]] = Field(
+    # -fa. Unset = OFF (owner, 2026-09-26: never on by default for gguf),
+    # except under a quantized V cache, which llama.cpp cannot run without it
+    # (providers.llama_server_provider.effective_flash_attn is the one
+    # decision). Until then unset was llama-server's auto; the 2026-09-23
+    # audit measured off slower on the vision encode, and the owner chose off
+    # with a re-measure. "auto" is now an explicit value.
+    flash_attn: Optional[Literal["on", "off", "auto"]] = Field(
         default=None,
         description=(
-            "Flash attention. Unset = auto: llama-server probes the device at "
-            "load and turns it on where supported, which is the default and "
-            "stays so -- forcing it off was measured slower. The field exists "
-            "to test a new architecture, not to tune. The admin row shows what "
-            "auto resolved to, read from llama-server's own log."),
+            "Flash attention. Unset = off (heylook's gguf default), except a "
+            "quantized V cache, which requires it and gets on. `auto` hands "
+            "the choice to llama-server's device probe, which turns it on "
+            "where supported; the admin row then shows what it resolved to, "
+            "read from llama-server's own log."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-fa",
                            "load_setting": True},
     )
@@ -965,7 +967,8 @@ class GGUFModelConfig(BaseModel):
             "Quantization type for the V half of the KV cache. Same posture "
             "as `cache_type_k` -- f16 by default and left there unless you "
             "have a headroom problem. A quantized V-cache needs flash "
-            "attention, whose default is auto in current builds."),
+            "attention, so a model with one gets it on unless flash_attn "
+            "says otherwise."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ctv",
                            "ui": "advanced"},
     )

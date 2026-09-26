@@ -338,8 +338,9 @@ def evaluate_model_fit(model_id: str, request: Request, body: FitRequest):
         "and persists them as its config (the same model.heylook.toml write a "
         "PATCH makes, so there is one place each value lives): an object of "
         "`load_setting` fields from /v1/admin/model-options (gguf: `ctx_size`, "
-        "`flash_attn`). `null` means Auto: the stored value is dropped and "
-        "llama-server decides. A key that is not a load setting of the "
+        "`flash_attn`). `null` means the default: the stored value is "
+        "dropped and the model's derived default applies (the training "
+        "context; flash attention off). A key that is not a load setting of the "
         "model's provider is a 400 that names the ones it has. When every "
         "value is unchanged and the model is already resident with nothing "
         "stale, this is a plain load (no restart) -- pressing Load with the "
@@ -353,7 +354,7 @@ async def reload_model(
     settings: dict[str, Any] | None = Body(
         default=None,
         description="Load settings to load with, persisted as the model's "
-                    "config; null = Auto (unset).",
+                    "config; null = the default (unset).",
         examples=[{"ctx_size": 65536, "flash_attn": None}],
     ),
 ):

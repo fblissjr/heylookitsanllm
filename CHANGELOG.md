@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.176]
+
+### Changed
+
+- **Flash attention is off by default for every gguf model** (owner call).
+  `-fa` is now always passed: off unless the model's `flash_attn` says
+  otherwise, and on for a quantized `cache_type_v`, which llama.cpp refuses to
+  run without it. `effective_flash_attn` is the one decision; the spawn and
+  the engine report both call it. `flash_attn` takes `auto` as an explicit
+  value (llama-server's device probe); `null` on `/reload` means the default.
+  The chat bar's load control reads "flash attn: default (off)".
+- **Re-measured the same day** on the unsloth Qwen3.8-27B GGUF, on vs off
+  (`internal/claude/perf/ab_unsloth_Qwen3.8-27B-UD-Q8_K_XL_20260926-155328.json`):
+  text prefill and decode indistinguishable; image time to first token slower
+  with off (the vision tower inherits the flag), as the 2026-09-23 audit
+  found. The run is marked contaminated (desktop GPU use before both off
+  arms), so it carries no formal verdict.
+
+### Fixed
+
+- `scripts/perf_ab.py` timed gguf wrong: it started the first-token clock at
+  the first chunk carrying `generation_tokens`, which gguf sends only at the
+  end, so every gguf TTFT was the whole wall time and decode rate was null. It
+  now times off the first chunk carrying output. An earlier record the same
+  day (`..._20260926-154016.json`) has the broken timing.
+
 ## [2.0.175]
 
 ### Changed

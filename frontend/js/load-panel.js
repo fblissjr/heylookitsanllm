@@ -6,10 +6,12 @@
 //
 // `ctx_size` keeps its own control (context-select.js: a power-of-two ladder
 // plus Custom…). Every other field gets a native <select> whose first option
-// is Auto, labelled with what auto resolved to when the running process said
-// ("flash attn: auto (on)"), then the field's own enum values. Choosing Auto
-// is the reset: it sends null and the server drops the stored key, so a
-// default is never written (plan principle 1). The title carries the
+// is the default, labelled with what it is when the server says ("flash attn:
+// default (off)"), then the field's own enum values. "Default", not "auto":
+// flash attention's default is off (2026-09-26) and llama-server's own auto
+// is one of its values. Choosing the default is the reset: it sends null and
+// the server drops the stored key, so a default is never written (plan
+// principle 1). The title carries the
 // setting's reason and provenance from the engine contract, which is where
 // "where did this value come from" is answered.
 //
@@ -24,7 +26,7 @@
 //   choicesToSend()  {field: value|null} to send with a reload, or null when
 //                    the current model has no load settings (plain load)
 //   describe()       a short phrase for the status line ("64K context, flash
-//                    attn off"), or '' when everything is Auto
+//                    attn on"), or '' when everything is the default
 //   setEnabled(on)
 // }
 //   currentModelId()   the id the page's model select shows
@@ -67,15 +69,17 @@ export function createLoadPanel({ currentModelId, adminRow, loadFields, onChange
     extras.replaceChildren(...fields.map((f) => {
       const setting = settings[f.name];
       const label = labelFor(f.name);
-      const resolved = setting?.auto;
-      const auto = resolved && resolved !== 'auto' ? `${label}: auto (${resolved})` : `${label}: auto`;
+      // `auto` on a Setting is what the model gets with nothing stored; it is
+      // absent while a value is stored, and then the label says only default.
+      const byDefault = setting?.auto;
+      const unset = byDefault ? `${label}: default (${byDefault})` : `${label}: default`;
       const select = createEl('select', {
         class: 'chat__load-select', 'data-field': f.name,
         'aria-label': label,
-        title: [f.description, setting && `Now: ${setting.value ?? 'auto'} (${setting.reason})`]
+        title: [f.description, setting && `Now: ${setting.value ?? 'default'} (${setting.reason})`]
           .filter(Boolean).join('\n\n'),
       }, [
-        createEl('option', { value: '' }, [auto]),
+        createEl('option', { value: '' }, [unset]),
         ...f.enum.map((v) => createEl('option', { value: String(v) }, [`${label}: ${v}`])),
       ]);
       select.value = row?.config?.[f.name] ?? '';
