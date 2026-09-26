@@ -48,8 +48,9 @@ box has Clear; an override that hides a model's `chat_template.jinja` says so
 `internal/archive/chat_templates/`); a blank field's default source sits
 under its name; gguf flash attention is off by default (on for a quantized V
 cache). Live passes are in the table above. Open follow-ups: TODO.md, "From
-the 2026-09-26 settings session". Everything since v2.0.171 is unpushed and
-unsigned (the 1Password agent was down).
+the 2026-09-26 settings session". Everything since v2.0.171 is unsigned (the
+1Password agent was down) and was pushed that way by the owner; re-signing
+would mean force-pushing main, so it stays.
 
 ## Earlier handoff (2026-09-25)
 

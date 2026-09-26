@@ -53,6 +53,13 @@ is left, each with the recommendation the owner was given:
 - [ ] **Models page "override hides chat_template.jinja" line, live.** Only
   the render suite covers it; a live check writes an override into a model
   folder (owner's files, ask first), loads the Models page, then reverts.
+- [ ] **A unit test for `perf_ab._timed` on a gguf-shaped stream.** Output
+  chunks first, the token count only on the final chunk (how the gguf
+  provider reports usage). It must fail if the first-token clock is keyed on
+  `generation_tokens` again: that bug made every gguf TTFT the whole wall time
+  and the decode rate null until v2.0.176 (sharp_edges.md, "gguf flash
+  attention default"). `tests/unit/test_perf_ab_verdict.py` covers only the
+  verdict.
 - [ ] **Preset section layout.** v2.0.172 clarified it (heading names what
   the document runs, drift line, Delete) but did not redesign it. If the
   owner still finds it confusing, next is folding Save as new behind a
