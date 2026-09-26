@@ -386,11 +386,21 @@ function buildChatTemplatePanel({ model, draft, onDraftChange }) {
 
     const bits = [`In force: ${view.origin}`];
     if (view.override_present) bits.push('your override is on disk');
-    originEl.textContent = bits.join(' · ');
     // The view's own in-force copy, not the row's engine.thinking: the row
     // was fetched with the list, so after a write or revert it describes the
     // template this panel just replaced.
     const inForce = (view.sources ?? []).find((src) => src.in_force);
+    // Said outright when the override is hiding a file the model ships: the
+    // sources list showed it, but a list of copies does not read as "your
+    // override is why the model's own levels are gone" (owner, 2026-09-26).
+    // Sources come in ladder order, so everything below the winner lost to it.
+    const below = (view.sources ?? []).slice((view.sources ?? []).indexOf(inForce) + 1);
+    const hidden = inForce?.source === 'heylook override' ? below.filter((src) => src.file).map((src) => src.file) : [];
+    if (hidden.length) {
+      bits.push(`it hides ${hidden.join(', ')}; Revert to use ${hidden.length > 1 ? 'them' : 'it'}`);
+    }
+    originEl.textContent = bits.join(' · ');
+    originEl.classList.toggle('cfg-tmpl__origin--warn', hidden.length > 0);
     thinkingEl.textContent = thinkingSummary(inForce?.thinking
       ? { ...inForce.thinking, template: inForce.file ?? inForce.source }
       : model.engine?.thinking);

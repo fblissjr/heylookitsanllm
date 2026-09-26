@@ -30,7 +30,7 @@ import { streamGenerate, stopGenerate } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
 import { MarkdownStream, appendPlainText } from '../markdown-stream.js';
 import { prepareImage, resizeImageTo, blobToBase64, MAX_EDGE_PX } from '../image-prep.js';
-import { samplerParams, snapshotSettings, unrepresentableNote, bindDocumentParams, hydrateDocParams, getSetting, setSetting, setSettings, thinkingChoice, onSettingsChange, documentScopeNote, PARAM_META } from '../settings.js';
+import { rowThinking, samplerParams, snapshotSettings, unrepresentableNote, bindDocumentParams, hydrateDocParams, getSetting, setSetting, setSettings, thinkingChoice, onSettingsChange, documentScopeNote, PARAM_META } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 import { createPresetBar, paintPresetChip } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
@@ -884,7 +884,7 @@ function currentModelRow(ctx) {
 
 // The selected model's own thinking controls (plan W2), off its row.
 function currentThinking(ctx) {
-  return currentModelRow(ctx)?.engine?.thinking ?? null;
+  return rowThinking(currentModelRow(ctx));
 }
 
 function currentThinkingDefault(ctx) {

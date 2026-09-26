@@ -403,8 +403,10 @@ thinking off (the unsloth Qwen3.8 override's `none`) is folded into *Off*
 rather than listed twice. A model with levels and no on/off switch (MiniMax)
 lists only its levels; a template that takes any word (gpt-oss) gets a text
 box with its known values as suggestions. The row names the template file the
-choices come from, and notes when a change mid-conversation re-processes the
-whole conversation. *Off* remembers the level you had, so the thinking button
+choices come from (and says when it is your own override, written on the Models
+page, which beats a `chat_template.jinja` beside the weights; that page says
+which files an override hides), and notes when a change mid-conversation
+re-processes the whole conversation. *Off* remembers the level you had, so the thinking button
 beside the composer, which flips the effective state, turns back on to it. A
 level saved on another model (in a preset, say) stays saved but shows as "not
 offered by this model" and is not sent. Since v1.79.62 a model that can think

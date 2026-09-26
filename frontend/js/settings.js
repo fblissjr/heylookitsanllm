@@ -474,11 +474,26 @@ function bindDepthControl(key, lookup, thinking) {
   return sel;
 }
 
+// A model row's thinking controls, with the ladder's answer for WHICH copy of
+// the template they were read from (`engine.template.origin`). One reader for
+// chat and notebook. The origin is what lets the row say the levels come from
+// the operator's own override: that file beats a chat_template.jinja beside
+// the weights, and a forgotten override is how the model's own levels went
+// missing (owner, 2026-09-26).
+export function rowThinking(row) {
+  const thinking = row?.engine?.thinking ?? null;
+  return thinking ? { ...thinking, origin: row.engine.template?.origin?.value ?? null } : null;
+}
+
 // A note for the depth row: where the depth enters the prompt decides what a
 // mid-conversation change costs (disclosed, never confirmed).
 function depthNote(thinking) {
   const notes = [];
-  if (thinking?.template) notes.push(`Levels from ${thinking.template}.`);
+  if (thinking?.template) {
+    notes.push(thinking.origin === 'heylook_override'
+      ? `Levels from ${thinking.template}, your override (Models page).`
+      : `Levels from ${thinking.template}.`);
+  }
   if (thinking?.depth?.changes_prefix) {
     notes.push('A change re-processes the whole conversation.');
   }

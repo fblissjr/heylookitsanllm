@@ -352,6 +352,18 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
       return { ...row };
     }
     if (url.endsWith('/v1/presets')) return { presets: remote.presets };
+    // A template view with the operator's override in force over a jinja the
+    // model ships (ladder order, as chat_template_files.template_sources).
+    if (url.endsWith('/chat-template') && method === 'GET') {
+      const src = (source, file, inForce) => ({ source, file, in_force: inForce, sha256: '0'.repeat(64),
+        provenance: source, download_commit: null, prefix_stable: true, prefix_note: '', thinking: null, template: 'x' });
+      return { model_id: 'test-model', provider: 'gguf', template: 'x', origin: 'heylook_override',
+        override_present: true, override_template: 'x', writable: true, inert_reason: null, stale: null,
+        refused_shapes: [], prefix_stable: true, prefix_note: '', notes: [], sources: [
+          src('heylook override', 'chat_template.heylook.jinja', true),
+          src('chat_template.jinja beside the .gguf', 'chat_template.jinja', false),
+          src('embedded in the GGUF', null, false)] };
+    }
     // Plan W4's image-plan, with a Qwen-like rule (32px grid, 2 marker
     // tokens) so a size off the grid has a "fit" to offer.
     if (url.includes('/image-plan')) {
@@ -3608,6 +3620,32 @@ async function main() {
         `the cap row with thinking on: ${JSON.stringify(out.cap.on)}`);
       assert(out.cap.off?.hidden === true, `the cap row shows while thinking is off: ${JSON.stringify(out.cap.off)}`);
       assert(out.cap.unenforced === null, 'the cap row is offered where the engine cannot enforce it');
+    });
+    await suite.check('an override hiding the model\'s own template says so', async () => {
+      const out = await dp.page.evaluate(async () => {
+        const s = await import('/js/settings.js');
+        const row = { engine: { template: { origin: { value: 'heylook_override' } }, thinking: {
+          switch: 'enable_thinking', template: 'chat_template.heylook.jinja', depth: {
+            variable: 'reasoning_effort', values: ['auto', 'low'], aliases: {}, default: 'auto',
+            unknown: 'raises', changes_prefix: false, off: [] } } } };
+        const note = s.buildSettingsPanel({ caps: ['thinking', 'reasoning_effort'], thinking: s.rowThinking(row) })
+          .querySelector('#set-enable_thinking').closest('.settings-row').textContent;
+        const { createModelConfigEditor } = await import('/js/model-config.js');
+        const editor = createModelConfigEditor({ model: { id: 'test-model', config: {}, engine: {} },
+          fields: [], draft: {}, onError() {}, onSaved() {}, onReload() {}, onReset() {} });
+        document.body.append(editor.el);
+        editor.el.querySelector('.cfg-tmpl > summary').click();
+        for (let i = 0; i < 50 && !/In force/.test(editor.el.querySelector('.cfg-tmpl__origin').textContent); i++) {
+          await new Promise((r) => setTimeout(r, 20));
+        }
+        const origin = editor.el.querySelector('.cfg-tmpl__origin');
+        const result = { note, origin: origin.textContent, warn: origin.classList.contains('cfg-tmpl__origin--warn') };
+        editor.el.remove();
+        return result;
+      });
+      assert(/your override/.test(out.note), `the thinking note does not say the levels are the override's: ${out.note}`);
+      assert(/hides chat_template\.jinja; Revert/.test(out.origin) && !/hides.*,/.test(out.origin) && out.warn,
+        `the Models page does not say the override hides the model's jinja: ${JSON.stringify(out)}`);
     });
     await dp.page.close();
 

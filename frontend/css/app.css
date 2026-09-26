@@ -1380,6 +1380,8 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
    templates run to hundreds of lines and the panel must not grow the page. */
 .cfg-tmpl__inner { display: flex; flex-direction: column; gap: 0.5rem; }
 .cfg-tmpl__origin { font-family: var(--mono); }
+/* the override is hiding a template file the model ships (model-config.js) */
+.cfg-tmpl__origin--warn { color: var(--warn); }
 .cfg-tmpl__sources { list-style: none; margin: 0; padding: 0;
   display: flex; flex-direction: column; gap: 0.35rem; }
 .cfg-tmpl__source { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem;

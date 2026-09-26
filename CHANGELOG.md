@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.173]
+
+### Added
+
+- **A template override says what it hides.** The Models page's chat template
+  panel states when your `chat_template.heylook.jinja` is hiding a template
+  file the model ships ("it hides chat_template.jinja; Revert to use it"), and
+  the drawer's Thinking note says the levels come from your override. The
+  ladder is unchanged: an override still beats a `chat_template.jinja` beside
+  the weights. Found live: the unsloth Qwen3.8 GGUF's 2026-09-23 override was
+  shadowing the froggeric template placed beside it on 2026-09-25 (that
+  override was then removed at the owner's request; a copy is in
+  `internal/archive/chat_templates/`).
+- Checks: `e2e:render` 103/103 (new: the override disclosure on both
+  surfaces); live on the Qwen3.8 GGUF, the drawer reads Default (medium) /
+  Off / medium (default) / low / xhigh from `chat_template.jinja`.
+
 ## [2.0.172]
 
 ### Changed

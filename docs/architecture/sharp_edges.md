@@ -1639,6 +1639,18 @@ Three rules that are each a bug if forgotten:
   greedy converter otherwise eats `<id>/chat-template` and 404s a model that
   exists.
 
+A forgotten override outranks a jinja added later (2026-09-26). The unsloth
+Qwen3.8 GGUF carried an override from 2026-09-23; on 2026-09-25 the owner put
+the froggeric template beside it as `chat_template.jinja`, expecting it to be
+used, and the thinking levels stayed the override's. The owner's first ask was
+"the jinja should always win"; the ladder was kept (letting a vendor jinja beat
+the override makes the editor inert on every model that ships one) and the
+stale override was deleted instead. What was missing was saying so: the Models
+page lists the copies, but a list does not read as "your override is why". The
+template panel now states which files the override hides, and the drawer's
+Thinking note says the levels are from your override (`engine.template.origin`,
+read through `settings.rowThinking`).
+
 The MLX half needs `install_chat_template` to target the processor as well as
 the tokenizer under force: mlx-vlm's `get_chat_template` reads
 `processor.chat_template` first (transformers fills it from a

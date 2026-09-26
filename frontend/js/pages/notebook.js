@@ -14,7 +14,7 @@ import { createPage } from '../page.js';
 import { createEl, autoGrow, armedConfirm, debounce, setStatus, fillOptions, dismissPaneOnOutsideClick } from '../utils.js';
 import { api } from '../api.js';
 import { streamMessages } from '../streaming.js';
-import { messagesParams, snapshotSettings, unrepresentableNote, bindDocumentParams, hydrateDocParams, documentScopeNote } from '../settings.js';
+import { rowThinking, messagesParams, snapshotSettings, unrepresentableNote, bindDocumentParams, hydrateDocParams, documentScopeNote } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 import { createPresetBar, paintPresetChip } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
@@ -245,7 +245,7 @@ function fillModelSelect(ctx) {
 
 // The selected model's own thinking controls (plan W2), off its row.
 function notebookThinking(ctx) {
-  return ctx.state.models.find((m) => m.id === ctx.state.modelSelect.value)?.engine?.thinking ?? null;
+  return rowThinking(ctx.state.models.find((m) => m.id === ctx.state.modelSelect.value));
 }
 
 function notebookCaps(ctx) {
