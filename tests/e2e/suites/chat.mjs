@@ -40,6 +40,22 @@ async function sendText(page, text) {
   await page.keyboard.press('Enter');
 }
 
+// Turn thinking on (or off) through the drawer's one thinking control. "On"
+// exists only where the template has no default level (v2.0.172); elsewhere
+// the default level IS on, so it is the pick. Either way enable_thinking is
+// stored true. Needs the drawer open.
+async function chooseThinking(page, on) {
+  await page.evaluate((wantOn) => {
+    const sel = document.querySelector('#set-enable_thinking');
+    const opts = [...sel.options].filter((o) => !o.disabled);
+    const levels = opts.filter((o) => o.value.startsWith('level:'));
+    sel.value = !wantOn ? 'off'
+      : opts.some((o) => o.value === 'on') ? 'on'
+        : (levels.find((o) => o.textContent.endsWith('(default)')) ?? levels[0]).value;
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  }, on);
+}
+
 async function sendBtnLabel(page) {
   return textOf(page, SEND_BTN);
 }
@@ -1190,6 +1206,64 @@ export async function runChatSuite({ suite, ctx, config }) {
     assert((await count(page, '.chat__switch-warning')) === 0, 'warning still up after Cancel');
   });
 
+  await suite.check('the thinking control offers the model\'s own levels, and a picked one changes the prompt', async () => {
+    // Live half of the render suite's thinking check: the options come from
+    // THIS server's detection of THIS model's template, and a picked level
+    // must reach the prompt, not just the stored params. Needs a model with
+    // depth levels (the Qwen3.8 GGUF: E2E_ARMS=gguf=<id>).
+    await requireCap(page, config.model, 'reasoning_effort');
+    await page.select(MODEL_SELECT, config.model);
+    const convId = await newFreshConversation(page);
+    const thinking = await page.evaluate(async (id) =>
+      (await (await fetch('/v1/models')).json()).data.find((m) => m.id === id)?.engine?.thinking, config.model);
+    const depth = thinking?.depth;
+    if (!depth || depth.unknown === 'verbatim') skip('this template takes free text for its depth (a text box, not levels)');
+    const off = new Set(depth.off ?? []);
+    const levels = depth.values.filter((v) => !off.has(v));
+    const pickLevel = levels.find((v) => v !== depth.default);
+    if (!pickLevel) skip('the template offers no level besides its default');
+
+    await openDrawer(page);
+    const offered = await page.$$eval('#set-enable_thinking option', (os) =>
+      os.filter((o) => !o.disabled).map((o) => o.value));
+    assert(JSON.stringify(offered.filter((v) => v.startsWith('level:')))
+      === JSON.stringify(levels.map((v) => `level:${v}`)),
+      `levels on screen ${JSON.stringify(offered)} are not the server's ${JSON.stringify(levels)}`);
+    assert(offered.includes('off') === Boolean(thinking.switch), `Off offered=${offered.includes('off')} with switch=${thinking.switch}`);
+
+    const choose = async (value) => {
+      await page.evaluate((v) => {
+        const sel = document.querySelector('#set-enable_thinking');
+        sel.value = v;
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+      }, value);
+    };
+    const params = () => page.evaluate(async (id) =>
+      (await (await fetch(`/v1/conversations/${id}`)).json()).params ?? {}, convId);
+    const preview = () => page.evaluate(async (id) => {
+      const r = await fetch(`/v1/conversations/${id}/prompt`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'append', user_content: 'hi' }) });
+      return r.ok ? (await r.json()).prompt : `HTTP ${r.status}`;
+    }, convId);
+
+    await choose('');
+    await waitFor(async () => !('reasoning_effort' in await params()) && !('enable_thinking' in await params()),
+      { message: 'Default never landed in the stored params' });
+    const atDefault = await preview();
+    await choose(`level:${pickLevel}`);
+    await waitFor(async () => (await params()).reasoning_effort === pickLevel,
+      { message: `picking ${pickLevel} never landed in the stored params` });
+    const atLevel = await preview();
+    await closeDrawer(page);
+    assert(!/^HTTP /.test(atDefault) && !/^HTTP /.test(atLevel), `preview failed: ${atDefault.slice(0, 40)} / ${atLevel.slice(0, 40)}`);
+    assert(atLevel !== atDefault, `the prompt at ${pickLevel} is identical to the default's -- the level never reached the template`);
+
+    // And the model runs at it: a generation completes and persists.
+    await sendText(page, 'Say hi.');
+    await waitFor(async () => (await conversationStateById(page, convId)).assistantCount === 1,
+      { timeout: 120000, message: `no reply persisted at ${pickLevel}` });
+  });
+
   await suite.check('thinking button reflects the model default and writes an explicit value', async () => {
     await requireCap(page, config.model, 'thinking');
     // v1.79.62: thinking is a tri-state. Unset follows the server's answer
@@ -1460,11 +1534,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     const convId = await newFreshConversation(page);
     await openDrawer(page);
     await setSettingsInput(page, 'Max tokens', String(STOP_TEST_MAX_TOKENS));
-    await page.evaluate(() => {
-      const sel = document.querySelector('#set-enable_thinking');
-      sel.value = 'on';
-      sel.dispatchEvent(new Event('change', { bubbles: true }));
-    });
+    await chooseThinking(page, true);
     await closeDrawer(page);
     await waitFor(async () => page.evaluate(async (id, cap) => {
       const p = (await (await fetch(`/v1/conversations/${id}`)).json()).params ?? {};
@@ -1764,11 +1834,7 @@ export async function runChatSuite({ suite, ctx, config }) {
   const setThinkingAndCap = async (thinking, cap) => {
     await openDrawer(page);
     await setSettingsInput(page, 'Max tokens', String(cap));
-    await page.evaluate((v) => {
-      const sel = document.querySelector('#set-enable_thinking');
-      sel.value = v;
-      sel.dispatchEvent(new Event('change', { bubbles: true }));
-    }, thinking ? 'on' : 'off');
+    await chooseThinking(page, thinking);
     await closeDrawer(page);
   };
 

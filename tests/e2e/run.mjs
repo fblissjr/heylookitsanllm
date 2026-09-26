@@ -7,6 +7,7 @@
 //   bun run e2e:pages       # pages suite only
 //   E2E_ARMS=all bun run e2e        # every arm (mlx-text, mlx-vision, gguf)
 //   E2E_ARMS=gguf,mlx-text bun run e2e
+//   E2E_ARMS=gguf=<model-id> bun run e2e   # one arm, its model pinned
 //
 // ARMS ARE NOT PROVIDERS: "mlx" runs a text model and a vision model down
 // different paths (on one engine, mlx-vlm), so a text arm and a vision arm are
@@ -72,9 +73,16 @@ const runPages = which === 'all' || which === 'pages';
 // engine. Re-deriving that here would be the hand-copied-list defect this repo
 // keeps paying for, in a second language where it could drift silently.
 async function resolveArms(base, spec) {
-  const wanted = spec === 'all' ? [] : spec.split(',').map((a) => a.trim()).filter(Boolean);
+  // `arm=model` pins that arm (helpers.engines' own --model ARM=ID); a bare
+  // arm lets the helper pick. A pinned slow model still counts as its arm,
+  // which is what keeps the one-fast-arm cadence check from false-failing.
+  const items = spec === 'all' ? [] : spec.split(',').map((a) => a.trim()).filter(Boolean);
   const args = ['run', 'python', '-m', 'helpers.engines', '--server', base, '--json'];
-  for (const a of wanted) args.push('--arm', a);
+  for (const item of items) {
+    const [arm, model] = item.split('=');
+    args.push('--arm', arm);
+    if (model) args.push('--model', `${arm}=${model}`);
+  }
   const { stdout } = await execFileAsync('uv', args, { cwd: join(REPO_ROOT, 'tests'), maxBuffer: 1 << 20 });
   return JSON.parse(stdout);
 }

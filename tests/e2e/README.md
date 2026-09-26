@@ -175,7 +175,13 @@ One arm by default -- whatever `E2E_MODEL` is, no extra load. `E2E_ARMS=all`
 ```bash
 E2E_ARMS=all bun run e2e          # mlx-text, mlx-vision, gguf
 E2E_ARMS=gguf bun run e2e:chat
+# one arm with its model pinned: a model with thinking depth levels, which
+# the default model lacks; also set E2E_MODEL to it so startup loads it once
+E2E_MODEL=unsloth_Qwen3.8-27B-UD-Q8_K_XL E2E_ARMS=gguf=unsloth_Qwen3.8-27B-UD-Q8_K_XL bun run e2e
 ```
+
+A named arm is what makes the client-cadence check skip on a slow model; a
+plain `E2E_MODEL` run of a slow dense model fails that check by design.
 
 Arms are not providers -- `"mlx"` runs text and vision models down different
 paths (on one engine, mlx-vlm), so a text arm and a vision arm are different

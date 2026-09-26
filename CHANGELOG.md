@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.174]
+
+### Changed
+
+- **Live e2e on a model with thinking levels.** The chat suite's two
+  thinking-resume checks picked the thinking control's `on`, which v2.0.172
+  offers only where the template has no default level; on the Qwen3.8 GGUF
+  they silently fell back to Default and timed out waiting for
+  `enable_thinking`. One helper (`chooseThinking`) now picks `on` or the
+  default level. `E2E_ARMS=gguf=<id>` pins an arm's model (forwarded to
+  `helpers.engines --model`).
+
+### Added
+
+- A live chat check: the thinking control's levels equal the server's
+  detection for the model, a picked non-default level is stored, changes the
+  rendered prompt against Default, and generates. Skips on a model without
+  levels.
+- Checks: `e2e:chat` 53/53 on the unsloth Qwen3.8-27B GGUF (gguf arm, its
+  `chat_template.jinja`; cadence skipped as a slow arm) and 53/53 on
+  Qwen3.5-0.8B (the new check skipped, no levels); `e2e:pages` 32/32 on the
+  GGUF.
+
 ## [2.0.173]
 
 ### Added

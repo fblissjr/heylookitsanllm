@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-26, v2.0.173, `main`.
+Last updated: 2026-09-26, v2.0.174, `main`.
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md) (triaged 2026-09-25;
@@ -17,6 +17,7 @@ rather than carried forward as green.
 | Suite | Result | As of |
 |---|---|---|
 | unit + contract | green (1439 passed) | v2.0.173 |
+| v2.0.174 e2e on the Qwen3.8 GGUF (gguf arm) | chat 53/53 (cadence skipped, slow arm), pages 32/32; the new live depth-level check passes (levels match detection, a picked level changes the prompt, generates); chat 53/53 on Qwen3.5-0.8B | v2.0.174 |
 | v2.0.173 live pass (settings drawer, override removed on the Qwen3.8 GGUF) | smoke 92/92 on gpt-oss-20b / Qwen3.5-0.8B / unsloth Qwen3.8-27B GGUF (now on its `chat_template.jinja`); e2e chat 53/53, pages 32/32 on Qwen3.5-0.8B; e2e render 103/103 | v2.0.173 |
 | v2.0.170 pin move (mlx-vlm `990a0287`) | smoke 92/92 on gpt-oss-20b / Qwen3.5-0.8B / unsloth Qwen3.8-27B GGUF; parity ok on Qwen3.5-0.8B (near-tie as before); chain probe clean on Qwen3.5-0.8B, Qwen3-0.6B, gpt-oss-20b (two near-ties). Record in `internal/claude/pin_990a0287/` | v2.0.170 |
 | `tests/smoke/` on `improve/2026-09-24` | green on all three arms (mlx-text Qwen3-0.6B, mlx-vision Qwen3.5-0.8B, gguf Qwen3.8-27B); the new system-prompt and back-to-A reuse checks fail on the base commit | improve/2026-09-24, merged as v2.0.121 |
