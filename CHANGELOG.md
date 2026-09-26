@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.175]
+
+### Changed
+
+- **A blank field's default source moved under its name.** The grey
+  placeholder shows just the value ("16384"); "vendor default", "model file
+  default" or "heylook default" sits under the field's name while the field is
+  blank. In the placeholder ("16384 · heylook") the 7rem field cut off the
+  source.
+- An empty thinking token cap reads "no cap" on first paint (it read "auto"
+  until a repaint).
+- Checks: `e2e:render` 104/104.
+
 ## [2.0.174]
 
 ### Changed

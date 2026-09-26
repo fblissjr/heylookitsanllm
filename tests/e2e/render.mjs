@@ -3580,6 +3580,8 @@ async function main() {
           return row ? { hidden: row.hidden, text: row.textContent } : null;
         };
         const cap = {
+          blank: s.buildSettingsPanel({ caps: capCaps, thinking: { ...leveled, budget: { enforced: true } } })
+            .querySelector('#set-thinking_budget_tokens')?.placeholder,
           on: capRow({ enable_thinking: true, thinking_budget_tokens: 3 }, { ...leveled, budget: { enforced: true } }),
           off: capRow({ enable_thinking: false }, { ...leveled, budget: { enforced: true } }),
           unenforced: capRow({}, { ...leveled, budget: { enforced: false, reason: 'no' } }),
@@ -3618,8 +3620,28 @@ async function main() {
       assert(wd.selected === 'level:medium', `a stored bare "on" shows as ${wd.selected}, not its level`);
       assert(out.cap.on && !out.cap.on.hidden && /stops after 3 tokens/.test(out.cap.on.text),
         `the cap row with thinking on: ${JSON.stringify(out.cap.on)}`);
+      assert(out.cap.blank === 'no cap', `an empty cap reads ${JSON.stringify(out.cap.blank)}, not "no cap"`);
       assert(out.cap.off?.hidden === true, `the cap row shows while thinking is off: ${JSON.stringify(out.cap.off)}`);
       assert(out.cap.unenforced === null, 'the cap row is offered where the engine cannot enforce it');
+    });
+    await suite.check('a blank field shows the default\'s value, and its source under the name', async () => {
+      const out = await dp.page.evaluate(async () => {
+        const s = await import('/js/settings.js');
+        const row = (values) => {
+          s.applySettings(values, { silent: true });
+          const input = s.buildSettingsPanel({ samplerDefaults: { max_tokens: 16384 },
+            samplerSources: { max_tokens: 'default' } }).querySelector('#set-max_tokens');
+          const label = input.closest('.settings-row').querySelector('label');
+          return { placeholder: input.placeholder, label: label.innerText };
+        };
+        const blank = row({});
+        const set = row({ max_tokens: 100 });
+        s.applySettings({}, { silent: true });
+        return { blank, set };
+      });
+      assert(out.blank.placeholder === '16384', `placeholder reads ${JSON.stringify(out.blank.placeholder)}`);
+      assert(/heylook default/.test(out.blank.label), `the source is not under the name: ${JSON.stringify(out.blank.label)}`);
+      assert(!/heylook default/.test(out.set.label), `the source still shows once overridden: ${JSON.stringify(out.set.label)}`);
     });
     await suite.check('an override hiding the model\'s own template says so', async () => {
       const out = await dp.page.evaluate(async () => {

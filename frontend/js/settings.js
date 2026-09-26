@@ -361,7 +361,7 @@ function bindControl(key, meta, lookup = () => null, thinking = null, caps = [],
     // The model's REAL resolved value, not the word "auto" -- a greyed
     // placeholder already reads as "this is what you get if you leave it
     // alone", and "auto" left the reader to generate something to find out.
-    placeholder: describe(key) ?? 'auto',
+    placeholder: describe(key) ?? meta.blank ?? 'auto',
     value: cache[key] ?? '',
   });
   input.addEventListener('change', () => {
@@ -555,10 +555,12 @@ export function documentScopeNote(noun, hasActive) {
 // path reads only some fields (a masked-diffusion model reads temperature,
 // max_tokens and the thinking controls), the rest are not offered. Null = all.
 // `samplerSources` (the row's `sampler_sources`) names the layer each default
-// came from, shown beside it: "0.6 · vendor" is the model's own published
-// value, "1 · heylook" the server's fallback, "0.3 · model file" this
-// model's own settings.
-const SOURCE_LABEL = { model: 'model file', vendor: 'vendor', default: 'heylook' };
+// came from, shown under the field's name while the field is blank: "vendor
+// default" is the model's own published value, "heylook default" the server's
+// fallback, "model file default" this model's own settings. It sat in the
+// placeholder beside the value ("16384 · heylook") until 2026-09-26, where a
+// 7rem field cut off the half that said where it came from.
+const SOURCE_LABEL = { model: 'model file default', vendor: 'vendor default', default: 'heylook default' };
 
 // Whether the Advanced group is open, for the page session (not stored): the
 // drawer rebuilds the panel on every open and every forced repaint.
@@ -582,11 +584,8 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
     if (key === 'enable_thinking' || !samplerDefaults) return modelDefaults[key] ?? null;
     return samplerDefaults[key] ?? null;
   };
-  const describe = (key) => {
-    const text = defaultText(lookup(key));
-    const source = SOURCE_LABEL[samplerSources?.[key]];
-    return text !== null && source ? `${text} · ${source}` : text;
-  };
+  const describe = (key) => defaultText(lookup(key));
+  const sourceOf = (key) => (describe(key) !== null ? SOURCE_LABEL[samplerSources?.[key]] ?? null : null);
 
   for (const [key, meta] of Object.entries(PARAM_META)) {
     if (meta.foldedInto) continue;  // rendered by the row it folds into
@@ -605,6 +604,7 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
     const noteText = meta.type === 'thinking' ? () => thinkingNote(thinking)
       : key === 'thinking_budget_tokens' ? () => budgetNote(thinking, cache[key]) : () => meta.note ?? null;
     const noteEl = createEl('span', { class: 'settings-row__note muted small' });
+    const sourceEl = createEl('span', { class: 'settings-row__note muted small' });
     // Shown only while the key is overridden, so its presence IS the "you
     // changed this" signal and there is nothing extra on screen otherwise.
     // Not a hover reveal -- state, not pointer -- so DESIGN.md §7's
@@ -622,7 +622,7 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
       'aria-label': `Reset ${meta.label} to the model default`,
     }, ['\u21ba']);
     const row = createEl('div', { class: `settings-row${meta.sub ? ' settings-row--sub' : ''}` }, [
-      createEl('label', { for: control.id || `set-${key}` }, [meta.label, noteEl]),
+      createEl('label', { for: control.id || `set-${key}` }, [meta.label, sourceEl, noteEl]),
       // The control and its reset share ONE wrapper: .settings-row is a
       // two-child space-between flex row and a third child re-spaces it.
       createEl('div', { class: 'settings-row__control' }, [control, control.suggestions ?? null, reset]),
@@ -638,6 +638,10 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
       const overridden = keys.some((k) => k in sent);
       row.classList.toggle('settings-row--overridden', overridden);
       reset.classList.toggle('settings-row__reset--on', overridden);
+      // Where the grey value comes from, only while it is the one in use.
+      const source = overridden ? null : sourceOf(key);
+      sourceEl.hidden = !source;
+      if (sourceEl.textContent !== (source ?? '')) sourceEl.textContent = source ?? '';
       const text = noteText();
       noteEl.hidden = !text;
       if (noteEl.textContent !== (text ?? '')) noteEl.textContent = text ?? '';

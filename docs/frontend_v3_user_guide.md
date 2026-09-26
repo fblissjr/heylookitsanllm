@@ -35,7 +35,10 @@ preset carries. **Clear**, under the prompt box, removes the prompt in one step
 
 **A blank sampler field shows the value it will actually use** (v2.0.21). Leaving
 Top-k empty on a gemma model shows that model's own value in grey, because that is
-what its config asks for — not the word "auto", which told you nothing. The moment you
+what its config asks for — not the word "auto", which told you nothing. Under the
+field's name, small text says where that value comes from: *vendor default* (the
+model publisher's), *model file default* (this model's heylook settings) or
+*heylook default* (the server's fallback). The moment you
 type your own value, the field's name turns accent-coloured, its border matches, and
 a small reset control appears beside it that puts the field back to the model's
 value. Nothing appears next to fields you have not touched, so the panel stays quiet
