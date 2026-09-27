@@ -117,12 +117,18 @@ class TestBusyIsBackpressureNotBreakage:
         """The 503 must not swallow the case this route's 500 is FOR."""
         router = client.app.state.router_instance
 
-        def boom(model_id):
-            raise RuntimeError("safetensors header is corrupt")
+        # ValueError too: loaders raise it bare for corrupt weights or an
+        # unsupported model_type, and only ModelNotFound is the caller's 400.
+        # Until v2.0.178 this route caught every ValueError as a 400 while
+        # /v1/messages answered the same failure with a 500.
+        for exc in (RuntimeError("safetensors header is corrupt"),
+                    ValueError("Model type foo not supported")):
+            def boom(model_id, exc=exc):
+                raise exc
 
-        monkeypatch.setattr(router, "get_provider", boom)
-        resp = client.post("/v1/models/test-mlx-model/load")
-        assert resp.status_code == 500
+            monkeypatch.setattr(router, "get_provider", boom)
+            resp = client.post("/v1/models/test-mlx-model/load")
+            assert resp.status_code == 500, f"{type(exc).__name__}: {resp.status_code}"
 
 
 

@@ -264,6 +264,15 @@ class MessageCreateRequest(BaseModel):
                 "/v1/presets user presets are a separate, still-supported "
                 "system, and the client expands one into those same fields"
             )
+        # Removed in v2.0.64 but never added here, so for 60+ releases a
+        # client sending a per-image token cap got a 200 and no cap at all.
+        if "vision_tokens" in data:
+            raise ValueError(
+                "vision_tokens was removed in v2.0.64 (it was measured to do "
+                "nothing on Qwen-family MLX models): cap image cost by the "
+                "pixels you send, and ask POST /v1/models/{id}/image-plan what "
+                "an image of a given size costs this model"
+            )
         return data
 
     def response_schema(self) -> Optional[Dict[str, Any]]:

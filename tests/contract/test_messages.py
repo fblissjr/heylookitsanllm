@@ -335,9 +335,11 @@ def test_retired_request_fields_are_refused_not_ignored(client):
     # `show_special_tokens` joined in v2.0.38: it was a per-BROWSER display pref
     # that decided what the conversation store PERSISTED, so a client still
     # asking to KEEP them must be told rather than quietly get stripped text.
+    # `vision_tokens` joined in v2.0.178: removed in v2.0.64 but silently
+    # accepted until then, so a client's image-cost cap did nothing.
     for field, value in (("logprobs", True), ("top_logprobs", 5),
                          ("preset", "x"), ("sampler", "balanced"),
-                         ("show_special_tokens", True)):
+                         ("show_special_tokens", True), ("vision_tokens", 256)):
         r = client.post("/v1/messages", json={**body, field: value})
         assert r.status_code == 422, f"{field} was accepted: {r.status_code}"
         assert field.split("_")[-1] in r.text or field in r.text, \

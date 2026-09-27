@@ -42,6 +42,7 @@ from pydantic import BaseModel, Field
 from heylook_llm.busy_response import model_busy_response
 from heylook_llm.capabilities import derived_model_facts
 from heylook_llm.providers.common.generation_gate import ModelBusyError
+from heylook_llm.router import ModelNotFound
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +126,10 @@ async def load_and_warm(router, model_id: str, warm: bool):
     try:
         import asyncio
         provider = await asyncio.to_thread(router.get_provider, model_id)
-    except ValueError as e:
+    except ModelNotFound as e:
+        # Only an unresolvable id is the caller's 400. A bare ValueError is a
+        # failed load (corrupt weights, unsupported model_type) and falls to
+        # the 500 below, the same split /v1/messages makes.
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
         # MODEL_BUSY is BACKPRESSURE, not a broken model. It reached the

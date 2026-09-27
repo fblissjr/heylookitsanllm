@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.178]
+
+### Fixed
+
+- **`vision_tokens` on `/v1/messages` is a 422.** It was removed in v2.0.64
+  but never added to the retired-field guard, so a client sending a per-image
+  token cap got a normal 200 and no cap. The refusal points at the client-side
+  pixel cap and `POST /v1/models/{id}/image-plan`. Found while syncing the
+  external heylook-provider skill, which still recommended the field.
+- **`POST /v1/models/{id}/load` (and admin `/reload`) answer a failed load
+  with 500, not 400.** The route caught every `ValueError` as the caller's
+  fault, but loaders raise a bare `ValueError` for corrupt weights or an
+  unsupported `model_type`. It now catches only `ModelNotFound`, the same split
+  `/v1/messages` makes, so one failure no longer has two status codes across
+  the two routes. Spec §4 already promised this.
+- Checks: `tests/unit/` + `tests/contract/` green; the retired-field and
+  load-failure contract tests cover both.
+
 ## [2.0.177]
 
 ### Fixed

@@ -315,7 +315,8 @@ Phase 3b; chat uses its conversation-scoped sibling below; the OpenAI-compatible
   request still sending `sampler` (or `preset`) gets a 422 naming the v2.0.30
   removal rather than a silent drop, one sending `chat_template_kwargs` (llama-server's
   spelling) gets a 422 naming `thinking` and `reasoning_effort` (v2.0.86), and one sending `show_special_tokens`
-  gets the same treatment for the v2.0.38 removal (below). `tools` and `tool_choice` are a 422
+  gets the same treatment for the v2.0.38 removal (below), as does `vision_tokens` (removed v2.0.64,
+  refused since v2.0.178; image cost is capped by the pixels sent). `tools` and `tool_choice` are a 422
   too (v2.0.151): not built yet. `response_format` (v2.0.155) is OpenAI's shape, which
   llama-server also takes: `{type:"json_schema", json_schema:{schema}}` makes the reply a
   JSON document matching the schema, `{type:"json_object"}` any JSON object, `{type:"text"}`

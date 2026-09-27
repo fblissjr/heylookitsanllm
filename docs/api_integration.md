@@ -441,7 +441,9 @@ scales linearly with area (about a thousand tokens per megapixel), so a cap
 on the client side is the direct control. There is no server-side budget
 field — `vision_tokens` existed until v2.0.64 and was removed after it was
 measured to do nothing on Qwen-family models (mlx-vlm drops the processor
-kwarg it mapped to).
+kwarg it mapped to). Sending it is a 422 since v2.0.178 (it was silently
+accepted before). `POST /v1/models/{id}/image-plan` answers what an image of
+a given size costs a resident model, which is how to pick the cap.
 
 ### Knobs
 
