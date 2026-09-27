@@ -1039,6 +1039,7 @@ class TestReasoningEffort:
 # timed out", and the model reported loaded the moment the run ended.
 
 import urllib.error
+from email.message import Message
 
 from heylook_llm.providers.base import GenerationFailed
 from heylook_llm.providers.common.generation_gate import GenerationGate, ModelBusyError
@@ -1077,6 +1078,24 @@ class TestGenerationGate:
             assert p._gen_gate.busy is True, "held across the stream"
             gen.close() if exit_by == "early_close" else list(gen)
         assert p._gen_gate.busy is False, f"not released on {exit_by}"
+
+    # llama-server's 400 is the client's fault (e.g. an image a model without
+    # a projector cannot take) and must reach /v1/messages as a 400, or an
+    # in-band invalid_request_error once streaming, carrying llama-server's own
+    # message; any other status is a server failure. External clients branch
+    # on this split.
+    @pytest.mark.parametrize("code, raised", [
+        (400, llama_mod.InvalidGenerationRequest), (500, GenerationFailed)])
+    def test_llama_server_status_maps_to_client_or_server_error(self, monkeypatch, code, raised):
+        p = self._gated(monkeypatch)
+
+        def refused(*a, **k):
+            body = io.BytesIO(json.dumps({"error": {"message": "image input is not supported"}}).encode())
+            raise urllib.error.HTTPError("http://x", code, "err", Message(), body)
+        monkeypatch.setattr(llama_mod.urllib.request, "urlopen", refused)
+        with pytest.raises(raised, match="image input is not supported"):
+            list(p.create_chat_completion(req()))
+        assert p._gen_gate.busy is False
 
     def test_the_model_counts_as_busy_while_llama_server_is_still_prefilling(self, monkeypatch):
         # llama-server answers urlopen only once it has a first result, so the

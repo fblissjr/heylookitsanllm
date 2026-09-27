@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.179]
+
+### Fixed
+
+- **`engine.thinking` schema description names `depth.off`.** The
+  `/v1/models` OpenAPI description listed the depth keys without `off`
+  (added v2.0.159), so a client reading `/openapi.json` could not learn it
+  exists. Spec §4 already listed it.
+
+### Added
+
+- Unit test: a llama-server 400 surfaces as `InvalidGenerationRequest`
+  (400, or an in-band `invalid_request_error` on a stream) carrying
+  llama-server's own message; any other status is `GenerationFailed` (500).
+  The external heylook-provider skill states this split and nothing tested it.
+- Checks: `tests/unit/` + `tests/contract/` green.
+
 ## [2.0.178]
 
 ### Fixed

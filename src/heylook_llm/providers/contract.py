@@ -113,7 +113,7 @@ class EngineDescription(BaseModel):
         default=None,
         description="Thinking controls the in-force template offers (plan W2, "
                     "thinking_controls.detect): {switch, depth: {variable, "
-                    "values, aliases, default, unknown, changes_prefix}, "
+                    "values, aliases, default, unknown, changes_prefix, off}, "
                     "template, budget: {enforced, reason}}. Values are the "
                     "template's own spellings; "
                     "`template` names the copy they were read from (the same "
