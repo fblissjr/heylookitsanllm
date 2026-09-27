@@ -179,7 +179,10 @@ Response (non-streaming):
 PROCESSED; the part of the prompt reused from a previous request is
 `cache_read_input_tokens`, so the whole prompt is their sum.
 `cache_read_input_tokens` is null when the engine reported nothing about
-reuse, never a claimed zero. Until v2.0.78 `input_tokens` meant different
+reuse, never a claimed zero. `thinking_tokens` / `content_tokens` (present
+when the reply had thinking) count emitted text segments, an approximate
+split rather than engine tokens: markers and EOS emit no text and one segment
+can hold several tokens, so they need not sum to `output_tokens`. Until v2.0.78 `input_tokens` meant different
 things on different engines (processed on MLX text, the whole prompt on gguf
 and MLX vision); it now means one thing everywhere.
 

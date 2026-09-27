@@ -258,6 +258,17 @@ loss. Header-based detection is planned with the registry sidecars. Neither
 the built-in-head launch nor the cross-quant drafter had been run when this
 was written.
 
+A drafter is known by its header, not only its name (2026-09-27, v2.0.180).
+LiquidAI ships its DSpark drafter as `LFM2.5-VL-3B-DSpark-F16.gguf`, with no
+family prefix, alone in its own repo. Discovery keyed drafters on the prefix
+alone, so the file imported as a chat model and every load failed
+(llama-server: "dflash requires ctx_other to be set"). A `dflash`
+architecture has no embeddings or LM head of its own; it borrows the
+target's, so it is never servable alone and pairs only with a target of the
+same hidden size and tokenizer (for this file, LFM2.5-VL-3B, per its model
+card). `ModelImporter._is_drafter` now takes the header's word, so a
+target downloaded beside it or into a neighbouring folder pairs it by name.
+
 Before 2026-09-24: spec decode (`spec_type = "draft-mtp"`) was per-model
 opt-in and was to stay off unless you had checked it was a win on your model
 at your context.

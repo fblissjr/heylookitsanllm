@@ -281,7 +281,13 @@ class ModelImporter:
 
     @classmethod
     def _is_drafter(cls, f: Path) -> bool:
-        return f.name.lower().startswith(cls._DRAFTER_PREFIXES)
+        # The prefix is the publisher's convention; the header is the fact.
+        # A `dflash` architecture is a standalone DSpark/DFlash drafter with no
+        # LM head of its own, whatever the file is called: LiquidAI ships
+        # `LFM2.5-VL-3B-DSpark-F16.gguf`, which imported as a chat model and
+        # 500'd on every load ("dflash requires ctx_other to be set").
+        return (f.name.lower().startswith(cls._DRAFTER_PREFIXES)
+                or gguf_metadata.architecture(f) == "dflash")
 
     @classmethod
     def _servable_size(cls, f: Path) -> int:

@@ -181,6 +181,25 @@ class TestCreateGGUFEntry:
         assert entry["config"]["draft_model_path"] == str(drafter)
         assert entry["config"]["model_path"] == str(d / f"{d.name}.gguf")
 
+    def test_a_dflash_header_is_a_drafter_whatever_its_name(self, importer, tmp_path):
+        # LiquidAI names its standalone DSpark drafter
+        # `LFM2.5-VL-3B-DSpark-F16.gguf`: no family prefix. Alone in a folder
+        # it must not import as a model (it cannot load without a target);
+        # beside a target it pairs as that target's drafter.
+        from helpers.gguf import STR, write_gguf
+        alone = tmp_path / "LFM-DSpark-GGUF"
+        alone.mkdir()
+        write_gguf(alone / "LFM-DSpark-F16.gguf", [("general.architecture", STR, "dflash")])
+        assert importer._is_gguf_model(alone) is False
+
+        paired = tmp_path / "LFM-GGUF"
+        paired.mkdir()
+        write_gguf(paired / "LFM-Q8_0.gguf", [("general.architecture", STR, "lfm2")])
+        write_gguf(paired / "LFM-DSpark-F16.gguf", [("general.architecture", STR, "dflash")])
+        entry = importer._create_gguf_entry(paired)
+        assert entry["config"]["model_path"] == str(paired / "LFM-Q8_0.gguf")
+        assert entry["config"]["draft_model_path"] == str(paired / "LFM-DSpark-F16.gguf")
+
     def test_sharded_model_loads_at_first_shard(self, importer, tmp_path):
         # llama_model_loader hard-errors ("model must be loaded with the first
         # split") on any shard but 00001, because it derives its siblings from

@@ -39,11 +39,15 @@ class Usage(BaseModel):
         description="Prompt tokens reused from a previous request (not in "
                     "input_tokens). Null when the engine reported no cache count.")
     thinking_tokens: Optional[int] = Field(
-        default=None, description="Tokens used in thinking blocks (Qwen3)"
-    )
+        default=None,
+        description="Emitted thinking text segments, an approximate split of "
+                    "output_tokens, not a token count: tokens that emit no text "
+                    "(thinking markers, EOS) are in neither and one segment can "
+                    "hold several tokens, so the two need not sum to "
+                    "output_tokens. Null when the reply had no thinking.")
     content_tokens: Optional[int] = Field(
-        default=None, description="Tokens in non-thinking content"
-    )
+        default=None,
+        description="Emitted reply text segments; see thinking_tokens.")
 
     @property
     def total_tokens(self) -> int:

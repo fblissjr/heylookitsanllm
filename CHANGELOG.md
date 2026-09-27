@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.180]
+
+### Fixed
+
+- **A GGUF whose header architecture is `dflash` is a drafter, whatever its
+  name.** Discovery recognised drafters by filename prefix only, so
+  LiquidAI's `LFM2.5-VL-3B-DSpark-F16.gguf` (no prefix, alone in its repo)
+  imported as a chat model and failed every load ("dflash requires
+  ctx_other to be set"). It is now skipped as a model and pairs as a
+  drafter with a target beside it or in a neighbouring folder.
+- **`usage.thinking_tokens` / `content_tokens` descriptions say what they
+  count**: emitted text segments, an approximate split that need not sum to
+  `output_tokens` (markers and EOS emit no text). The schema called them
+  tokens. `docs/api_integration.md` says the same.
+- Checks: `tests/unit/` + `tests/contract/` green; new import test covers a
+  lone and a paired unprefixed `dflash` file.
+
 ## [2.0.179]
 
 ### Fixed
