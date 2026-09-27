@@ -38,8 +38,10 @@ themselves.)
   "capabilities": ["chat", "vision", "thinking", "reasoning_effort", "thinking_budget", ...],
   "thinking_default": true,
   "sampler_defaults": { ... },
+  "sampler_sources": { "temperature": "model" | "vendor" | "default", ... },
   "engine": { "runtime": {...}, "context": {...}, "template": {...},
-              "settings": {...}, "cache": null, "thinking": null,
+              "settings": {...}, "cache": {...}, "thinking": {...},
+              "decoding": {...}, "speculative": {...},
               "image": null, "steering": null } }
 ```
 
@@ -48,6 +50,19 @@ model (`engine.runtime.value`: `mlx-vlm` or `llama.cpp`), its context
 ceiling (`engine.context.length.value`), the template in force, and every
 setting with its value, the stored value, what auto would pick and why. Each
 value carries a `provenance`. It replaced the top-level `context_length`.
+Two slots a client reads directly:
+
+- `engine.thinking`: `{switch, depth: {variable, values, aliases, default,
+  unknown, changes_prefix, off}, template, budget: {enforced, reason}}`, or
+  null when there is no template to judge. `depth.values` is the model's own
+  `reasoning_effort` vocabulary (see [Knobs](#knobs)); `off` lists the values
+  that render the same prompt as thinking switched off; `changes_prefix` means
+  changing depth mid-conversation re-processes the whole prompt.
+- `engine.decoding`: `mode` (autoregressive, or diffusion for a
+  masked-diffusion checkpoint) and `request_fields`, the sampler fields that
+  engine path reads (null = all of them). Hide a control whose field is not
+  listed.
+
 The full shape is `docs/frontend_v3_spec.md` §4.
 
 `modalities` is the checkpoint author's description of the weights.
@@ -84,12 +99,15 @@ decide what actually happened.
 **Only the MLX provider refuses.** The gguf path forwards the messages to
 `llama-server` without a capability check of its own, so a text-only GGUF
 that advertises vision does whatever that subprocess does with the block. If
-llama-server rejects it, its 400 is normalized into the same
-`InvalidGenerationRequest` and reaches you in the two shapes above; if it
-accepts and ignores the block, nothing refuses and you get the silent case —
-an answer about an image the model never used. Recorded as unsettled rather
-than omitted, because "the server refuses over-reported capabilities" reads
-as an all-clear that does not hold on that arm.
+llama-server rejects it, its 400 becomes the same `InvalidGenerationRequest`
+and reaches you in the two shapes above (any other llama-server status is a
+500 / `api_error`; `tests/unit/test_llama_server_provider.py` pins the split
+since v2.0.179). The message text is llama-server's own, not heylook's, so
+never string-match a refusal across engines. If it accepts and ignores the
+block, nothing refuses and you get the silent case — an answer about an
+image the model never used. Since v2.0.147 a gguf model advertises `vision`
+only with an mmproj projector, which narrows that case to an operator's
+explicit override.
 
 **Never hardcode a model id.** The registry is override-only: anything under
 a scanned folder is served with derived defaults, so the roster changes when
@@ -260,16 +278,14 @@ is the point.
   slow prefill. It is absent/null now. On .54–.57, treat `0` as unknown.
 - **`queue_wait_ms` absent means NOT MEASURED, and `0` never appears.** The
   wait is an elapsed-counter difference, so even an idle gate reports a tiny
-  nonzero float (live: 0.0044, 0.0037, 0.0024 ms). The only things that would
-  produce an exact `0` are the cases where nothing measured it — **gguf never
-  measures it at all**: it takes the same process-wide FIFO gate as MLX (since
-  v1.79.44, so a busy backend queues here in arrival order and can answer 503),
-  but the provider does not stamp the wait on its chunks, so a gguf request
-  that really waited seconds has no wait to report. So: absent on gguf always,
-  absent on MLX only when the run produced no chunk. (v1.79.58 briefly published that zero on the reasoning
-  that it rescued a measurement on idle servers; measurement showed the idle
-  case was never zero, so the release was inverting a correct behaviour.
-  Restored in .59.)
+  nonzero float. Both engines stamp it: gguf takes the same process-wide FIFO
+  gate as MLX (since v1.79.44, so a busy backend queues here in arrival order
+  and can answer 503), and its provider has measured the wait at that gate
+  since 2026-09-24 (`llama_server_provider.py`, `queue_wait_ms`); before that
+  it was absent on gguf always. Absent now means the run produced no chunk.
+  (v1.79.58 briefly published a zero on the reasoning that it rescued a
+  measurement on idle servers; measurement showed the idle case was never
+  zero, so the release was inverting a correct behaviour. Restored in .59.)
 - **`thinking_duration_ms` and `content_duration_ms` are filled in both
   modes** (non-streaming since v2.0.64; before that it answered `null` for
   both while the stream filled them). Each is the span from that channel's
@@ -314,14 +330,13 @@ a mean dragged to zero by non-streaming requests and a literal `0.0`.
 produce a response at all — it is an HTTP 4xx/5xx — so there is no error
 member and no branch to write for one.
 
-In practice you will see **only `end_turn` and `max_tokens`**: those are what
-both engines produce (the MLX engine and llama-server both report OpenAI's
-`stop`/`length`, renamed at the boundary). `stop_sequence` is declared and
-mapped so a provider that learns to emit it needs no change here, but nothing
-produces it today. It is kept, unlike the removed `error`, because it is a
-value Anthropic's own spec defines — a client written against that spec
-already handles it, so declaring it costs nothing, whereas `error` was a
-heylook invention that would have made clients write a branch for us.
+You will see `end_turn` and `max_tokens` from both engines (the MLX engine
+and llama-server both report OpenAI's `stop`/`length`, renamed at the
+boundary), and `stop_sequence` when a request's `stop_sequences` matched
+(v2.0.151, see [Knobs](#knobs)); the response and the `message_delta` then
+also carry `stop_sequence`, the string that matched. There is no `error`
+stop reason: it was a heylook invention that would have made clients write a
+branch for us, and was removed.
 
 ### Image blocks
 
@@ -449,12 +464,43 @@ a given size costs a resident model, which is how to pick the cap.
 
 `max_tokens`, `temperature`, `top_p`, `top_k`, `min_p`, `repetition_penalty`,
 `repetition_context_size`, `presence_penalty`, `seed`,
-`thinking`, `reasoning_effort`,
+`thinking`, `reasoning_effort`, `stop_sequences`, `response_format`,
 `stream`, `metadata`. (`stream_options` was removed in v2.0.148: a stream
 always carries usage in `message_delta`, so a client that still sends
 `include_usage` gets what it asked for and the field is ignored.)
 
-Every one is optional and **absent means the server's cascade decides**.
+Every one is optional and **absent means the server's cascade decides**
+(server floor, then the model's vendor `generation_config`, then its
+heylook config; `sampler_sources` on `/v1/models` says which won per field).
+`model` is the exception: a request without one is a 400 listing the ids
+(v2.0.150), because there is no default model.
+
+**Unknown fields are ignored, not rejected** — by design, so an Anthropic SDK
+sending a field heylook does not implement still works. The exceptions are
+named: a removed field (`logprobs`, `top_logprobs`, `sampler`, `preset`,
+`show_special_tokens: true`, `vision_tokens`), a misspelling of a real one
+(`enable_thinking`, `max_new_tokens`, `system_prompt`,
+`chat_template_kwargs`), and an unbuilt one (`tools`, `tool_choice`) each
+answer **422** naming the right field or the removal. Any other typo in an
+optional field is a silent no-op, so check field names against
+`/openapi.json`.
+
+`stop_sequences` (v2.0.151): up to 16 strings of 1-256 characters. The
+reply is cut before the first match (the thinking channel is never matched),
+generation ends between tokens, and `stop_reason` is `stop_sequence`.
+
+`response_format` (v2.0.155), OpenAI's shape: `{type:"json_schema",
+json_schema:{schema:{...}}}` makes the reply a JSON document matching the
+schema, `{type:"json_object"}` any JSON object, `{type:"text"}` free text.
+Thinking is not constrained. It is a 400 (or an in-band
+`invalid_request_error` once streaming) on harmony (gpt-oss) and
+masked-diffusion models and on a continuation. `json_schema` with named
+properties is the reliable form; a bare `json_object` on MLX can come back
+with odd keys.
+
+**A trailing assistant message is continued, not answered**: the model picks
+up where that text ends (prefill), and a trailing assistant message holding
+only a `thinking` block resumes the thinking.
 
 `logprobs` and `top_logprobs` were REMOVED in v1.79.74 along with the token
 explorer, the only surface that read them, and so was the
@@ -557,11 +603,14 @@ and null as one condition.
 
 | Condition | Shape |
 |---|---|
-| Unknown or disabled `model`, or no `model` and no server default | **400** with the reason and the available ids in `detail` |
-| Model load failed (corrupt weights, unsupported architecture) | **500** |
+| Unknown `model`, or no `model` at all (there is no default, v2.0.150) | **400** with the reason and the available ids in `detail` |
+| Input the model cannot take: an image or audio it does not serve, a prompt longer than its context, a `reasoning_effort` it does not offer, a `thinking.budget_tokens` or `response_format` it cannot honour, an unreadable image, a local file path as an MLX image source | **400**, or in-band `invalid_request_error` once streaming |
+| Model load failed (corrupt weights, unsupported architecture) | **500** (also on `/load` since v2.0.178, which answered some of these 400) |
 | Cannot make room — another model is resident and generating | **503**, same envelope as a full queue (v1.79.53+; a **500** carrying `MODEL_BUSY` before that) |
 | Generation queue full | **503**, body `{error:{code:"model_overloaded"}}`, plus `Retry-After` and `X-RateLimit-*` headers |
-| Bad request body | **422** (FastAPI validation) |
+| Bad request body, or a removed/misspelt/unbuilt field (see [Knobs](#knobs)) | **422** naming the field |
+| `Host` header the server does not recognise (see [§6](#6-auth)) | **403** naming the fix |
+| Image plan asked of a model that is not loaded | **409** (planning never loads a model) |
 | Failure *after* the stream opened | in-band `event: error`, `data: {type:"error", error:{type, message}}` |
 
 400 means "pick a different model"; 500 means "this model is broken".
@@ -583,8 +632,21 @@ is normal.
 Inference is unauthenticated: the server is meant for a trusted home LAN.
 The one gate is **opt-in and off by default**:
 
-- `HEYLOOK_ADMIN_TOKEN` → send `X-Heylook-Admin-Token`. Gates admin routes.
-  An integration should not need it.
+- `HEYLOOK_ADMIN_TOKEN` → send `X-Heylook-Admin-Token`. Gates the
+  `/v1/admin/*` routes plus `/v1/data/clear` and `/v1/cache/clear`; a wrong
+  or missing token is a 401. An integration should not need it.
+  (`HEYLOOK_API_KEY`, an inference key, was removed in v2.0.127.)
+
+Two network rules replace an inference key:
+
+- **Host check** (v2.0.137, DNS-rebinding guard). A request whose `Host`
+  header is not an IP address, `localhost`, one of the server machine's own
+  names, or an entry in `allowed_hosts` at the top of the server's
+  `heylook.toml` gets a **403** naming that fix. A client reaching the server
+  by a LAN DNS name needs that name added by the operator; an IP always works.
+- **No CORS** (v2.0.123). The server sends no CORS headers, so a browser page
+  on another origin is refused at preflight. Call it server-side, or serve
+  the page from the same origin.
 
 Send `X-Request-ID` on every request, and **make it unique per request** — a
 fresh UUID each time, not one stable id per session or per client. This is
@@ -722,6 +784,74 @@ stated; do not restate it here.
   that silence as a hang — better, pay it explicitly with `POST
   /v1/models/{id}/load` (see [§3](#paying-the-model-load-up-front)).
 
+## 9. Every route, by who it is for
+
+An inference integration needs only the first group. The rest is here so an
+agent building against heylook knows what exists and where it is specified;
+shapes are in `/openapi.json`, behaviour in
+[frontend_v3_spec.md](./frontend_v3_spec.md) §4. "Admin" means the
+`X-Heylook-Admin-Token` gate from [§6](#6-auth) (a no-op when the server
+sets no token); everything else is open.
+
+**Inference** (this document):
+
+| Route | Purpose |
+|---|---|
+| `POST /v1/messages` | The inference wire (§2-§5) |
+| `GET /v1/models` | Served models, capabilities, the `engine` object (§1) |
+| `GET /v1/capabilities` | Server version, optimizations, Metal info (§1) |
+| `POST /v1/models/{id}/load[?warm=true]` | Pay a model load up front (§3) |
+| `POST /v1/models/{id}/image-plan` | Tokens and resize target per image size, resident models only (§3, spec §4 "Image plan") |
+| `DELETE /v1/requests/{request_id}` | Cancel by `X-Request-ID` (§6) |
+
+**Server-side conversation store** (spec §4, conversations; DuckDB-backed,
+what this repo's chat page uses). An alternative to keeping history
+client-side: the server stores the messages and media and builds each
+request itself.
+
+| Route | Purpose |
+|---|---|
+| `GET/POST /v1/conversations`, `GET/PUT/DELETE /v1/conversations/{id}` | List, create, read (with messages), update metadata, delete |
+| `POST /v1/conversations/{id}/clone` | Copy a conversation, media included |
+| `POST /v1/conversations/{id}/messages`, `DELETE .../messages?after=` | Append; truncate after a position |
+| `PUT/DELETE /v1/conversations/{id}/messages/{msg_id}` | Edit or delete one message |
+| `POST /v1/conversations/{id}/generate` | Generate into the conversation (`mode`: append, regenerate, continue). Same SSE grammar as `/v1/messages`, plus a final `heylook_saved` event carrying the stored rows; an `error` event may precede it (a partial still persists) |
+| `DELETE /v1/conversations/{id}/generate` | Stop the active generation; the partial persists |
+| `POST /v1/conversations/{id}/prompt` | The exact prompt string the model would see, rendered by the model's own template (resident models only) |
+| `GET /v1/conversations/{id}/media/{media_id}` | A stored image or audio blob; stored messages reference media by this URL |
+
+**Notebooks and presets** (spec §4): `GET/POST /v1/notebooks`,
+`GET/PUT/DELETE /v1/notebooks/{id}` store plain-text notebooks (the list
+omits content); `GET/POST /v1/presets`, `PUT/DELETE /v1/presets/{id}` store
+named system-prompt-plus-sampler bundles that a client expands into request
+fields itself (the server never applies a preset to a request).
+
+**Model administration** (admin; spec §4 "Admin models"):
+
+| Route | Purpose |
+|---|---|
+| `GET/POST /v1/admin/models`, `GET/PATCH/DELETE /v1/admin/models/{id}` | Per-model config in `heylook.toml`; PATCH reports which fields need a reload |
+| `POST /v1/admin/models/validate` | Validate a config without saving |
+| `GET /v1/admin/model-options` | Every settable field per provider and when a change takes effect |
+| `GET/PUT /v1/admin/models/scan-config` | The folders models are discovered from |
+| `POST /v1/admin/models/{id}/fit` | Will it fit memory, with optional candidate edits |
+| `GET /v1/admin/models/{id}/status` | Loaded state, memory, context use, requests active and queued |
+| `POST /v1/admin/models/{id}/unload` | Unload (409 while it is generating) |
+| `POST /v1/admin/models/{id}/reload` | Unload then load(+warm) as one operation; JSON body `{ctx_size, flash_attn}` |
+| `GET/PUT/DELETE /v1/admin/models/{id}/chat-template` | Read, override or reset the chat template in force |
+| `GET/PUT /v1/admin/config`, `DELETE /v1/admin/config/{key}` | Server operational settings |
+| `POST /v1/admin/reload` | Re-read config and clear loaded models without a restart |
+
+**Maintenance and observability**:
+
+| Route | Purpose |
+|---|---|
+| `POST /v1/cache/clear` (admin) | Clear prompt and vision caches for one model or all |
+| `POST /v1/data/clear` (admin) | Delete every conversation, message and notebook |
+| `GET /v1/system/metrics` | RAM, loaded models, per-model memory (unknown readings are null) |
+| `GET /v1/performance/profile/{1h\|6h\|24h\|7d}` | Aggregated timing by phase (§3 says what it cannot tell you) |
+| `POST /v1/telemetry/events` | Ingest this repo's frontend events; not for integrations |
+
 ## Where this still differs from Anthropic's Messages API
 
 As of v1.79.39 the payloads conform: nested `source` on media blocks,
@@ -743,23 +873,19 @@ rather than a guarantee, for reasons the closing note gives:
   are top-level fields (`thinking`, `reasoning_effort`); a request sending
   llama-server's `chat_template_kwargs` gets a 422 naming them (v2.0.86)
   rather than a silent drop.
-- **No tools.** No `tools`, `tool_use`, or `tool_result`, so no `tool_use`
-  stop reason.
+- **No tools yet.** `tools` and `tool_choice` are a 422 (v2.0.151; silently
+  dropped before), so there is no `tool_use` block, `tool_result` or
+  `tool_use` stop reason.
 - **Thinking blocks carry no `signature`.** Anthropic's is
   `{type, thinking, signature}` and emits a `signature_delta`; heylook emits
   neither. Nothing to verify, nothing to echo back.
-- **No `stop_sequence` field.** `message_delta.delta` carries `stop_reason`
-  alone, and `message_start.message` omits both `stop_reason` and
-  `stop_sequence`.
-- **`stop_sequences` is not accepted.** Anthropic takes it on the request;
-  heylook's request model has no such field, so it is ignored rather than
-  honoured — a port that relies on it will silently generate past the
-  sequence you meant to stop at. (This is separate from the response-side
-  omission above.)
+- **`stop_sequences` works as Anthropic's does, on the reply only** (v2.0.151;
+  ignored before). It never matches inside thinking. `message_start.message`
+  omits `stop_reason` and `stop_sequence`.
 - **Extensions**: some request fields have no Anthropic equivalent —
   the sampling knobs (`min_p`, `repetition_penalty`,
   `repetition_context_size`, `presence_penalty`, `seed`), plus
-  `reasoning_effort`. All are listed
+  `reasoning_effort` and `response_format` (OpenAI's shape). All are listed
   under [Knobs](#knobs) and enumerated authoritatively in `/openapi.json`,
   which is the only list that cannot go stale — this bullet carried a COUNT
   and was wrong twice (v1.79.41, then v1.79.49 dropping
