@@ -374,13 +374,29 @@ content_block_delta, content_block_stop, message_delta, message_stop).
     # copy on the route emitted it twice in /openapi.json.
 )
 async def create_message(request: Request, msg_request: MessageCreateRequest):
-    router = request.app.state.router_instance
     # Honour the client's X-Request-ID. This endpoint used to always generate
     # its own, which meant the id a client sends -- and which the docs tell it
     # to send -- named nothing the server could find. DELETE /v1/requests/{id}
     # cancels by exactly this value, so a rewritten id would be uncancellable.
     request_id = resolve_request_id(
         request.headers.get("x-request-id"), prefix="msg")
+    # Per-request cooperative abort signal: shared with the streaming layer so a
+    # disconnect cancels only THIS request, not a concurrent one.
+    abort_event = AbortEvent()
+    # Registered from the start, model load included. Until v2.0.182 it was
+    # registered only once the provider resolved, so a DELETE during a cold
+    # load answered 404 ("nothing running") and the run then went ahead. Now
+    # the flag is set, the generation gate sees it, and the run ends with no
+    # tokens once the load (which is not interruptible) finishes. The body's
+    # own registrations (non-streaming `with`, `tracked_stream`) are the same
+    # event in the same set, so they overlap this one harmlessly.
+    with track_request(request_id, abort_event):
+        return await _create_message(request, msg_request, request_id, abort_event)
+
+
+async def _create_message(request: Request, msg_request: MessageCreateRequest,
+                          request_id: str, abort_event: AbortEvent):
+    router = request.app.state.router_instance
     request_start_time = time.time()
 
     # Convert to internal ChatRequest
@@ -389,9 +405,6 @@ async def create_message(request: Request, msg_request: MessageCreateRequest):
 
     provider_get_ms = 0.0
     provider = None
-    # Per-request cooperative abort signal: shared with the streaming layer so a
-    # disconnect cancels only THIS request, not a concurrent one.
-    abort_event = AbortEvent()
     try:
         # Get provider and create generator (CPU-bound, run in thread)
         provider_get_start = time.time()

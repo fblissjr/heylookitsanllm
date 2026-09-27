@@ -68,6 +68,30 @@ class TestMessagesHonoursTheClientId:
         assert r.status_code == 200
         assert r.headers.get("X-Request-ID") == "client-chosen-id"
 
+    @pytest.mark.parametrize("stream", [False, True])
+    def test_a_cancel_during_the_model_load_is_not_too_early(self, client, monkeypatch, stream):
+        """A cold load runs before anything is written, and it is exactly when
+        a client gives up. Until v2.0.182 the id was registered only after the
+        provider resolved, so a DELETE sent during the load answered 404
+        ("already finished") and the run went ahead once the load was done."""
+        router = client.app.state.router_instance
+        real_get = router.get_provider
+        signalled = []
+
+        def loading(model_id):
+            # The DELETE lands while the model is still loading.
+            signalled.append(get_request_registry().cancel("loading-req"))
+            return real_get(model_id)
+
+        monkeypatch.setattr(router, "get_provider", loading)
+        r = client.post(
+            "/v1/messages", headers={"X-Request-ID": "loading-req"},
+            json={"model": "test-mlx-model", "max_tokens": 8, "stream": stream,
+                  "messages": [{"role": "user", "content": "hi"}]})
+        assert r.status_code == 200
+        assert signalled == [1], "the cancel found nothing to signal during the load"
+        assert "loading-req" not in get_request_registry().live_ids()
+
 class TestMalformedIdIsNotAMiss:
     """A malformed id answers 422, not 404.
 

@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.182]
+
+### Fixed
+
+- **`DELETE /v1/requests/{id}` reaches a `/v1/messages` request that is still
+  loading its model.** The id was registered only once the provider resolved,
+  so a cancel sent during a cold load answered 404 ("already finished") and
+  the run went ahead afterwards. It is now registered from the start; the
+  load (not interruptible) finishes and the run ends with no tokens. Found by
+  the heylook-provider skill's cold-read client, 2026-09-27.
+- `docs/api_integration.md`: the request-id cancel covers `/v1/messages`; a
+  conversation generate stops through `DELETE .../generate` (unchanged, now
+  stated).
+- Checks: `tests/unit/` + `tests/contract/` green; new contract test cancels
+  mid-load in both modes.
+
 ## [2.0.181]
 
 Found by the 2026-09-27 live pass of the external heylook-provider skill.

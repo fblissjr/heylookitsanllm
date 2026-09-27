@@ -718,7 +718,14 @@ Responses:
 
 Cancellation is cooperative: the decode loop stops at the next token
 boundary, so a run blocked in a long prompt prefill stops when that finishes,
-not instantly. The cancelled request still returns a normal response carrying
+not instantly. A cancel sent while the model is still loading is
+accepted (v2.0.182; before that it was a 404 and the run went ahead): the
+load itself cannot be interrupted, and the run ends with no tokens once it
+finishes.
+
+This endpoint covers `/v1/messages`. A conversation generate is stopped with
+`DELETE /v1/conversations/{id}/generate`, which also persists the partial
+reply; its `X-Request-ID` is not a cancel handle. The cancelled request still returns a normal response carrying
 whatever was generated, and it reports `stop_reason: "max_tokens"`. **There
 is no distinct cancellation value** -- Anthropic's vocabulary has none, since
 cancellation there is a dropped connection rather than an end state. So a
