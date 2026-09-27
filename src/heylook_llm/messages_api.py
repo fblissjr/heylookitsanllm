@@ -635,9 +635,13 @@ async def _non_stream_messages(
     # report a generation span at all; it never could before, which is why
     # `total_duration_ms` here meant something different from the same key on
     # the stream.
+    # No token gate (until v2.0.183 a run with no tokens -- a cancel during the
+    # load, an immediate stop -- got `performance: null` here while the stream
+    # reported the same run's durations). The two spans are measured whatever
+    # was generated; the builder drops what was not.
     elapsed = time.time() - request_start_time
     total_tokens = (telemetry.completion_tokens or token_count)
-    if elapsed > 0 and total_tokens > 0:
+    if elapsed > 0:
         end_time = time.time()
         thinking_ms = content_ms = None
         if thinking_start is not None:

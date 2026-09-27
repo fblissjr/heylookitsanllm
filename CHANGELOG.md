@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.183]
+
+### Fixed
+
+- **A non-streaming run with no tokens reports its durations, like the
+  stream.** A cancel during the model load (or an immediate stop) answered
+  `performance: null` on `/v1/messages` non-streaming while the same run's
+  `message_stop.performance` carried `request_duration_ms` and
+  `generation_duration_ms` (found live by the heylook-provider skill pass,
+  2026-09-27). The non-streaming builder's token gate is gone; both modes
+  now carry what was measured. `docs/api_integration.md` §3 updated.
+- Checks: `tests/unit/` + `tests/contract/` green; new unit test drives a
+  cancel before the first token.
+
 ## [2.0.182]
 
 ### Fixed

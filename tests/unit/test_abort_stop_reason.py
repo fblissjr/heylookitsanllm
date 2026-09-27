@@ -108,3 +108,26 @@ class TestMessagesWireReportsCancellationHonestly:
         resp = await _non_stream_messages(
             gen(), req, "rid", 0.0, abort_event=abort)
         assert resp.stop_reason == "stop_sequence"
+
+    @pytest.mark.asyncio
+    async def test_a_cancel_before_the_first_token_still_reports_its_spans(self):
+        """A cancel during the model load (v2.0.182) ends the run with no
+        tokens. The stream's message_stop reported that run's durations while
+        this path answered `performance: null` (live, 2026-09-27); both modes
+        now carry what was measured."""
+        from heylook_llm.messages_api import _non_stream_messages
+        from heylook_llm.schema.messages import MessageCreateRequest
+
+        abort = AbortEvent()
+        abort.set()
+        req = MessageCreateRequest.model_validate(
+            {"model": "m", "messages": [{"role": "user", "content": "hi"}]})
+        def nothing():  # a real generator: the builder closes it
+            return
+            yield
+
+        resp = await _non_stream_messages(nothing(), req, "rid", 0.0, abort_event=abort)
+        assert resp.stop_reason == "max_tokens"
+        assert not any(getattr(b, "text", "") for b in resp.content)
+        assert resp.performance is not None
+        assert resp.performance.request_duration_ms is not None

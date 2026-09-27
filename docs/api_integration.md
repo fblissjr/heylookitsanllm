@@ -204,12 +204,12 @@ assistant message with a `thinking` block and no text continues generation
 inside that thought (see the continuation notes).
 
 **A non-streaming response also carries `performance`** — there is no flag
-for it, so you cannot turn it on or off. It is `null` in one case: the
-builder is gated on the generation having produced at least one token, so a
-run that emits none (an immediate stop token, or a cancel landing before the
-first token) returns `"performance": null`. The response model declares it
-`Optional`, so null-check it; the earlier version of this paragraph said
-"always" and was wrong.
+for it, so you cannot turn it on or off. A run that produced no tokens (an
+immediate stop token, or a cancel landing before the first token) carries
+the two durations and nothing else, the same as the stream's
+`message_stop.performance` for that run (v2.0.183; before that the
+non-streaming response answered `"performance": null` there). The response
+model still declares it `Optional`, so null-check it.
 
 It carries `prompt_tps`, `generation_tps`, `request_duration_ms`,
 `generation_duration_ms`, `peak_memory_gb`, `queue_wait_ms`,
