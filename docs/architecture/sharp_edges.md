@@ -905,6 +905,14 @@ way; a server-wide or default grammar reopens this ruling. (The full original
 entry, with the reporter's words, is in the local archive of the 2026-09-25
 TODO triage.)
 
+On gguf the schema goes to llama-server as OpenAI's `response_format`, never
+as its top-level `json_schema` (v2.0.181). Both reach the chat template's
+reasoning-aware grammar, but a top-level `json_schema` is also compiled into a
+plain grammar (`tools/server/server-schema.cpp`) that clashes with it. Found by
+the 2026-09-27 live pass: on a PEG-parsed template (Muse-Glimmer) every
+structured request failed with "Failed to initialize samplers", while the same
+schema as `response_format` returned the constrained object.
+
 ### Cancellation
 
 (v1.79.44, `request_registry.py`) A streaming request is cancellable by

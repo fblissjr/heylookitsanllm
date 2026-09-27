@@ -213,6 +213,12 @@ async def _model_config_readonly_handler(request: Request, exc: ModelConfigReadO
     return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
+# A message write while a generation streams into the conversation: the same
+# envelope a second generate gets, so `error.code` covers both.
+from heylook_llm.conversation_generate_api import install_generation_in_progress_handler
+install_generation_in_progress_handler(app)
+
+
 # No CORS middleware (v2.0.123): the UI is served from this origin and the
 # other clients are not browsers, so a cross-origin grant only let any web page
 # the owner opened drive this unauthenticated API. Without it, a browser

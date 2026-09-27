@@ -29,15 +29,17 @@ def _refuse_while_generating(conv_id: str) -> None:
     Metadata PUTs (title/prompt/params) stay open -- they are not
     position-destructive and don't touch the pending commit.
     """
-    from heylook_llm.conversation_generate_api import _ACTIVE
+    from heylook_llm.conversation_generate_api import _ACTIVE, GenerationInProgress
     if conv_id in _ACTIVE:
         # Reaches a PERSON: v3 surfaces this verbatim as "Send failed: ...".
         # So no HTTP verb, no route, and no "mutate" -- the route is in
         # OpenAPI for the clients that need it, and a reader who just pressed
-        # Send needs to know what to do, not which endpoint to call.
-        raise HTTPException(status_code=409, detail=(
+        # Send needs to know what to do, not which endpoint to call. The app
+        # handler answers it in the generate route's envelope
+        # (`error.code: generation_in_progress`).
+        raise GenerationInProgress(
             "A reply is still being generated in this conversation. Wait for "
-            "it to finish, or stop it first."))
+            "it to finish, or stop it first.")
 
 conversation_router = APIRouter(
     prefix="/v1/conversations",

@@ -121,6 +121,33 @@ class _Run:
 _ACTIVE: dict[str, _Run] = {}
 
 
+class GenerationInProgress(Exception):
+    """A conversation already has a generation streaming into it.
+
+    Raised by the message-mutation gate (conversation_api) and answered by
+    the app-level handler with the same envelope a second generate gets, so
+    a client keys on `error.code` for both. Until v2.0.181 the gate answered
+    `{"detail": ...}` with no code."""
+
+
+def generation_in_progress_response(message: str) -> JSONResponse:
+    # The message can reach a person verbatim ("Send failed: ..."), so it
+    # carries no verb and no route; `code` is what a program keys on.
+    return JSONResponse(status_code=409, content={"error": {
+        "message": message,
+        "type": "invalid_request_error",
+        "code": "generation_in_progress",
+    }})
+
+
+def install_generation_in_progress_handler(app) -> None:
+    """Register the GenerationInProgress handler: the one registration
+    api.py and the conversation test apps share."""
+    async def _handler(request, exc: GenerationInProgress):
+        return generation_in_progress_response(str(exc))
+    app.add_exception_handler(GenerationInProgress, _handler)
+
+
 def is_generating(conv_id: str) -> bool:
     """Is a generation running for this conversation right now?
 
@@ -463,19 +490,9 @@ async def generate_in_conversation(conv_id: str, request: Request, body: Generat
     request_start_time = time.time()
 
     if conv_id in _ACTIVE:
-        return JSONResponse(
-            status_code=409,
-            content={"error": {
-                # Same rule as the CRUD gate's twin in conversation_api: this
-                # string can reach a person, so it carries no verb and no
-                # route. `code` is what a program should key on, and it is
-                # what the test asserts.
-                "message": "A reply is already being generated in this "
-                           "conversation. Wait for it to finish, or stop it first.",
-                "type": "invalid_request_error",
-                "code": "generation_in_progress",
-            }},
-        )
+        return generation_in_progress_response(
+            "A reply is already being generated in this conversation. Wait "
+            "for it to finish, or stop it first.")
     # Claim BEFORE the row snapshot, not merely before the provider awaits
     # (second review, 2026-08-13): with the claim first, any message write
     # that passed the CRUD gate earlier has already committed before our

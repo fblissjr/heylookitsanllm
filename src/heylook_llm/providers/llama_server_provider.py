@@ -1592,10 +1592,17 @@ class LlamaServerProvider(BaseProvider):
         if template_kwargs:
             payload["chat_template_kwargs"] = template_kwargs
         if request.response_schema is not None:
-            # llama-server's own spelling (an empty schema = any object). Its
-            # chat parser admits the reasoning block first and constrains the
-            # reply after it, and returns only the JSON as content.
-            payload["json_schema"] = request.response_schema
+            # OpenAI's `response_format`, NOT llama-server's top-level
+            # `json_schema`. Both feed the chat template's reasoning-aware
+            # grammar (the reply is constrained after the thinking block, and
+            # only the JSON comes back as content), but a top-level
+            # `json_schema` ALSO compiles into a plain grammar
+            # (server-schema.cpp) that clashes with it: on a PEG-parsed
+            # template (Muse-Glimmer) every request failed with "Failed to
+            # initialize samplers" while response_format worked. An empty
+            # schema is any object.
+            payload["response_format"] = {
+                "type": "json_schema", "json_schema": {"schema": request.response_schema}}
         return payload
 
     def _is_sleeping(self) -> bool:

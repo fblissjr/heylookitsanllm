@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.181]
+
+Found by the 2026-09-27 live pass of the external heylook-provider skill.
+
+### Fixed
+
+- **Structured output works on gguf models with a PEG-parsed template.** The
+  provider sent the schema as llama-server's top-level `json_schema`, which
+  llama-server ALSO compiles into a plain grammar that clashes with the
+  template's reasoning-aware one: every `response_format` request on
+  Muse-Glimmer was a 400 "Failed to initialize samplers". It now sends
+  OpenAI's `response_format`, which takes only the template path; the same
+  request returns the constrained object.
+- **A message write during a generation answers the same 409 envelope as a
+  second generate**: `{error:{code:"generation_in_progress", ...}}`, where it
+  was a bare `{detail}`. One handler (`GenerationInProgress`), registered by
+  `api.py` and the conversation test apps through one function.
+- **`thinking.budget_tokens` is described as it behaves**: a 400 only on an
+  MLX harmony model; elsewhere it is accepted and may cap nothing. The schema
+  said "a 400 elsewhere".
+
+### Docs
+
+- `api_integration.md` §9 and spec §4: `params` / `overrides` take the store's
+  names (`enable_thinking`, `thinking_budget_tokens`), and an unknown or
+  cap-gated key is dropped silently; expanding a preset onto `/v1/messages`
+  renames exactly those two.
+- Checks: `tests/unit/` + `tests/contract/` green; live: `response_format`
+  (json_schema and an empty schema) returned the constrained object on the
+  Muse-Glimmer gguf through llama-server directly.
+
 ## [2.0.180]
 
 ### Fixed

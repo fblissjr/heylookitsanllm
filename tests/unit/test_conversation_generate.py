@@ -32,7 +32,8 @@ from heylook_llm import db
 from heylook_llm.config import AppConfig
 from heylook_llm.conversation_api import conversation_router
 from heylook_llm.conversation_generate_api import (
-    _ACTIVE, _Run, _pump, _subscribe, generate_router)
+    _ACTIVE, _Run, _pump, _subscribe, generate_router,
+    install_generation_in_progress_handler)
 from heylook_llm.providers.abort import AbortEvent
 from heylook_llm.providers.base import BaseProvider, GenerationChunk
 from helpers.sse import sse_events, streamed_text
@@ -136,6 +137,7 @@ async def ctx():
     app = FastAPI()
     app.include_router(conversation_router)
     app.include_router(generate_router)
+    install_generation_in_progress_handler(app)
     app.state.db = await db.get_connection(path=":memory:")
     app.state.router_instance = FakeRouter(provider)
     transport = ASGITransport(app=app)
@@ -591,6 +593,9 @@ class TestMessageAndMediaEndpoints:
         try:
             res = await client.delete(f"/v1/conversations/{conv['id']}/messages/{rows[0]['id']}")
             assert res.status_code == 409
+            # The generate route's envelope, so one `error.code` check covers
+            # both 409s (a bare `detail` until v2.0.181).
+            assert res.json()["error"]["code"] == "generation_in_progress"
         finally:
             _ACTIVE.pop(conv["id"], None)
 
@@ -796,6 +801,7 @@ class TestDeclaredSpecialsAreAlwaysStripped:
         app = FastAPI()
         app.include_router(conversation_router)
         app.include_router(generate_router)
+        install_generation_in_progress_handler(app)
         app.state.db = await db.get_connection(path=":memory:")
         app.state.router_instance = FakeRouter(provider)
         transport = ASGITransport(app=app)

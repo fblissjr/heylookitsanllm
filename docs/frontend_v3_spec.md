@@ -470,6 +470,8 @@ truncate→stream→persist sequences):**
     structure at all 400s in-band with the workaround named.
   - `overrides` layers one-shot sampler values over `params` (same allowlist
     + cap gates) and may carry `model` to generate with a non-stamped model.
+    Keys are the store's (`enable_thinking`, `thinking_budget_tokens`), not the
+    wire's (`thinking`); an unknown or cap-gated key is dropped silently.
   - Wire: Messages SSE grammar (`message_start` / `content_block_start|delta|
     stop` / `message_delta` / `message_stop`, same translator as
     `/v1/messages` -- so it inherits the v1.79.39 conformance changes above,
@@ -500,7 +502,8 @@ truncate→stream→persist sequences):**
   - Arbitration: one active generation per conversation — a second POST gets
     409 `{error:{code:"generation_in_progress"}}`. While one is active,
     MESSAGE mutations on the conversation (POST/PUT messages, DELETE
-    ?after, conversation DELETE) also 409 (v1.67.0): the generation's
+    ?after, conversation DELETE) also 409 (v1.67.0; the same
+    `generation_in_progress` envelope since v2.0.181, a bare `detail` before): the generation's
     commit truncates by position in its own transaction, and rows appended
     mid-stream by another client would be silently destroyed at that
     commit. Metadata PUTs (title/prompt/params) stay open.

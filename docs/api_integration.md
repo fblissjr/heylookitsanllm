@@ -535,8 +535,11 @@ it (llama-server's reasoning budget; on MLX, mlx-vlm's thinking-budget
 criteria): once the cap is passed the thinking block is forced shut and the
 answer follows. It is a cap, not a quality-neutral setting. Offered on models
 with the `thinking_budget` capability; on an MLX model whose thinking format
-the engine cannot close (harmony) a budget is a 400. With thinking off it does
-nothing.
+the engine cannot close (harmony) a budget is a 400. Anywhere else it is
+accepted and may cap nothing: with thinking off, on a model with no thinking
+format, or on a gguf model without the capability (llama-server applies it
+only where it finds the template's thinking end tag). Gate on the
+capability rather than on the absence of an error.
 
 `reasoning_effort` values are **the model's own**. Read them off the model's
 row on `/v1/models`: `engine.thinking.depth.values` (and `aliases`), with
@@ -607,7 +610,7 @@ and null as one condition.
 | Condition | Shape |
 |---|---|
 | Unknown `model`, or no `model` at all (there is no default, v2.0.150) | **400** with the reason and the available ids in `detail` |
-| Input the model cannot take: an image or audio it does not serve, a prompt longer than its context, a `reasoning_effort` it does not offer, a `thinking.budget_tokens` or `response_format` it cannot honour, an unreadable image, a local file path as an MLX image source | **400**, or in-band `invalid_request_error` once streaming |
+| Input the model cannot take: an image or audio it does not serve, a prompt longer than its context, a `reasoning_effort` it does not offer, `thinking.budget_tokens` on a harmony MLX model, a `response_format` it cannot honour (on gguf, in llama-server's words), an unreadable image, a local file path as an MLX image source | **400**, or in-band `invalid_request_error` once streaming |
 | Model load failed (corrupt weights, unsupported architecture) | **500** (also on `/load` since v2.0.178, which answered some of these 400) |
 | Cannot make room — another model is resident and generating | **503**, same envelope as a full queue (v1.79.53+; a **500** carrying `MODEL_BUSY` before that) |
 | Generation queue full | **503**, body `{error:{code:"model_overloaded"}}`, plus `Retry-After` and `X-RateLimit-*` headers |
@@ -820,6 +823,20 @@ request itself.
 | `PUT/DELETE /v1/conversations/{id}/messages/{msg_id}` | Edit or delete one message |
 | `POST /v1/conversations/{id}/generate` | Generate into the conversation (`mode`: append, regenerate, continue). Same SSE grammar as `/v1/messages`, plus a final `heylook_saved` event carrying the stored rows; an `error` event may precede it (a partial still persists) |
 | `DELETE /v1/conversations/{id}/generate` | Stop the active generation; the partial persists |
+
+One generation per conversation: a second generate, and any message write
+(append, edit, delete, truncate, conversation delete) while one runs, is a
+**409** `{error:{code:"generation_in_progress"}}` (message writes answered
+a bare `detail` until v2.0.181). Metadata PUTs stay open.
+
+A conversation's `params` and a generate's `overrides` are the store's
+sampler bag, not wire fields: they take the internal names
+`enable_thinking` and `thinking_budget_tokens` (not `thinking`), beside
+`reasoning_effort` and the sampler knobs. An unknown key is dropped, and so
+is a key the model lacks the capability for, silently. A preset's `params`
+use the same names, so expanding one onto `/v1/messages` means renaming
+`enable_thinking` to `thinking` and `thinking_budget_tokens` to
+`thinking.budget_tokens`; every other key carries over as is.
 | `POST /v1/conversations/{id}/prompt` | The exact prompt string the model would see, rendered by the model's own template (resident models only) |
 | `GET /v1/conversations/{id}/media/{media_id}` | A stored image or audio blob; stored messages reference media by this URL |
 

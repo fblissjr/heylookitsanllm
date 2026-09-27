@@ -134,8 +134,12 @@ class MessageCreateRequest(BaseModel):
         default=None,
         description="Thinking on or off: a bool, or Anthropic's "
                     '{"type": "enabled"|"disabled", "budget_tokens": N}. '
-                    "budget_tokens is a hard cap the engine enforces (models "
-                    "with the thinking_budget capability; a 400 elsewhere). "
+                    "budget_tokens is a hard cap the engine enforces on "
+                    "models with the thinking_budget capability; a 400 on an "
+                    "MLX harmony model (gpt-oss), whose thinking cannot be "
+                    "forced shut; elsewhere it caps nothing (no thinking "
+                    "format, thinking off, or a gguf template llama-server "
+                    "finds no end tag in). "
                     "Absent = the model's default.")
     # Same type as ChatRequest.reasoning_effort -- shared alias, so the two
     # schemas cannot drift into accepting different values.

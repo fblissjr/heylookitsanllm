@@ -35,13 +35,19 @@ def test_the_wire_normalizes_to_one_schema(fmt, schema):
 
 
 @pytest.mark.unit
-def test_gguf_sends_llama_servers_own_field():
+def test_gguf_sends_response_format_not_top_level_json_schema():
+    # A top-level `json_schema` also becomes a plain grammar in llama-server,
+    # which broke every structured request on a PEG-parsed template
+    # (2026-09-27, Muse-Glimmer); response_format takes only the
+    # template's reasoning-aware path.
     from heylook_llm.providers.llama_server_provider import LlamaServerProvider
 
     p = LlamaServerProvider("g", {"model_path": "/fake/model.gguf"}, False)
     body = {"messages": [{"role": "user", "content": "hi"}]}
-    assert p._build_payload(ChatRequest.model_validate({**body, "response_schema": SCHEMA}))["json_schema"] == SCHEMA
-    assert "json_schema" not in p._build_payload(ChatRequest.model_validate(body))
+    payload = p._build_payload(ChatRequest.model_validate({**body, "response_schema": SCHEMA}))
+    assert payload["response_format"] == {"type": "json_schema", "json_schema": {"schema": SCHEMA}}
+    assert "json_schema" not in payload
+    assert "response_format" not in p._build_payload(ChatRequest.model_validate(body))
 
 
 @pytest.mark.unit
