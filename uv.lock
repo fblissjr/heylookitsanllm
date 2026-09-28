@@ -407,7 +407,7 @@ requires-dist = [
     { name = "duckdb", specifier = ">=1.5.5" },
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "mlx", marker = "sys_platform == 'darwin'", specifier = ">=0.32.1" },
-    { name = "mlx-vlm", marker = "sys_platform == 'darwin'", git = "https://github.com/Blaizzy/mlx-vlm?rev=990a028763b2f8c605329f29ae4e747f9285902d" },
+    { name = "mlx-vlm", marker = "sys_platform == 'darwin'", git = "https://github.com/Blaizzy/mlx-vlm?rev=00093678a1f6bd513212d94778ffc381d6d731bf" },
     { name = "numpy", specifier = ">=2.5.2" },
     { name = "orjson", specifier = ">=3.12.0" },
     { name = "pillow", specifier = ">=12.3.0" },
@@ -739,8 +739,8 @@ wheels = [
 
 [[package]]
 name = "mlx-vlm"
-version = "0.7.3"
-source = { git = "https://github.com/Blaizzy/mlx-vlm?rev=990a028763b2f8c605329f29ae4e747f9285902d#990a028763b2f8c605329f29ae4e747f9285902d" }
+version = "0.7.4"
+source = { git = "https://github.com/Blaizzy/mlx-vlm?rev=00093678a1f6bd513212d94778ffc381d6d731bf#00093678a1f6bd513212d94778ffc381d6d731bf" }
 dependencies = [
     { name = "fastapi" },
     { name = "jinja2" },

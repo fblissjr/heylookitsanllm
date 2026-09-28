@@ -17,6 +17,7 @@ rather than carried forward as green.
 | Suite | Result | As of |
 |---|---|---|
 | unit + contract | green (1439 passed) | v2.0.173 |
+| v2.0.186 pin move (mlx-vlm `00093678`) + #2356 carry (v2.0.185) | unit + contract 1452 on both. NOT run: smoke, `vlm_parity_probe.py`, `chain_probe.py` (the carry is a cache change) | v2.0.186 |
 | v2.0.175 / v2.0.176 | unit + contract 1439, e2e render 104/104; flash attention on/off A/B on the Qwen3.8 GGUF contaminated (no verdict; TODO) | v2.0.176 |
 | v2.0.174 e2e on the Qwen3.8 GGUF (gguf arm) | chat 53/53 (cadence skipped, slow arm), pages 32/32; the new live depth-level check passes (levels match detection, a picked level changes the prompt, generates); chat 53/53 on Qwen3.5-0.8B | v2.0.174 |
 | v2.0.173 live pass (settings drawer, override removed on the Qwen3.8 GGUF) | smoke 92/92 on gpt-oss-20b / Qwen3.5-0.8B / unsloth Qwen3.8-27B GGUF (now on its `chat_template.jinja`); e2e chat 53/53, pages 32/32 on Qwen3.5-0.8B; e2e render 103/103 | v2.0.173 |

@@ -48,10 +48,16 @@ def _patch_merge_rows(coordinator_cls) -> bool:
         return False
 
     def merge_rows(self, picks, prefix_lens, *, kv_quant_config=None):
-        if single_restored_row(picks, kv_quant_config):
-            with self.manager.lock:
-                self.manager.stats.restored_tokens += prefix_lens[0]
-            return picks[0]["warm_cache"], prefix_lens[0]
+        # An upstream rename the signature check cannot see (the pick's keys,
+        # the manager's lock or stats) falls through to upstream: slower,
+        # never a failed request. Nothing is mutated before the increment.
+        try:
+            if single_restored_row(picks, kv_quant_config):
+                with self.manager.lock:
+                    self.manager.stats.restored_tokens += prefix_lens[0]
+                return picks[0]["warm_cache"], prefix_lens[0]
+        except (AttributeError, KeyError, TypeError) as exc:
+            logging.warning("mlx-vlm#2356 carry fell through to upstream: %r", exc)
         return upstream(self, picks, prefix_lens, kv_quant_config=kv_quant_config)
 
     merge_rows.__doc__ = upstream.__doc__

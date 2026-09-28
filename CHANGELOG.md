@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.186]
+
+### Changed
+
+- **mlx-vlm pin moved to upstream main `00093678`** (v0.7.4, from `990a0287`).
+  The range adds image-generation modules, two `MODEL_CONFIG` message formats
+  (`internvl`, `deepseek_v41`), an `lfm2_encoder` route and two more names
+  (`vision`, `aligner`) that `convert` leaves unquantized; nothing in APC, the
+  cache classes, qwen3_5, speculative decoding or `generate/ar.py` changed. It
+  does not include Blaizzy/mlx-vlm#2356, so the v2.0.185 carry stays
+  (`TestCarriedPatches` green). Unit and contract suites green. Not run:
+  `tests/smoke/` on any arm, `scripts/vlm_parity_probe.py`,
+  `scripts/chain_probe.py`; `scripts/vendor_frontend.py --check` not run (no
+  vendored-library change).
+
+### Fixed
+
+- The #2356 carry falls through to upstream `merge_rows` (with a warning)
+  instead of failing the request if an upstream rename reaches a name its
+  fast path uses but its signature check cannot see.
+
 ## [2.0.185]
 
 ### Fixed
