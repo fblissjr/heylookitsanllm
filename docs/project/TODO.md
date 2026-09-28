@@ -100,9 +100,14 @@ Record: `internal/claude/improve/archive/runs-2026-09-24/` (report.html has the 
   cache" DIVERGED at token 4, upstream top-2 margin 0.25 = two bf16 quanta,
   so not the probe's tie). Present with the drafter off and without the
   #2356 carry; case 3 runs on a fresh prefix cache, so APC is not involved.
-  Suspect: position state (rope deltas) carried between requests on one side.
-  Next: the failing image FIRST in a fresh process. Reports:
-  `internal/claude/vlm_parity_swift_{mtp,nodraft,nocarry}.json`.
+  Ruled out since: MRoPE position state (both probe images are 448x448, and
+  BatchGenerator passes rope_deltas per forward), a one-step bf16 tie (the
+  upstream top two are 28.0 / 27.75: two steps at that magnitude), and
+  prefill chunking (`--step 128` on both sides: same token, same logits).
+  Next: record heylook's own top two at that step. The same two tokens in
+  reverse order within a step or two = two float paths splitting a close call;
+  a different distribution = an input difference. Reports:
+  `internal/claude/vlm_parity_swift_{mtp,nodraft,nocarry,logits,step128}.json`.
 - [ ] **Move the pin again past Blaizzy/mlx-vlm#2356** once it merges (restored
   qwen3_5 decode). Carried locally since v2.0.185 (`mlx_vlm_patches.py`); the
   pin move turns `TestCarriedPatches` red, and the fix is deleting the carry.
