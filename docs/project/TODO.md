@@ -94,20 +94,19 @@ Record: `internal/claude/improve/archive/runs-2026-09-24/` (report.html has the 
   without the #2356 carry; image edit, follow-up edit, regenerate and image
   swap give identical greedy ids drafted-after-restore vs undrafted cold.
 - [ ] **`tests/smoke/` on all three arms** for v2.0.186-187 (not run).
-- [ ] **qwen3.8 27b bf16 vision parity: heylook vs mlx-vlm's loop diverges on
-  the SECOND image request in a process** (`vlm_parity_probe`: "vision after
-  text" MATCH; "vision after vision" and "cached features, fresh prefix
-  cache" DIVERGED at token 4, upstream top-2 margin 0.25 = two bf16 quanta,
-  so not the probe's tie). Present with the drafter off and without the
-  #2356 carry; case 3 runs on a fresh prefix cache, so APC is not involved.
-  Ruled out since: MRoPE position state (both probe images are 448x448, and
-  BatchGenerator passes rope_deltas per forward), a one-step bf16 tie (the
-  upstream top two are 28.0 / 27.75: two steps at that magnitude), and
-  prefill chunking (`--step 128` on both sides: same token, same logits).
-  Next: record heylook's own top two at that step. The same two tokens in
-  reverse order within a step or two = two float paths splitting a close call;
-  a different distribution = an input difference. Reports:
-  `internal/claude/vlm_parity_swift_{mtp,nodraft,nocarry,logits,step128}.json`.
+- [x] **qwen3.8 27b bf16 vision parity DIVERGED at token 4 on the second
+  image** (2026-09-28): benign. Both sides' top two at that step are the same
+  pair (' bold' / ' simple'); heylook has them in an exact bf16 tie (27.875 /
+  27.875) and mlx-vlm's loop at 28.0 / 27.75, each logit one step (0.125) off
+  the other's, as elsewhere in the reply. Two float paths splitting a close
+  call, not an input difference. Ruled out on the way: MTP, the #2356 carry,
+  APC, the feature cache, MRoPE state, prefill chunking. Reports:
+  `internal/claude/vlm_parity_swift_*.json`.
+- [ ] **vlm_parity_probe judges a tie from the reference side only**, so a
+  divergence where heylook sits in an exact tie reads DIVERGED. Record
+  heylook's top two as well (a pass-through processor) and call it a
+  NEAR-TIE when either side has the two picked tokens within one step at
+  that magnitude.
 - [ ] **Move the pin again past Blaizzy/mlx-vlm#2356** once it merges (restored
   qwen3_5 decode). Carried locally since v2.0.185 (`mlx_vlm_patches.py`); the
   pin move turns `TestCarriedPatches` red, and the fix is deleting the carry.
