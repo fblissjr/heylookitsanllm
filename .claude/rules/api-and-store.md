@@ -26,6 +26,7 @@ paths:
 - `db.py` holds conversations, notebooks, presets and `settings`, with a single serialized writer thread and transactional ops. `HEYLOOK_DB_PATH` overrides the location.
 - Dynamic field names are gated by allowlists: the `_UPDATABLE_*_FIELDS` frozensets and the public `UPDATABLE_CONVERSATION_FIELDS`, which the update route also uses (never a second copy).
 - Schema changes: add a table with `CREATE TABLE IF NOT EXISTS`; for a real change, bump `_SCHEMA_VERSION`, which drops all tables. `settings` and `presets` are additive, drop-safe and not in the drop list. No migration code.
+- `params` on conversations, notebooks and presets is typed `schema.sampler_params.SamplerParams` on every write: keys from `REQUEST_SAMPLER_FIELDS`, types and ranges from `ChatRequest`'s fields (never a copy), unknown or bad = 422. A new route that writes `params` uses the same type.
 - `applied_preset_id` is written only on explicit Apply/Update/Save-as-new; a document that merely matches a preset is labelled by live client-side matching and never stamped.
 
 ## Observability

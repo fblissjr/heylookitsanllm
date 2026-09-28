@@ -2360,8 +2360,10 @@ async function main() {
         sel.dispatchEvent(new Event('change', { bubbles: true }));
       });
       await settle(page);
+      // Since v2.0.184 the switch REMOVES the explicit "on" the plain model
+      // cannot use (settings.reconcileSettings) and names it.
       const status = await page.$eval('.chat__status', (el) => el.textContent);
-      assert(/thinking is unavailable/i.test(status),
+      assert(/Removed settings this model can't use: Thinking "on"/.test(status),
         `switching away from a thinking model said ${JSON.stringify(status)}`);
       assert(!(await page.$('.chat__switch-warning')),
         'losing thinking raised a blocking warning -- it should disclose, not gate');
@@ -3535,10 +3537,11 @@ async function main() {
     // ---- thinking depth: the model's own values (plan W2) -----------------
     // Model-free on purpose: the pair of models with real depth vocabularies
     // is large, and what is being checked here is the page's own logic --
-    // the control built from `engine.thinking`, the wire filter, the
-    // disclosure -- against the real settings.js in a real DOM.
+    // the control built from `engine.thinking`, the reconcile that removes
+    // what a model cannot use and names it -- against the real settings.js in
+    // a real DOM.
     const dp = await openChat(browser, base, {});
-    await suite.check('one thinking control: Off, On, the model\'s own levels, a foreign one dropped at the wire', async () => {
+    await suite.check('one thinking control: Off, On, the model\'s own levels; what a model cannot use is removed and named', async () => {
       const out = await dp.page.evaluate(async () => {
         const s = await import('/js/settings.js');
         const closed = { switch: 'enable_thinking', depth: {
@@ -3558,9 +3561,19 @@ async function main() {
           options: [...sel.options].map((o) => [o.value, o.disabled, o.textContent]),
           selected: sel.value,
           note: sel.closest('.settings-row').textContent,
-          wire: 'reasoning_effort' in s.samplerParams(caps, closed),
-          wireFree: s.samplerParams(['reasoning_effort'], free).reasoning_effort,
+          wire: 'reasoning_effort' in s.samplerParams({ caps, thinking: closed }),
+          wireFree: s.samplerParams({ caps: ['reasoning_effort'], thinking: free }).reasoning_effort,
+          // No row yet: nothing is judged, so nothing is destroyed on a guess.
+          unknownModel: s.reconcileSettings(null).length,
         };
+        foreign.dropped = s.reconcileSettings({ caps, thinking: closed });
+        foreign.after = s.snapshotSettings();
+        foreign.text = s.droppedNote(foreign.dropped);
+        // A model with no thinking controls at all loses every thinking key
+        // and keeps the rest.
+        s.applySettings({ enable_thinking: true, thinking_budget_tokens: 3, temperature: 0.5 }, { silent: true });
+        const plain = { dropped: s.reconcileSettings({ caps: [], thinking: null }).map((d) => d.key).sort(),
+          after: s.snapshotSettings() };
         s.applySettings({ reasoning_effort: 'maximum' }, { silent: true });
         const aliasSel = control(closed).value;
         s.applySettings({ enable_thinking: true, reasoning_effort: 'none' }, { silent: true });
@@ -3600,16 +3613,24 @@ async function main() {
         const listed = input.list ? [...input.list.options].map((o) => o.value) : null;
         input.closest('.settings-panel').remove();
         s.applySettings({}, { silent: true });
-        return { foreign, aliasSel, offSel, picked, tag: input.tagName, listed, withDefault, cap };
+        return { foreign, plain, aliasSel, offSel, picked, tag: input.tagName, listed, withDefault, cap };
       });
       const { foreign } = out;
       assert(foreign.rows === 0, 'the depth still has a row of its own');
       assert(JSON.stringify(foreign.options.slice(0, 5).map((o) => o[0]))
         === JSON.stringify(['', 'off', 'on', 'level:high', 'level:max']),
         `options are not default/Off/On + the model's own levels, off-level folded: ${JSON.stringify(foreign.options)}`);
-      const shown = foreign.options.find((o) => o[0] === 'level:xhigh');
-      assert(shown && shown[1] && /not offered by this model/.test(shown[2]) && foreign.selected === 'level:xhigh',
-        `a stored foreign value is not disclosed as not offered: ${JSON.stringify(foreign)}`);
+      assert(!foreign.options.some((o) => o[0] === 'level:xhigh'),
+        `a level the model does not offer is still an option: ${JSON.stringify(foreign.options)}`);
+      assert(foreign.unknownModel === 0, 'a reconcile with no model row removed something');
+      assert(foreign.dropped.length === 1 && foreign.dropped[0].key === 'reasoning_effort'
+        && !('reasoning_effort' in foreign.after),
+        `a depth the model does not offer was not removed: ${JSON.stringify(foreign)}`);
+      assert(/Thinking depth "xhigh" \(this model's template offers high, none, max\)/.test(foreign.text ?? ''),
+        `the removal is not named with what the model offers: ${foreign.text}`);
+      assert(JSON.stringify(out.plain.dropped) === JSON.stringify(['enable_thinking', 'thinking_budget_tokens'])
+        && JSON.stringify(out.plain.after) === JSON.stringify({ temperature: 0.5 }),
+        `a model with no thinking controls: ${JSON.stringify(out.plain)}`);
       assert(/re-processes the whole conversation/.test(foreign.note),
         `changes_prefix is not disclosed on the row: ${foreign.note}`);
       assert(!foreign.wire, 'a value the model does not offer rode the wire');

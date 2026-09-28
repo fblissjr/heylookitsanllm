@@ -66,8 +66,8 @@ function valid(key, v) {
   if (meta.type === 'number') return typeof v === 'number' && Number.isFinite(v);
   if (meta.type === 'thinking') return v === true || v === false;
   if (meta.type === 'select') return meta.options.includes(v);
-  // Validity of a depth VALUE is per model (depthOffered); stored here is any
-  // bounded word, so a value from another model survives to be restored.
+  // Validity of a depth VALUE is per model: this checks the shape the server
+  // stores, and reconcileSettings removes a word the model does not offer.
   if (meta.type === 'depth') return typeof v === 'string' && /^[A-Za-z0-9_-]{1,32}$/.test(v);
   if (meta.type === 'checkbox') return typeof v === 'boolean';
   return true;
@@ -164,8 +164,9 @@ export function resetSettings() {
   applySettings({});
 }
 
-// Preset capture: every non-null key, raw (zeros included, as requests
-// send them).
+// Every non-null key the panel holds, raw (zeros included, as requests send
+// them): the document's params PUT. A preset save goes through samplerParams
+// instead, so it keeps only what the selected model can use.
 export function snapshotSettings() {
   const out = {};
   for (const key of Object.keys(PARAM_META)) {
@@ -187,32 +188,95 @@ export function applySettings(params, { silent = false } = {}) {
   return { unusable, unknown };
 }
 
+// ---------------------------------------------------------------------------
+// What the selected model can use. ONE rule, read by every path that decides
+// it: the panel's rows, the request, a preset save, and the reconcile that
+// removes what the model cannot use from the document (owner, 2026-09-27).
+//
+// `model` is { caps, thinking }: the row's capabilities and its template's
+// thinking controls (`rowModel`). null = the row is not known yet, and then
+// nothing is judged -- removing a value on a guess would destroy it.
+//
+// Until v2.0.184 a value the model could not use was KEPT in the document and
+// only left off the wire, so switching back restored it (plan W2). The cost
+// was a stored value that silently did nothing: a conversation saying Off on
+// a model running xhigh, and presets carrying settings no row showed. Now
+// stored, shown and sent are the same bag, and every removal is named.
+// ---------------------------------------------------------------------------
+
+// Build the rule's input from a /v1/models row (chat and notebook both read
+// their selected model's row).
+export function rowModel(row) {
+  return row ? { caps: row.capabilities ?? [], thinking: rowThinking(row) } : null;
+}
+
+// Does the model have a control for `key` at all? The panel builds a row
+// exactly where this is true.
+function keyOffered(key, model) {
+  const meta = PARAM_META[key];
+  if (meta.requiresCap && !model.caps.includes(meta.requiresCap)) return false;
+  // The engine says it cannot enforce a cap: a field that visibly does
+  // nothing is worse than no field.
+  if (key === 'thinking_budget_tokens' && model.thinking?.budget?.enforced === false) return false;
+  return true;
+}
+
+// The keys in `values` this model cannot use, each with the reason in words.
+export function inapplicable(values, model) {
+  if (!model) return [];
+  const out = [];
+  for (const [key, value] of Object.entries(values ?? {})) {
+    if (value === null || value === undefined || !(key in PARAM_META)) continue;
+    if (!keyOffered(key, model)) {
+      out.push({ key, value, why: key === 'thinking_budget_tokens' && model.caps.includes('thinking_budget')
+        ? 'this engine cannot enforce a thinking cap'
+        : `this model has no ${PARAM_META[key].label.toLowerCase()} control` });
+    } else if (key === 'reasoning_effort' && !depthOffered(value, model.thinking)) {
+      const offered = model.thinking?.depth?.values ?? [];
+      out.push({ key, value, why: offered.length
+        ? `this model's template offers ${offered.join(', ')}`
+        : "this model's template has no thinking depth" });
+    }
+  }
+  return out;
+}
+
+export function withoutInapplicable(values, model) {
+  const out = { ...(values ?? {}) };
+  for (const { key } of inapplicable(out, model)) delete out[key];
+  return out;
+}
+
+// Remove from the panel -- and so from the open document, whose params PUT
+// the change fires -- whatever the model cannot use. Returns what went, for
+// the page to say (droppedNote). Call it wherever the model or the values
+// can have changed under the panel: a document load, a model switch, a
+// preset apply.
+export function reconcileSettings(model) {
+  const dropped = inapplicable(cache, model);
+  if (!dropped.length) return dropped;
+  for (const { key } of dropped) cache[key] = null;
+  fireSettingsChange();
+  return dropped;
+}
+
+// The one spelling of a removal, for the page's status line. null = nothing.
+export function droppedNote(dropped) {
+  if (!dropped?.length) return null;
+  const items = dropped.map(({ key, value, why }) => `${PARAM_META[key].label} "${defaultText(value)}" (${why})`);
+  return `Removed settings this model can't use: ${items.join('; ')}.`;
+}
+
 // Request-body params: the snapshot, zeros included -- a 0 is the backend's
 // explicit OFF (samplers.KNOBS_OFF) and beats the model's own layers (a GGUF
 // header's top_k of 20, a per-model presence penalty); dropping it handed
 // the notebook's /v1/messages the model default while chat's stored params
-// sent the 0. Pass the CURRENT model's
-// `caps` to also drop capability-gated keys the model doesn't support --
-// the panel hides those controls (requiresCap) but the cache keeps their
-// values, and without this filter a value set on a capable model rides
-// every request to an incapable one invisibly ("pinned") until Reset.
-// The cache itself is untouched: switch back to a capable model and the
-// value (and its control) return.
-export function samplerParams(caps = null, thinking = null) {
-  const out = snapshotSettings();
-  if (caps) {
-    for (const [key, meta] of Object.entries(PARAM_META)) {
-      if (meta.requiresCap && !caps.includes(meta.requiresCap)) delete out[key];
-    }
-  }
-  // The same drop for a VALUE (plan W2): a depth this model does not offer
-  // (a preset saved on another model) is left off, and the model runs at its
-  // own default. The cache keeps it, so switching back restores it. The
-  // server applies the same rule to stored params and refuses an explicit one.
-  if (out.reasoning_effort !== undefined && !depthOffered(out.reasoning_effort, thinking)) {
-    delete out.reasoning_effort;
-  }
-  return out;
+// sent the 0. Less what the CURRENT model cannot use, by the same rule the
+// reconcile applies -- normally a no-op, since the reconcile already removed
+// it; it matters only before a row is known and for a key a model switch has
+// not yet reconciled.
+export function samplerParams(model = null) {
+  return withoutInapplicable(snapshotSettings(), model);
 }
 
 // Whether `value` is a thinking depth the model offers, read off its
@@ -231,8 +295,8 @@ export function depthOffered(value, thinking) {
 // samplerParams, never a second hand-written copy -- the one wire difference
 // is that Messages says `thinking` where the OpenAI wire said
 // `enable_thinking` (same tri-state: absent = the model's own default).
-export function messagesParams(caps = null, thinking = null) {
-  const { enable_thinking, thinking_budget_tokens, ...out } = samplerParams(caps, thinking);
+export function messagesParams(model = null) {
+  const { enable_thinking, thinking_budget_tokens, ...out } = samplerParams(model);
   if (thinking_budget_tokens !== undefined) {
     // The budget rides Anthropic's object form; an omitted `type` keeps the
     // model's own thinking default, as an absent bool would.
@@ -409,15 +473,12 @@ function bindThinkingControl(lookup, thinking, caps) {
   const defaultLevel = depth?.default && levels.includes(depth.default) ? depth.default : null;
   const known = lookup('enable_thinking');
   const described = known === false ? 'off' : (defaultLevel ?? (known === true ? 'on' : null));
-  const stored = cache.reasoning_effort ?? null;
-  const offered = stored === null || !depth || depthOffered(stored, thinking);
-  const option = (value, label, extra = {}) => createEl('option', { value, ...extra }, [label]);
+  const option = (value, label) => createEl('option', { value }, [label]);
   const sel = createEl('select', { id: 'set-enable_thinking', class: 'input' }, [
     option('', `Default${described ? ` (${described})` : ''}`),
     sw ? option('off', 'Off') : null,
     sw && !defaultLevel ? option('on', 'On') : null,
     ...levels.map((v) => option(`level:${v}`, v === defaultLevel && known !== false ? `${v} (default)` : v)),
-    offered ? null : option(`level:${stored}`, `${stored} (not offered by this model)`, { disabled: true }),
   ]);
   const choice = thinkingChoice(depth ? thinking : null);
   sel.value = choice === 'on' && defaultLevel ? `level:${defaultLevel}` : choice;
@@ -433,9 +494,9 @@ function bindThinkingControl(lookup, thinking, caps) {
 
 // The thinking-depth control, built from the model's own values. A template
 // that pastes any word in (gpt-oss, Muse) gets a text box with its known
-// values as suggestions; every other template a select. A stored value this
-// model does not offer shows as a disabled option saying so (the wire filter
-// drops it), and an alias selects the spelling it stands for.
+// values as suggestions; every other template a select. An alias selects the
+// spelling it stands for; a value the model does not offer never reaches here
+// (reconcileSettings removed it and said so).
 function bindDepthControl(key, lookup, thinking) {
   const depth = thinking?.depth ?? null;
   const values = depth?.values ?? [];
@@ -462,14 +523,11 @@ function bindDepthControl(key, lookup, thinking) {
     return input;
   }
   const canonical = stored === null ? '' : (depth?.aliases?.[stored] ?? stored);
-  const offered = stored === null || depthOffered(stored, thinking);
   const sel = createEl('select', { id: `set-${key}`, class: 'input' }, [
     createEl('option', { value: '' }, [autoLabel]),
     ...values.map((v) => createEl('option', { value: v }, [v])),
-    offered ? null : createEl('option', { value: stored, disabled: true },
-      [`${stored} (not offered by this model)`]),
   ]);
-  sel.value = offered ? canonical : stored;
+  sel.value = canonical;
   sel.addEventListener('change', () => setSetting(key, sel.value || null));
   return sel;
 }
@@ -571,6 +629,7 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
                                     thinking = null, requestFields = null } = {}) {
   const rows = { thinking: [], core: [], advanced: [] };
   const controls = [];
+  const model = { caps, thinking };
 
   // `samplerDefaults` is ONE bag since v2.0.33. It was `{off,on}` and this
   // read had a resolver to pick a half, because the anti-loop overlay moved
@@ -593,11 +652,8 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
     // a depth-only one (MiniMax, gpt-oss) each get it.
     const keys = [key, ...Object.entries(PARAM_META)
       .filter(([, m]) => m.foldedInto === key).map(([k]) => k)];
-    if (!keys.some((k) => !PARAM_META[k].requiresCap || caps.includes(PARAM_META[k].requiresCap))) continue;
+    if (!keys.some((k) => keyOffered(k, model))) continue;
     if (Array.isArray(requestFields) && !keys.some((k) => requestFields.includes(k))) continue;
-    // The cap is not offered where the engine says it cannot enforce one: a
-    // field that visibly does nothing is worse than no field.
-    if (key === 'thinking_budget_tokens' && thinking?.budget?.enforced === false) continue;
     const control = bindControl(key, meta, lookup, thinking, caps, describe);
     // The cap's note moves with its value (a tiny cap is called out), so it
     // is recomputed on every sync; the rest are fixed at build.
@@ -634,7 +690,7 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
       // typed 0 used to light the row accent and offer a reset for a value the
       // server never sees and never applies. Marking is a CLAIM about what the
       // model is running, so it has to be read off the thing that decides it.
-      const sent = samplerParams(caps, thinking);
+      const sent = samplerParams(model);
       const overridden = keys.some((k) => k in sent);
       row.classList.toggle('settings-row--overridden', overridden);
       reset.classList.toggle('settings-row__reset--on', overridden);

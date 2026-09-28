@@ -71,7 +71,7 @@
 
 import { createEl, armedConfirm } from './utils.js';
 import { api } from './api.js';
-import { applySettings, snapshotSettings, PARAM_META, onSettingsChange, depthOffered } from './settings.js';
+import { applySettings, snapshotSettings, samplerParams, withoutInapplicable, reconcileSettings, droppedNote, PARAM_META, onSettingsChange } from './settings.js';
 import * as drawer from './settings-drawer.js';
 
 // adapter = {
@@ -86,19 +86,16 @@ import * as drawer from './settings-drawer.js';
 //                                       applied_preset_id
 //   setStamp?(id|null): void         -- persist it (the page owns the write,
 //                                       same division as setPrompt)
+//   model?():           {caps, thinking}|null -- the selected model
+//                                       (settings.rowModel): a save keeps what
+//                                       it can use, an apply removes the rest
+//                                       and says so, drift ignores it
 // }
-// A preset keeps the depth it was saved with (plan W2: a value means what
-// THAT template says, so nothing is translated). Applied on a model that
-// does not offer it, the value stays stored and is left off the wire; say so.
-function depthDisclosure(value, thinking) {
-  if (!value || depthOffered(value, thinking)) return '';
-  const fallback = thinking?.depth?.default;
-  return ` Its thinking depth "${value}" isn't offered by this model, so the model's `
-    + (fallback ? `default (${fallback}) is used.` : 'own default is used.');
-}
-
+// A preset holds what the panel showed when it was saved (owner, 2026-09-27):
+// saving on one model and applying on another removes what the second cannot
+// use, named on the status line, rather than keeping it silently unused.
 export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, onIndicator, getStamp, setStamp,
-                                       thinking = () => null }) {
+                                       model = () => null }) {
   let presets = [];
   // Select-box state only -- applying copies, it never binds. THREE states,
   // not two: `undefined` = no explicit pick yet, so the select FOLLOWS the
@@ -235,8 +232,10 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   // whole sampler panel)? Field-by-field over PARAM_META, not JSON compare --
   // key order round-trips through the server and can't be trusted.
   function samplerDrift(preset) {
+    // Only what THIS model can use: a preset saved on another model is still
+    // the one running when its other keys were removed on apply.
     const now = snapshotSettings();
-    const saved = preset.params ?? {};
+    const saved = withoutInapplicable(preset.params, model());
     return Object.keys(PARAM_META).filter((k) => (now[k] ?? null) !== (saved[k] ?? null));
   }
   function samplersMatch(preset) {
@@ -475,6 +474,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     const preset = selected();
     if (preset) {
       applySettings(preset.params ?? {});
+      const removed = droppedNote(reconcileSettings(model()));
       // Override box: carry the prompt when the preset has one, otherwise
       // leave whatever the conversation (or the model's own default) uses.
       const incoming = presetPrompt(preset);
@@ -485,7 +485,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
       onStatus((incoming
         ? `Preset "${preset.name}" applied.`
         : `Preset "${preset.name}" applied — it carries no system prompt, so this one is unchanged.`)
-        + depthDisclosure(preset.params?.reasoning_effort, thinking()));
+        + (removed ? ` ${removed}` : ''));
     }
     // Force: the Apply button lives in the drawer, so the focus guard would
     // otherwise skip the repaint that shows the applied values.
@@ -570,7 +570,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
       // cached name reverts a rename made on another device -- or 409s and
       // throws the whole confirmed write away.
       const saved = await api.updatePreset(target.id, {
-        system_prompt: getPrompt(), params: snapshotSettings(),
+        system_prompt: getPrompt(), params: samplerParams(model()),
       });
       if (!ctx.alive) return;
       commitSaved(saved, 'updated');
@@ -602,7 +602,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
         return;
       }
       const saved = await api.createPreset({
-        name, system_prompt: getPrompt(), params: snapshotSettings(),
+        name, system_prompt: getPrompt(), params: samplerParams(model()),
       });
       if (!ctx.alive) return;
       commitSaved(saved, 'saved');

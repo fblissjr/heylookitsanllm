@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from heylook_llm import db
 from heylook_llm.db import get_db as _get_db
+from heylook_llm.schema.sampler_params import SamplerParams
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ class ConversationCreate(BaseModel):
     title: str = "New Conversation"
     model_id: str | None = None
     system_prompt: str | None = None
-    params: dict = {}  # per-conversation sampler settings (temperature, top_p, ...)
+    params: SamplerParams = {}  # per-conversation sampler settings (temperature, top_p, ...)
     # A new document can START as a preset (v3's new-conversation inheritance)
     # -- that is an explicit apply at birth, so it stamps. Same contract as
     # ConversationUpdate.applied_preset_id otherwise.
@@ -66,7 +67,7 @@ class ConversationUpdate(BaseModel):
     title: str | None = None
     model_id: str | None = None
     system_prompt: str | None = None
-    params: dict | None = None
+    params: SamplerParams | None = None
     # Which preset this conversation is running. EXPLICIT stamps only (an
     # Apply or a Save writes it); a document whose state merely happens to
     # match a preset is labelled by live client-side inference and never

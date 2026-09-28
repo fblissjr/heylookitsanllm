@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.184]
+
+### Changed
+
+- **A setting the selected model cannot use is removed and named, not kept.**
+  The settings panel, the document's stored `params` and the request are now
+  one bag (owner, 2026-09-27; reverses plan W2's keep-and-restore). One
+  predicate, `settings.inapplicable` (a missing capability, a thinking depth
+  the template does not offer, a thinking cap the engine cannot enforce),
+  drives `reconcileSettings`, which removes those keys at document load,
+  model switch, preset apply and resume and says on the status line what went
+  and what the template does offer. Before, such a value stayed on the
+  document and was only left off the wire: a conversation could read Off while
+  a qwen3.8 27b gguf ran its template default (xhigh), with a greyed "(not
+  offered by this model)" option as the only sign. Switching back no longer
+  restores a removed value.
+- **A preset saves what the panel shows** for the selected model
+  (`samplerParams(model)`), not every cached value; applying one elsewhere
+  removes what that model cannot use, and drift ignores those keys.
+- The chat switch note "Thinking is unavailable on X" is replaced by the
+  removal note, which covers every key.
+
+### Fixed
+
+- **`params` is validated on every write** (conversations, notebooks,
+  presets; create and update) against the request's own sampler fields and
+  `ChatRequest`'s types and ranges (`schema/sampler_params.py`): an unknown
+  key or a bad value is a 422 naming it, and nulls are not stored. Any JSON
+  object used to be stored, so `top_p: "high"` written through the API was
+  accepted and then failed every generation on that document.
+
+### Docs
+
+- Spec §4 `params`, user guide (presets, switching, thinking, a closed rough
+  edge), wiki frontend_core §3, sharp_edges "Settings a model cannot use are
+  removed, not kept", rules (frontend, engine-contract, api-and-store).
+- Checks: `tests/unit/` + `tests/contract/` green; new
+  `test_sampler_params.py` (every params route, 422 cases and a valid bag);
+  `e2e:render` 105/105 (the thinking-control check now asserts removal and
+  its note). Not run: e2e chat/pages and a live browser pass (no server was
+  running; none spawned).
+
 ## [2.0.183]
 
 ### Fixed

@@ -409,10 +409,11 @@ def _build_chat_request(conv: dict, rows: list[dict], caps: list[str],
     for key, cap in _CAP_GATED.items():
         if cap not in caps:
             kwargs.pop(key, None)
-    # The VALUE twin of the gate above, and of v3's samplerParams (plan W2):
-    # a stored depth this model's template does not offer (a preset saved on
-    # another model) is left off, so the model runs at its own default. The
-    # document keeps the value; switching back restores it.
+    # The VALUE twin of the gate above: a stored depth this model's template
+    # does not offer is left off, so the model runs at its own default. v3
+    # removes such a value from the document before it could get here
+    # (settings.reconcileSettings, v2.0.184); this drop is the safety net for
+    # any other client writing params.
     if kwargs.get("reasoning_effort") is not None and check_depth(
             kwargs["reasoning_effort"], thinking):
         kwargs.pop("reasoning_effort")

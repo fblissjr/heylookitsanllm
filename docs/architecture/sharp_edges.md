@@ -1274,6 +1274,30 @@ it, was read as a level (a cap of 3 tokens, typed as "level 3"). "On" now
 appears only where there is no default level, and the cap is a sub-row that
 names its unit and hides while thinking is off.
 
+### Settings a model cannot use are removed, not kept
+
+Plan W2 kept a thinking depth the selected model did not offer: the value
+stayed on the document and in the panel cache, was left off the request, and
+came back when you switched to a model that did offer it. The server did the
+same for anything in `params`, which accepted any JSON object. On 2026-09-27
+that produced a report of thinking levels "totally broken": after a template
+change one qwen3.8 27b gguf offered no `none` level and defaulted to xhigh, so
+a conversation or preset carrying `none` read Off and ran at xhigh, and the
+only sign was a greyed "(not offered by this model)" option. Presets saved
+every cached value, including ones no row showed on the model they were saved
+on, so they carried settings the owner could neither see nor clear. And a
+wrong-typed value written through the API was stored and then failed every
+generation on that document.
+
+The owner chose one invariant over switch-back restore: stored, shown and sent
+are the same bag. Writes are validated (`schema/sampler_params.py`, from
+`ChatRequest`'s fields); the page removes what the selected model cannot use
+(`settings.reconcileSettings`, one predicate `inapplicable`) at document load,
+model switch, preset apply and resume, and names each removal; a preset save
+keeps only what the panel shows. The generate route's send-time drop stays as
+the safety net for other clients. The cost is deliberate: switching back does
+not restore a removed level.
+
 ### Model switching and the config editor
 
 Since v1.54-1.57 the models page edits per-model config (`js/model-config.js`,

@@ -30,7 +30,7 @@ import { streamGenerate, stopGenerate } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
 import { MarkdownStream, appendPlainText } from '../markdown-stream.js';
 import { prepareImage, resizeImageTo, blobToBase64, MAX_EDGE_PX } from '../image-prep.js';
-import { rowThinking, samplerParams, snapshotSettings, unrepresentableNote, bindDocumentParams, hydrateDocParams, getSetting, setSetting, setSettings, thinkingChoice, onSettingsChange, documentScopeNote, PARAM_META } from '../settings.js';
+import { rowThinking, rowModel, samplerParams, snapshotSettings, unrepresentableNote, reconcileSettings, droppedNote, bindDocumentParams, hydrateDocParams, getSetting, setSetting, setSettings, thinkingChoice, onSettingsChange, documentScopeNote, PARAM_META } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 import { createPresetBar, paintPresetChip } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
@@ -146,7 +146,7 @@ export default createPage({
       onIndicator: (info) => { paintPresetChip(s.presetChip, info); paintSysPromptChip(ctx); },
       getStamp: () => s.appliedPresetId,
       setStamp: (id) => setAppliedPreset(ctx, id),
-      thinking: () => currentThinking(ctx),
+      model: () => currentModel(ctx),
     });
     // The chip needs preset names before the drawer's first lazy fetch.
     s.presetBar.refresh().then(() => { if (ctx.alive) s.presetBar.syncIndicator(); });
@@ -291,7 +291,7 @@ function buildSkeleton(ctx) {
     // Pre-switch check, not post-switch discovery: cost and compatibility
     // are only actionable BEFORE the switch commits. A clean switch (target
     // resident, nothing in the conversation it can't take) commits silently.
-    const warnings = switchWarnings(ctx, from, to);
+    const warnings = switchWarnings(ctx, to);
     if (!warnings.length) {
       commitModelSwitch(ctx, to);
       return;
@@ -737,7 +737,7 @@ async function loadModelNow(ctx) {
 // the one that was actually missing -- a live status while the send waits
 // on the load (sendMessage). Owner call 2026-08-11: state what is
 // happening, do not ask permission for the inevitable.
-function switchWarnings(ctx, from, to) {
+function switchWarnings(ctx, to) {
   const s = ctx.state;
   const target = s.models.find((m) => m.id === to);
   const caps = target?.capabilities ?? [];
@@ -755,27 +755,10 @@ function switchWarnings(ctx, from, to) {
     lines.push(`This conversation has ${audio} audio clip${audio === 1 ? '' : 's'}. `
       + 'They will be dropped from every request to this model — it cannot hear them.');
   }
-  // Thinking loss RIDES an existing warning but never raises one on its own
-  // (see thinkingLossNote): losing a capability destroys nothing, and
-  // only-loss-gates says disclose that rather than interrupt a routine switch.
-  if (lines.length && thinkingLossNote(ctx, from, to)) {
-    lines.push('Thinking is unavailable on this model; the toggle will hide.');
-  }
+  // Settings the target cannot use are not a warning: they are removed on
+  // commit and named then (commitModelSwitch), which destroys nothing the
+  // user cannot pick again, so only-loss-gates says disclose, not interrupt.
   return lines;
-}
-
-// The same fact, for the case that has no warning to ride: a text-only
-// conversation switching from a thinking model to a plain one used to say
-// NOTHING, because the line above was gated on `lines.length` -- so a real
-// capability loss was announced only when it happened to coincide with media
-// being dropped. Returns the note, or null when nothing is lost.
-function thinkingLossNote(ctx, from, to) {
-  const s = ctx.state;
-  if (getSetting('enable_thinking') !== true) return null;
-  const fromCaps = s.models.find((m) => m.id === from)?.capabilities ?? [];
-  const toCaps = s.models.find((m) => m.id === to)?.capabilities ?? [];
-  if (!fromCaps.includes('thinking') || toCaps.includes('thinking')) return null;
-  return `Thinking is unavailable on ${to} — the toggle will hide.`;
 }
 
 // Inline in the chat status area, per the switching design -- NOT a modal (a
@@ -802,25 +785,22 @@ function commitModelSwitch(ctx, to) {
   // disconnect path) into this same conversation after model_id is
   // rewritten. Each message row carries its own model_id (v1.74.0), so the
   // partial stays attributed to the model that wrote it.
-  // A local, not page state: thinkingLossNote needs where we came FROM, and
-  // committedModelId is about to become the destination. It was briefly an
-  // `s.lastCommittedModelId`, which read as meaningful elsewhere while only
-  // ever being used ten lines below -- and switchWarnings(ctx, from, to)
-  // right above already takes `from` as a parameter. Computed BEFORE the
-  // abort, because the abort resolves later and `from` is gone by then.
-  const from = s.committedModelId;
-  const thinking = thinkingLossNote(ctx, from, to);
+  // The select already shows `to`, so this judges the destination: what it
+  // cannot use leaves the panel and the conversation's params (the PUT the
+  // change fires is a metadata write, open while a run is held), named below.
+  // Computed BEFORE the abort, because the abort's own note lands later.
+  const removed = droppedNote(reconcileSettings(currentModel(ctx)));
 
   // Abandoning, not stopping: the run detaches and commits into THIS
   // conversation under the old model. finishGenerate says so (abandonNote),
   // which also carries the load-cost clause -- so this path writes no line of
   // its own that the async abort would overwrite a beat later. But the
-  // THINKING note is not in abandonNote and is not recoverable later, so it
+  // removal note is not in abandonNote and is not recoverable later, so it
   // rides along on the stream. Suppressing both was how a mid-stream switch
   // silently reintroduced the capability loss v1.79.27 exists to close.
   const abandoning = Boolean(s.stream);
   if (s.stream) {
-    s.stream.pendingNote = thinking;
+    s.stream.pendingNote = removed;
     abortStream(ctx, ABANDON.MODEL);
   }
   s.committedModelId = to;
@@ -828,14 +808,12 @@ function commitModelSwitch(ctx, to) {
   // target is resident or residency is still unknown -- a guess would be
   // worse than nothing (same rule as the dots).
   if (!abandoning) {
-    // Both facts, whichever apply: what this costs, and what it takes away.
-    // The thinking note is the ONLY announcement when the conversation has no
-    // media for switchWarnings to have warned about.
+    // Both facts, whichever apply: what this costs, and what it took away.
     const notes = [];
     if (isCold(ctx, to)) {
       notes.push(`${to} is not loaded — your first message loads it, or press Load to do it now.`);
     }
-    if (thinking) notes.push(thinking);
+    if (removed) notes.push(removed);
     showStatus(ctx, notes.join(' '));
   }
   if (s.activeId) {
@@ -887,6 +865,12 @@ function currentThinking(ctx) {
   return rowThinking(currentModelRow(ctx));
 }
 
+// What the settings rule judges against (settings.rowModel); null until the
+// models list lands, and then nothing is removed.
+function currentModel(ctx) {
+  return rowModel(currentModelRow(ctx));
+}
+
 function currentThinkingDefault(ctx) {
   return currentModelRow(ctx)?.thinking_default ?? null;
 }
@@ -927,7 +911,7 @@ async function previewNextPrompt(ctx) {
     const body = await api.previewPrompt(s.activeId, {
       mode: 'append',
       user_content: draft || undefined,
-      overrides: { model: s.modelSelect.value, ...samplerParams(currentCaps(ctx), currentThinking(ctx)) },
+      overrides: { model: s.modelSelect.value, ...samplerParams(currentModel(ctx)) },
     });
     if (!ctx.alive) return;
     paintPromptPreview(host, body, close);
@@ -1430,17 +1414,21 @@ async function selectConversation(ctx, convId) {
     // Programmatic selection IS the committed model -- a restore never runs
     // the pre-switch warning flow (the conversation already lives there).
     s.committedModelId = s.modelSelect.value || null;
+    // Against the model the select now shows (never before it moves): a
+    // conversation started from a preset saved on another model, or one whose
+    // model's template changed since, loses what this model cannot use, and
+    // the status line says what.
+    const removed = droppedNote(reconcileSettings(currentModel(ctx)));
     refreshLoadBtn(ctx);
     // an open drawer shows the previous conversation's system prompt otherwise
     drawer.requestRebuild({ force: true });
     s.presetBar.syncIndicator(); // rebuild no-ops while the drawer is closed
     renderMessages(ctx);
     scrollMessages(ctx, true);
-    // Last, so the empty-status reset above cannot swallow it.
-    if (leaving) {
-      showStatus(ctx, `"${leaving}" keeps generating — it will finish on the server `
-        + 'and be there when you come back.');
-    }
+    // Last, so the empty-status reset above cannot swallow them.
+    const notes = [removed, leaving && `"${leaving}" keeps generating — it will finish on the server `
+      + 'and be there when you come back.'].filter(Boolean);
+    if (notes.length) showStatus(ctx, notes.join(' '));
   } catch (err) {
     if (ctx.alive && s.activeId === convId) {
       showStatus(ctx, `Could not load conversation: ${err.message}`, true);
@@ -2018,7 +2006,7 @@ function buildEditEl(ctx, msg) {
       try {
         const body = await api.previewPrompt(s.activeId, {
           ...shape, edits,
-          overrides: { model: s.modelSelect.value, ...samplerParams(currentCaps(ctx), currentThinking(ctx)) },
+          overrides: { model: s.modelSelect.value, ...samplerParams(currentModel(ctx)) },
         });
         if (!ctx.alive) return;
         paintPromptPreview(previewHost, body, close);
@@ -2472,6 +2460,9 @@ async function refreshAfterResume(ctx) {
           docChanged = true;
           const typingPrompt = document.activeElement?.classList.contains('sysprompt-input') ?? false;
           adoptConversationMeta(ctx, conv, { keepPrompt: typingPrompt });
+          // Another tab may have written params this page's model cannot use.
+          const removed = droppedNote(reconcileSettings(currentModel(ctx)));
+          if (removed) showStatus(ctx, removed);
           refreshThinkBtn(ctx);
           const rowsMerged = !s.stream;
           if (rowsMerged) mergeServerRows(ctx, conv.messages ?? []);
@@ -3312,7 +3303,7 @@ function startStream(ctx, opts = {}) {
   // the debounced params PUT is FLUSHED first, because a CLEARED value is
   // expressed by absence and only the PUT can spell that (overrides
   // cannot un-set a stored key).
-  const overrides = { model: s.modelSelect.value, ...samplerParams(currentCaps(ctx), currentThinking(ctx)) };
+  const overrides = { model: s.modelSelect.value, ...samplerParams(currentModel(ctx)) };
   const launch = () => streamGenerate(stream.targetConvId,
     { mode, message_id: messageId, overrides }, {
     signal: controller.signal,

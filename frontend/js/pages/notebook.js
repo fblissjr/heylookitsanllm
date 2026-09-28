@@ -14,7 +14,7 @@ import { createPage } from '../page.js';
 import { createEl, autoGrow, armedConfirm, debounce, setStatus, fillOptions, dismissPaneOnOutsideClick } from '../utils.js';
 import { api } from '../api.js';
 import { streamMessages } from '../streaming.js';
-import { rowThinking, messagesParams, snapshotSettings, unrepresentableNote, bindDocumentParams, hydrateDocParams, documentScopeNote } from '../settings.js';
+import { rowThinking, rowModel, messagesParams, snapshotSettings, unrepresentableNote, reconcileSettings, droppedNote, bindDocumentParams, hydrateDocParams, documentScopeNote } from '../settings.js';
 import * as drawer from '../settings-drawer.js';
 import { createPresetBar, paintPresetChip } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
@@ -58,7 +58,7 @@ export default createPage({
       onIndicator: (info) => paintPresetChip(s.presetChip, info),
       getStamp: () => s.appliedPresetId,
       setStamp: (id) => setAppliedPreset(ctx, id),
-      thinking: () => notebookThinking(ctx),
+      model: () => notebookModel(ctx),
     });
     // The chip needs preset names before the drawer's first lazy fetch.
     s.presetBar.refresh().then(() => { if (ctx.alive) s.presetBar.syncIndicator(); });
@@ -186,6 +186,7 @@ function buildSkeleton(ctx) {
     s.modelId = s.modelSelect.value;
     s.dirty = true;
     s.scheduleSave();
+    reconcileParams(ctx);
     // capability-gated sampler controls (enable_thinking) track the model
     drawer.requestRebuild({ force: true });
   });
@@ -251,6 +252,20 @@ function notebookThinking(ctx) {
 function notebookCaps(ctx) {
   const model = ctx.state.models.find((m) => m.id === ctx.state.modelSelect.value);
   return model?.capabilities ?? [];
+}
+
+// What the settings rule judges against (settings.rowModel); null until the
+// models list lands, and then nothing is removed.
+function notebookModel(ctx) {
+  return rowModel(ctx.state.models.find((m) => m.id === ctx.state.modelSelect.value));
+}
+
+// Remove what the selected model cannot use from the panel (and so from the
+// notebook's params) and say what went. Chat has the same three call sites:
+// document load, model switch, resume.
+function reconcileParams(ctx) {
+  const removed = droppedNote(reconcileSettings(notebookModel(ctx)));
+  if (removed) showStatus(ctx, removed);
 }
 
 function showStatus(ctx, text, isError = false) {
@@ -435,6 +450,7 @@ async function selectNotebook(ctx, id) {
     if (lostNb) showStatus(ctx, lostNb, true);
     s.dirty = false;
     populateFields(ctx);
+    reconcileParams(ctx); // after populateFields moves the select to the notebook's model
     // an open drawer shows the previous notebook's params/sysprompt otherwise
     drawer.requestRebuild({ force: true });
   } catch (err) {
@@ -514,7 +530,7 @@ function startGenerate(ctx) {
     model: s.modelSelect.value,
     system: s.systemPrompt || undefined,
     messages: [{ role: 'user', content: head.trim() ? head : 'Continue writing.' }],
-    ...messagesParams(notebookCaps(ctx), notebookThinking(ctx)),
+    ...messagesParams(notebookModel(ctx)),
   }, {
     signal: controller.signal,
     onToken: (_, full) => { gen.content = full; if (ctx.alive) s.paint(); },
@@ -666,6 +682,7 @@ async function refreshAfterResume(ctx) {
           }
           s.appliedPresetId = nb.applied_preset_id ?? null;
           hydrateDocParams(nb);
+          reconcileParams(ctx); // another tab may have written what this model cannot use
           adopted = !typingPrompt && !typingDoc;
         }
       }

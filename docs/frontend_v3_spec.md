@@ -580,9 +580,15 @@ Response bodies are typed in `/openapi.json` (`Preset`, `PresetList`, `PresetDel
   reads as "no stamp". Note this is deliberately NOT carried inside
   `params`: that object is the sampler bag and everything in it reaches the
   model, so non-sampler state may never live there.
-- `params` is an open sampler-knob object; the authoritative key vocabulary is `PARAM_META` in the v3
-  settings panel (`frontend/js/settings.js`) — do not re-enumerate it here. A preset
-  stores only the knobs it pins — absent keys stay on the null-means-cascade contract when applied.
+- `params` (conversations, notebooks and presets, on create and update) is validated on write
+  since v2.0.184 (`schema/sampler_params.py`): the keys are the request's sampler fields
+  (`samplers.REQUEST_SAMPLER_FIELDS`, which `PARAM_META` in `frontend/js/settings.js` must
+  match; `test_sampler_roundtrip.py` pins it) with `ChatRequest`'s types and ranges. An unknown
+  key or a bad value is a **422** naming it; a null is not stored. Whether a MODEL can use a
+  key is not judged here (a document can change model): v3 removes what the selected model
+  cannot use and says so, a preset save keeps only what the panel shows, and the generate
+  route still drops it at send. A preset stores only the knobs it pins — absent keys stay on
+  the null-means-cascade contract when applied.
   Presets survive `POST /v1/data/clear` AND store schema recreates (they're config, not data).
 
 **Admin models** (`X-Heylook-Admin-Token`): `GET /v1/admin/models` →
@@ -898,8 +904,9 @@ pastes any word in (gpt-oss, Muse), so any value is accepted. The value is sent 
 template's OWN variable (`depth.variable`: Muse's `reasoning_strength`, MiniMax's
 `thinking_mode`), whenever set and never gated on thinking being on. A value the model
 does not offer is a **400 before any stream** on `/v1/messages`; the conversation generate
-route drops it from stored params instead (the model runs at its default), as
-`samplerParams(caps, thinking)` does client-side. The `reasoning_effort` capability means
+route drops it from stored params instead (the model runs at its default). v3 never
+sends one: since v2.0.184 `reconcileSettings(model)` removes it from the document when
+the document loads, the model switches or a preset is applied, and names it. The `reasoning_effort` capability means
 `engine.thinking.depth` is non-null. Since v2.0.159 v3 shows ONE thinking control
 (`#set-enable_thinking`): Default / Off / On / `level:<value>` for each value not in
 `off`, writing the same two stored keys (`enable_thinking`, `reasoning_effort`) together.
@@ -908,9 +915,8 @@ stored bare `enable_thinking: true` otherwise shows as `level:<default>`), and
 `thinking_budget_tokens` is an indented sub-row of that control, hidden while thinking is
 off and absent when `engine.thinking.budget.enforced` is false.
 Off keeps the stored level. A verbatim template with no switch keeps a text box with
-suggestions (`#set-reasoning_effort`). A stored value the model does not offer shows as a
-disabled "(not offered by this model)" option, and `changes_prefix` adds the note that
-changing it mid-conversation re-processes the conversation.
+suggestions (`#set-reasoning_effort`). `changes_prefix` adds the note that changing it
+mid-conversation re-processes the conversation.
 
 **Image plan** (v2.0.101, plan W4) `POST /v1/models/{id}/image-plan` `{sizes:[[w,h],...]}`
 (1-16 sizes) → `{model_id, engine, images:[{size, tokens, target}], source}`: what an image

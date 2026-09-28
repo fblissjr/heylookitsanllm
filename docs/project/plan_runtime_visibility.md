@@ -224,7 +224,9 @@ translated between models. Detail and reasoning:
   `samplerParams(caps)` extends its existing capability drop to the VALUE: a
   depth the current model does not offer is left off the request, so the
   model runs at its own default. The panel cache keeps it, and switching back
-  restores it. `valid()` accepts any bounded string, since validity is per
+  restores it. (Reversed 2026-09-27, v2.0.184, owner: a value the model cannot
+  use is removed from the document and named; sharp_edges "Settings a model
+  cannot use are removed, not kept".) `valid()` accepts any bounded string, since validity is per
   model; legacy stored values need no migration. Presets keep saving system
   prompts; nothing here touches `presets.system_prompt`.
 - **Disclosure, no confirm** (nothing is lost). The dropdown is "auto

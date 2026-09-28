@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from heylook_llm import db
 from heylook_llm.db import get_db as _get_db
+from heylook_llm.schema.sampler_params import SamplerParams
 
 logger = logging.getLogger(__name__)
 
@@ -48,13 +49,13 @@ _PARAMS_DOC = (
 class PresetCreate(BaseModel):
     name: str
     system_prompt: str | None = None
-    params: dict = Field(default_factory=dict, description=_PARAMS_DOC)
+    params: SamplerParams = Field(default_factory=dict, description=_PARAMS_DOC)
 
 
 class PresetUpdate(BaseModel):
     name: str | None = None
     system_prompt: str | None = None
-    params: dict | None = Field(default=None, description=_PARAMS_DOC)
+    params: SamplerParams | None = Field(default=None, description=_PARAMS_DOC)
 
 
 class Preset(BaseModel):

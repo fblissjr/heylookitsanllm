@@ -23,7 +23,8 @@ Map and backend coupling: [docs/frontend_v3.md](../../docs/frontend_v3.md). User
 - The page is a mirror of the store with exactly two invalidation points: document select and resume (`ctx.onResume` -> `refreshAfterResume`). Nothing polls; re-clicking the active conversation does not refetch.
 - Use `createPage`'s `ctx.onHide` / `ctx.onResume`; never hand-wire `visibilitychange`/`pagehide`/`pageshow` in a page. Every debounced writer owns its hide flush. Hide flushes use `keepalive` and go ahead of the PUT chain. A prompt section's hide hook lives as long as the section; chat `release()`s the one it replaces.
 - Resume refetches only when the list's `updated_at` moved, commits the new stamp only after everything it covers is adopted, adopts via `adoptConversationMeta`, and never touches a live stream's rows, the prompt box while it is being typed in, or the sidebar during a rename.
-- A document's `params` is the sampler bag, and everything in it reaches the model. Never stash non-sampler state there; display prefs and preset provenance live elsewhere. `samplerParams(caps)` filters capability-gated keys at the wire for the same reason.
+- A document's `params` is the sampler bag, and everything in it reaches the model. Never stash non-sampler state there; display prefs and preset provenance live elsewhere.
+- Stored, shown and sent are one bag (owner, 2026-09-27). What the selected model cannot use (`settings.inapplicable`: a missing capability, a depth its template does not offer, a cap its engine cannot enforce) is REMOVED by `reconcileSettings(model)` and named with `droppedNote`, at document load (after the select moves), model switch, preset apply and resume. Never keep an unusable value so switching back restores it. `samplerParams(model)` applies the same rule at the wire and on preset save; `model` is `rowModel(row)`, null until the row is known, and null judges nothing.
 
 ## Attachments and model switching
 

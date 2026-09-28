@@ -77,9 +77,10 @@ Two consequences worth internalising:
 
 ### What a preset holds
 
-A name, a system prompt (optionally), and the whole sampler panel — temperature,
-max tokens, top-p, top-k, and the advanced knobs including thinking and thinking
-depth.
+A name, a system prompt (optionally), and the sampler panel as it shows for the
+model you save it on — temperature, max tokens, top-p, top-k, thinking, and the
+advanced knobs. A setting that model has no control for is not saved: a preset
+holds exactly what you saw.
 
 Presets are global. They are not per-conversation, per-model, or per-page; chat
 and the notebook share one store.
@@ -117,10 +118,16 @@ a system prompt is typed work.
 Apply also **stamps** the conversation: from then on the conversation records
 that it is running that preset, and the dropdown will open on it next time.
 
+A preset saved on one model and applied on another may hold something the second
+one cannot use: thinking on a model without it, a thinking level its template
+does not offer, a thinking cap its engine cannot enforce. Apply removes those
+and the status line names each one, with the levels the template does offer.
+The preset itself keeps them, and the conversation still counts as running it.
+
 ### Save and Save as new
 
-Both buttons write the current conversation's prompt and the entire sampler
-panel to a preset. They differ only in *which* preset. (Save was labelled
+Both buttons write the current conversation's prompt and the sampler panel (what
+it shows for the selected model) to a preset. They differ only in *which* preset. (Save was labelled
 **Update** before v1.79.62; nothing about what it does changed.)
 
 There are **two** write buttons, and which preset you hit is decided by which
@@ -205,8 +212,13 @@ than blocked:
   **dropped from the request**, with a note on each affected message. The
   conversation keeps them; the model just never sees them. This is the one
   thing that stops to ask (Cancel / Switch anyway).
-- Losing **thinking** is stated in the status line, not confirmed — a capability
-  going away destroys nothing, so it is disclosed rather than gated.
+- Settings the new model cannot use (thinking on a plain model, a thinking level
+  its template does not offer, a thinking cap its engine cannot enforce) are
+  **removed** from the conversation and named in the status line, not confirmed.
+  Switching back does not bring them back; pick them again. What the panel shows
+  is always what the conversation stores and what the model is sent. The same
+  happens when you open a conversation whose settings its model cannot use (it
+  was started from a preset made on another model, or its template changed).
 - Attachments you have staged but not yet sent **block** the switch instead.
   The asymmetry is deliberate: history is already committed and dropping it is
   reversible by switching back, whereas a staged file silently vanishing from a
@@ -411,8 +423,9 @@ page, which beats a `chat_template.jinja` beside the weights; that page says
 which files an override hides), and notes when a change mid-conversation
 re-processes the whole conversation. *Off* remembers the level you had, so the thinking button
 beside the composer, which flips the effective state, turns back on to it. A
-level saved on another model (in a preset, say) stays saved but shows as "not
-offered by this model" and is not sent. Since v1.79.62 a model that can think
+level from another model's template (a preset, or a conversation you switched)
+is removed when this model does not offer it, and the status line says so and
+lists what it does offer. Since v1.79.62 a model that can think
 thinks by default unless its own settings say otherwise. Depth levels are
 instructions the model may overrun; the token cap below is what bounds
 length. The *Advanced* group is folded by default and its heading counts the
@@ -543,3 +556,9 @@ Kept as a record rather than deleted, so this section reads as a ledger.
 - *Losing thinking on a model switch was announced only when media was also
   being dropped* — found while closing the above, fixed in v1.79.27. A
   text-only conversation switching to a plain model said nothing at all.
+- *A setting the model could not use stayed stored and silently did nothing* —
+  closed in v2.0.184. A thinking level from another model's template was kept
+  on the conversation and left off the request, so the conversation could say
+  Off while the model ran its own default (xhigh on one qwen3.8 27b template),
+  and a preset saved every value, including ones no row showed. Now such a
+  setting is removed and named, and a preset holds what the panel showed.

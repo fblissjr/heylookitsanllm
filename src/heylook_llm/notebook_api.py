@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from heylook_llm import db
 from heylook_llm.db import get_db as _get_db
+from heylook_llm.schema.sampler_params import SamplerParams
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ class NotebookCreate(BaseModel):
     content: str = ""
     system_prompt: str | None = None
     model_id: str | None = None
-    params: dict = {}  # per-notebook sampler settings (same shape as conversations)
+    params: SamplerParams = {}  # per-notebook sampler settings (same shape as conversations)
     # A new document can START as a preset (v3's new-document inheritance) --
     # an explicit apply at birth, so it stamps. Same contract as
     # NotebookUpdate.applied_preset_id otherwise.
@@ -37,7 +38,7 @@ class NotebookUpdate(BaseModel):
     content: str | None = None
     system_prompt: str | None = None
     model_id: str | None = None
-    params: dict | None = None
+    params: SamplerParams | None = None
     # Explicit preset stamp -- same contract as conversations (see
     # ConversationUpdate.applied_preset_id).
     applied_preset_id: str | None = None

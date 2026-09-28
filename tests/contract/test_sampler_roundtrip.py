@@ -10,9 +10,9 @@ agree, and BOTH directions lose data silently when they drift:
   through the API, or through an older client, disappears the first time they
   touch a knob.
 
-  a key the PANEL has but the server does not accept -- it is written into
-  `params`, stored, read back, and dropped at `_SAMPLER_KEYS` on every
-  generation. The panel shows a number that never reaches the model.
+  a key the PANEL has but the server does not accept -- the params PUT that
+  carries it is a 422 (schema/sampler_params.py, v2.0.184), so every other
+  setting on the document stops saving too.
 
 This is the repo's named defect class (a second hand-written copy of a list) in
 its most expensive form, because the copies are in different LANGUAGES so no
@@ -62,8 +62,8 @@ class TestSamplerBagRoundTrips:
     def test_every_panel_control_is_a_key_the_server_stores(self):
         extra = sorted(_panel_keys() - set(REQUEST_SAMPLER_FIELDS))
         assert not extra, (
-            f"the panel offers {extra} but the server drops them at _SAMPLER_KEYS, "
-            "so the control shows a number that never reaches the model."
+            f"the panel offers {extra} but the server refuses them on a params "
+            "write (422), so a document holding one stops saving any setting."
         )
 
 
