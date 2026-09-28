@@ -1817,6 +1817,19 @@ lock with mlx-lm: every MLX model here ships a `tokenizer.json`, and a
 sentencepiece-only checkpoint would now fail at load with transformers naming
 protobuf.
 
+Carried upstream fixes (2026-09-28, v2.0.185). Blaizzy/mlx-vlm#2356, heylook's
+own fix for restored qwen3_5 requests decoding slower than cold ones, sat open
+upstream while every pin move left the slowdown in place ("picked up when the
+pin moves"). Pinning the fork branch would mean rebasing it onto each new
+upstream SHA, so the owner asked for a carry that survives pin moves instead:
+`providers/common/mlx_vlm_patches.py` wraps the one upstream method with the
+PR's own condition. The risk of a carry is that it outlives its reason, so
+retirement is a test, not a note: `TestCarriedPatches` runs the unpatched
+upstream method and goes red once the pin already does what the patch does.
+This is not the "no mlx-vlm fork" decision in `.claude/rules/mlx.md`, which is
+about carrying assistant-turn image support; a carry here is always a filed
+upstream PR of ours.
+
 The optloop-lib bench exists because the app-level optloop (retired
 2026-07-06) bypassed the server code it claimed to measure.
 

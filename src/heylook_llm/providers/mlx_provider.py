@@ -1213,6 +1213,8 @@ class MLXProvider(BaseProvider):
 
             if not self.is_diffusion:
                 from mlx_vlm import apc as _apc
+                from .common import mlx_vlm_patches
+                mlx_vlm_patches.apply()
                 self._apc = vlm_engine.make_apc_manager()
                 self._apc_mode = _apc.APCCoordinator(
                     self._apc, self.model.language_model).legacy_mode

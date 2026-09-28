@@ -86,7 +86,9 @@ Record: `internal/claude/improve/archive/runs-2026-09-24/` (report.html has the 
   "the current latest commit"), which includes #2328. Suite green; vision
   parity ok and chain probe matching on Qwen3.5-0.8B. Smoke green on all three arms on it (v2.0.133 record).
 - [ ] **Move the pin again past Blaizzy/mlx-vlm#2356** once it merges (restored
-  qwen3_5 decode). Usual suite, chain probe and smoke.
+  qwen3_5 decode). Carried locally since v2.0.185 (`mlx_vlm_patches.py`); the
+  pin move turns `TestCarriedPatches` red, and the fix is deleting the carry.
+  Usual suite, chain probe and smoke. Chain probe on the carry itself not yet run.
 - [x] **Security: CORS, admin argv, RLM** (v2.0.123, owner call): the CORS
   wildcard is gone, admin writes refuse `config.FILE_ONLY_FIELDS` (422), and
   RLM (with its `sandbox: false` request field) is removed.

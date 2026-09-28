@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.185]
+
+### Fixed
+
+- **A request restored from the MLX prefix cache decodes as fast as the same
+  request run cold on qwen3_5 models** (including qwen3.8 27b). heylook now
+  carries its own open upstream fix, Blaizzy/mlx-vlm#2356, as a runtime
+  wrapper instead of waiting for the pin to move: `APCCoordinator.merge_rows`
+  hands a lone restored row its own warm cache instead of merging it into
+  batch caches, which qwen3_5's single-row shortcut re-copied on every decode
+  step. The wrapper (`providers/common/mlx_vlm_patches.py`) keeps the PR's
+  exact condition, applies at MLX load only while `merge_rows` has the
+  signature it was written against, and falls through to upstream otherwise.
+  `TestCarriedPatches` in `tests/contract/test_mlxvlm_surface.py` runs the
+  unpatched upstream function and fails once the pin already includes the fix,
+  naming the patch to delete. Ends v2.0.121's known issue. Not yet run:
+  `scripts/chain_probe.py` on a live server.
+
 ## [2.0.184]
 
 ### Changed

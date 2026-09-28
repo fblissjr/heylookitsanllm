@@ -379,3 +379,64 @@ class TestVlmEngineSurface:
         for name in ("image_hash", "media", "model", "processor"):
             assert name in salt, name
         assert "pixel_values" in inspect.signature(_apc.hash_image_payload).parameters
+
+
+class TestCarriedPatches:
+    """providers/common/mlx_vlm_patches.py carries heylook's own open
+    mlx-vlm PRs. Each test runs the UNPATCHED upstream function too: when it
+    already behaves like the patch, the pin has moved past the PR and the
+    patch is dead weight."""
+
+    def test_single_restored_row_keeps_its_own_cache_2356(self):
+        from types import SimpleNamespace
+
+        import mlx.core as mx
+        from mlx_vlm import apc as _apc
+        from mlx_vlm.apc_coordinator import APCCoordinator
+        from mlx_vlm.models.cache import ArraysCache, KVCache
+        from heylook_llm.providers.common import mlx_vlm_patches
+
+        mlx_vlm_patches.apply()
+        patched = APCCoordinator.merge_rows
+        assert getattr(patched, "_heylook_patch", None) == "mlx-vlm#2356", (
+            "carry not installed: merge_rows signature changed upstream")
+        upstream = patched._heylook_upstream
+
+        def filled():
+            arrays, kv = ArraysCache(2), KVCache()
+            arrays.cache = [mx.ones((1, 2, 4)), mx.ones((1, 1, 4)) * 2]
+            kv.keys = mx.ones((1, 1, 32, 4))
+            kv.values, kv.offset = kv.keys * 2, 32
+            return [arrays, kv]
+
+        manager = _apc.APCManager(num_blocks=8, block_size=16, disk=None)
+        tokens = list(range(32))
+        assert manager.store_exact_cache(tokens, filled())
+        runner = manager.coordinator(SimpleNamespace(
+            make_cache=lambda: [ArraysCache(2), KVCache()]))
+
+        def hit():
+            return runner.lookup(tokens + [99], extra_hash=0, safe_lookup_min=0,
+                                 suffix_is_text_only=lambda _: True,
+                                 prefix_has_media=lambda _: False)
+
+        one = hit()
+        caches, _ = upstream(runner, [one], [one["prefix_len"]])
+        assert caches is not one["warm_cache"], (
+            "upstream merge_rows now returns a lone restored row's own cache: "
+            "Blaizzy/mlx-vlm#2356 (or its equivalent) is in the pin. Delete "
+            "_patch_merge_rows from providers/common/mlx_vlm_patches.py and "
+            "this test.")
+        runner.release_hit(one)
+
+        one = hit()
+        before = manager.stats_snapshot()["restored_tokens"]
+        caches, prefix = runner.merge_rows([one], [one["prefix_len"]])
+        assert caches is one["warm_cache"] and prefix == one["prefix_len"]
+        assert manager.stats_snapshot()["restored_tokens"] == before + prefix
+        runner.release_hit(one)
+
+        two = hit()
+        caches, _ = runner.merge_rows([two, None], [two["prefix_len"], 0])
+        assert caches is not two["warm_cache"]
+        runner.release_hit(two)
