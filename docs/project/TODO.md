@@ -85,11 +85,24 @@ Record: `internal/claude/improve/archive/runs-2026-09-24/` (report.html has the 
 - [x] **mlx-vlm pin moved to upstream main** `ac737ef3` (v0.7.3, v2.0.124; owner:
   "the current latest commit"), which includes #2328. Suite green; vision
   parity ok and chain probe matching on Qwen3.5-0.8B. Smoke green on all three arms on it (v2.0.133 record).
-- [ ] **MLX spec decode speed, measured** (v2.0.187 shipped it with parity
-  checked, no speed claim): `scripts/perf_ab.py` on qwen3.8 27b with arms
-  drafter on / `{"draft_model_path": null}`, and a `draft_block_size` sweep.
-  Then `tests/smoke/` on all three arms, and `scripts/vlm_parity_probe.py`
-  with the drafter (image prefill runs through the target; unchecked drafted).
+- [x] **MLX spec decode speed, measured** (2026-09-28): `scripts/perf_ab.py`
+  on qwen3.8 27b bf16, short workload, drafter off vs block 3 vs block 4:
+  both drafted arms faster than off on decode and TTFT with no range overlap,
+  block 3 vs 4 overlapping (default kept). Record:
+  `internal/claude/perf/ab_ukisai_Swift-1.5-Qwen3.8-27b-mlx_20260928-172310.json`.
+  Image path drafted: `vlm_parity_probe` text identical drafted / undrafted /
+  without the #2356 carry; image edit, follow-up edit, regenerate and image
+  swap give identical greedy ids drafted-after-restore vs undrafted cold.
+- [ ] **`tests/smoke/` on all three arms** for v2.0.186-187 (not run).
+- [ ] **qwen3.8 27b bf16 vision parity: heylook vs mlx-vlm's loop diverges on
+  the SECOND image request in a process** (`vlm_parity_probe`: "vision after
+  text" MATCH; "vision after vision" and "cached features, fresh prefix
+  cache" DIVERGED at token 4, upstream top-2 margin 0.25 = two bf16 quanta,
+  so not the probe's tie). Present with the drafter off and without the
+  #2356 carry; case 3 runs on a fresh prefix cache, so APC is not involved.
+  Suspect: position state (rope deltas) carried between requests on one side.
+  Next: the failing image FIRST in a fresh process. Reports:
+  `internal/claude/vlm_parity_swift_{mtp,nodraft,nocarry}.json`.
 - [ ] **Move the pin again past Blaizzy/mlx-vlm#2356** once it merges (restored
   qwen3_5 decode). Carried locally since v2.0.185 (`mlx_vlm_patches.py`); the
   pin move turns `TestCarriedPatches` red, and the fix is deleting the carry.
