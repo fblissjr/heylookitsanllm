@@ -105,6 +105,30 @@ class TestAssistantCheckpointSkipped:
         assert [(m["id"], m["provider"]) for m in found] == [("real-mlx-model", "mlx")]
 
 
+@pytest.mark.unit
+def test_an_mlx_drafter_folder_pairs_onto_its_models_and_is_not_one(importer, tmp_path):
+    """The folder `mlx_vlm.convert --mtp` writes (`<model>-mtp`, a drafter
+    model_type, no architectures) is not a model. It pairs onto every
+    neighbour its name, less the last -segment, begins, when the hidden sizes
+    match. `laguna` is in mlx-vlm's drafter map and a real model too."""
+    def mlx_dir(name, model_type, hidden):
+        d = tmp_path / name
+        d.mkdir()
+        (d / "config.json").write_text(json.dumps(
+            {"model_type": model_type, "text_config": {"hidden_size": hidden}}))
+        _write_bytes(d / "model.safetensors", 1000)
+        return d
+
+    mlx_dir("m", "qwen3_5", 64)
+    mlx_dir("m-8bit", "qwen3_5", 64)
+    mlx_dir("m-big", "qwen3_5", 128)
+    mlx_dir("lag", "laguna", 64)
+    drafter = mlx_dir("m-mtp", "qwen3_5_mtp", 64)
+    found = {e["id"]: e["config"].get("draft_model_path")
+             for e in importer.scan_directory(str(tmp_path))}
+    assert found == {"m": str(drafter), "m-8bit": str(drafter), "m-big": None, "lag": None}
+
+
 # ---------------------------------------------------------------------------
 # Entry construction
 # ---------------------------------------------------------------------------

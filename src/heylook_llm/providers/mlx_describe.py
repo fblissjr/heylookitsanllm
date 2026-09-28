@@ -165,9 +165,7 @@ def describe_static(model_id: str, cfg: dict, config_obj: Any, *,
                                derived=derived, engine_default="mlx-vlm")
 
     return EngineDescription(
-        speculative={"in_force": Fact(
-            value=False, provenance="not_applicable",
-            source="heylook's MLX path serves without speculative decoding")},
+        speculative=_speculative(cfg, derived, written),
         cache=_cache_static(),
         runtime=Fact(value="mlx-vlm", provenance="derived",
                      source="every MLX model runs on mlx-vlm's engine (plan W10, A2)"),
@@ -185,6 +183,41 @@ def describe_static(model_id: str, cfg: dict, config_obj: Any, *,
             "request_fields": Fact(provenance="unknown", source="decided at load, with the mode"),
         },
     )
+
+
+def _speculative(cfg: dict, derived: dict, written) -> dict:
+    """What spec decode this model is set up to run, before load (the loaded
+    model's answer is describe_observed's ``in_force``). The drafter's type
+    is its config.json ``model_type``; the kind mlx-vlm runs it as is
+    resolved at load."""
+    from heylook_llm.modality_detect import read_model_config_json
+    from heylook_llm.providers.contract import store_name
+
+    drafter = cfg.get("draft_model_path")
+    found = derived.get("draft_model_path")
+    set_here = bool(written) and drafter != found
+    prov = "configured" if set_here else "derived"
+    how = f"set in this model's {store_name(written)}" if set_here else "found by discovery"
+    if drafter:
+        path = Path(str(drafter)).expanduser()
+        home = Path(str(cfg.get("model_path") or "")).expanduser()
+        where = (f"the neighbouring folder {path.name}/" if path.parent == home.parent
+                 else "a folder outside the model's parent")
+        d = Fact(value=path.name, provenance=prov, source=f"{how}, {where}")
+        model_type = (read_model_config_json(path) or {}).get("model_type")
+        t = Fact(value=model_type if isinstance(model_type, str) else None,
+                 provenance="derived" if model_type else "unknown",
+                 source="the drafter's config.json" if model_type
+                 else "the drafter's config.json names no model_type")
+    else:
+        d = Fact(value=None, provenance=prov, source=(
+            f"turned off in this model's {store_name(written)}; discovery found one"
+            if found and set_here else
+            "no neighbouring drafter folder whose name, less its last -segment, "
+            "begins this model's"))
+        t = Fact(value=None, provenance=prov, source="no drafter")
+    return {"drafter": d, "type": t,
+            "in_force": Fact(provenance="unknown", source="not loaded")}
 
 
 def _thinking(model_id: str, cfg: dict):

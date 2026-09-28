@@ -85,6 +85,11 @@ Record: `internal/claude/improve/archive/runs-2026-09-24/` (report.html has the 
 - [x] **mlx-vlm pin moved to upstream main** `ac737ef3` (v0.7.3, v2.0.124; owner:
   "the current latest commit"), which includes #2328. Suite green; vision
   parity ok and chain probe matching on Qwen3.5-0.8B. Smoke green on all three arms on it (v2.0.133 record).
+- [ ] **MLX spec decode speed, measured** (v2.0.187 shipped it with parity
+  checked, no speed claim): `scripts/perf_ab.py` on qwen3.8 27b with arms
+  drafter on / `{"draft_model_path": null}`, and a `draft_block_size` sweep.
+  Then `tests/smoke/` on all three arms, and `scripts/vlm_parity_probe.py`
+  with the drafter (image prefill runs through the target; unchecked drafted).
 - [ ] **Move the pin again past Blaizzy/mlx-vlm#2356** once it merges (restored
   qwen3_5 decode). Carried locally since v2.0.185 (`mlx_vlm_patches.py`); the
   pin move turns `TestCarriedPatches` red, and the fix is deleting the carry.

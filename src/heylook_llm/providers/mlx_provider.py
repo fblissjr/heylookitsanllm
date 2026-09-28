@@ -524,6 +524,8 @@ class UnifiedTextStrategy:
                          if self.owner is not None else None),
             thinking_budget=_thinking_budget_criteria(
                 request, effective_request, self.template_info, tokenizer),
+            draft=getattr(self.owner, "_draft", None),
+            draft_block_size=effective_request.get('draft_block_size'),
         )
 
     def _prepare_messages(self, messages) -> list[dict]:
@@ -817,6 +819,8 @@ class VLMVisionStrategy:
             thinking_budget=_thinking_budget_criteria(
                 request, effective_request, self.template_info,
                 getattr(processor, "tokenizer", processor)),
+            draft=getattr(self.owner, "_draft", None),
+            draft_block_size=effective_request.get('draft_block_size'),
         )
 
     def _prepare_vlm_inputs_parallel(self, messages: List, processor, config,
@@ -1004,6 +1008,11 @@ class MLXProvider(BaseProvider):
         # stop set resolved ONCE at load, and the last request's context.
         self._apc = None
         self._apc_mode = None
+        # The speculative drafter as (model, kind), loaded from
+        # draft_model_path; None when there is none or it was skipped
+        # (drafter_skipped says why).
+        self._draft = None
+        self.drafter_skipped = None
         self._stop_tokens = frozenset()
         self._context_used = None  # the last request's context; None until one ran
         # Served with vision? Declared modalities + whether mlx-vlm registers
@@ -1086,7 +1095,20 @@ class MLXProvider(BaseProvider):
                 value=int(self._apc.memory_max_bytes), provenance="observed",
                 source="mlx-vlm's automatic prefix-cache budget, sized from the Metal working set")
         return Observed(loaded_template=self.loaded_chat_template, cache=cache,
-                        decoding=decoding)
+                        decoding=decoding, speculative={"in_force": self._spec_in_force()})
+
+    def _spec_in_force(self):
+        """Whether this loaded model drafts, and why not."""
+        from .contract import Fact
+
+        if self._draft is not None:
+            drafter, kind = self._draft
+            return Fact(value=True, provenance="observed", source=(
+                f"{kind} drafter {Path(str(self.config.get('draft_model_path'))).name} "
+                f"loaded; a request with a penalty, logit bias, structured output "
+                f"or thinking budget runs without it"))
+        return Fact(value=False, provenance="observed",
+                    source=self.drafter_skipped or "loaded without a drafter")
 
     def load_model(self):
         model_path = self.config['model_path']
@@ -1218,6 +1240,7 @@ class MLXProvider(BaseProvider):
                 self._apc = vlm_engine.make_apc_manager()
                 self._apc_mode = _apc.APCCoordinator(
                     self._apc, self.model.language_model).legacy_mode
+                self._draft = self._load_drafter()
 
             logging.info(f"Successfully loaded {'VLM' if self.is_vlm else 'LLM'} model")
 
@@ -1258,6 +1281,29 @@ class MLXProvider(BaseProvider):
 
         # Pre-compile generation strategies after model loading
         self._compile_strategies()
+
+    def _load_drafter(self):
+        """``(drafter, kind)`` from ``draft_model_path``, or None.
+
+        A drafter never costs the model, as on gguf: one that will not load,
+        or that mlx-vlm's own check says does not fit this model, is skipped
+        with a warning and the model serves without it (``drafter_skipped``).
+        """
+        path = self.config.get("draft_model_path")
+        if not path:
+            return None
+        name = Path(str(path)).name
+        try:
+            from mlx_vlm.speculative.drafters import (
+                load_drafter, validate_drafter_compatibility)
+            drafter, kind = load_drafter(str(Path(str(path)).expanduser()))
+            validate_drafter_compatibility(self.model, drafter, kind)
+        except Exception as e:  # noqa: BLE001 - any failure means serve without it
+            self.drafter_skipped = f"drafter {name} not used: {e}"
+            logging.warning(f"{self.model_id}: speculative decoding off: {self.drafter_skipped}")
+            return None
+        logging.info(f"{self.model_id}: speculative decoding on ({kind} drafter {name})")
+        return drafter, kind
 
     def _detect_diffusion(self) -> bool:
         """Whether the loaded model needs the diffusion denoising engine.
@@ -1840,6 +1886,7 @@ class MLXProvider(BaseProvider):
         # Clear caches
         self._strategies.clear()
         self._apc = None
+        self._draft = None
 
         # Clean up models
         if hasattr(self, 'model'):

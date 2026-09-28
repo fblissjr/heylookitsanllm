@@ -22,6 +22,7 @@ from heylook_llm.modality_detect import (
     has_vision_weight_files,
     read_model_config_json,
 )
+from heylook_llm.providers.common.loader_routing import hidden_size, mlx_drafter_kind
 
 __all__ = ["ModelImporter"]
 
@@ -77,7 +78,7 @@ class ModelImporter:
                 # These pair with a GGUF's MTP head; they are not servable on
                 # their own and must be refused BEFORE the mlx branch below
                 # would otherwise happily import them.
-                logging.info(f"Skipping drafter/assistant checkpoint (not servable): {rel_path}")
+                logging.info(f"Skipping drafter/assistant checkpoint (not servable on its own): {rel_path}")
             elif self._is_embedding_checkpoint(root_path, config_data):
                 logging.info(f"Skipping embedding checkpoint (no provider serves it): {rel_path}")
             elif self._is_gguf_model(root_path):
@@ -206,11 +207,16 @@ class ModelImporter:
         are drafter/MTP SOURCE checkpoints -- inputs to GGUF conversion,
         never servable on their own -- and must be refused before the mlx
         detector would otherwise claim them.
+
+        A standalone mlx-vlm drafter (``mlx_drafter_kind``: the folder
+        ``mlx_vlm.convert --mtp`` writes) is one too; it is paired onto its
+        target by ``_pick_mlx_drafter`` rather than served.
         """
         if not config_data:
             return False
         architectures = config_data.get("architectures") or []
-        return any("assistant" in str(a).lower() for a in architectures)
+        return (any("assistant" in str(a).lower() for a in architectures)
+                or mlx_drafter_kind(config_data) is not None)
 
     def _is_embedding_checkpoint(self, path: Path, config_data: Optional[dict]) -> bool:
         """A sentence-embedding checkpoint: not servable by any provider.
@@ -425,6 +431,38 @@ class ModelImporter:
                 f"matched on the model name in both headers{extra}")
         return None, None, None
 
+    def _pick_mlx_drafter(self, path: Path, config_data: Optional[dict]) -> Optional[Path]:
+        """The standalone mlx-vlm drafter for this MLX model, or None.
+
+        A neighbouring folder (same parent) that is a drafter
+        (``mlx_drafter_kind``) and whose name, less its last ``-segment``,
+        begins this model's name: ``mlx_vlm.convert --mtp`` writes
+        ``<model>-mtp``, and one drafter serves every conversion of the model
+        beside it (``<model>``, ``<model>-8bit``). Its hidden size must match
+        this model's, which keeps a smaller sibling's drafter off a bigger
+        model whose name it prefixes. Exactly one candidate or none: an
+        ambiguous pairing is left to ``draft_model_path`` in the model's
+        model.heylook.toml.
+        """
+        if config_data is None:
+            config_data = self._read_model_config(path)
+        want = hidden_size(config_data)
+        found = []
+        for sib in self._subdirs(path.parent):
+            stem, sep, _ = sib.name.rpartition("-")
+            if sib == path or not sep or not path.name.lower().startswith(stem.lower()):
+                continue
+            cfg = self._read_model_config(sib)
+            if mlx_drafter_kind(cfg) is None:
+                continue
+            if want is not None and hidden_size(cfg) not in (None, want):
+                continue
+            found.append(sib)
+        if len(found) > 1:
+            logging.info(f"[import] {path.name}: {len(found)} neighbouring drafters "
+                         f"({', '.join(f.name for f in found)}); pairing none")
+        return found[0] if len(found) == 1 else None
+
     @staticmethod
     def _subdirs(path: Path) -> list:
         try:
@@ -578,6 +616,14 @@ class ModelImporter:
         # storing. Materializing any of these is a copy that rots when the
         # model dir changes in place.
         config: dict[str, Any] = {"model_path": str(path)}
+        draft = self._pick_mlx_drafter(path, config_data)
+        if draft is not None:
+            # Spec decode is on wherever a model has a drafter (owner decision
+            # 2026-09-24, same as gguf); unset draft_model_path in the model's
+            # model.heylook.toml to keep it off.
+            config["draft_model_path"] = str(draft)
+            logging.info(f"[import] {model_id}: speculative decoding on -- "
+                         f"drafter from neighbouring folder {draft.name}/")
 
         return self._apply_sidecar(
             {"id": model_id, "provider": "mlx", "config": config}, path)

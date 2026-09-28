@@ -381,6 +381,29 @@ class TestVlmEngineSurface:
         assert "pixel_values" in inspect.signature(_apc.hash_image_payload).parameters
 
 
+class TestSpeculativeSurface:
+    """What MLX speculative decoding consumes (vlm_engine, mlx_provider,
+    loader_routing.mlx_drafter_kind)."""
+
+    def test_the_drafter_surface_we_call(self):
+        from mlx_vlm.generate.ar import BatchGenerator, SpeculativeGenerationBatch
+        from mlx_vlm.speculative import drafters
+
+        params = inspect.signature(BatchGenerator.__init__).parameters
+        for name in ("draft_model", "draft_kind", "draft_block_size"):
+            assert name in params, name
+        for name in ("load_drafter", "validate_drafter_compatibility"):
+            assert callable(getattr(drafters, name)), name
+        assert isinstance(drafters.DRAFTER_KIND_BY_MODEL_TYPE, dict)
+        # vlm_engine.drafting_blocker keeps a request with logits processors
+        # or a thinking budget off the drafter because this batch takes
+        # neither. When it does, the blocker's rule for it is dead weight.
+        spec = inspect.signature(SpeculativeGenerationBatch.__init__).parameters
+        for name in ("logits_processors", "thinking_budget_criteria"):
+            assert name not in spec, (
+                f"mlx-vlm's speculative batch now takes {name}: drop that rule "
+                f"from vlm_engine.drafting_blocker")
+
 class TestCarriedPatches:
     """providers/common/mlx_vlm_patches.py carries heylook's own open
     mlx-vlm PRs. Each test runs the UNPATCHED upstream function too: when it

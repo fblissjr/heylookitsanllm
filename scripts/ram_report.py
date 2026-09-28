@@ -139,8 +139,11 @@ def config_from_path(path: Path) -> dict:
 
         importer = ModelImporter()
         primary = importer._pick_primary_gguf(path)
-        if primary is None:
-            return {"model_path": str(path)}  # MLX dir: size the whole tree
+        if primary is None:  # MLX dir: size the whole tree, plus its drafter
+            config = {"model_path": str(path)}
+            if (draft := importer._pick_mlx_drafter(path, None)) is not None:
+                config["draft_model_path"] = str(draft)
+            return config
         config = {"model_path": str(primary)}
         if (mmproj := importer._pick_mmproj(path)) is not None:
             config["mmproj_path"] = str(mmproj)

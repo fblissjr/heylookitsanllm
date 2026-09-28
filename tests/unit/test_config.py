@@ -152,6 +152,7 @@ class TestMLXModelConfigValidation:
     #   consumed by _build_cache_config/make_cache), removed outright.
     # - retired_mlx_fields: retired with the mlx-vlm engine (plan W10 stage 3);
     #   an entry still carrying one fails at load rather than doing nothing.
+    #   (draft_model_path came back in v2.0.187 as an mlx-vlm drafter folder.)
     # - gguf: the same rule on GGUFModelConfig.
     @pytest.mark.parametrize("config_cls, base, bad_kwargs", [
         pytest.param(MLXModelConfig, BASE, [{"temperatue": 0.9}], id="unknown_key_rejected"),
@@ -159,8 +160,7 @@ class TestMLXModelConfigValidation:
                      id="quantized_kv_start_removed"),
         pytest.param(MLXModelConfig, BASE,
                      [{"loader": "mlx-lm"}, {"cache_type": "quantized"},
-                      {"kv_bits": 8}, {"draft_model_path": "/d"},
-                      {"num_draft_tokens": 3}],
+                      {"kv_bits": 8}, {"num_draft_tokens": 3}],
                      id="retired_mlx_fields_are_refused"),
         pytest.param(GGUFModelConfig, {"model_path": "/x.gguf"}, [{"surprise": True}],
                      id="gguf_extra_fields_forbidden"),

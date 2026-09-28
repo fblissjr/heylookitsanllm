@@ -259,6 +259,8 @@ def largest_alloc_gb(config: dict) -> float:
         sidecar = Path(config.get(key) or "")
         if sidecar.is_file():
             candidates += _shard_set_members(sidecar)
+        elif config.get(key) and sidecar.is_dir():  # an MLX drafter folder
+            candidates += list(sidecar.rglob("*.safetensors"))
     for f in candidates:
         if f in seen:
             continue
@@ -300,8 +302,12 @@ def size_config_gb(config: dict) -> tuple[float, list[str]]:
         sidecar = Path(config.get(key) or "")
         if sidecar.is_file():
             size = _shard_set_bytes(sidecar)
-            total += size
-            notes.append(f"+{label} {sidecar.name} ({size / GB:.1f} GiB)")
+        elif config.get(key) and sidecar.is_dir():  # an MLX drafter folder; Path("") is "."
+            size = sum(f.stat().st_size for f in sidecar.rglob("*.safetensors"))
+        else:
+            continue
+        total += size
+        notes.append(f"+{label} {sidecar.name} ({size / GB:.1f} GiB)")
     return total / GB, notes
 
 

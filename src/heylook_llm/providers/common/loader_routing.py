@@ -66,6 +66,39 @@ def mlx_vlm_supports(model_type: str) -> bool:
         return False
 
 
+def mlx_drafter_kind(config_data: Optional[dict]) -> Optional[str]:
+    """The speculative kind (``"mtp"``, ``"dflash"``, ...) mlx-vlm runs this
+    checkpoint as, when it is a standalone drafter, else None.
+
+    A drafter is a ``model_type`` mlx-vlm's own drafter map names that
+    mlx-vlm does not also serve as a model: ``laguna`` is in the map (its
+    dflash drafter) and is a real model too, so the map alone would hide
+    every laguna model. This is the folder ``mlx_vlm.convert --mtp`` or
+    ``mlx_vlm.split_mtp`` writes (``qwen3_5_mtp``, no ``architectures``).
+    Any failure, a mocked mlx-vlm included, is None."""
+    mt = (config_data or {}).get("model_type")
+    if not isinstance(mt, str):
+        return None
+    try:
+        from mlx_vlm.speculative.drafters import DRAFTER_KIND_BY_MODEL_TYPE
+    except Exception:
+        return None
+    if not isinstance(DRAFTER_KIND_BY_MODEL_TYPE, dict):
+        return None
+    kind = DRAFTER_KIND_BY_MODEL_TYPE.get(mt)
+    if not isinstance(kind, str) or mlx_vlm_supports(mt):
+        return None
+    return kind
+
+
+def hidden_size(config_data: Optional[dict]) -> Optional[int]:
+    """A config's hidden size, under ``text_config`` where it nests (a VLM,
+    an mlx-vlm drafter), else at the top. None when absent."""
+    cfg = config_data or {}
+    size = (cfg.get("text_config") or {}).get("hidden_size", cfg.get("hidden_size"))
+    return size if isinstance(size, int) else None
+
+
 def read_model_type(model_path: str) -> Optional[str]:
     """The ``model_type`` from a model dir's config.json, or None. Defensive --
     a missing/odd config (draft/MTP heads, sparse checkpoints) yields None."""

@@ -481,6 +481,35 @@ class MLXModelConfig(BaseModel):
         json_schema_extra={"is_runtime_default": True,
                            "effect": EFFECT_PER_REQUEST},
     )
+    # Standalone mlx-vlm drafter (the folder `mlx_vlm.convert --mtp` or
+    # `mlx_vlm.split_mtp` writes). Discovery pairs a neighbouring one
+    # (model_importer._pick_mlx_drafter), as gguf pairs its drafter files.
+    draft_model_path: Optional[str] = Field(
+        default=None,
+        description=(
+            "Standalone mlx-vlm drafter folder (e.g. `<model>-mtp`, written by "
+            "`mlx_vlm.convert --mtp` or `mlx_vlm.split_mtp`). Setting it turns "
+            "speculative decoding on; a drafter that will not load or does not "
+            "fit this model is skipped with a warning, and the model serves "
+            "without it. Spec decode is on whenever a model has a drafter "
+            "(owner decision 2026-09-24): discovery pairs a neighbouring drafter "
+            "folder whose name, less its last `-segment`, begins this model's "
+            "name. To keep it off, unset this field in the model's "
+            "model.heylook.toml. A request carrying a penalty, a logit bias, "
+            "structured output or a thinking budget runs without drafting, "
+            "because mlx-vlm's speculative loop applies none of them."),
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD},
+    )
+    draft_block_size: Optional[int] = Field(
+        default=None, gt=0,
+        description=(
+            "Tokens a drafter proposes per speculation round. Unset = the "
+            "drafter's own `block_size` (its config.json). Inert without "
+            "`draft_model_path`. Per-request, so it costs no reload to try; "
+            "any speed claim for a value needs scripts/perf_ab.py."),
+        json_schema_extra={"is_runtime_default": True,
+                           "effect": EFFECT_PER_REQUEST},
+    )
     # Model-level thinking DEFAULT (Qwen3 <think> blocks, gemma-4 thought
     # channels). None = unset (v1.79.62): the cascade then falls back to the
     # model's thinking CAPABILITY (on for a model whose template reads
@@ -622,7 +651,8 @@ class GGUFModelConfig(BaseModel):
 
     One entry = one servable model; MTP/draft artifacts are FIELDS here,
     never their own entries (embedded MTP -> just ``spec_type``; a sidecar
-    drafter -> ``draft_model_path``; MLX serves without speculative decoding).
+    drafter -> ``draft_model_path``; MLX takes a drafter folder in its own
+    ``draft_model_path``).
     llama-server owns tokenization, chat templating, and reasoning splitting
     -- the provider surfaces pre-split thinking via GenerationChunk.thinking
     and reports template_info() = None.

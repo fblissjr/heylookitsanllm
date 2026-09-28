@@ -42,7 +42,7 @@ from typing import Any, Generator, Iterable, Optional
 
 import mlx.core as mx
 
-from ..base import CacheReport, GenerationChunk, InvalidGenerationRequest
+from ..base import CacheReport, GenerationChunk, InvalidGenerationRequest, SpecReport
 
 # The spike's settings (2026-09-23, measured): at mlx-vlm's defaults a
 # checkpoint model keeps only its prompt end and one 2048-aligned boundary,
@@ -307,6 +307,22 @@ def release_prefill(bg) -> None:
         logging.debug(f"APC block release skipped: {e}")
 
 
+def drafting_blocker(processors: list, thinking_budget) -> Optional[str]:
+    """Why this request cannot draft, or None when it can.
+
+    mlx-vlm's speculative loop (``SpeculativeGenerationBatch``) takes a
+    sampler only: no logits processors and no thinking budget. A request
+    carrying either (a penalty, a logit bias, structured output, a budget)
+    runs without its drafter rather than silently losing them. Sampling is
+    not a blocker: every emitted token is the target's own sample, and a
+    draft is kept only where it equals it."""
+    if processors:
+        return "a logits processor (penalty, logit bias or structured output)"
+    if thinking_budget is not None:
+        return "a thinking budget"
+    return None
+
+
 def _token_int(t) -> int:
     return int(t.item()) if hasattr(t, "item") else int(t)
 
@@ -333,6 +349,8 @@ def generate(
     reset_peak: bool = True,
     thinking_budget=None,
     shared_prefixes: Iterable[list[int]] = (),
+    draft=None,
+    draft_block_size: Optional[int] = None,
 ) -> Generator[GenerationChunk, None, None]:
     """One request, start to finish, yielding GenerationChunks.
 
@@ -351,6 +369,10 @@ def generate(
     system prompt as the template renders it); on a checkpoint model the
     engine snapshots where each agrees with this prompt, so the next
     conversation restores it (``install_capture_policy``).
+    ``draft``: the loaded model's ``(drafter, kind)`` or None. It drafts
+    only when ``drafting_blocker`` finds nothing; the final chunk then
+    carries a ``SpecReport`` (accepted and emitted, counted per round here:
+    each ``next()`` returns one whole round, its drafts plus one target token).
     ``embed_extras`` reach ``get_input_embeddings`` only, never the
     generator's prompt kwargs (heylook's ``cached_image_features``; mlx-vlm's
     server strips its own vision-cache kwargs the same way).
@@ -382,6 +404,16 @@ def generate(
     }
     if prefill_step_size:
         bg_kwargs["prefill_step_size"] = prefill_step_size
+    active = generated_only(processors) or []
+    drafting = False
+    if draft is not None:
+        blocker = drafting_blocker(active, thinking_budget)
+        if blocker is None:
+            drafting = True
+            bg_kwargs.update(draft_model=draft[0], draft_kind=draft[1],
+                             draft_block_size=draft_block_size)
+        else:
+            logging.debug(f"{model_id}: not drafting this request: it carries {blocker}")
     bg = BatchGenerator(model.language_model, processor, **bg_kwargs)
     detok = None
     salt, boundaries = None, []
@@ -399,7 +431,7 @@ def generate(
         if apc_manager is not None:
             salt = gen_kwargs["_apc_semantic_hash"] = semantic_hash(raw_inputs, model, processor)
         (uid,) = bg.insert([prompt_list], max_tokens=max_tokens, prompt_kwargs=[gen_kwargs],
-                           logits_processors=[generated_only(processors) or []],
+                           logits_processors=[active],
                            thinking_budget_criteria=[thinking_budget])
 
         if detokenizer is not None:
@@ -412,6 +444,8 @@ def generate(
         cache_rep = None
         prefill_done_at = None
         generated = 0
+        accepted = 0
+        seen_token = False
         first = True
         last_progress = None
         while True:
@@ -435,12 +469,18 @@ def generate(
                     last_progress = progress
                     report_progress(*progress)
             finish = None
-            text = ""
-            token = None
+            toks = []
+            delivered = 0
             for r in responses:
                 if r.uid != uid:
                     continue
+                if finish is not None:
+                    # A drafting round delivers several tokens at once; nothing
+                    # after a stop is reply text, including a stop only
+                    # heylook's set holds (mlx-vlm keeps going past it).
+                    break
                 if r.token is not None:
+                    delivered += 1
                     tok = _token_int(r.token)
                     # Either stop set ends the reply, and neither's token is
                     # text. mlx-vlm stops on its own list (config.json eos,
@@ -451,37 +491,52 @@ def generate(
                     if tok in stop or r.finish_reason == "stop":
                         finish = "stop"
                     else:
-                        token = tok
-                        generated += 1
-                        detok.add_token(tok)
-                        text += detok.last_segment
+                        toks.append(tok)
                 if r.finish_reason is not None and finish is None:
                     finish = "stop" if r.finish_reason == "stop" else "length"
-            if token is None and finish is None:
+            if drafting and delivered:
+                # Every call after the first token's is one round: its drafts
+                # the target kept, plus the target's own token.
+                if seen_token:
+                    accepted += delivered - 1
+                seen_token = True
+            if not toks and finish is None:
                 continue
-            if finish is not None:
-                detok.finalize()
-                text += detok.last_segment
-                if finish == "stop" and generated < max_tokens:
-                    bg.remove(uid)
-            now = time.perf_counter()
-            prefill_end = prefill_done_at or now
-            chunk = GenerationChunk(
-                text=text, token=token, finish_reason=finish,
-                prompt_tokens=n, generation_tokens=generated,
-                prompt_tps=(n - cached) / max(prefill_end - started, 1e-9),
-                generation_tps=generated / max(now - prefill_end, 1e-9) if generated else 0.0,
-                peak_memory=mx.get_peak_memory() / 1e9,
-            )
-            if first:
-                # A fresh turn's first token carries the artifact space after
-                # the role marker; a continuation's first token completes
-                # prefilled text and its space is real.
-                if not continuing and chunk.text.startswith(" "):
-                    chunk.text = chunk.text.lstrip()
-                chunk.cache = cache_rep
-                first = False
-            yield chunk
+            if finish == "stop" and generated + len(toks) < max_tokens:
+                bg.remove(uid)
+            # One chunk per token, a drafting round included: a chunk's
+            # `token` is one id, and readers count and align on it.
+            steps = toks or [None]
+            for i, tok in enumerate(steps):
+                last = i == len(steps) - 1
+                text = ""
+                if tok is not None:
+                    generated += 1
+                    detok.add_token(tok)
+                    text = detok.last_segment
+                if last and finish is not None:
+                    detok.finalize()
+                    text += detok.last_segment
+                now = time.perf_counter()
+                prefill_end = prefill_done_at or now
+                chunk = GenerationChunk(
+                    text=text, token=tok, finish_reason=finish if last else None,
+                    prompt_tokens=n, generation_tokens=generated,
+                    prompt_tps=(n - cached) / max(prefill_end - started, 1e-9),
+                    generation_tps=generated / max(now - prefill_end, 1e-9) if generated else 0.0,
+                    peak_memory=mx.get_peak_memory() / 1e9,
+                )
+                if drafting and last and finish is not None:
+                    chunk.spec = SpecReport(accepted=accepted, emitted=generated)
+                if first:
+                    # A fresh turn's first token carries the artifact space after
+                    # the role marker; a continuation's first token completes
+                    # prefilled text and its space is real.
+                    if not continuing and chunk.text.startswith(" "):
+                        chunk.text = chunk.text.lstrip()
+                    chunk.cache = cache_rep
+                    first = False
+                yield chunk
             if finish is not None:
                 return
     finally:

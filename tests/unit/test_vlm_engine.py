@@ -84,7 +84,8 @@ class _FakeBatchGenerator:
     blocks until it is released."""
     script: list = []
 
-    def __init__(self, *_a, **_k):
+    def __init__(self, *_a, **k):
+        self.kwargs = k
         self.apc = None
         self.released = 0
         self._prompt_batch = SimpleNamespace(
@@ -117,14 +118,14 @@ def _run(monkeypatch, script, **kw):
     # by module object: `mlx_vlm.generate` resolves to the re-exported function
     ar = importlib.import_module("mlx_vlm.generate.ar")
     monkeypatch.setattr(ar, "BatchGenerator",
-                        lambda *a, **k: made.append(_FakeBatchGenerator()) or made[-1])
+                        lambda *a, **k: made.append(_FakeBatchGenerator(**k)) or made[-1])
     model = SimpleNamespace(
         language_model=None,
         get_input_embeddings=lambda *a, **k: SimpleNamespace(to_dict=lambda: {}))
     ids = mx.array([[1, 2, 3]])
     chunks = list(vlm_engine.generate(
         model=model, processor=None, apc_manager=None, input_ids=ids,
-        raw_inputs={"input_ids": ids}, sampler=None, processors=[],
+        raw_inputs={"input_ids": ids}, sampler=None, processors=kw.pop("processors", []),
         stop_tokens=kw.pop("stop_tokens", [99]), max_tokens=8,
         detokenizer=_FakeDetok(), **kw))
     return chunks, made[0]
@@ -138,6 +139,30 @@ def test_a_token_the_engine_stops_on_is_never_text(monkeypatch):
     chunks, _ = _run(monkeypatch, [([], [resp(5)]), ([], [resp(42, "stop")])])
     assert "".join(c.text for c in chunks) == "<5>"
     assert chunks[-1].finish_reason == "stop" and chunks[-1].generation_tokens == 1
+
+
+@pytest.mark.unit
+def test_a_drafting_round_ends_at_a_stop_and_counts_its_kept_drafts(monkeypatch):
+    """With a drafter, next() delivers a whole round. Reply text ends at the
+    first stop, one only heylook's set holds included, and the report counts
+    each round's kept drafts (its tokens less the target's own). A request
+    carrying a logits processor or a thinking budget never drafts: mlx-vlm's
+    speculative loop would drop both."""
+    from heylook_llm.providers.common.vlm_engine import drafting_blocker
+
+    resp = lambda tok, fin=None: SimpleNamespace(uid=0, token=tok, finish_reason=fin)
+    script = [([], [resp(5)]), ([], [resp(6), resp(7), resp(8)]),
+              ([], [resp(9), resp(99), resp(10)])]
+    chunks, bg = _run(monkeypatch, script, draft=("drafter", "mtp"))
+    assert (bg.kwargs["draft_model"], bg.kwargs["draft_kind"]) == ("drafter", "mtp")
+    assert [c.token for c in chunks] == [5, 6, 7, 8, 9]   # one chunk per token
+    assert "".join(c.text for c in chunks) == "<5><6><7><8><9>"
+    assert (chunks[-1].spec.accepted, chunks[-1].spec.emitted) == (3, 5)
+
+    _, bg = _run(monkeypatch, [([], [resp(5, "stop")])], draft=("drafter", "mtp"),
+                 processors=[lambda tokens, logits: logits])
+    assert "draft_model" not in bg.kwargs
+    assert drafting_blocker([], object()) and drafting_blocker([], None) is None
 
 
 @pytest.mark.unit

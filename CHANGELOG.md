@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.187]
+
+### Added
+
+- **Speculative decoding on MLX.** A standalone mlx-vlm drafter folder (the
+  `<model>-mtp` that `mlx_vlm.convert --mtp` or `mlx_vlm.split_mtp` writes)
+  is paired by discovery onto every neighbouring conversion its name, less
+  the last `-segment`, begins (hidden sizes must match; one candidate or
+  none), loaded beside the model, and handed to mlx-vlm's `BatchGenerator`.
+  New `MLXModelConfig` fields: `draft_model_path` (the folder; back with a new
+  meaning after its v2.0.88 retirement) and `draft_block_size` (per request).
+  A drafter that will not load or fails mlx-vlm's compatibility check is
+  skipped with a warning and the model serves without it. Output is the
+  undrafted output at any temperature (every token is the target's own
+  sample). A request with a penalty, logit bias, structured output or a
+  thinking budget runs undrafted, because mlx-vlm's speculative loop applies
+  none of them (`vlm_engine.drafting_blocker`; `TestSpeculativeSurface`
+  fails when upstream starts to). `engine.speculative` reports drafter, type
+  and `in_force` on MLX as on gguf; a drafted request reports `accepted` and
+  `emitted` in `performance.speculative`.
+- A drafter folder is no longer imported as a servable model, and the RAM
+  pre-flight counts it.
+
+### Fixed
+
+- The engine loop yields one chunk per token and stops at the first stop even
+  when a call delivers several tokens (a drafting round): a stop only
+  heylook's set holds would otherwise have streamed the rest of its round.
+
+Verified: unit and contract suites green. Live, in-process on qwen3.8 27b
+bf16 with its extracted MTP drafter: greedy token ids identical across
+undrafted, drafted cold and drafted restored from the prefix cache;
+`scripts/chain_probe.py` clean on it (drafted) and on Qwen3.5-0.8B,
+Qwen3-0.6B and gpt-oss-20b (two near-ties on gpt-oss, as at v2.0.170). Not
+run: `scripts/perf_ab.py` (no speed claim is made here), `tests/smoke/`, the
+eval bank, `scripts/vlm_parity_probe.py`, `scripts/vendor_frontend.py --check`
+(no vendored-library change).
+
 ## [2.0.186]
 
 ### Changed

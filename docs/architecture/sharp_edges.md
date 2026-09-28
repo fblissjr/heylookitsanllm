@@ -1830,6 +1830,22 @@ This is not the "no mlx-vlm fork" decision in `.claude/rules/mlx.md`, which is
 about carrying assistant-turn image support; a carry here is always a filed
 upstream PR of ours.
 
+MLX speculative decoding (2026-09-28, v2.0.187). Plan W10 stage 3 retired the
+MLX drafter fields because mlx-lm's speculative path went with mlx-lm and no
+served MLX model had a drafter; it was a fact about the population, not a
+decision against drafting. It came back when a bf16 qwen3.8 27b conversion ran
+slowly and its MTP head had been stripped at conversion (mlx-vlm's qwen3_5
+sanitize always drops `mtp.*`; `--mtp` writes the head to a separate folder).
+Three traps found on the way in. mlx-vlm's `SpeculativeGenerationBatch` takes
+a sampler only, so wiring the drafter unconditionally would have dropped every
+penalty, logit bias, structured-output constraint and thinking budget without
+a word; `drafting_blocker` runs those requests undrafted. A round delivers
+several tokens per `next()`, which let a stop only heylook's set holds leak the
+rest of its round as text, and put several tokens' text under one chunk's
+single `token` id, which chain_probe's token alignment reads. And `laguna` is
+both a real mlx-vlm model and a key in the drafter map, so "a model_type the
+drafter map names" alone would have hidden every laguna model.
+
 The optloop-lib bench exists because the app-level optloop (retired
 2026-07-06) bypassed the server code it claimed to measure.
 
