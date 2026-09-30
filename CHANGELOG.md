@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.188]
+
+### Changed
+
+- **The #2356 carry follows the updated upstream PR: a restored single row
+  gets the cache a cold row would.** A drafted request now keeps batch caches
+  on restore, as it does cold and as upstream does, instead of getting a plain
+  cache inside the batch drafting loop. The carry binds to each request's
+  generator (`mlx_vlm_patches.apply_to`, called from `vlm_engine.generate`)
+  rather than patching `APCCoordinator` at model load, so it can see the
+  drafter and `kv_bits`. Undrafted restores are unchanged. `TestCarriedPatches`
+  now runs upstream's unpatched restore site; it was confirmed to fail on the
+  PR's own code, so it goes red when the pin includes the fix.
+  `scripts/chain_probe.py` clean on Qwen3.5-0.8B (undrafted) and on the
+  qwen3.8 27b fine-tune with its MTP drafter (drafted on every hop, fresh and
+  restored). Not run: `tests/smoke/`, `scripts/perf_ab.py`, the eval bank.
+- **`scripts/chain_probe.py` records whether each hop drafted.** Each hop
+  now carries the generation's speculative report (`fresh_spec`,
+  `restored_spec`) and the summary line shows accepted drafts, so a "drafted"
+  probe run can be checked from its own record.
+
 ## [2.0.187]
 
 ### Added

@@ -1830,6 +1830,20 @@ This is not the "no mlx-vlm fork" decision in `.claude/rules/mlx.md`, which is
 about carrying assistant-turn image support; a carry here is always a filed
 upstream PR of ours.
 
+The carry follows its PR (2026-09-30, v2.0.188). Reviewing #2356 found the
+first version's condition could not see the drafter: `merge_rows` belongs to
+the coordinator, which holds no draft state, so every drafted restore got a
+plain cache inside the batch drafting loop, a combination upstream never runs
+(its own drafted restores stay on batch caches) and that was checked only with
+qwen3_5's MTP head. The PR was reworked to one rule, "a restored single row
+gets the cache a cold row would", and the carry had to follow it. It now binds
+per generator (`apply_to`, the same shape as `install_capture_policy`), where
+the drafter, `kv_bits` and the model are visible, and it no longer patches the
+class at load. The retirement check moved with it: it drives upstream's
+unpatched restore site (`_build_mixed_prompt_batch`) and was confirmed red on
+the PR's own code, because the reworked PR fixes the restore site and leaves
+`merge_rows` untouched, so the old check would never have fired.
+
 MLX speculative decoding (2026-09-28, v2.0.187). Plan W10 stage 3 retired the
 MLX drafter fields because mlx-lm's speculative path went with mlx-lm and no
 served MLX model had a drafter; it was a fact about the population, not a

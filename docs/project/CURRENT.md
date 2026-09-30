@@ -18,6 +18,7 @@ rather than carried forward as green.
 |---|---|---|
 | unit + contract | green (1439 passed) | v2.0.173 |
 | v2.0.187 MLX speculative decoding | unit + contract 1455; in-process on qwen3.8 27b bf16 + MTP drafter: greedy ids identical undrafted / drafted cold / drafted restored; chain probe clean on it (drafted), Qwen3.5-0.8B, Qwen3-0.6B, gpt-oss-20b (two near-ties, as before). NOT run: perf_ab, smoke, eval bank, vlm_parity_probe | v2.0.187 |
+| v2.0.188 #2356 carry per generator (follows the updated PR) | unit + contract 1456; chain probe clean on Qwen3.5-0.8B and on the qwen3.8 27b fine-tune + MTP (drafting recorded on every hop, fresh and restored); the retirement test confirmed red on the PR's code (forks/mlx-vlm `d9e21a0d`). NOT run: smoke, perf_ab, eval bank, vlm_parity_probe | v2.0.188 |
 | mlx-vlm pin move to `fdcdaf46` (commit `9af89c0a`, no version bump) | unit + contract 1455. NOT run: smoke, `vlm_parity_probe.py`, `chain_probe.py`; the #2356 carry is unchanged and its retirement test stayed green | 2026-09-30 |
 | v2.0.186 pin move (mlx-vlm `00093678`) + #2356 carry (v2.0.185) | unit + contract 1452 on both. NOT run: smoke, `vlm_parity_probe.py`, `chain_probe.py` (the carry is a cache change) | v2.0.186 |
 | v2.0.175 / v2.0.176 | unit + contract 1439, e2e render 104/104; flash attention on/off A/B on the Qwen3.8 GGUF contaminated (no verdict; TODO) | v2.0.176 |

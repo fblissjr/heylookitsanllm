@@ -75,7 +75,8 @@ def http_asker():
                                    headers={"Content-Type": "application/json"})
         b = json.loads(urllib.request.urlopen(r, timeout=900).read())
         text = "".join(x.get("text") or "" for x in b["content"] if x.get("type") == "text")
-        return text, (b.get("performance") or {}).get("cache"), None, text
+        perf = b.get("performance") or {}
+        return text, perf.get("cache"), None, text, perf.get("speculative")
 
     def clear():
         r = urllib.request.Request(a.server + "/v1/cache/clear", method="POST",
@@ -111,15 +112,17 @@ def inproc_asker():
         # assistant content is refused by gpt-oss's template.
         def go():
             req = request(messages)
-            text, cache, tokens = "", None, []
+            text, cache, tokens, spec = "", None, [], None
             for c in provider.create_chat_completion(req):
                 text += c.text or ""
                 if c.token is not None:
                     tokens.append(int(c.token))
                 if getattr(c, "cache", None) is not None:
                     cache = asdict(c.cache)
+                if getattr(c, "spec", None) is not None:
+                    spec = asdict(c.spec)
             reply, _ = parse_reasoning(text, parser_factory_for(provider, req)())
-            return text, cache, tokens, reply
+            return text, cache, tokens, reply, spec
         return on_worker(go)
 
     def judge(messages, fresh_tokens, restored_tokens):
@@ -138,13 +141,16 @@ ask, judge, evict = http_asker() if a.server else inproc_asker()
 
 def run_hop(label, msgs, prime):
     evict()
-    fresh, fcache, ftoks, reply = ask(msgs)
+    fresh, fcache, ftoks, reply, fspec = ask(msgs)
     if prime is not None:
         evict()                         # or the restore is of this same prompt
         ask(prime)                      # prime the cache with the previous hop
-    restored, rcache, rtoks, _ = ask(msgs)
+    restored, rcache, rtoks, _, rspec = ask(msgs)
     hop = {"hop": label, "match": fresh == restored, "fresh_cache": fcache,
-           "restored_cache": rcache, "fresh": fresh, "restored": restored}
+           "restored_cache": rcache, "fresh": fresh, "restored": restored,
+           # Drafting in force, or not: without this a "drafted" run is
+           # unfalsifiable from its own record.
+           "fresh_spec": fspec, "restored_spec": rspec}
     if not hop["match"]:
         hop.update(judge(msgs, ftoks, rtoks) if judge else
                    {"verdict": "MISMATCH", "why": "over HTTP: rerun in-process for a tie verdict"})
@@ -179,7 +185,8 @@ for h in hops:
     tail = "" if h["match"] else f" {h['verdict']}" + (
         f" at token {h['first_divergence']} (margin {h['margin']})" if "margin" in h else "")
     print(f"{h['hop']:9} match={h['match']} restored={rc.get('outcome')} cause={rc.get('cause')} "
-          f"cached={rc.get('cached_tokens')}/{rc.get('prompt_tokens')}{tail}")
+          f"cached={rc.get('cached_tokens')}/{rc.get('prompt_tokens')}"
+          f" drafted={(h['restored_spec'] or {}).get('accepted', 'no')}{tail}")
 print("wrote", path)
 # Per-hop expectation. Every extend hop (the multi-turn follow-up, and the
 # exact repeat that opens the chain) MUST restore: if reuse breaks entirely,

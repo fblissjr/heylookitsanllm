@@ -43,6 +43,7 @@ from typing import Any, Generator, Iterable, Optional
 import mlx.core as mx
 
 from ..base import CacheReport, GenerationChunk, InvalidGenerationRequest, SpecReport
+from . import mlx_vlm_patches
 
 # The spike's settings (2026-09-23, measured): at mlx-vlm's defaults a
 # checkpoint model keeps only its prompt end and one 2048-aligned boundary,
@@ -420,6 +421,7 @@ def generate(
     try:
         boundaries = shared_prefix_len(prompt_list, shared_prefixes)
         install_capture_policy(bg, boundaries)
+        mlx_vlm_patches.apply_to(bg)
         cold = apc_is_empty(apc_manager)
         has_media = raw_inputs.get("pixel_values") is not None
         if bg.apc is not None:

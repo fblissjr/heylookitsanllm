@@ -410,7 +410,7 @@ class TestCarriedPatches:
     already behaves like the patch, the pin has moved past the PR and the
     patch is dead weight."""
 
-    def test_single_restored_row_keeps_its_own_cache_2356(self):
+    def test_2356_carry_binds_per_generator_under_the_cold_rule(self):
         from types import SimpleNamespace
 
         import mlx.core as mx
@@ -418,12 +418,6 @@ class TestCarriedPatches:
         from mlx_vlm.apc_coordinator import APCCoordinator
         from mlx_vlm.models.cache import ArraysCache, KVCache
         from heylook_llm.providers.common import mlx_vlm_patches
-
-        mlx_vlm_patches.apply()
-        patched = APCCoordinator.merge_rows
-        assert getattr(patched, "_heylook_patch", None) == "mlx-vlm#2356", (
-            "carry not installed: merge_rows signature changed upstream")
-        upstream = patched._heylook_upstream
 
         def filled():
             arrays, kv = ArraysCache(2), KVCache()
@@ -435,31 +429,79 @@ class TestCarriedPatches:
         manager = _apc.APCManager(num_blocks=8, block_size=16, disk=None)
         tokens = list(range(32))
         assert manager.store_exact_cache(tokens, filled())
-        runner = manager.coordinator(SimpleNamespace(
-            make_cache=lambda: [ArraysCache(2), KVCache()]))
+        model = SimpleNamespace(make_cache=lambda: [ArraysCache(2), KVCache()])
+        class_method = APCCoordinator.__dict__["merge_rows"]
 
-        def hit():
+        def generator(**over):
+            fields = dict(apc=manager.coordinator(model), model=model, kv_bits=None,
+                          draft_model=None, draft_kind=None)
+            return SimpleNamespace(**{**fields, **over})
+
+        def hit(runner):
             return runner.lookup(tokens + [99], extra_hash=0, safe_lookup_min=0,
                                  suffix_is_text_only=lambda _: True,
                                  prefix_has_media=lambda _: False)
 
-        one = hit()
-        caches, _ = upstream(runner, [one], [one["prefix_len"]])
-        assert caches is not one["warm_cache"], (
-            "upstream merge_rows now returns a lone restored row's own cache: "
-            "Blaizzy/mlx-vlm#2356 (or its equivalent) is in the pin. Delete "
-            "_patch_merge_rows from providers/common/mlx_vlm_patches.py and "
-            "this test.")
-        runner.release_hit(one)
+        # The rule leaves these generators on batch caches, as mlx-vlm does
+        # cold: a drafter, KV quantization, a model without make_cache.
+        for over in ({"draft_model": object(), "draft_kind": "mtp"}, {"kv_bits": 8},
+                     {"model": SimpleNamespace()}, {"apc": None}):
+            bg = generator(**over)
+            assert not mlx_vlm_patches.apply_to(bg), over
+            if bg.apc is not None:
+                assert not hasattr(bg.apc.merge_rows, "_heylook_patch"), over
 
-        one = hit()
+        bg = generator()
+        assert mlx_vlm_patches.apply_to(bg) and mlx_vlm_patches.apply_to(bg)
+        runner = bg.apc
+        assert runner.merge_rows._heylook_patch == mlx_vlm_patches.PATCH_2356
+        assert not hasattr(runner.merge_rows._heylook_upstream, "_heylook_patch")
+        assert APCCoordinator.__dict__["merge_rows"] is class_method, (
+            "the carry must bind to one generator, never to the class")
+
+        one = hit(runner)
         before = manager.stats_snapshot()["restored_tokens"]
         caches, prefix = runner.merge_rows([one], [one["prefix_len"]])
         assert caches is one["warm_cache"] and prefix == one["prefix_len"]
         assert manager.stats_snapshot()["restored_tokens"] == before + prefix
         runner.release_hit(one)
 
-        two = hit()
+        two = hit(runner)
         caches, _ = runner.merge_rows([two, None], [two["prefix_len"], 0])
         assert caches is not two["warm_cache"]
         runner.release_hit(two)
+
+    def test_2356_upstream_restore_path_still_merges_a_lone_row(self):
+        """Retirement: runs mlx-vlm's UNPATCHED restore site. When it stops
+        sending a lone checkpoint hit on a plain-eligible generator through
+        merge_rows (the PR's own fix, or any equivalent), the carry is dead
+        weight."""
+        import sys
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock, patch
+
+        import mlx.core as mx
+        from mlx_vlm.generate.ar import BatchGenerator
+
+        bg = object.__new__(BatchGenerator)
+        bg.apc_manager = object()
+        bg.model = SimpleNamespace(layers=[object()], make_cache=lambda: [])
+        bg.prefill_step_size = None
+        bg.kv_bits, bg.kv_group_size, bg.kv_quant_scheme = None, 64, "uniform"
+        bg._wire_stack = None
+        bg.apc = MagicMock()
+        bg.apc.merge_rows.return_value = (["merged"], 4)
+        bg.apc.materialize_single.return_value = ["plain"]
+        pick = {"warm_cache": ["warm"], "matched_blocks": [], "prefix_len": 4,
+                "extra_hash": 7, "full_input_ids": list(range(8))}
+        sequence = (0, list(range(8)), 1, {"inputs_embeds": mx.ones((1, 8, 4))}, [], None)
+        captured = {}
+        with (patch.object(BatchGenerator, "_apc_pick_for", side_effect=[pick]),
+              patch.object(sys.modules["mlx_vlm.generate"], "PromptProcessingBatch",
+                           lambda **kw: captured.update(kw) or SimpleNamespace(**kw))):
+            assert bg._build_mixed_prompt_batch([sequence]) is not None
+        assert bg.apc.merge_rows.called and captured["warm_cache"] == ["merged"], (
+            "upstream no longer merges a lone restored row: Blaizzy/mlx-vlm#2356 "
+            "(or its equivalent) is in the pin. Delete providers/common/"
+            "mlx_vlm_patches.py's #2356 carry, its apply_to call in "
+            "vlm_engine.generate, and these two tests.")
