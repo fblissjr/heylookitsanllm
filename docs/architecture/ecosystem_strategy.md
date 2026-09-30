@@ -19,6 +19,15 @@ after ~2026-09.
 > applies to mlx-vlm alone. What this doc says about mlx-lm's release cadence
 > is the dated reasoning that led there, not a live dependency.
 
+> **Update 2026-09-30 (owner): build on top of mlx-vlm, not a fork and not a
+> clone.** heylook may own the runtime around mlx-vlm's models (engine loop,
+> scheduling, cache, sampling and drafting policy) where that serves the
+> owner's use; model code and kernels stay upstream, and model-level fixes
+> are carried as patches until they merge (VISION.md principle 6,
+> `.claude/rules/mlx.md`). The "Fork mlx-lm/mlx-vlm" entry under
+> alternatives still stands: this is an owned layer over a pinned library,
+> not a fork. The ecosystem facts below were not re-verified for this update.
+
 ## Overview
 
 The distilled message to any session working on performance right now:

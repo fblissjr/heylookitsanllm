@@ -38,8 +38,14 @@ driver and a workbench at the same time.
 5. **Both engines are first class.** MLX and llama.cpp each do something the
    other does not. The user sees one server, one set of controls and one
    report, whichever engine is behind a model.
-6. **Follow upstream, don't fork.** Pin exact versions, contribute fixes back,
-   and keep the local layer thin. The ecosystem moves faster than any fork can.
+6. **Build on upstream, don't clone it.** mlx-vlm and llama.cpp own the
+   models and their kernels. heylook pins exact versions, sends fixes back,
+   and carries a fix only until upstream has it; each carried fix has a test
+   that says when to delete it. On MLX, heylook owns the runtime around
+   mlx-vlm's models wherever that serves the owner's evolving use: scheduling,
+   cache policy, sampling and drafting policy, tuned for the models in daily
+   use on this machine. It never re-implements an architecture, and it does
+   not optimize for users it does not have.
 7. **Simple where it can be, with judgment.** Remove what is dead or
    duplicated. Keep what earns its place, even when removing it would be
    tidier.
@@ -55,6 +61,16 @@ Toward one engine-neutral server: the same contract, cache behaviour and
 reporting whether a model runs on MLX or llama.cpp, with less code on each
 side of that line, not more. Toward models that are fast in real use, which
 means reusing what was already computed (multi-turn context, long system
-prompts, images) rather than chasing raw throughput. And toward a codebase
-small and legible enough that one person, helped by agents, can keep it
-honest.
+prompts, images) rather than chasing raw throughput. On MLX that means a thin
+runtime of heylook's own over mlx-vlm's models, tuned model by model for the
+ones in daily use, rather than waiting for upstream to schedule, cache or
+draft the way this machine needs. And toward a codebase small and legible
+enough that one person, helped by agents, can keep it honest.
+
+## Changing this document
+
+It follows the owner's use as that use evolves. When a change would conflict
+with something written here, raise the conflict with the owner before
+building it, name the principle it collides with, and let the owner decide:
+change the work, or change this document. The vision moves by an explicit
+edit, never by drift.

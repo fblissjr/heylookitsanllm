@@ -13,7 +13,7 @@ subprocess per loaded model), and a vanilla-JS frontend (`frontend/`, served at 
 
 ## Where to look first
 
-- [VISION.md](./VISION.md): what the project is for. It breaks ties when a design choice is unclear; it carries no status and no plan.
+- [VISION.md](./VISION.md): what the project is for. It breaks ties when a design choice is unclear; it carries no status and no plan. A change that conflicts with it is raised with the owner before it is built, naming the principle; the vision changes by an explicit edit, never by drift.
 - [docs/wiki/](./docs/wiki/README.md): how the system works end to end. Start here to learn a subsystem.
 - [docs/project/CURRENT.md](./docs/project/CURRENT.md) and [TODO.md](./docs/project/TODO.md): status and backlog. Read before starting.
 - [docs/architecture/sharp_edges.md](./docs/architecture/sharp_edges.md): why each rule here and in `.claude/rules/` exists. Read an area's section before changing it, and the [postmortems](./docs/architecture/postmortems/) before touching providers.
