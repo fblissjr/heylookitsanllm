@@ -20,7 +20,7 @@ subprocess per loaded model), and a vanilla-JS frontend (`frontend/`, served at 
 - [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md) §4: the authoritative API contract.
 - Loops (`/improve`, `/optimize`, `/design-scoreboard`): [docs/loops.md](./docs/loops.md) holds this repo's North star, Where things live, How to work, Other sessions, Measurement, Reporting and Loop state sections. It counts as part of this file; read it before any loop run.
 - Everything else: [docs/README.md](./docs/README.md).
-- `internal/` (logs, research, local notes), `heylook.toml` and `coderef/` are gitignored and never committed. `coderef/llama.cpp` is the checkout the running llama-server was built from (its `heylook-build.json` names the commit); read upstream tip from a separate clone.
+- `internal/` (logs, research, local notes), `heylook.toml`, `coderef/` and `forks/` are gitignored and never committed. `coderef/llama.cpp` is the checkout the running llama-server was built from (`coderef/llama.cpp/build/heylook-build.json` names the commit); read upstream tip from a separate clone. `coderef/mlx-vlm` is pure upstream, for reading only: upstream PR work is built in `forks/mlx-vlm` (origin is the owner's fork, `upstream` is the project), never in `coderef/`.
 
 ## Rules by area
 
@@ -55,6 +55,7 @@ Each file below holds the mechanisms that bite in its area. Claude Code loads it
 - The checks the Tests section names for what you touched have run, and you say which did not.
 - Docs moved in the same commit: the matching wiki page when a subsystem's behaviour changed, spec §4 when an API contract changed, and `sharp_edges.md` when a new rule has a story behind it.
 - For a change landing on main, `CHANGELOG.md` has the entry and `src/heylook_llm/__init__.py` `__version__` matches it (a pre-commit guard checks this). On a branch someone else will merge, such as a loop run's, leave both alone and propose the entry in your report: sessions on main bump the version constantly, so a branch that bumps it conflicts at merge.
+- A dependency pin move on its own (the mlx-vlm `rev =`, `uv.lock`) needs no CHANGELOG entry or version bump (owner, 2026-09-30); the commit message names the SHA and what ran. The pre-commit guard still requires `HEYLOOK_ALLOW_CHANNEL_COMMIT=1` for it.
 - `internal/log/log_YYYY-MM-DD.md` is updated before the session ends.
 
 ## Tests
