@@ -217,6 +217,46 @@ class TestBuildArgs:
             provider.load_model()
         assert spawned, f"preflight rejected files that all exist: {files}"
 
+    # llama-server's own output when it rejected a sidecar template at load
+    # (2026-10-01, after a rebuild changed how its jinja resolves
+    # `namespace.items`). With file logging off the failure said only
+    # `exited with code 1 -- output not captured`, and finding the cause took
+    # re-running the spawn argv by hand. The error goes into the message;
+    # the warning before it and the template dumped after it do not.
+    TEMPLATE_REJECTED = (
+        b"0.00.011.231 W render_message_to_json: Neither string content nor typed content is supported\n"
+        b"0.00.011.688 E common_chat_verify_template: failed to apply template: \n"
+        b"------------\n"
+        b"While executing If at line 97, column 5 in source:\n"
+        b"Error: Function is not a bool value\n"
+        b"error: the supplied chat template is not supported: {%- set image_count = namespace(value=0) %}\n"
+        + b"{%- set line = 1 %}\n" * 50
+    )
+
+    def test_load_exit_quotes_llama_servers_error(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(llama_mod.observability, "current_level", lambda: "off")
+
+        class Exited(_FakeProc):
+            def __init__(self):
+                super().__init__()
+                self._rc = 1
+                self.stdout = io.BytesIO(TestBuildArgs.TEMPLATE_REJECTED)
+
+        def fake_popen(argv, *a, **k):
+            if argv and str(argv[0]).endswith("llama-server"):
+                return Exited()
+            raise FileNotFoundError("unrelated probe, not this test's subject")
+
+        self._stub_spawn(tmp_path, monkeypatch, fake_popen)
+        provider = make_provider(model_path=str(_weights(tmp_path)))
+        with pytest.raises(llama_mod.LlamaServerLoadExit) as exc:
+            provider.load_model()
+        said = str(exc.value).split("llama-server said:\n", 1)[1].splitlines()
+        assert said[0] == "  E common_chat_verify_template: failed to apply template:"
+        assert "  Error: Function is not a bool value" in said
+        assert len(said) == llama_mod.LOAD_ERROR_LINES
+        assert not any("render_message_to_json" in l for l in said)
+
 
 # ---------------------------------------------------------------------------
 # Spawn environment

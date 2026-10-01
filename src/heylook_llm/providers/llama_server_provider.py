@@ -196,17 +196,54 @@ def flash_attn_from_log(line: str) -> Optional[str]:
     return None
 
 
+# A load failure quotes llama-server's own error: this many lines from its
+# first error line on, each cut to this many characters. A template error is
+# followed by the whole template, so the window stays small.
+LOAD_ERROR_LINES = 8
+LOAD_ERROR_LINE_CHARS = 240
+
+# The line that starts llama-server's account of a failure: libllama/common
+# ERROR level ("E " after the -lv timestamp), a bare "error:" from arg or
+# template parsing, a ggml assert, or a C++ abort.
+_LOAD_ERROR_START = re.compile(
+    r"^(?:[\d.]+ )?E |^error: |GGML_ASSERT|^libc\+\+abi: |^terminate called")
+_LOG_TIMESTAMP = re.compile(r"^[\d.]+ ")
+
+
 class SpawnLog:
     """Load facts only llama-server's own log states, read off the pump.
     The first flash-attention line is the target model's context; a drafter
-    or the projector may log their own after it."""
+    or the projector may log their own after it.
+
+    While the model loads it also holds llama-server's error, if it prints
+    one, so a failed load can say why: the lines from the first error line
+    on, bounded by LOAD_ERROR_LINES. Nothing else is held. ``loaded()``
+    drops it and stops looking, so a serving process keeps no output."""
 
     def __init__(self) -> None:
         self.flash_attn: Optional[str] = None
+        self.load_error: list[str] = []
+        self._loading = True
 
     def note_line(self, line: str) -> None:
         if self.flash_attn is None:
             self.flash_attn = flash_attn_from_log(line)
+        if not self._loading or len(self.load_error) >= LOAD_ERROR_LINES:
+            return
+        if self.load_error or _LOAD_ERROR_START.search(line):
+            text = _LOG_TIMESTAMP.sub("", line.rstrip())
+            if text:
+                self.load_error.append(text[:LOAD_ERROR_LINE_CHARS])
+
+    def loaded(self) -> None:
+        self._loading = False
+        self.load_error = []
+
+    def error_excerpt(self) -> str:
+        """llama-server's error as a suffix for a load-failure message, or ""."""
+        if not self.load_error:
+            return ""
+        return "\nllama-server said:\n" + "\n".join(f"  {l}" for l in self.load_error)
 
 
 def _pump_output(stream, tee, *sinks) -> None:
@@ -1210,9 +1247,9 @@ class LlamaServerProvider(BaseProvider):
             # router pre-warm the in-process cache still holds the pre-
             # configure default, so the DB setting may already be higher --
             # claiming its value here would be false (review 2026-08-13).
-            log_ref = ("output not captured (file logging was off when this "
-                       "model spawned; ensure observability_level>off and "
-                       "reload to capture llama-server logs)")
+            log_ref = ("full output not captured (file logging was off when "
+                       "this model spawned; ensure observability_level>off "
+                       "and reload to capture llama-server logs)")
         else:
             log_dir = Path(os.environ.get("HEYLOOK_LOGS_DIR", "logs"))
             log_dir.mkdir(parents=True, exist_ok=True)
@@ -1296,11 +1333,12 @@ class LlamaServerProvider(BaseProvider):
         self._register_proc(self._proc)
         self._cache_witness = CacheWitness()
         self._spawn_log = SpawnLog()
-        threading.Thread(
+        pump = threading.Thread(
             target=_pump_output,
             args=(self._proc.stdout, self._log_handle, self._cache_witness, self._spawn_log),
             name=f"llama-log-{self.model_id}", daemon=True,
-        ).start()
+        )
+        pump.start()
         self._base_url = f"http://{host}:{port}"
 
         timeout_s = float(self.config.get("startup_timeout_s") or 300.0)
@@ -1308,10 +1346,15 @@ class LlamaServerProvider(BaseProvider):
         while True:
             rc = self._proc.poll()
             if rc is not None:
+                # The process is gone but the pump may still be reading what
+                # it printed on the way out, which is the error; the pipe hits
+                # EOF on its own, so this wait is short.
+                pump.join(timeout=2.0)
                 self._cleanup_handles()
                 raise LlamaServerLoadExit(
                     f"llama-server exited with code {rc} while loading "
                     f"'{self.model_id}' -- {log_ref}"
+                    + self._spawn_log.error_excerpt()
                 )
             try:
                 with urllib.request.urlopen(self._base_url + "/health", timeout=5) as resp:
@@ -1323,13 +1366,15 @@ class LlamaServerProvider(BaseProvider):
             except (urllib.error.URLError, OSError):
                 pass  # not listening yet
             if time.time() > deadline:
+                excerpt = self._spawn_log.error_excerpt()
                 self.unload()
                 raise RuntimeError(
                     f"llama-server for '{self.model_id}' not ready after "
-                    f"{timeout_s:.0f}s -- {log_ref}"
+                    f"{timeout_s:.0f}s -- {log_ref}" + excerpt
                 )
             time.sleep(0.5)
 
+        self._spawn_log.loaded()
         self.running_ctx = self._read_running_ctx()
         logging.info(
             f"[GGUF] llama-server ready for '{self.model_id}' at {self._base_url}"

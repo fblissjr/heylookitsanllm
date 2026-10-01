@@ -975,7 +975,12 @@ footgun; env is bootstrap-only (`HEYLOOK_LOGS_DIR`, `HEYLOOK_DB_PATH`). `off`
 is the master kill switch: it silences the spine, memory.py's streams, and the
 llama-server subprocess `.log`. The gguf provider checks the level at spawn,
 so capturing llama-server output needs level > off at load time, then a
-reload.
+reload. A failed load is the exception, and it is not a log: the error
+llama-server prints while loading is quoted in the failure message and held
+nowhere else (`SpawnLog`). Before that, a sidecar template a llama.cpp
+rebuild started rejecting (2026-10-01) failed as `exited with code 1 --
+output not captured`, and the cause was found only by re-running the spawn
+argv by hand.
 
 Settings live in the App-DB `settings` table (`db.get_setting` /
 `set_setting`), the contract in `settings.py` (`SettingsSchema` +

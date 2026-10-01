@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.189]
+
+### Fixed
+
+- **A gguf model that fails to load says why.** When llama-server exits or
+  times out while loading, the failure message now quotes its own error
+  (from its first error line, bounded by `LOAD_ERROR_LINES`) under
+  `llama-server said:`, at every `observability_level`. Before this, with file
+  logging off (the default), the message was only `exited with code 1 --
+  output not captured`; a sidecar chat template that a llama.cpp rebuild
+  started rejecting was found only by re-running the spawn by hand. Nothing
+  is logged or kept: the lines are held only while the model loads, and are
+  dropped once it serves. The wait loop now joins the output pump before
+  reading it, so an error printed on the way out is not lost.
+
 ## [2.0.188]
 
 ### Changed
