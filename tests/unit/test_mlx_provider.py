@@ -760,5 +760,5 @@ class TestThinkingBudgetCriteria:
         assert self._call(mock_mlx, ModelTemplateInfo(), 64, True) is None  # no format
         harmony = ModelTemplateInfo(has_harmony_structure=True)
         for switch in (True, False):
-            with pytest.raises(InvalidGenerationRequest, match="harmony"):
+            with pytest.raises(InvalidGenerationRequest, match="closed by the engine"):
                 self._call(mock_mlx, harmony, 64, switch)

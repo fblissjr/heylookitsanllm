@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.190]
+
+### Added
+
+- **Muse on MLX splits its reasoning from its reply.** Muse addresses every
+  assistant message in its header: `to=self` for reasoning, `to=user` for the
+  answer. No MLX reasoning parser knew that format, so an MLX build of the
+  model returned the reasoning, the channel headers and the answer as one
+  text block. A fifth routing parser, `RecipientChannelParser`, is selected
+  when the template renders the `to=self<|message|>` header
+  (`ModelTemplateInfo.has_recipient_channel_structure`), the same string
+  mlx-vlm declares as the model's thinking start token. A mid-thought resume
+  reopens `to=self`; a content continuation starts inside the reply. A tool
+  recipient routes to text. Like harmony, the reply starts after a multi-token
+  hop out of the reasoning channel, so a thinking budget and `response_format`
+  are refused on it (`template_info.reply_follows_channel_hop`).
+  Capabilities are unchanged and match the gguf build: no thinking switch
+  (the template has none; the model always reasons), depth through
+  `reasoning_strength`. Not run: any live generation through heylook on the
+  MLX build, the eval bank, smoke, `vlm_parity_probe.py`, `chain_probe.py`
+  and the browser suites.
+
 ## [2.0.189]
 
 ### Fixed

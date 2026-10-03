@@ -187,19 +187,20 @@ already cost it the reload set, the import allowlist and three more.
 
 Models format their internal reasoning in diverse, vendor-specific ways. The parser subsystem ([`reasoning_parser.py`](../../src/heylook_llm/reasoning_parser.py)) separates reasoning thoughts from final assistant content:
 
-`select_reasoning_parser()` picks exactly one of **four** routing parsers off `ModelTemplateInfo`, in this order:
+`select_reasoning_parser()` picks exactly one of **five** routing parsers off `ModelTemplateInfo`, in this order:
 
 | Engine / Family | Selector | Routing Parser | Handling |
 | :--- | :--- | :--- | :--- |
 | **gpt-oss / harmony** | `has_harmony_structure` | `HarmonyChannelParser` | Tracks harmony channel markers. **Both** `analysis` and `commentary` route to thinking; everything else is text. |
 | **Gemma 4** | `has_gemma_channel_structure` | `GemmaChannelParser` | Same shape, gemma's own thought/content channels. |
+| **Muse** | `has_recipient_channel_structure` | `RecipientChannelParser` | Every assistant message is addressed in its header (`<\|start\|>assistant to=RECIPIENT<\|message\|>`). `to=self` routes to thinking; `to=user`, a tool recipient or no recipient is text. The generation prompt ends at `<\|start\|>assistant`, so a fresh stream opens with the rest of a header; text there that cannot be a header is the reply. |
 | **DeepSeek / Qwen** | `has_thinking_markers` | `HybridThinkingParser` (lives in `thinking_parser.py`) | State machine over `<think>` / `</think>`. |
 | **GGUF (`llama-server`)**, and any model with none of the above | *(fallthrough)* | `PassThroughParser` | The provider's `template_info()` is `None`, so routing is pass-through by construction. `llama-server` has already pre-split `reasoning_content`; re-parsing another engine's split output is exactly what this avoids. |
 
 Two selection subtleties, both about where a stream *starts*:
 - `prefills_thinking` is consulted in the **marker branch only** -- the channel parsers never look at it. There, a template that pre-fills an unclosed `<think>` means the model's output begins **inside** the block, so the parser starts in thinking state, but only when thinking is actually enabled *and* the request is not a **continuation**. A continuation has no generation prompt at all, so nothing opened a block, and a parser armed that way would misfile the whole continuation as thinking.
 - A content continuation (the final assistant message has text) is rendered on the **generation prompt** plus that text whenever the template's history render drops part of what the generation prompt put before the reply -- gemma-4 with thinking off opens an empty thought channel there that its history render omits, and without it the continuation degrades. Otherwise the template's own `continue_final_message` render stands. One helper, [`continue_from_generation_prompt`](../../src/heylook_llm/providers/common/vlm_inputs.py), on the text and vision paths.
-- `resumes_thinking` is the one continuation that *does* start inside the block: the final assistant message carries thinking and no content, so the provider reopened the block. All three routing parsers accept it -- harmony starts inside `analysis`, gemma inside `thought`, the marker parser inside `<think>`.
+- `resumes_thinking` is the one continuation that *does* start inside the block: the final assistant message carries thinking and no content, so the provider reopened the block. Every routing parser accepts it -- harmony starts inside `analysis`, gemma inside `thought`, Muse inside `to=self`, the marker parser inside `<think>`. The Muse parser also takes `continuing`: with no generation prompt there is no header to read, so the stream starts inside the reply.
 
 Both rules live in one function, [`starts_inside_thinking`](../../src/heylook_llm/reasoning_parser.py), which the MLX thinking budget reads too.
 

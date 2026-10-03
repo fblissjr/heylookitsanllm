@@ -13,6 +13,7 @@ set, observability) reads from this info object.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -49,6 +50,10 @@ _THINK_JINJA = (
     "{% if enable_thinking %}<think>\n\n</think>\n\n"
     "{% endif %}{% endif %}"
 )
+
+# The real template: the recipient family is read off its own header literal.
+_MUSE_JINJA = (Path(__file__).parent.parent / "fixtures" / "chat_templates"
+               / "muse_glimmer.jinja").read_text()
 
 _GEMMA_JINJA = (
     "{{ bos_token }}{% if enable_thinking %}<|think|>\n{% endif %}"
@@ -155,9 +160,15 @@ class TestReadTemplateInfoFormat:
             ({"chat_template.jinja": _GEMMA_JINJA},
              {"has_gemma_channel_structure": True, "has_harmony_structure": False,
               "has_thinking_markers": False}, set()),
-            (_HARMONY_FILES, {"has_gemma_channel_structure": False}, set()),
+            (_HARMONY_FILES, {"has_gemma_channel_structure": False,
+                              "has_recipient_channel_structure": False}, set()),
+            ({"chat_template.jinja": _MUSE_JINJA},
+             {"has_recipient_channel_structure": True, "has_harmony_structure": False,
+              "has_thinking_markers": False, "supports_enable_thinking": False,
+              "reads_reasoning_content": True}, set()),
         ],
-        ids=["harmony", "thinking-markers", "gemma-channels", "harmony-is-not-gemma"],
+        ids=["harmony", "thinking-markers", "gemma-channels", "harmony-is-not-gemma",
+             "recipient-channels"],
     )
     def test_format_flags_are_read_from_the_template(self, tmp_path, files, flags, specials):
         info = _read(tmp_path, files)

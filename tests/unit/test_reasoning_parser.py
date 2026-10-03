@@ -27,6 +27,7 @@ from heylook_llm.reasoning_parser import (
     GemmaChannelParser,
     HarmonyChannelParser,
     PassThroughParser,
+    RecipientChannelParser,
     StripSpecials,
     select_reasoning_parser,
 )
@@ -72,10 +73,17 @@ _GEMMA_REPRODUCER = (
     "<channel|>The sky appears blue because of Rayleigh scattering."
 )
 _GEMMA_EXPECTED_THINKING = "Topic: sky color. Constraint: two sentences.\n"
+
+# Muse: the generation prompt ends at ``<|start|>assistant``, so the stream
+# opens with the rest of the reasoning header.
+_RECIPIENT_REPRODUCER = (
+    " to=self<|message|>plan it<|eom|>"
+    "<|start|>assistant to=user<|message|>The answer.<|eot|>"
+)
 _GEMMA_EXPECTED_CONTENT = "The sky appears blue because of Rayleigh scattering."
 
 
-def _template(*, harmony=False, gemma=False, thinking=False, specials=()):
+def _template(*, harmony=False, gemma=False, thinking=False, recipient=False, specials=()):
     """ModelTemplateInfo stand-in for factory-driven tests."""
     from heylook_llm.providers.common.template_info import ModelTemplateInfo
 
@@ -86,6 +94,7 @@ def _template(*, harmony=False, gemma=False, thinking=False, specials=()):
         has_harmony_structure=harmony,
         has_gemma_channel_structure=gemma,
         has_thinking_markers=thinking,
+        has_recipient_channel_structure=recipient,
     )
 
 
@@ -189,8 +198,9 @@ class TestAbortMidControlToken:
             (GemmaChannelParser, ["<|channel>thought\nplan text\n<chan"],
              ("", "plan text\n")),
             (GemmaChannelParser, ["Answer text<|chann"], ("Answer text", "")),
+            (RecipientChannelParser, [" to=self<|message|>plan text<|eo"], ("", "plan text")),
         ],
-        ids=["harmony-end", "harmony-preamble", "gemma-close", "gemma-open"],
+        ids=["harmony-end", "harmony-preamble", "gemma-close", "gemma-open", "recipient-eom"],
     )
     def test_abort_mid_control_token_drops_partial(self, parser_cls, chunks, expected):
         assert _collect(parser_cls(), chunks) == expected
@@ -252,6 +262,7 @@ class TestReasoningParserFactory:
     _GEMMA = (_GEMMA_REPRODUCER, _GEMMA_EXPECTED_CONTENT, _GEMMA_EXPECTED_THINKING)
     _THINK = "<think>plan</think>answer"
     _PASSED_THROUGH = (_THINK, _THINK, "")
+    _RECIPIENT = (_RECIPIENT_REPRODUCER, "The answer.", "plan it")
 
     @pytest.mark.parametrize(
         "info, stream",
@@ -261,12 +272,13 @@ class TestReasoningParserFactory:
             (_template(harmony=True, gemma=True), _HARMONY),
             (_template(harmony=True, thinking=True), _HARMONY),
             (_template(thinking=True), (_THINK, "answer", "plan")),
+            (_template(recipient=True), _RECIPIENT),
             (_template(), _PASSED_THROUGH),
             (None, _PASSED_THROUGH),
         ],
         ids=[
             "gemma-channels", "harmony", "harmony-over-gemma", "harmony-over-thinking",
-            "think-markers", "nothing-matches", "no-template-info",
+            "think-markers", "recipient-channels", "nothing-matches", "no-template-info",
         ],
     )
     def test_template_flags_pick_the_split(self, info, stream):
@@ -543,6 +555,21 @@ class TestParserInvariants:
             _Pinned(("<|channel>thought\nplanning<channel|>Answer.",),
                     "Answer.", "planning"),
         ],
+        "recipient": [
+            _RECIPIENT_REPRODUCER,
+            " to=user<|message|>padding text<|reserved_200000|> tail<|eot|>",
+            " to=self<|message|>half a plan and then <|star",
+            "to=nothing follows this header",
+            # the reproducer one character at a time: the header the
+            # generation prompt opened, then every control token split
+            _Pinned(tuple(_RECIPIENT_REPRODUCER), "The answer.", "plan it"),
+            # the model skipped reasoning, or wrote no recipient at all
+            _Pinned((" to=user<|mess", "age|>Just the answer."), "Just the answer."),
+            _Pinned(("<|message|>No recipient.",), "No recipient."),
+            # a tool recipient is content, never reasoning
+            _Pinned((" to=self<|message|>t<|eom|><|start|>assistant to=web.search<|message|>call",),
+                    "call", "t"),
+        ],
         "think": [
             "<think>plan</think>answer",
             "<think>plan <|endoftext|> more</think>done [INST] x",
@@ -608,6 +635,7 @@ class TestParserInvariants:
         specials = ["<|reserved_200000|>", "<|endoftext|>", "[INST]", "<turn|>"]
         flags = {
             "harmony": dict(harmony=True), "gemma": dict(gemma=True),
+            "recipient": dict(recipient=True),
             "think": dict(thinking=True), "plain": {},
         }[kind]
         return select_reasoning_parser(_template(specials=specials, **flags))
@@ -691,6 +719,17 @@ class TestChannelParsersResumeInsideThinking:
             " keep reasoning<|end|><|start|>assistant<|channel|>final<|message|>Done.<|return|>"])
         assert thinking == " keep reasoning"
         assert content == "Done."
+
+    def test_recipient_starts_inside_the_open_message(self):
+        """A resume starts inside ``to=self``; a content continuation has no
+        generation prompt, so its stream starts inside the reply."""
+        resumed = select_reasoning_parser(_template(recipient=True), resumes_thinking=True,
+                                          continuing=True)
+        assert _collect(resumed, [
+            " keep going<|eom|><|start|>assistant to=user<|message|>Done.<|eot|>"
+        ]) == ("Done.", " keep going")
+        continued = select_reasoning_parser(_template(recipient=True), continuing=True)
+        assert _collect(continued, [" and the rest.<|eot|>"]) == (" and the rest.", "")
 
     def test_factory_arms_the_channel_parsers(self):
         class Gemma:

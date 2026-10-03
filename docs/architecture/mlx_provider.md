@@ -358,7 +358,8 @@ window. It existed to strip declared special tokens the fast detokenizer
 occasionally leaks into decoded text. That stripping now happens in the
 reasoning parsers themselves (`reasoning_parser.py`'s `_strip_specials`,
 built from `ModelTemplateInfo.special_tokens` and applied by every parser
--- `PassThroughParser`, `HarmonyChannelParser`, `GemmaChannelParser`) --
+-- `PassThroughParser`, `HarmonyChannelParser`, `GemmaChannelParser`;
+`RecipientChannelParser` since v2.0.190) --
 one fewer module, same guarantee, applied at the point where routed text
 (content vs. thinking) is already being assembled.
 

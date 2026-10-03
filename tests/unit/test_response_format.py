@@ -77,5 +77,5 @@ def test_mlx_constrains_the_reply_not_the_thinking():
         free = ChatRequest.model_validate({"messages": [{"role": "user", "content": "hi"}]})
         assert _structured_processors(free, {"enable_thinking": True}, think, None) == []
         # the reply's start cannot be found: refused, not left unconstrained
-        with pytest.raises(InvalidGenerationRequest, match="harmony"):
+        with pytest.raises(InvalidGenerationRequest, match="channel switch"):
             _structured_processors(request, {"enable_thinking": False}, harmony, None)

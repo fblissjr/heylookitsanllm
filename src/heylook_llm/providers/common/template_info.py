@@ -125,6 +125,9 @@ class ModelTemplateInfo:
     has_harmony_structure: bool = False
     has_thinking_markers: bool = False
     has_gemma_channel_structure: bool = False
+    # Recipient channels (Muse): every assistant message is addressed,
+    # ``to=self`` for reasoning and ``to=user`` for the reply.
+    has_recipient_channel_structure: bool = False
     supports_enable_thinking: bool = False
     # Template PRE-FILLS an unclosed <think> into the generation prompt when
     # thinking is enabled (Qwen3.5 style) -- the model output then starts
@@ -152,6 +155,9 @@ _THINK_CLOSE_PATTERN = re.compile(r"</think>")
 # `<|channel|>` does NOT match it.
 _GEMMA_CHANNEL_OPEN_PATTERN = re.compile(r"<\|channel>")
 _GEMMA_CHANNEL_CLOSE_PATTERN = re.compile(r"<channel\|>")
+# Recipient channels (Muse): the reasoning message's header. mlx-vlm declares
+# the same string as this model's thinking_start_token.
+_RECIPIENT_SELF_PATTERN = re.compile(r"to=self<\|message\|>")
 # Cross-model thinking toggle: transformers passes extra apply_chat_template
 # kwargs through as template variables, so a template that references
 # `enable_thinking` (Qwen3 renders <think> blocks, Gemma-4 renders thought
@@ -187,6 +193,17 @@ def _cached_template_info(model_dir: str, source: Optional[str],
     return read_template_info(Path(model_dir), source)
 
 
+def reply_follows_channel_hop(info) -> bool:
+    """Whether the reply starts after a multi-token hop out of the reasoning
+    channel: harmony's ``<|end|><|start|>assistant<|channel|>final<|message|>``
+    and the recipient family's ``<|eom|><|start|>assistant to=user<|message|>``.
+    The engine can neither force that hop shut (no thinking budget) nor find
+    the reply's first token to constrain it (no response_format), and such a
+    stream never starts inside a prefilled block."""
+    return bool(getattr(info, "has_harmony_structure", False)
+                or getattr(info, "has_recipient_channel_structure", False))
+
+
 def thinking_budget_markers(info: Optional["ModelTemplateInfo"]) -> Optional[tuple[str, str]]:
     """(open, close) for a thinking format an engine can force shut with ONE
     token, or None.
@@ -194,12 +211,13 @@ def thinking_budget_markers(info: Optional["ModelTemplateInfo"]) -> Optional[tup
     The MLX thinking budget (mlx-vlm's ``ThinkingBudgetCriteria``) closes an
     over-budget block by forcing a newline and the close token. That works
     for ``<think>``/``</think>`` and gemma-4's ``<|channel>``/``<channel|>``.
-    Harmony (gpt-oss) leaves its analysis channel with a multi-token
-    sequence into the final channel, which the criteria cannot force, so it
-    gets no budget. The capability report and the provider both read this,
+    Harmony (gpt-oss) and the recipient family (Muse) leave their reasoning
+    channel with a multi-token sequence into the reply
+    (``reply_follows_channel_hop``), which the criteria cannot force, so they
+    get no budget. The capability report and the provider both read this,
     so the control is offered exactly where it is enforced.
     """
-    if info is None or info.has_harmony_structure:
+    if info is None or reply_follows_channel_hop(info):
         return None
     if info.has_gemma_channel_structure:
         return ("<|channel>", "<channel|>")
@@ -293,6 +311,7 @@ def read_template_info(
         _GEMMA_CHANNEL_OPEN_PATTERN.search(template)
         and _GEMMA_CHANNEL_CLOSE_PATTERN.search(template)
     )
+    has_recipient_channel = bool(_RECIPIENT_SELF_PATTERN.search(template))
     supports_enable_thinking = bool(_ENABLE_THINKING_PATTERN.search(template))
     prefills_thinking = bool(
         has_thinking and _PREFILL_THINK_PATTERN.search(template)
@@ -307,6 +326,7 @@ def read_template_info(
         has_harmony_structure=has_harmony,
         has_thinking_markers=has_thinking,
         has_gemma_channel_structure=has_gemma_channel,
+        has_recipient_channel_structure=has_recipient_channel,
         supports_enable_thinking=supports_enable_thinking,
         prefills_thinking=prefills_thinking,
         reads_reasoning_content=reads_reasoning_content,

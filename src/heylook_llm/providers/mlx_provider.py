@@ -34,6 +34,7 @@ from .common.template_info import (
     install_chat_template,
     missing_template_error,
     read_template_info,
+    reply_follows_channel_hop,
     should_force_install,
     thinking_budget_markers,
 )
@@ -134,8 +135,9 @@ def _thinking_budget_criteria(request: ChatRequest, effective_request: dict,
 
     None when no budget was asked for, the model has no thinking format, or
     thinking is off: there is nothing to cap. A budget on a format the engine
-    cannot force shut (harmony) is refused rather than ignored, whatever the
-    switch says: harmony has no switch and always reasons, so dropping the
+    cannot force shut (harmony, Muse's recipient channels) is refused rather
+    than ignored, whatever the switch says: those have no switch and always
+    reason, so dropping the
     budget would let it think uncapped while the client believes it capped.
     The capability report never offers it there. The count starts where the
     parser starts reading thinking (``starts_inside_thinking``); a resumed
@@ -145,11 +147,11 @@ def _thinking_budget_criteria(request: ChatRequest, effective_request: dict,
     if not budget:
         return None
     markers = thinking_budget_markers(template_info)
-    if markers is None and getattr(template_info, "has_harmony_structure", False):
+    if markers is None and reply_follows_channel_hop(template_info):
         raise InvalidGenerationRequest(
             "thinking budget_tokens is not supported for this model: its thinking "
-            "format cannot be closed by the engine (harmony models leave the "
-            "analysis channel with a multi-token sequence)")
+            "format cannot be closed by the engine (it leaves the reasoning "
+            "channel with a multi-token sequence)")
     thinking = _resolve_enable_thinking(effective_request) or request.resumes_thinking()
     if markers is None or not thinking:
         return None
@@ -175,18 +177,18 @@ def _structured_processors(request: ChatRequest, effective_request: dict,
     the format's closer (``thinking_budget_markers``, the same pair the
     thinking budget forces) -- mlx-vlm's ThinkingAwareLogitsProcessor, as its
     own server wires it. Refused where the start of the reply cannot be
-    found: harmony (a multi-token hop into the final channel) and a
+    found: harmony and the recipient family (a multi-token hop into the
+    reply, ``reply_follows_channel_hop``) and a
     continuation (the prompt may already sit past the closer, so a wrapper
     waiting for it would never constrain anything).
     """
     schema = request.response_schema
     if schema is None:
         return []
-    if getattr(template_info, "has_harmony_structure", False):
+    if reply_follows_channel_hop(template_info):
         raise InvalidGenerationRequest(
             "response_format is not supported for this model: its reply starts "
-            "after a multi-token channel switch (harmony) the engine cannot "
-            "constrain from")
+            "after a multi-token channel switch the engine cannot constrain from")
     if request.is_continuation():
         raise InvalidGenerationRequest(
             "response_format cannot be combined with a continuation")
@@ -219,7 +221,7 @@ def _thinking_resume_opener(template_info) -> str | None:
     None when the family has no resumable block. Read off ModelTemplateInfo
     -- the same probe the reasoning parser is selected from, so the opener
     appended here is the one the parser will treat as already open.
-    All three served families since v1.79.63: the channel parsers take an
+    Every served family: the channel parsers take an
     initial-thinking state now, so the opener appended here is one the
     selected parser starts inside of.
     """
@@ -229,6 +231,8 @@ def _thinking_resume_opener(template_info) -> str | None:
         return "<|channel|>analysis<|message|>"
     if getattr(template_info, "has_gemma_channel_structure", False):
         return "<|channel>thought\n"
+    if getattr(template_info, "has_recipient_channel_structure", False):
+        return " to=self<|message|>"
     if getattr(template_info, "has_thinking_markers", False):
         return "<think>\n"
     return None

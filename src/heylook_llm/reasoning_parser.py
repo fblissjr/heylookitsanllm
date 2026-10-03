@@ -350,6 +350,135 @@ class HarmonyChannelParser:
         return ("content", text)
 
 
+# Recipient channels (Muse): every assistant message is addressed in its
+# header, ``<|start|>assistant to=RECIPIENT<|message|>BODY`` closed by
+# ``<|eom|>`` (more messages follow) or ``<|eot|>`` (turn over). ``to=self`` is
+# reasoning; ``to=user``, a tool recipient, or no recipient is content. The
+# generation prompt ends at ``<|start|>assistant``, so a fresh stream opens
+# with the rest of a header (`` to=self<|message|>``).
+_RECIPIENT_CONTROL_TOKENS = ("<|start|>", "<|message|>", "<|eom|>", "<|eot|>")
+_RECIPIENT_MAX_TOKEN_LEN = max(len(t) for t in _RECIPIENT_CONTROL_TOKENS)
+_RECIPIENT_CONTROL_PATTERN = re.compile(
+    "|".join(re.escape(t) for t in _RECIPIENT_CONTROL_TOKENS)
+)
+_RECIPIENT_PATTERN = re.compile(r"to=(\S+)")
+# What the head of a fresh stream may hold while it can still be a header, and
+# every prefix of it: a model that answers with no header at all must not have
+# its text held back waiting for a ``<|message|>`` that never comes.
+_RECIPIENT_LEAD_HEADER = re.compile(r"\s*(to=\S+)?\s*")
+_RECIPIENT_LEAD_PREFIX = re.compile(r"\s*(t|to|to=\S*\s*)?")
+_RECIPIENT_THINKING = "self"
+
+
+class RecipientChannelParser:
+    """Recipient-addressed channel parser (Muse).
+
+    ``lead`` is the head of a fresh stream, which continues the header the
+    generation prompt opened; text there that cannot be a header is content.
+    ``header`` follows a ``<|start|>`` the model emitted and is structural up
+    to the next control token. ``outside`` is between a closed message and the
+    next ``<|start|>``.
+    """
+
+    def __init__(self, initial_thinking: bool = False, continuing: bool = False):
+        # ``initial_thinking``: the provider re-opened `` to=self<|message|>``
+        # and appended a partial trace, so the first token is reasoning.
+        # ``continuing``: no generation prompt was rendered; the stream starts
+        # inside the final message's content.
+        self._initial_thinking = initial_thinking
+        self._continuing = continuing
+        self.reset()
+
+    def process_chunk(
+        self, text: str, token_id: int | None = None
+    ) -> list[ParserDelta]:
+        if not text:
+            return []
+        self._buffer += text
+        return self._drain(final=False)
+
+    def flush(self) -> list[ParserDelta]:
+        return self._drain(final=True)
+
+    def reset(self) -> None:
+        self._buffer = ""
+        self._header_buf = ""
+        if self._initial_thinking:
+            self._state, self._recipient = "in_message", _RECIPIENT_THINKING
+        elif self._continuing:
+            self._state, self._recipient = "in_message", None
+        else:
+            self._state, self._recipient = "lead", None
+
+    def _drain(self, final: bool) -> list[ParserDelta]:
+        if final:
+            self._buffer = _strip_partial_token(self._buffer, _RECIPIENT_CONTROL_TOKENS)
+        out: list[ParserDelta] = []
+        progress = True
+        while progress:
+            progress = False
+            m = _RECIPIENT_CONTROL_PATTERN.search(self._buffer)
+            safe_len = (m.start() if m else _safe_prefix_len(
+                self._buffer, _RECIPIENT_MAX_TOKEN_LEN, final))
+            head = self._buffer[:safe_len]
+
+            if self._state == "lead":
+                if m is not None and _RECIPIENT_LEAD_HEADER.fullmatch(head):
+                    self._consume(head, m.group())
+                    progress = True
+                elif m is not None or not _RECIPIENT_LEAD_PREFIX.fullmatch(head):
+                    # not a header: the model answered without one
+                    self._state, self._recipient = "in_message", None
+                    progress = True
+                elif final and head:
+                    # header-shaped text and the stream ended: nothing is lost
+                    out.append(("content", head))
+                    self._buffer = ""
+
+            elif self._state == "in_message":
+                if head:
+                    out.append(self._route_text(head))
+                if m is not None:
+                    self._consume(head, m.group(), header=False)
+                    progress = True
+                elif head:
+                    self._buffer = self._buffer[safe_len:]
+                    progress = True
+
+            else:  # header, outside: structural up to the next control token
+                if m is not None:
+                    self._consume(head, m.group(), header=self._state == "header")
+                    progress = True
+                elif safe_len > 0:
+                    if self._state == "header":
+                        self._header_buf += head
+                    self._buffer = self._buffer[safe_len:]
+                    progress = True
+
+        return [d for d in out if d[1]]
+
+    def _consume(self, head: str, token: str, header: bool = True) -> None:
+        """Drop ``head`` and ``token`` from the buffer and move to the state
+        ``token`` opens. ``header``: ``head`` is header text, read for its
+        recipient when ``token`` is the ``<|message|>`` that ends it."""
+        self._buffer = self._buffer[len(head) + len(token):]
+        if token == "<|message|>":
+            if header:
+                found = _RECIPIENT_PATTERN.search(self._header_buf + head)
+                self._recipient = found.group(1) if found else None
+            self._state = "in_message"
+        elif token == "<|start|>":
+            self._state = "header"
+        else:  # <|eom|>, <|eot|>
+            self._state = "outside"
+        self._header_buf = ""
+
+    def _route_text(self, text: str) -> ParserDelta:
+        if self._recipient == _RECIPIENT_THINKING:
+            return ("thinking", text)
+        return ("content", text)
+
+
 # Gemma-4 canonical channel format: `<|channel>NAME\n BODY <channel|>` emitted
 # inline in the model turn. Single-token delimiters (no <|message|>); the
 # `thought` channel is reasoning, text outside channels is content.
@@ -554,9 +683,11 @@ def starts_inside_thinking(template_info: Any, *, thinking_enabled: bool | None,
     and the MLX thinking budget both read this, so where the parser starts
     counting thinking and where the budget starts counting it cannot differ.
     """
+    from heylook_llm.providers.common.template_info import reply_follows_channel_hop
+
     if resumes_thinking:
         return True
-    if (getattr(template_info, "has_harmony_structure", False)
+    if (reply_follows_channel_hop(template_info)
             or getattr(template_info, "has_gemma_channel_structure", False)):
         return False
     return (bool(thinking_enabled)
@@ -620,6 +751,9 @@ def select_reasoning_parser(
         parser = HarmonyChannelParser(initial_thinking=initial)
     elif getattr(template_info, "has_gemma_channel_structure", False):
         parser = GemmaChannelParser(initial_thinking=initial)
+    elif getattr(template_info, "has_recipient_channel_structure", False):
+        parser = RecipientChannelParser(
+            initial_thinking=initial, continuing=continuing and not initial)
     elif getattr(template_info, "has_thinking_markers", False):
         from heylook_llm.thinking_parser import HybridThinkingParser
         parser = HybridThinkingParser(initial_thinking=initial)

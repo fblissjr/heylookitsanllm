@@ -1661,8 +1661,8 @@ thinking-capability signal.
 
 ### Reasoning parsers
 
-`reasoning_parser.py` has four routing parsers (harmony/gemma channels,
-`<think>` markers, pass-through) that never strip anything themselves;
+`reasoning_parser.py` has five routing parsers (harmony/gemma/recipient
+channels, `<think>` markers, pass-through) that never strip anything themselves;
 declared-specials stripping is one wrapper, `StripSpecials`, composed over the
 selected parser by `select_reasoning_parser`, and only when the model declares
 specials, so a bare parser is the no-strip case. Its rolling holdback is sized
