@@ -2140,6 +2140,35 @@ async function main() {
       assert(m.selectWidth >= 100, `the armed preset row crushes the select to ${Math.round(m.selectWidth)}px`);
       await closeDrawer(mob.page);
     });
+    await suite.check('touch: no field is small enough to make iOS zoom on focus', async () => {
+      // iOS zooms the page when a focused control's text is under 16px, and
+      // Chrome never shows it. The rule that prevents it is the last block in
+      // app.css and wins only by source order, so a size declared after it at
+      // the same specificity brings the zoom back with nothing visible here.
+      // One property over every text field the chat page and its drawer hold.
+      await openDrawer(mob.page);
+      await settle(mob.page);
+      const got = await mob.page.evaluate(() => {
+        const NOT_TEXT = ['checkbox', 'radio', 'range', 'file', 'hidden', 'color', 'button', 'submit'];
+        const fields = [...document.querySelectorAll('input, select, textarea')]
+          .filter((el) => !NOT_TEXT.includes(el.type));
+        const name = (el) => `${el.tagName.toLowerCase()}${el.className ? '.' + el.className.split(' ').join('.') : ''}`;
+        return {
+          coarse: matchMedia('(pointer: coarse)').matches,
+          inBar: fields.filter((el) => el.closest('.chat__bar')).length,
+          inDrawer: fields.filter((el) => el.closest('.drawer--open')).length,
+          small: fields
+            .map((el) => ({ el: name(el), px: parseFloat(getComputedStyle(el).fontSize) }))
+            .filter((f) => f.px < 16),
+        };
+      });
+      await closeDrawer(mob.page);
+      assert(got.coarse, 'the touch emulation is not live, so this measured the desktop sizes');
+      assert(got.inBar > 0 && got.inDrawer > 0,
+        `expected fields in the chat bar and the drawer, got ${got.inBar} and ${got.inDrawer}`);
+      assert(got.small.length === 0,
+        `fields under 16px on touch: ${got.small.map((f) => `${f.el} ${f.px}px`).join(', ')}`);
+    });
 
     await mob.page.close();
 

@@ -361,6 +361,17 @@ owner: "equally well on desktop web and iPhone 17 Pro Safari").
   actions bump to 44px, the attach-thumb remove control is ≥24px. `btn--sm`
   (26px) is acceptable for dense desktop-hover action clusters (≥ the 24px AA
   floor) but never the sole phone affordance.
+- **A text field is never under 16px on touch.** iOS zooms the page when a
+  focused control's text is smaller, and desktop Chrome never shows it. One
+  `@media (pointer: coarse)` block raises every `input`, `select` and
+  `textarea`, and it is the last block in `app.css` on purpose: the phone
+  bar's own sizes sit at the same specificity, so it wins by source order
+  only. Add nothing after it. The block only raises: a field that is already
+  larger is excluded from it (`.notebook__title`), and a field with its own
+  class and size has to be named in it (`.cfg-tmpl__body`), because a bare
+  element selector loses to any class. Not `maximum-scale=1`, which blocks
+  pinch-zoom. `e2e:render` holds the property for the chat page and the
+  drawer; the notebook and models fields are outside that check.
 - **`aria-pressed` is the toggle-button style hook, not a class.** Icon-only
   toggle buttons (`.btn--icon`, e.g. the chat composer's thinking toggle) set
   `aria-pressed="true"/"false"` and style state off that attribute
