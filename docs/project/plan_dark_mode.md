@@ -260,9 +260,10 @@ Per AGENTS.md's done rules, each phase lands with its docs: DESIGN.md section 1 
 
 1. SETTLED 2026-10-05 (owner): light `line-strong` raised to `oklch(0.64 0.015 88)` (v2.0.192): 3:1 on white and on `surface` with margin; the plan's 0.66 cleared white only, which the contrast test caught. A control is identified by its edge, not only its text.
 2. SETTLED 2026-10-05 (owner): the light `warn` stays at hue 75 as built; its 4.43:1 on `warn-tint` is within rounding of the floor and dark already separates warn from accent.
-3. System theme only, or a light / dark / system toggle in the drawer? `color-scheme` on `:root` is the single switch either way.
-4. Which colour should iOS show while the Home Screen app launches: the dark surface (`#191713`) or the light one (`#f8f6f1`)? A manifest holds one.
-5. At step 7, does the light theme also move to Workbench's cooler neutrals, or keep Lamplight's warm paper?
+3. SETTLED 2026-10-05 (owner, simplicity): system theme only, no toggle. `color-scheme` on `:root` stays the single switch.
+4. SETTLED 2026-10-05 (owner): the dark surface (`#191713`). The phone is used mostly at night; the per-scheme `theme-color` metas cover the page itself in daytime.
+5. OPEN, by choice: decide at step 7 after living with dark Lamplight. Nothing seen so far argues either way.
+6. SETTLED 2026-10-05 (owner): the phone is used BOTH as a Home Screen app and in a WebKit browser (Orion), so Phase 3's Home Screen work and Phase 4 step 3's top nav are both needed and the order stands; neither may add much complexity. Open question 2's light `warn` stays as built for the same reason it was settled: light is the daytime Mac theme, and at night the phone is in dark, where warn already sits at hue 62 (Night Shift's warm cast makes amber and bronze converge, which is one more reason dark keeps them apart).
 
 ## Sources
 
