@@ -44,18 +44,18 @@ data, not theme, and keep their light values in dark.
 | panels/sidebars | `--surface`, `--surface-2` | warm paper; `-2` = hover/pressed/code | one and two steps up from `--bg` |
 | text | `--ink`, `--ink-muted` | muted stays ≥4.5:1 on `--bg` | cream; muted stays ≥4.5:1 on every surface |
 | placeholders only | `--ink-faint` | below 4.5:1 — never real text | meets only the 3:1 non-text floor — never real text |
-| hairlines | `--line`, `--line-strong` | control borders are a settled soft look (plan open question 1) | `--line-strong` meets 3:1 on `--bg` and `--surface` |
+| hairlines | `--line`, `--line-strong` | `--line-strong` meets the 3:1 non-text floor on `--bg` and `--surface` (raised 2026-10-05; it was 1.69:1) | same |
 | selection glints | `--brand` (honey gold), `--brand-tint` | active nav, chosen rows | `--brand` is the seed and is identical in both; the tint darkens |
 | actions/links/focus | `--accent` (deep bronze), `--accent-hover`, `--on-accent` | `--on-accent` is white | `--accent` is lit honey, `--on-accent` deep brown, hover lighter |
 | destructive | `--danger`, `--danger-tint` | | lifted, on a dark red-brown tint |
-| degraded-but-working | `--warn` (amber), `--warn-tint` | fit meter WARN; never for refusals (that's danger); light hue is as built (plan open question 2) | hue 62, so "degraded" no longer matches the action colour |
+| degraded-but-working | `--warn` (amber), `--warn-tint` | fit meter WARN; never for refusals (that's danger); light hue stays as built (owner, 2026-10-05: its 4.43:1 on `--warn-tint` is within rounding of the floor) | hue 62, so "degraded" no longer matches the action colour |
 | drawer backdrop | `--scrim` | ink at low alpha | black at higher alpha |
 | the one shadow | `--shadow-ink` | ink at low alpha; the drawer's left edge | black at higher alpha |
 
 `tests/unit/test_css_token_contrast.py` recomputes the contrast of every text
 and border pair above in both themes from the `:root` values, and fails on any
-colour literal outside `:root`. The dark pairs all meet their floors; the light
-misses it names are the open questions in `docs/project/plan_dark_mode.md`.
+colour literal outside `:root`. Every pair meets its floor in both themes except light warn on its tint, kept
+by decision and named in the test.
 
 Type: system stack (`--font`) + `--mono` for anything numeric, token-literal, or
 telemetry. Scale: `--text-sm 0.8125rem / --text-ui 0.875rem / --text-body 1rem /

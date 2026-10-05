@@ -8,7 +8,7 @@ How to use this file: one phase (or one Phase 4 step) per session, on a branch. 
 
 | Phase | State | Where |
 | --- | --- | --- |
-| 1 Tokens | On main as v2.0.191 (merged 2026-10-05) | light theme unchanged; open questions 1 and 2 still open; the iPhone check and the page suites under dark not yet run |
+| 1 Tokens | On main as v2.0.191 (merged 2026-10-05); light control borders raised to 3:1 in v2.0.192 | open questions 1 and 2 settled (below); the iPhone check and the page suites under dark not yet run |
 | 2 Safari fixes | In progress on `feat/dark-mode-phase2` | six fixes (the nav gear joined it) |
 | 3 Platform | Not started | |
 | 4 Toward Workbench | Not started | gated on A being live and measured |
@@ -103,7 +103,7 @@ Measured contrast for the dark theme (WCAG 2, from the values above):
 | line-strong on bg / surface | 3.5 / 3.3 | 3.0 |
 | ink-faint on bg (placeholders) | 4.5 | 3.0 |
 
-The light theme's control borders stay at 1.69:1 in this phase; raising them is open question 1.
+The light theme's control borders were raised to 3:1 in v2.0.192 (open question 1, settled); the light `warn` stays as built (open question 2, settled).
 
 ## Phase 2: Safari fixes
 
@@ -258,8 +258,8 @@ Per AGENTS.md's done rules, each phase lands with its docs: DESIGN.md section 1 
 
 ## Open questions
 
-1. Light control borders sit at 1.69:1. Raise `line-strong` to `oklch(0.66 0.015 88)` (3.1:1 on white) in phase 1, or keep today's softer look?
-2. The light `warn` moves from hue 75 to 60 so it stops matching bronze. Keep that, or leave the light theme untouched?
+1. SETTLED 2026-10-05 (owner): light `line-strong` raised to `oklch(0.64 0.015 88)` (v2.0.192): 3:1 on white and on `surface` with margin; the plan's 0.66 cleared white only, which the contrast test caught. A control is identified by its edge, not only its text.
+2. SETTLED 2026-10-05 (owner): the light `warn` stays at hue 75 as built; its 4.43:1 on `warn-tint` is within rounding of the floor and dark already separates warn from accent.
 3. System theme only, or a light / dark / system toggle in the drawer? `color-scheme` on `:root` is the single switch either way.
 4. Which colour should iOS show while the Home Screen app launches: the dark surface (`#191713`) or the light one (`#f8f6f1`)? A manifest holds one.
 5. At step 7, does the light theme also move to Workbench's cooler neutrals, or keep Lamplight's warm paper?

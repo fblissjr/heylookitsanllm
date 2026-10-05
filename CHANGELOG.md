@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.192]
+
+### Changed
+
+- **Light control borders meet the 3:1 floor.** `--line-strong`'s light value
+  moves from 1.69:1 to 3:1 against white, so a button, input or select is
+  identified by its edge in the light theme as it already was in dark (plan
+  open question 1, owner decision). The light `warn` stays as built (open
+  question 2). The contrast test's light exemptions shrink to that one pair.
+
 ## [2.0.191]
 
 ### Added

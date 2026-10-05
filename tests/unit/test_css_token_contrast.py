@@ -47,12 +47,9 @@ PAIRS = [
     ("ink-faint", "bg", NON_TEXT_FLOOR),
 ]
 
-# Light pairs under their floor in the palette as built. Each is a settled
-# look or an open plan question, not a regression; the dark theme was
-# designed to the floors and gets no exemptions.
+# Light pairs under their floor, kept by decision (plan_dark_mode.md open
+# question 2); the dark theme was designed to the floors and gets no exemptions.
 KNOWN_LIGHT_MISSES = {
-    ("line-strong", "bg"): "plan_dark_mode.md open question 1 (control borders)",
-    ("line-strong", "surface"): "plan_dark_mode.md open question 1 (control borders)",
     ("warn", "warn-tint"): "plan_dark_mode.md open question 2 (light warn hue)",
 }
 
