@@ -58,6 +58,9 @@ on, and both of these found checks that could not.
   mlx-vision, gguf); all phases shipped
 - [project/plan_chat_orchestration.md](./project/plan_chat_orchestration.md) --
   the design behind the server-owned chat generate route (the Phase 3b chat half)
+- [project/plan_dark_mode.md](./project/plan_dark_mode.md) -- the dark theme
+  (Lamplight) in three CSS-first phases, the iOS 27 / Safari 27 fixes, and seven
+  gated steps toward the Workbench direction
 - [project/plan_runtime_visibility.md](./project/plan_runtime_visibility.md) --
   APPROVED 2026-09-23: make every effective setting and every cache/spec
   outcome visible, and make MLX and gguf behave the same. Covers thinking
