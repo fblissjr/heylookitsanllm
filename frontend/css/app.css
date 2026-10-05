@@ -707,6 +707,7 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .chat__messages {
   flex: 1;
   overflow-y: auto;
+  overflow-anchor: none;   /* chat.js owns scrollTop */
   padding: 1.25rem 1rem 0.5rem;
 }
 .chat__messages-inner { max-width: 44rem; margin: 0 auto; }

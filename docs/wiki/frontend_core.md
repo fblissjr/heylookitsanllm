@@ -148,6 +148,7 @@ Note the interface: `render()` takes the **whole accumulated message**, not a ch
 To maintain smooth auto-scrolling during high-speed token generation:
 - Scroll offsets are calculated at the **top of the paint cycle, before DOM mutations**.
 - Measuring before DOM mutation hits browser layout caches without forcing synchronous reflows.
+- The message list opts out of the engine's scroll anchoring (`overflow-anchor: none` on `.chat__messages`), so `chat.js` is the only thing that moves `scrollTop`. Every decision here is derived from `scrollTop` and `scrollHeight`, and anchoring is an engine changing one of them between two reads.
 - `content-visibility: auto` was **removed**, and not because of WebKit. It was in the original scaffold as a generic "make long lists fast" pattern, never a response to a measured problem. A skipped row reports its `contain-intrinsic-size` estimate instead of its real height until the engine lazily decides it is relevant, so `scrollHeight` lurches by thousands of pixels and **the engine moves `scrollTop` on its own** (clamping, then scroll anchoring). Every scroll decision in `chat.js` derives from those two values, so all of them were poisoned. It was measured **on Chrome** -- this is not a WebKit quirk. The reproduction and its figures are in the comment at the removal site in [`app.css`](../../frontend/css/app.css). The layout it saved was one-time and desktop-only.
 
 ---

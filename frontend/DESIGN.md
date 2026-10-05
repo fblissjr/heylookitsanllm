@@ -7,10 +7,11 @@
 > path out) apply to whatever renders that shape next. Read them as worked
 > examples, not as a description of the current pages.
 
-Last updated: 2026-10-05 (§1 gains the dark theme, Lamplight: every colour
-token is a `light-dark()` pair and the theme follows the system; the drawer's
-shadow and scrim became tokens. Earlier: 2026-07-23, §7 settings entry points
-and §6 settings taxonomy.)
+Last updated: 2026-10-05 (§7 gains the touch field size, closed overlay,
+scroll owner and side safe-area rules; §1 gains the dark theme, Lamplight:
+every colour token is a `light-dark()` pair and the theme follows the system;
+the drawer's shadow and scrim became tokens. Earlier: 2026-07-23, §7 settings
+entry points and §6 settings taxonomy.)
 
 The written form of the design system that previously lived only in `css/app.css`
 comments. It formalizes what v3 does so that new UI — starting with the j-space
@@ -395,6 +396,13 @@ owner: "equally well on desktop web and iPhone 17 Pro Safari").
   stale node down the list and re-detaches the whole tail, which has the same
   effect as a rebuild. A forced scroll-to-bottom also re-aims on the next
   animation frame, because a row added this tick is still an estimate.
+- **chat.js is the only owner of the message list's scroll position.**
+  `.chat__messages` sets `overflow-anchor: none`, so no engine's scroll
+  anchoring moves `scrollTop` when content above the viewport changes height.
+  Every scroll decision in chat.js is derived from `scrollTop` and
+  `scrollHeight`; an engine that moves them on its own is the failure that
+  removed `content-visibility` (the rule above). Do not turn anchoring back
+  on to absorb a late height: reserve the height or re-aim from chat.js.
 
 Verify phone behavior at an iPhone-class viewport with **touch media emulated**
 (`hover:none`/`pointer:coarse`) — desktop Chrome reports `hover:hover`, so it
