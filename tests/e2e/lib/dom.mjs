@@ -103,8 +103,8 @@ export async function saveAsNewPreset(page, name) {
   }, name);
 }
 
-// The Save sheet's "Update X" option as the sheet offers it right now: its
-// label, or null when it is not offered (no stamped preset, or nothing
+// The Save sheet's "Overwrite X" option as the sheet offers it right now:
+// its label, or null when it is not offered (no stamped preset, or nothing
 // differs from it). Opens the sheet.
 export async function updateOptionLabel(page) {
   await openSaveSheet(page);
@@ -114,17 +114,29 @@ export async function updateOptionLabel(page) {
   });
 }
 
-// One click on the "Update X" option. Returns its label right after the
-// click: the armed question when it armed, its own label when it went ahead
-// (the write is asynchronous, so the caller waits on the wire or the store).
+// One click on the "Overwrite X" option. Returns its label right after the
+// click: the armed question ("Overwrite X?") on a first press, its own label
+// once a confirming press went ahead (the write is asynchronous, so the
+// caller waits on the wire or the store).
 export async function clickUpdateOption(page) {
   await openSaveSheet(page);
   return page.evaluate(() => {
     const btn = document.querySelector('.drawer--open .preset-save__update');
-    if (!btn || btn.hidden) throw new Error('the Save sheet offers no Update option');
+    if (!btn || btn.hidden) throw new Error('the Save sheet offers no Overwrite option');
     btn.click();
     return btn.isConnected ? btn.textContent.trim() : null;
   });
+}
+
+// Write the document back to the preset it came from: the option arms on
+// EVERY press and the second press confirms. Throws if it fires unarmed,
+// because that is the behaviour under test.
+export async function overwriteStampedPreset(page) {
+  const armed = await clickUpdateOption(page);
+  if (!/^Overwrite .+\?$/.test(armed ?? '')) {
+    throw new Error(`the overwrite option did not arm (it reads ${JSON.stringify(armed)})`);
+  }
+  await clickUpdateOption(page);
 }
 
 // ---- the preset STORE, read and cleaned up directly -------------------------

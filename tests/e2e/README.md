@@ -165,7 +165,7 @@ composer focus is worth building.
   system-prompt persistence (no-blur commit +
   Escape-close survival), preset save/apply round-trip (the picker copies
   nothing until an entry's Apply, provenance states), the iterate loop
-  (apply, tune the prompt, Update X from the Save sheet, re-apply shows the
+  (apply, tune the prompt, Overwrite X from the Save sheet, re-apply shows the
   edit), the applied-preset chip (shows/(modified)/clears when its preset is
   deleted on the Presets page), conversation CRUD, 390px mobile, and a capability/
   thinking/image section: gating (the thinking toggle tracks the selected

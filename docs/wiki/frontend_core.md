@@ -93,17 +93,17 @@ flowchart LR
     P["Preset store"]
     P -- "Apply preset… (copy in, stamp)" --> D
     D -- "Save… → Save as a new preset (create, stamp)" --> P
-    D -- "Save… → Update X (X = the stamp, only when it differs)" --> P
+    D -- "Save… → Overwrite X (X = the stamp, only when it differs; armed)" --> P
 ```
 
 - **Apply preset…** opens a list of every preset with its *own* prompt; each entry has one Apply button. Apply copies the preset onto the document and stamps it. It arms ("Replace prompt?") only when it would replace a differing non-empty prompt: sampler values are recoverable, a prompt is typed work.
-- **Save…** offers *Save as a new preset* always. It creates, refuses a name in use (against a freshly fetched list, with the server's 409 as the backstop) and keeps what was typed. Enter in its name box is safe because there is no arm to get past: it cannot overwrite.
-- **Save… → Update X** is the only write from the drawer to an existing preset. It exists only when the document is stamped with X and differs from it, and its target is the stamp: no select and no name box feeds it. It re-fetches first and refuses when X's `updated_at` is not the one this drawer read. It arms in one case, an empty prompt box over a stored prompt, because that write leaves the preset present but inert.
+- **Save…** offers *Save as a new preset* first and always. It creates, refuses a name in use (against a freshly fetched list, with the server's 409 as the backstop) and keeps what was typed. Enter in its name box is safe because there is no arm to get past: it cannot overwrite.
+- **Save… → Overwrite X**, under the create, is the only write from the drawer to an existing preset. It exists only when the document is stamped with X and differs from it, and its target is the stamp: no select and no name box feeds it. It arms on every press, and after the confirm it re-fetches and refuses when X's `updated_at` is not the one this drawer read.
 
 No control on the drawer's face is conditional. The one conditional choice sits inside the Save sheet.
 
 ### 3.4. Loss prevention
-The loss this design answers was a write aimed at a preset nobody was looking at: the old section's `<select>` pre-filled the save-as name, so browsing a preset aimed Save at it, and Save wrote the document's prompt over the stored one with an update that keeps no history. The guards that followed (an armed Save, a read-only preview, a drift line) each patched a reading failure of a section that did two jobs. Removing the select removed the aim: Update's target is a property of the document.
+The loss this design answers was a write aimed at a preset nobody was looking at: the old section's `<select>` pre-filled the save-as name, so browsing a preset aimed Save at it, and Save wrote the document's prompt over the stored one with an update that keeps no history. The guards that followed (an armed Save, a read-only preview, a drift line) each patched a reading failure of a section that did two jobs. Removing the select removed the aim: Overwrite's target is a property of the document. Removing the aim did not remove the need to confirm: shipped first in the sheet and firing on one press, it replaced a stored prompt when it was pressed on the way to the create, so it arms on every press and sits second.
 
 **An arm is a promise about one action**, and that is enforced in the primitive rather than in consumer wiring. `armedConfirm` takes a `target()` describing destination, payload and the stored value about to be replaced, captures it at arm time, and re-reads it on the confirming click, re-arming instead of firing if any of them moved. It cannot live in the section: the payload is the *document's* prompt, edited in a different drawer section this one gets no events from.
 

@@ -18,7 +18,7 @@ async function requireCap(page, modelId, cap) {
 }
 import { serverGet } from '../lib/server-state.mjs';
 import { clickByText, armedClick, count, textOf, waitForLabel, settingsInputValue, setSettingsInput, noHorizontalOverflow, openDrawer, closeDrawer,
-  provenanceText, openPresetPicker, applyPreset, saveAsNewPreset, updateOptionLabel, clickUpdateOption,
+  provenanceText, openPresetPicker, applyPreset, saveAsNewPreset, updateOptionLabel, overwriteStampedPreset,
   storedPresets, deleteStoredPreset, presetCardButton } from '../lib/dom.mjs';
 
 const COMPOSER = '.chat__composer textarea';
@@ -837,7 +837,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     // there is nothing it could be written back to.
     await provenanceIs('No preset', 'on a conversation no preset was applied to');
     assert((await updateOptionLabel(page)) === null,
-      'the Save sheet offers an Update on a conversation with no preset');
+      'the Save sheet offers an overwrite on a conversation with no preset');
     await setSettingsInput(page, 'Temperature', '0.31');
     await saveAsNewPreset(page, 'e2e-preset');
     await waitFor(() => presetStored('e2e-preset'), { message: 'the saved preset is not in the store' });
@@ -862,9 +862,10 @@ export async function runChatSuite({ suite, ctx, config }) {
 
   await suite.check('the iterate loop: apply, tune the prompt, write it back to its preset', async () => {
     // Apply a preset, improve the prompt inside the conversation, and store
-    // the improvement where it came from. The Save sheet offers "Update X"
+    // the improvement where it came from. The Save sheet offers "Overwrite X"
     // only because this conversation is stamped with X and now differs from
-    // it; nothing on screen chooses the target.
+    // it; nothing on screen chooses the target, and every press arms first
+    // (overwriteStampedPreset throws if it does not).
     const typePrompt = (text) => page.$eval('.sysprompt-input', (el, v) => {
       el.value = v;
       el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -874,15 +875,15 @@ export async function runChatSuite({ suite, ctx, config }) {
     await applyPreset(page, 'e2e-preset'); // the preset's temperature back, so only the prompt will differ
     await provenanceIs('From preset e2e-preset', 'after Apply');
     assert((await updateOptionLabel(page)) === null,
-      'Update is offered to a conversation that matches its preset');
+      'the overwrite is offered to a conversation that matches its preset');
 
     const tuned = `${SYS_PROMPT} Be terse. Always.`;
     await typePrompt(tuned);
     await provenanceIs('e2e-preset, modified: prompt', 'after tuning the prompt');
     const offered = await updateOptionLabel(page);
-    assert(offered === 'Update e2e-preset with this conversation\'s prompt and settings',
+    assert(offered === 'Overwrite e2e-preset with this conversation\'s prompt and settings',
       `the Save sheet offers ${JSON.stringify(offered)}`);
-    await clickUpdateOption(page);
+    await overwriteStampedPreset(page);
     await waitFor(async () => (await storedPreset())?.system_prompt === tuned,
       { message: async () => `the update did not reach the store: ${JSON.stringify((await storedPreset())?.system_prompt)}` });
     assert(String((await storedPreset()).params?.temperature) === '0.31',

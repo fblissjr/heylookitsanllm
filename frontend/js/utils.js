@@ -281,7 +281,7 @@ export function armedConfirm(btn, action, armedLabel = 'Confirm?', when = null, 
   // prompt?" while aimed somewhere else is a lie even though clicking it is now
   // safe. Consumers call this from whatever re-aims or withdraws the action
   // (the Presets page's editor on a prompt edit, the Save sheet when its
-  // Update option stops applying). Exposed on the button, so a caller that never
+  // Overwrite option stops applying). Exposed on the button, so a caller that never
   // re-aims can ignore it.
   function disarm() {
     if (!armed) return;

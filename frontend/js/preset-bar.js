@@ -15,20 +15,21 @@
 //     document's state (owner, 2026-10-05: a better design, never at the cost
 //     of added complexity; a state-dependent control is complexity)
 //   - ONE PATH HERE OVERWRITES A STORED PRESET, and it cannot be aimed. Apply
-//     copies preset -> document. The Save sheet always offers "Save as a new
-//     preset" (document -> a NEW preset; a name in use is refused), and,
-//     only while the document is stamped with X and differs from it, "Update
-//     X": the document written back to the preset it came from. That is the
-//     iterate loop (apply, tune the prompt in a conversation, write it back),
-//     and its target is a property of the DOCUMENT, never of a control: no
-//     select and no name box feeds it. The old Save took its target from a
-//     select that browsing moved and a name box the select pre-filled, and
-//     that cost a 35k-character prompt on 2026-08-28. Update names X on its
-//     face and refuses when X's stored row moved since this drawer read it.
-//     It arms in one case only: when the document has no prompt and X has
-//     one, because that write leaves X in the list but inert ("my preset
-//     disappeared"), the rule every version of this section has kept. Do not
-//     give Update a way to choose a target
+//     copies preset -> document. The Save sheet offers "Save as a new preset"
+//     first and always (document -> a NEW preset; a name in use is refused),
+//     and under it, only while the document is stamped with X and differs
+//     from it, "Overwrite X": the document written back to the preset it came
+//     from. That is the iterate loop (apply, tune the prompt in a
+//     conversation, write it back), and its target is a property of the
+//     DOCUMENT, never of a control: no select and no name box feeds it. The
+//     old Save took its target from a select that browsing moved and a name
+//     box the select pre-filled, and that cost a 35k-character prompt on
+//     2026-08-28. Overwrite names X on its face, ARMS ON EVERY PRESS, and
+//     refuses when X's stored row moved since this drawer read it. A named
+//     target is not a confirmation: as the sheet's first, one-press option it
+//     was hit on the way to save-as-new and replaced a stored prompt
+//     (2026-10-05). Do not give it a way to choose a target, do not put it
+//     above the create, and do not let it fire unarmed
 //   - the PROVENANCE LINE answers "which preset is this document running, and
 //     is it still that preset?" without opening anything: "No preset", "From
 //     preset X", or "X, modified: prompt and two knobs (...)". It reads the
@@ -102,7 +103,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
                                        model = () => null, noun = 'document' }) {
   let presets = [];
   let provEl = null;  // latest built section's provenance line; detached writes are harmless
-  let syncUpdate = null; // latest built section's "Update X" option: offered or not, with the line
+  let syncUpdate = null; // latest built section's "Overwrite X" option: offered or not, with the line
   // The stamp -- which preset a document EXPLICITLY had applied/saved onto
   // it -- lives on the DOCUMENT (getStamp/setStamp -> applied_preset_id), so
   // provenance survives a reload and is the same on every device, like every
@@ -286,7 +287,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   function updateProvenance() {
     syncIndicator(); // the chip tracks the same edits the line does
     if (provEl) paintProvenance(provEl);
-    syncUpdate?.(); // the Save sheet offers "Update X" only while the line reads "X, modified"
+    syncUpdate?.(); // the Save sheet offers "Overwrite X" only while the line reads "X, modified"
   }
 
   // The section owns the sampler half of provenance-tracking (settings.js is
@@ -436,13 +437,20 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
       // this one gets no events from).
       () => JSON.stringify([preset.id, getPrompt() ?? null]),
     );
+    // Tags beside the name, not sentences under it: an entry is a CHOICE,
+    // and a list of them read as a list of things already applied (owner,
+    // 2026-10-05). Only the one preset this document came from carries the
+    // "applied here" tag, in the chosen-item fill.
     const marks = [];
-    if (!carries) marks.push('settings only');
-    if (current?.id === preset.id) marks.push(current.modified ? 'applied here, modified since' : 'applied here');
+    if (!carries) marks.push(createEl('span', { class: 'preset-option__mark' }, ['settings only']));
+    if (current?.id === preset.id) {
+      marks.push(createEl('span', { class: 'preset-option__mark preset-option__mark--applied' },
+        [current.modified ? 'applied here, modified since' : 'applied here']));
+    }
     return createEl('div', { class: 'preset-option', dataset: { name: preset.name } }, [
       createEl('div', { class: 'preset-option__head' }, [
         createEl('span', { class: 'preset-option__name' }, [preset.name]),
-        ...marks.map((m) => createEl('span', { class: 'preset-option__mark' }, [m])),
+        ...marks,
         applyBtn,
       ]),
       carries
@@ -475,44 +483,21 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     const fillPicker = () => {
       const current = provenance();
       pickerEl.replaceChildren(...(presets.length
-        ? presets.map((p) => buildOption(p, current))
+        ? [
+          // Says what the list is FOR. Without it the entries read as status.
+          createEl('div', { class: 'preset-sheet__heading' }, [`Choose a preset to copy into this ${noun}`]),
+          ...presets.map((p) => buildOption(p, current)),
+        ]
         : [createEl('div', { class: 'settings-note muted small' }, [
           'No presets yet. Save makes one from what is shown here.',
         ])]));
     };
 
     // ---- the Save sheet: where this document's bag can be written ---------
-    // "Update X" is built only for a document that HAS a stamped preset,
-    // bound to that preset, and offered only while the document differs from
-    // it. It sits first because it is the answer when it applies at all.
-    const built = stamped();
-    const blanks = () => Boolean(presetPrompt(presets.find((p) => p.id === built?.id)) && !getPrompt());
-    const updateBtn = built ? armedConfirm(
-      createEl('button', {
-        type: 'button', class: 'btn btn--sm preset-save__update', hidden: true,
-        title: `Overwrites the stored preset "${built.name}"`,
-      }, [`Update ${built.name} with this ${noun}'s prompt and settings`]),
-      () => updateStamped(built),
-      `Remove ${built.name}'s prompt?`,
-      // The one write here that costs something nothing on screen shows: an
-      // empty prompt box written over a prompt the preset stores.
-      blanks,
-      // Destination, payload and the stored row being replaced: the prompt is
-      // edited in another drawer section this one gets no events from, and a
-      // list refresh can move the row. Any of them moving voids the arm.
-      () => JSON.stringify([getStamp?.() ?? null, getPrompt() ?? null,
-        presets.find((p) => p.id === built.id)?.updated_at ?? null]),
-    ) : null;
-    syncUpdate = updateBtn ? () => {
-      const now = provenance();
-      const offer = Boolean(now && now.id === built.id && now.modified);
-      if (!offer || !blanks()) updateBtn.disarm();
-      if (updateBtn.hidden === offer) updateBtn.hidden = !offer;
-    } : null;
-    syncUpdate?.();
-
-    // Creates only. Enter in the name box goes straight to the create, which
-    // is safe because there is no arm to get past: this cannot overwrite.
+    // "Save as a new preset" FIRST: it is what most presses of Save are for,
+    // and it cannot cost anything. Creates only. Enter in the name box goes
+    // straight to the create, which is safe because there is no arm to get
+    // past: this cannot overwrite.
     const nameInput = createEl('input', {
       class: 'input', placeholder: 'Name for a new preset',
       'aria-label': 'Name for a new preset',
@@ -522,12 +507,44 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     nameInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') saveAsNew(nameInput.value);
     });
+
+    // "Overwrite X" SECOND, built only for a document that HAS a stamped
+    // preset, bound to that preset, and offered only while the document
+    // differs from it. It arms on EVERY press. It was the sheet's first
+    // option and fired on one press, on the reasoning that a button naming
+    // its target needs no confirm; within hours a press on the way to "Save
+    // as a new preset" wrote a conversation's prompt over a stored one
+    // (2026-10-05). It destroys a stored prompt and keeps nothing, so it arms
+    // then fires, like every other destructive action here.
+    const built = stamped();
+    const updateBtn = built ? armedConfirm(
+      createEl('button', {
+        type: 'button', class: 'btn btn--sm preset-save__update', hidden: true,
+        title: `Replaces what the stored preset "${built.name}" holds. Nothing of it is kept.`,
+      }, [`Overwrite ${built.name} with this ${noun}'s prompt and settings`]),
+      () => updateStamped(built),
+      `Overwrite ${built.name}?`,
+      null,
+      // Destination, payload and the stored row being replaced: the prompt is
+      // edited in another drawer section this one gets no events from, and a
+      // list refresh can move the row. Any of them moving voids the arm.
+      () => JSON.stringify([getStamp?.() ?? null, getPrompt() ?? null, snapshotSettings(),
+        presets.find((p) => p.id === built.id)?.updated_at ?? null]),
+    ) : null;
+    syncUpdate = updateBtn ? () => {
+      const now = provenance();
+      const offer = Boolean(now && now.id === built.id && now.modified);
+      if (!offer) updateBtn.disarm();
+      if (updateBtn.hidden === offer) updateBtn.hidden = !offer;
+    } : null;
+    syncUpdate?.();
+
     const saveEl = createEl('div', {
       class: 'preset-sheet preset-save', id: 'preset-save', hidden: true,
       role: 'group', 'aria-label': 'Save this prompt and these settings',
     }, [
-      updateBtn,
       createEl('div', { class: 'preset-row' }, [nameInput, createBtn]),
+      updateBtn,
     ]);
 
     // ---- the two verbs ----------------------------------------------------

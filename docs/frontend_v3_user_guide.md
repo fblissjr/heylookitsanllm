@@ -162,23 +162,24 @@ The preset itself keeps them, and the conversation still counts as running it.
 
 Opens the two places this conversation's prompt and settings can be written:
 
-- **Save as a new preset**, always there. Type a name and press it (or Enter).
-  It creates a preset and stamps the conversation with it. If the name is in
-  use it refuses and keeps what you typed. It can never overwrite.
-- **Update X with this conversation's prompt and settings**, offered first, and
+- **Save as a new preset**, first and always there. Type a name and press it
+  (or Enter). It creates a preset and stamps the conversation with it. If the
+  name is in use it refuses and keeps what you typed. It can never overwrite.
+- **Overwrite X with this conversation's prompt and settings**, under it, and
   only when the conversation came from preset X and now differs from it. This
   is the ordinary loop: apply a preset, improve the prompt while you use it,
   write the improvement back. X is always the preset named on the provenance
   line. Nothing on screen can point this at a different preset.
 
-Update goes through on one press, with two exceptions:
+Overwrite replaces what X stores and keeps nothing of it, so it always asks
+first: the button changes to **Overwrite X?** for a few seconds, and a second
+press goes through. If you edit the prompt or a setting in between, the
+confirmation is void and it asks again. Writing from an empty prompt box
+leaves X in the list as *settings only*, and the status line says so.
 
-- If the prompt box is empty and X stores a prompt, the button asks first
-  ("Remove X's prompt?"). Writing an empty prompt leaves X in the list as
-  *settings only*, which later reads as "my preset disappeared".
-- If X was changed somewhere else since the drawer read it (another tab, the
-  Presets page on another device), nothing is written and the status line says
-  so. Look at it under *Apply preset…* and save again if you still mean to.
+If X was changed somewhere else since the drawer read it (another tab, the
+Presets page on another device), nothing is written and the status line says
+so. Look at it under *Apply preset…* and save again if you still mean to.
 
 ### The Presets page
 

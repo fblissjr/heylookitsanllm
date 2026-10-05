@@ -1212,12 +1212,22 @@ instead. The drawer holds what the document runs on and one provenance line
 ("No preset", "From preset X", "X, modified: ..."), with two verbs: Apply
 copies preset to document, Save writes the document to a new preset or, only
 while the document is stamped with X and differs from it, back to X. That
-"Update X" is the one write from the drawer to an existing preset and its
+"Overwrite X" is the one write from the drawer to an existing preset and its
 target is the document's stamp: there is no select and no name box that can
 feed it, which is the property the 2026-08-28 write lacked. Do not give it a
 way to choose a target, and do not add a second overwrite. It refuses when
-X's row moved since the drawer read it, and it arms only to write an empty
-prompt over a stored one (blanking always arms, as it has since v1.79.20).
+X's row moved since the drawer read it.
+
+It also arms on every press, and that took one more loss to learn. It first
+shipped as "Update X", the first option in the Save sheet, firing on one
+press: the reasoning was that a button naming the preset it writes to needs
+no confirmation, and that an arm on the ordinary iterate loop trains
+click-through. On 2026-10-05, the day it shipped, a press on the way to "Save
+as a new preset" wrote a conversation's prompt over a stored one. A named
+target says where a write goes; it does not ask whether you meant it. The
+create is first now, the overwrite is under it, labelled as an overwrite, and
+it arms then fires like every other destructive action. The iterate loop
+costs a second press.
 Edit, rename, duplicate and delete are the Presets page's, where the thing
 edited is the thing on screen. The page's knob editor is bound to the preset's
 own bag and must not reuse the drawer's sampler panel: that panel is a view of

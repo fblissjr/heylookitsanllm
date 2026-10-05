@@ -434,7 +434,18 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 }
 .preset-option__head { display: flex; align-items: center; gap: 0.4rem 0.5rem; flex-wrap: wrap; }
 .preset-option__name { font-weight: 550; font-size: var(--text-ui); overflow-wrap: anywhere; }
-.preset-option__mark { font-size: var(--text-sm); color: var(--ink-muted); white-space: nowrap; }
+/* Tags beside the name. The one preset the document came from gets the
+   chosen-item fill (§3), so it reads as a mark and the rest as choices. */
+.preset-option__mark {
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-ctl);
+  padding: 0 0.35rem;
+  white-space: nowrap;
+}
+.preset-option__mark--applied { background: var(--brand-tint); color: var(--ink); }
+.preset-sheet__heading { font-size: var(--text-sm); color: var(--ink-muted); }
 .preset-option__head .btn { margin-left: auto; }
 .preset-option__prompt {
   max-height: 7rem;

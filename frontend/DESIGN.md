@@ -256,9 +256,11 @@ Managing the store of presets is a different job with a different surface:
   about which preset a document is running. It sits above the prompt box so
   the answer is on screen without scrolling on the phone.
 - **Two verbs on the drawer's face, each opening a sheet in place:** "Apply
-  preset…" (every preset with its own prompt, one Apply per entry) and "Save…"
-  ("Save as a new preset", always; "Update X", only while the document came
-  from X and differs). No control on the face appears or disappears with the
+  preset…" (headed by what it is for; every preset with its own prompt, one
+  Apply per entry; the preset the document came from carries an "applied
+  here" tag) and "Save…" ("Save as a new preset", first and always;
+  "Overwrite X", under it, only while the document came from X and differs).
+  No control on the face appears or disappears with the
   document's state: a state-dependent control is complexity, so the
   conditional choice lives inside the verb it belongs to.
 - **The Presets surface** is a page (`#/presets`, `pages/presets.js`): a card
@@ -269,10 +271,16 @@ Managing the store of presets is a different job with a different surface:
   model-agnostic. It must not reuse the drawer's sampler panel, which is a
   view of the sampler cache chat and notebook share.
 - **One write from the drawer reaches an existing preset, and it cannot be
-  aimed:** "Update X" targets the document's stamped preset. Do not add a
+  aimed:** "Overwrite X" targets the document's stamped preset. Do not add a
   select, a name box or any other control that can choose its target; that is
   the shape that overwrote a preset nobody was looking at (`sharp_edges.md`
   "Presets and the system prompt").
+- **A destructive action arms, then fires, whatever its label says.** Naming
+  the target on the button is not a confirmation. "Overwrite X" arms on every
+  press and sits under the create, not above it: placed first and firing on
+  one press, it was hit on the way to "Save as a new preset" and replaced a
+  stored prompt. The safe choice goes first in a sheet; the one that destroys
+  something goes after it and asks.
 
 **Editing is raw-token-honest (a hard rule, not subject to the toggle).** Any
 surface that lets the user *edit* a message — editing a chat turn, prefilling or

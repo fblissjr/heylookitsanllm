@@ -43,7 +43,7 @@ import { fileURLToPath } from 'node:url';
 import { launchBrowser } from './lib/browser.mjs';
 import { Suite, printSummary, assert, waitFor, sleep, skip } from './lib/harness.mjs';
 import { openDrawer, closeDrawer, clickByText, armedClick, provenanceText, openPresetPicker, clickPresetApply,
-  applyPreset, saveAsNewPreset, updateOptionLabel, clickUpdateOption, presetCardButton } from './lib/dom.mjs';
+  applyPreset, saveAsNewPreset, updateOptionLabel, clickUpdateOption, overwriteStampedPreset, presetCardButton } from './lib/dom.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const V3_ROOT = process.env.E2E_V3_ROOT
@@ -1588,7 +1588,7 @@ async function main() {
     // UPDATE that keeps no history. An armed guard followed, then a preview,
     // then a drift line. Since Phase 3b the drawer has two verbs: Apply
     // copies preset -> document, and Save writes the document either to a NEW
-    // preset or back to the one preset it is stamped with ("Update X"), which
+    // preset or back to the one preset it is stamped with ("Overwrite X"), which
     // nothing on screen can re-aim. Everything else about a stored preset is
     // the Presets page's (boot 4e).
     //
@@ -1640,7 +1640,7 @@ async function main() {
       assert((await provenanceText(guard.page)) === 'No preset',
         `an unstamped conversation reads ${JSON.stringify(await provenanceText(guard.page))}`);
       assert((await guard.page.$('.drawer--open .preset-save__update')) === null,
-        'a conversation with no stamped preset was built an Update option');
+        'a conversation with no stamped preset was built an Overwrite option');
       await typeDocPrompt('the document prompt, not any preset\'s');
       const before = JSON.stringify(guard.store.remote.presets);
       const from = guard.reqs.length;
@@ -1650,14 +1650,14 @@ async function main() {
       // what is visible. By index over a fresh query, because an Apply
       // rebuilds the section. Swept TWICE: the first sweep stamps the
       // conversation part-way through, so only the second one meets every
-      // button a stamped conversation has (its Update option among them).
+      // button a stamped conversation has (its Overwrite option among them).
       // A button added later is pressed too, which is the point: this is a
       // property of the section, not a list of the buttons it has today.
       //
       // Nothing may reach the store, because at no point here does the
       // conversation differ from the preset it is stamped with: each Apply
-      // leaves it equal to what was applied. That is the one state in which
-      // Update may write (the next check but two).
+      // leaves it equal to what was applied. Only a conversation that DIFFERS
+      // from its stamp is offered the overwrite (checked on its own below).
       const buttons = async () => {
         await openPresetPicker(guard.page);
         return guard.page.$$eval('.drawer--open .preset-section button', (els) => els.map((e) => e.textContent.trim()));
@@ -1683,7 +1683,7 @@ async function main() {
           }
         }
       }
-      assert(pressed.has('update'), 'the sweep never reached an Update option, so it proved nothing about one');
+      assert(pressed.has('update'), 'the sweep never reached an Overwrite option, so it proved nothing about one');
       // ...and the keyboard path into the same create.
       await guard.page.evaluate(() => {
         const box = document.querySelector('.drawer--open .preset-save input');
@@ -1699,6 +1699,8 @@ async function main() {
 
     await suite.check('Save as new creates, refuses a name in use, and keeps what was typed', async () => {
       await typeDocPrompt('a prompt worth keeping');
+      assert(/, modified: prompt$/.test(await provenanceText(guard.page)),
+        `precondition: the conversation should be stamped and modified, the line reads ${JSON.stringify(await provenanceText(guard.page))}`);
       let from = guard.reqs.length;
       await saveAsNewPreset(guard.page, 'owned');
       await sleep(300);
@@ -1714,7 +1716,11 @@ async function main() {
       await settle(guard.page);
       assert(post.method === 'POST' && JSON.parse(post.postData).system_prompt === 'a prompt worth keeping',
         `Save as new sent ${post.method} ${post.postData}`);
-      assert(presetWrites(guard.reqs, from).length === 1, 'Save as new sent more than its one create');
+      // ONE write, and it is the create. The conversation was stamped and
+      // differed from its preset when this ran, which is exactly when the
+      // sheet also offers "Overwrite X": saving as new must not touch X.
+      const all = presetWrites(guard.reqs, from);
+      assert(all.length === 1, `Save as new wrote ${JSON.stringify(all.map((w) => [w.method, w.url]))}`);
       // It stamps: the conversation IS that preset now.
       assert((await provenanceText(guard.page)) === 'From preset fresh-one',
         `after Save as new the line reads ${JSON.stringify(await provenanceText(guard.page))}`);
@@ -1790,62 +1796,72 @@ async function main() {
       await setSampler('temperature', ''); // leave the panel as we found it
     });
 
-    await suite.check('Save offers "Update X" only to a conversation that came from X and differs, and it writes only X', async () => {
+    await suite.check('Save offers "Overwrite X" only to a conversation that came from X and differs; it arms, and writes only X', async () => {
       // The iterate loop: apply, tune in the conversation, write it back.
       // The conversation is stamped "stable" with an edited prompt.
       const stable = () => guard.store.remote.presets.find((p) => p.id === 'p-stable');
-      const label = 'Update stable with this conversation\'s prompt and settings';
+      const label = 'Overwrite stable with this conversation\'s prompt and settings';
       assert((await updateOptionLabel(guard.page)) === label,
         `the Save sheet offers ${JSON.stringify(await updateOptionLabel(guard.page))}`);
-      // ...and stops offering it the moment there is nothing to write back.
+      // "Save as a new preset" comes FIRST. With the overwrite on top, a user
+      // heading for save-as-new met it first and one press destroyed a
+      // preset's prompt (2026-10-05).
+      const createFirst = await guard.page.evaluate(() => {
+        const sheet = document.querySelector('.drawer--open .preset-save');
+        const name = sheet.querySelector('input');
+        const over = sheet.querySelector('.preset-save__update');
+        return Boolean(name.compareDocumentPosition(over) & Node.DOCUMENT_POSITION_FOLLOWING);
+      });
+      assert(createFirst, 'the overwrite option sits above "Save as a new preset"');
+      // ...and it stops being offered the moment there is nothing to write back.
       await typeDocPrompt('STABLE PRESET PROMPT');
-      assert((await updateOptionLabel(guard.page)) === null, 'Update is offered to a conversation that matches its preset');
+      assert((await updateOptionLabel(guard.page)) === null, 'the overwrite is offered to a conversation that matches its preset');
 
       await typeDocPrompt('STABLE PRESET PROMPT, tuned');
       await setSampler('temperature', '0.7');
+      // EVERY press arms first. It overwrites a stored prompt with nothing
+      // kept, and naming the target on the button did not stop a mis-press.
       let from = guard.reqs.length;
-      assert((await clickUpdateOption(guard.page)) === label, 'an ordinary update asked for confirmation');
+      assert((await clickUpdateOption(guard.page)) === 'Overwrite stable?', 'the first press did not arm');
+      await sleep(300);
+      assert(presetWrites(guard.reqs, from).length === 0, 'the first press wrote');
+      // The arm is about one payload. Edit the prompt and it asks again.
+      await typeDocPrompt('STABLE PRESET PROMPT, tuned twice');
+      assert((await clickUpdateOption(guard.page)) === 'Overwrite stable?', 'an arm made over one prompt fired over another');
+      await sleep(300);
+      assert(presetWrites(guard.reqs, from).length === 0, 'a stale arm wrote');
+      await typeDocPrompt('STABLE PRESET PROMPT, tuned');
+      from = guard.reqs.length;
+      await overwriteStampedPreset(guard.page);
       const put = await waitFor(() => presetWrites(guard.reqs, from)[0],
-        { timeout: 5000, interval: 50, message: 'Update sent nothing' });
+        { timeout: 5000, interval: 50, message: 'the confirmed overwrite sent nothing' });
       await settle(guard.page);
       const body = JSON.parse(put.postData);
       assert(put.method === 'PUT' && put.url.endsWith('/v1/presets/p-stable'), `the write was ${put.method} ${put.url}`);
       assert(body.system_prompt === 'STABLE PRESET PROMPT, tuned' && body.params.temperature === 0.7,
         `the write carried ${put.postData}`);
-      assert(!('name' in body), 'the update re-sent the preset\'s name');
-      assert(presetWrites(guard.reqs, from).length === 1, 'Update sent more than its one write');
+      assert(!('name' in body), 'the overwrite re-sent the preset\'s name');
+      assert(presetWrites(guard.reqs, from).length === 1, 'the overwrite sent more than its one write');
       await waitFor(async () => (await provenanceText(guard.page)) === 'From preset stable',
-        { timeout: 5000, interval: 50, message: 'the line did not return to a match after the update' });
-      assert((await updateOptionLabel(guard.page)) === null, 'Update is still offered right after it wrote');
+        { timeout: 5000, interval: 50, message: 'the line did not return to a match after the overwrite' });
+      assert((await updateOptionLabel(guard.page)) === null, 'the overwrite is still offered right after it wrote');
       // Re-applying brings the tuned prompt back: the preset holds it now.
       await typeDocPrompt('something else entirely');
       await applyPreset(guard.page, 'stable', { armed: true });
       await settle(guard.page);
       assert((await docPrompt()) === 'STABLE PRESET PROMPT, tuned', `re-applying carried ${JSON.stringify(await docPrompt())}`);
 
-      // Another device writes the row after this drawer read it. The update
-      // must not land on a preset its author never saw.
+      // Another device writes the row after this drawer read it. Even a
+      // confirmed overwrite must not land on a preset its author never saw.
       await typeDocPrompt('STABLE PRESET PROMPT, tuned further');
       stable().updated_at = 'moved-elsewhere';
       from = guard.reqs.length;
-      await clickUpdateOption(guard.page);
+      await overwriteStampedPreset(guard.page);
       await sleep(300); // it re-reads the store before it would write
       await settle(guard.page);
-      assert(presetWrites(guard.reqs, from).length === 0, 'an update landed on a preset that had changed elsewhere');
+      assert(presetWrites(guard.reqs, from).length === 0, 'an overwrite landed on a preset that had changed elsewhere');
       assert(stable().system_prompt === 'STABLE PRESET PROMPT, tuned', 'the stored prompt changed');
-
-      // An empty prompt box written over a stored prompt leaves the preset in
-      // the list but inert ("my preset disappeared"). The one case that arms.
-      await typeDocPrompt('');
-      from = guard.reqs.length;
-      assert((await clickUpdateOption(guard.page)) === 'Remove stable\'s prompt?',
-        'emptying a stored prompt through Update did not arm');
-      await sleep(300);
-      assert(presetWrites(guard.reqs, from).length === 0, 'the first click blanked the preset');
-      // The arm was about an empty box. With text back in it, it is gone.
       await typeDocPrompt('STABLE PRESET PROMPT, tuned');
-      assert((await updateOptionLabel(guard.page)) === null && stable().system_prompt === 'STABLE PRESET PROMPT, tuned',
-        'the blanking arm outlived the empty prompt box');
     });
 
     // ---- the drawer says what it is doing (v1.79.25) ---------------------
@@ -1926,6 +1942,10 @@ async function main() {
       // was never applied here is not credited.
       assert(!marks['idle-one']?.some((m) => /applied here/.test(m)),
         'a preset that was never applied is marked as applied');
+      const heading = await stamped.page.$eval('.drawer--open .preset-sheet__heading', (el) => el.textContent);
+      assert(/^Choose a preset to copy into this conversation/.test(heading),
+        `the Apply sheet is headed ${JSON.stringify(heading)}`);
+      await closeDrawer(stamped.page);
     });
     await stamped.page.close();
 
