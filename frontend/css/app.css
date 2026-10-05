@@ -122,6 +122,9 @@ code, pre, kbd { font-family: var(--mono); font-size: 0.875em; }
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr;
   height: 100dvh;
+  /* Landscape phone: wide enough for the desktop layout, with the Dynamic
+     Island over the left of the rail. Zero everywhere else. */
+  padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
 }
 
 #sidebar {
@@ -183,6 +186,8 @@ code, pre, kbd { font-family: var(--mono); font-size: 0.875em; }
     left: 0; right: 0; bottom: 0;
     height: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom));
     padding-bottom: env(safe-area-inset-bottom);
+    /* fixed, so #app's inline padding does not reach it */
+    padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
     background: var(--surface);
     border-top: 1px solid var(--line);
     z-index: var(--z-raised);

@@ -321,6 +321,10 @@ owner: "equally well on desktop web and iPhone 17 Pro Safari").
   insets ensure dynamic island / notch clearance without wasting vertical
   space. Desktop is untouched — the wrapper is `display:contents` there and the
   bar and composer are the flat rows they were.
+- **Side safe areas are padded at the shell.** `#app` pads inline by the left
+  and right insets, because a landscape phone is wide enough for the desktop
+  layout and puts the Dynamic Island over the rail. A fixed bar is outside
+  that padding and pads itself (`#bottom-nav`).
 - **The drawer is a real modal dialog.** `role="dialog"` + `aria-modal`,
   `inert` while closed; on open it seals `#app` with `inert` (Tab can't escape),
   moves focus to Close, and on close restores focus to the opener. Escape and a
