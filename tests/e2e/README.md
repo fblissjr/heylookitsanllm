@@ -63,9 +63,10 @@ yourself that a check you doubt can actually fail. It is a tool, not a step:
 write the check and move on unless its ability to fail is genuinely in
 question.
 
-Run any suite under the dark theme with `E2E_COLOR_SCHEME=dark` (or `light`):
-the stylesheet follows the system's colour scheme, so a headless run is
-light-only unless the media feature is emulated.
+Run any suite under a theme with `E2E_COLOR_SCHEME=dark` or `light`. The
+stylesheet follows the system's colour scheme and headless Chrome follows the
+OS, so a run without the variable is whatever the Mac is set to; to cover both
+themes, run each explicitly.
 
 Known false positive: after an mlx version bump, the FIRST run pays Metal
 shader JIT compilation and the streaming-cadence guard can read low (seen:

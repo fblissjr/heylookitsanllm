@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.193]
+
+### Fixed
+
+- **Dark mode phase 2: Safari and shell fixes.** The page declares its colour
+  scheme and `theme-color` before the stylesheet loads, so the first paint is
+  in the right theme. Text fields are 16px under a coarse pointer, so iOS no
+  longer zooms the page when one is focused. The shell pads the side safe
+  areas, so a landscape phone's rail clears the Dynamic Island. The closed
+  settings drawer and its backdrop are `display: none` rather than hidden,
+  with the slide kept by `@starting-style` and a discrete `display`
+  transition, so Safari cannot sample them for its bar tint. The chat message
+  list opts out of engine scroll anchoring, so chat.js is the only owner of
+  its scroll position. The sidebar gear no longer wears the browser's default
+  button chrome. Phase 2 of `docs/project/plan_dark_mode.md`; DESIGN.md
+  section 7 carries the new rules. `E2E_COLOR_SCHEME` must be set explicitly
+  for a light run, since headless Chrome follows the OS theme.
+- Not verified on a device: focus zoom, Safari's bar tint after the drawer
+  closes, landscape clearance, and the drawer's open-and-focus sequence in
+  WebKit. Chrome checks: backend suite, `e2e:render` in both themes, and the
+  page suites under dark (chat 53/53, pages 32/32). The chat suite's
+  settings-row lookup had been broken since v2.0.175 (the label gained the
+  default-source text); it matches the label's name node now.
+
 ## [2.0.192]
 
 ### Changed

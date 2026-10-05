@@ -1,6 +1,6 @@
 # Plan: dark mode, Lamplight to Workbench
 
-Last updated: 2026-10-05 (Phase 1 built; status section; Phase 2 gains the nav gear)
+Last updated: 2026-10-05 (Phases 1 and 2 on main; open questions 1 to 4 settled; Phase 2 snippets corrected as built; follow-ups listed)
 
 How to use this file: one phase (or one Phase 4 step) per session, on a branch. The values and rules here become code in `frontend/css/app.css` and rules in `frontend/DESIGN.md` as each phase lands; once landed, those files are the source of truth, not this plan. Open decisions are at the end; settle the first two before Phase 1.
 
@@ -8,8 +8,8 @@ How to use this file: one phase (or one Phase 4 step) per session, on a branch. 
 
 | Phase | State | Where |
 | --- | --- | --- |
-| 1 Tokens | On main as v2.0.191 (merged 2026-10-05); light control borders raised to 3:1 in v2.0.192 | open questions 1 and 2 settled (below); the iPhone check and the page suites under dark not yet run |
-| 2 Safari fixes | In progress on `feat/dark-mode-phase2` | six fixes (the nav gear joined it) |
+| 1 Tokens | On main as v2.0.191 (merged 2026-10-05); light control borders raised to 3:1 in v2.0.192 | open questions 1 and 2 settled (below); page suites under dark green at v2.0.193; the iPhone check not yet run |
+| 2 Safari fixes | On main as v2.0.193 (merged 2026-10-05, built by session mrgreen) | six fixes; two of this file's snippets were wrong and are corrected below; Chrome suites green in both themes (page suites under dark: chat 53/53, pages 32/32); device checks not yet run; four follow-ups listed under Phase 2 |
 | 3 Platform | Not started | |
 | 4 Toward Workbench | Not started | gated on A being live and measured |
 
@@ -121,14 +121,15 @@ Six fixes, all CSS plus three `<head>` lines. Each closes a way the phone or the
 
 ```css
 @media (pointer: coarse) {
-  .input, select, textarea, .sysprompt-input,
-  .chat__bar > select, .chat__load-select, .chat__ctx-select, .chat__ctx-custom {
+  .input:not(.notebook__title), select, textarea, .sysprompt-input,
+  .chat__bar > select, .chat__load-select, .chat__ctx-select, .chat__ctx-custom,
+  .cfg-tmpl__body {
     font-size: 16px;
   }
 }
 ```
 
-`maximum-scale=1` would also stop the zoom, but it blocks pinch-zoom in Chrome on Android; 16px fixes the cause and reads better on the phone anyway.
+`maximum-scale=1` would also stop the zoom, but it blocks pinch-zoom in Chrome on Android; 16px fixes the cause and reads better on the phone anyway. As built (v2.0.193), two corrections to the first draft of this snippet: a bare `.input` pulled the notebook title down from its larger size (equal specificity, later rule wins), so the title is excluded; and the models page's template editor has its own class and size, which beats a bare `textarea`, so it is named. `tests/e2e/render.mjs` holds the property (no text field in the chat bar or drawer under 16px on touch).
 
 **3. Landscape safe areas.** At 874pt wide the landscape iPhone gets the desktop layout, with the Dynamic Island over the left of the rail.
 
@@ -165,8 +166,17 @@ This follows VISION principle 1: nothing happens where it cannot be seen.
 **6. The nav gear is a nav item, not a browser button.** The sidebar's "⚙ Settings" (`.drawer-gear`) sets no background or border, so it wears the browser's default button chrome: a grey pill with a dark border in light, and in dark (found in the Phase 1 screenshots) a mid-grey pill on near-black. `.drawer-gear-bottom` already resets both. Give `.drawer-gear` the same reset so it reads like the nav items around it in both themes; Phase 4 step 3 moves the gear beside the top nav and inherits the fix.
 
 ```css
-.drawer-gear { background: none; border: none; }
+:where(.drawer-gear) { background: none; border: none; }
 ```
+
+As built (v2.0.193): the reset sits in `:where()` so it carries no specificity. The plain class form, written first, landed after the `.nav-item` hover rule at equal specificity and removed the gear's hover tint (measured: gear transparent on hover while its sibling links tinted).
+
+**Phase 2 follow-ups, seen while building and not fixed** (fold into Phase 3 or Phase 4 step 3, where the gear moves):
+
+- The gear's label uses the browser's button font (Arial in Chrome) while sibling nav links use the system font, so it still does not fully read as a nav item.
+- `.drawer-gear-bottom` has the plain-class reset shape that defeated hover on the desktop gear; by cascade reasoning only, not measured; it is a touch control.
+- `.message-edit__thinking`'s smaller font-size is dead: `.message-edit textarea` outranks it, so the thinking editor already computes 16px.
+- Fix 3 pads `#app` and `#bottom-nav` only. The drawer (fixed, right edge) and the phone list panes (fixed) get no side inset in landscape. Not verified on a device.
 
 ## Phase 3: platform enhancements
 
@@ -244,7 +254,7 @@ Each phase is proved on the device it is for; desktop Chrome cannot show Safari'
 | Phase | Check | Where |
 | --- | --- | --- |
 | 1 | Contrast for every text and border pair, both themes, computed from the token values | script over app.css |
-| 1 | `e2e:render` and the page suites with `prefers-color-scheme: dark` emulated | desktop Chrome via puppeteer |
+| 1 | `e2e:render` and the page suites with `prefers-color-scheme: dark` emulated (`E2E_COLOR_SCHEME`; a run without it follows the OS theme, so on a dark Mac a plain run is a second dark run: set `light` explicitly) | desktop Chrome via puppeteer |
 | 1 | Each page and the drawer, light and dark | iPhone 17 Pro and desktop |
 | 2 | Tap every input, select and textarea: the page does not zoom | iPhone 17 Pro, iOS 27 |
 | 2 | Open and close the drawer: Safari's bar returns to the bottom-nav colour | iPhone 17 Pro, iOS 27 |
