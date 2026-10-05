@@ -1,8 +1,19 @@
 # Plan: dark mode, Lamplight to Workbench
 
-Last updated: 2026-10-05
+Last updated: 2026-10-05 (Phase 1 built; status section; Phase 2 gains the nav gear)
 
 How to use this file: one phase (or one Phase 4 step) per session, on a branch. The values and rules here become code in `frontend/css/app.css` and rules in `frontend/DESIGN.md` as each phase lands; once landed, those files are the source of truth, not this plan. Open decisions are at the end; settle the first two before Phase 1.
+
+## Status
+
+| Phase | State | Where |
+| --- | --- | --- |
+| 1 Tokens | Built, on branch `feat/dark-mode-phase1` (v2.0.191), awaiting merge | light theme unchanged; open questions 1 and 2 still open |
+| 2 Safari fixes | Not started | next up; now six fixes (the nav gear joined it) |
+| 3 Platform | Not started | |
+| 4 Toward Workbench | Not started | gated on A being live and measured |
+
+Phase 1 checks run: backend suite, `E2E_COLOR_SCHEME=dark bun run e2e:render`, screenshots of every page in both themes. Not yet run: the page suites under dark, the iPhone check.
 
 Reference (claude.ai, not needed to do the work): [living plan doc](https://claude.ai/code/artifact/cb02e772-6df7-4852-8b3b-4f597a96e32d) · [heylook design system](https://claude.ai/artifact/FVfbt5DgekitSQPdBu6QHs) (derived from app.css; dark theme shown as proposed) · [the three dark directions compared](https://claude.ai/artifact/GrsjonmBzc145DcFjXka4i).
 
@@ -96,7 +107,7 @@ The light theme's control borders stay at 1.69:1 in this phase; raising them is 
 
 ## Phase 2: Safari fixes
 
-Five fixes, all CSS plus three `<head>` lines. Each closes a way the phone currently misbehaves or could, in either theme.
+Six fixes, all CSS plus three `<head>` lines. Each closes a way the phone or the shell currently misbehaves or could, in either theme.
 
 **1. No dark flash, correct bars.** Declare the scheme before the stylesheet loads, and give browsers that still read `theme-color` (Chrome, older Safari) the surface colour of the bottom nav.
 
@@ -150,6 +161,12 @@ The `visibility` rules on both go. The reduced-motion kill switch still collapse
 ```
 
 This follows VISION principle 1: nothing happens where it cannot be seen.
+
+**6. The nav gear is a nav item, not a browser button.** The sidebar's "⚙ Settings" (`.drawer-gear`) sets no background or border, so it wears the browser's default button chrome: a grey pill with a dark border in light, and in dark (found in the Phase 1 screenshots) a mid-grey pill on near-black. `.drawer-gear-bottom` already resets both. Give `.drawer-gear` the same reset so it reads like the nav items around it in both themes; Phase 4 step 3 moves the gear beside the top nav and inherits the fix.
+
+```css
+.drawer-gear { background: none; border: none; }
+```
 
 ## Phase 3: platform enhancements
 

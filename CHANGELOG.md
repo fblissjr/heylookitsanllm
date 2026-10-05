@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.191]
+
+### Added
+
+- **Dark theme (Lamplight).** Every colour token in `frontend/css/app.css`
+  is one `light-dark()` pair and `:root` sets `color-scheme: light dark`, so
+  the theme follows the system and the two halves cannot drift apart. The
+  drawer's shadow and backdrop are tokens (`--shadow-ink`, `--scrim`), and
+  `html` paints the page background for overscroll and Safari's fallback bar
+  tint. The light theme is unchanged. `tests/unit/test_css_token_contrast.py`
+  recomputes the contrast table from the `:root` values in both themes and
+  fails on a colour literal outside `:root`. `E2E_COLOR_SCHEME=dark|light`
+  runs the browser suites under a theme. Phase 1 of
+  `docs/project/plan_dark_mode.md`; DESIGN.md section 1 has the dark column.
+
 ## [2.0.190]
 
 ### Added
