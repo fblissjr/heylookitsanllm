@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-10-05, v2.0.198, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
+Last updated: 2026-10-05, v2.0.199, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md) (triaged 2026-09-25;
@@ -16,6 +16,7 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
+| v2.0.199 phase 3b fixes from the owner's device pass (typed value commits as typed; debounced write keeps its target; Save sheet order and arm; editor safeguard) | unit + contract 1542; `e2e:render` 104/104 light and dark; live chat 56/56 (1 skipped) and pages 33/33 on Qwen3.5-0.8B (mrgreen). The owner's controlled repro on the iPhone (blur-then-save stores the value, straight-to-save did not) is the WebKit confirmation of the cause; the fix itself is unverified on a device | v2.0.199 |
 | v2.0.198 dark mode phase 3b (preset manager: Presets page, two-verb drawer) | unit + contract 1542 (mrgreen, rebased tip); `e2e:render` 101/101 light and dark; live chat 54/54 (1 skipped, depth model) and pages 33/33 on Qwen3.5-0.8B. NOT run: on-device; Update X on the notebook live (shared code, covered in render and chat); gguf arm | v2.0.198 |
 | v2.0.194 to v2.0.196 dark mode phase 3 items 1, 2, 3, 5 (Home Screen app, Increase Contrast tokens, text wrapping, themed desktop picker) | contract test for the manifest and icon routes; the contrast test with the prefers-contrast overlay; `e2e:render` light and dark after the picker CSS (see the Phase 3 row on the plan's task board for the figures). NOT run: on-device (Home Screen launch, Increase Contrast, the open picker in Safari 27) | v2.0.196 |
 | v2.0.193 dark mode phase 2 (Safari and shell fixes) + v2.0.192 light control borders | unit + contract 1503 (mrgreen, on the rebased branch); `e2e:render` 106/106 light and dark; page suites under `E2E_COLOR_SCHEME=dark`: chat 53/53 (1 skipped, needs a depth-capable model), pages 32/32, on Qwen3.5-0.8B. The chat suite had been red since v2.0.175 (label lookup; fixed in the harness, same commit span). NOT run: anything on a device (focus zoom, bar tint, landscape, drawer focus in WebKit, tail-follow in Safari 27): the on-device row on the plan's task board | v2.0.193 |

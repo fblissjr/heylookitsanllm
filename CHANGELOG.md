@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.199]
+
+### Fixed
+
+- **A setting typed in the drawer counts as soon as it is typed.** On an
+  iPhone, and in desktop Safari, a value typed and followed directly by Save,
+  Overwrite or Apply was not in what got written: the field committed only
+  when it lost focus, and tapping a button does not take focus there.
+- **A setting changed just before New or a conversation switch is written to
+  the conversation it was changed on.** The debounced write used to resolve
+  its target when it fired, so the new conversation got it and the old one
+  lost it.
+- **The Save sheet puts "Save as a new preset" first.** Writing back to the
+  preset a conversation came from is "Overwrite X with this conversation's
+  prompt and settings", under it, and asks "Overwrite X?" on every press. As
+  the first, one-press option it was hit on the way to saving a new preset
+  and replaced a stored prompt.
+- The Apply sheet says what it is for and marks only the preset the
+  conversation came from, as a tag. The Presets page editor saves a setting
+  only if it was touched, so opening a preset and saving it unchanged cannot
+  alter its settings (a safeguard; the one case seen was not reproduced).
+- Not verified on a device; the typed-value fix reproduces WebKit's focus
+  sequence in Chrome. Checks (session mrgreen): backend suite, `e2e:render`
+  in both themes, the chat and pages suites live on one small MLX model.
+
 ## [2.0.198]
 
 ### Changed
