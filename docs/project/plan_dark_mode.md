@@ -15,7 +15,7 @@ How to use this file: one phase (or one Phase 4 step) per session, on a branch. 
 
 Phase 1 checks run: backend suite, `E2E_COLOR_SCHEME=dark bun run e2e:render`, screenshots of every page in both themes. Not yet run: the page suites under dark, the iPhone check.
 
-Reference (claude.ai, not needed to do the work): [living plan doc](https://claude.ai/code/artifact/cb02e772-6df7-4852-8b3b-4f597a96e32d) · [heylook design system](https://claude.ai/artifact/FVfbt5DgekitSQPdBu6QHs) (derived from app.css; dark theme shown as proposed) · [the three dark directions compared](https://claude.ai/artifact/GrsjonmBzc145DcFjXka4i).
+Reference (not needed to do the work): the owner keeps a living copy of this plan with a task board, a design system derived from app.css, and the comparison of the three dark directions as private documents; the links are in local notes (`internal/`), not here.
 
 ## Summary
 
