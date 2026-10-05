@@ -44,8 +44,8 @@ select were never targeted. Reading that row as "checks we should delete" would
 be exactly the false confidence this exercise exists to prevent.
 
 The kill matrix per mutation, and the unreached checks listed by name, are in
-the published report:
-https://claude.ai/code/artifact/1efda03f-b6ac-4689-9e93-c0a11f80c2cc
+the owner's private report (the link is in local notes under `internal/`,
+not in the tracked docs).
 
 ## 3. What it found
 
