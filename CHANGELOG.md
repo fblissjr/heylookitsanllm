@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.197]
+
+### Fixed
+
+- **Phase 2 loose ends.** Both gear buttons inherit the page font instead of
+  the browser's button font, and the phone gear's native-chrome reset moves
+  into `:where()` like the desktop one, so a hover tint can still win. The
+  thinking editor's smaller size declaration, which the textarea rule had
+  always outranked, is gone. The settings drawer pads the right safe area
+  and the phone's slide-in list panes pad the left one, for a landscape
+  phone. Unverified on a device.
+
 ## [2.0.196]
 
 ### Added

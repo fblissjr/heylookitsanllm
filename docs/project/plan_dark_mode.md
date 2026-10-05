@@ -172,7 +172,7 @@ This follows VISION principle 1: nothing happens where it cannot be seen.
 
 As built (v2.0.193): the reset sits in `:where()` so it carries no specificity. The plain class form, written first, landed after the `.nav-item` hover rule at equal specificity and removed the gear's hover tint (measured: gear transparent on hover while its sibling links tinted).
 
-**Phase 2 follow-ups, seen while building and not fixed** (fold into Phase 3 or Phase 4 step 3, where the gear moves):
+**Phase 2 follow-ups, seen while building** (all four closed in v2.0.197; the landscape insets are unverified on a device):
 
 - The gear's label uses the browser's button font (Arial in Chrome) while sibling nav links use the system font, so it still does not fully read as a nav item.
 - `.drawer-gear-bottom` has the plain-class reset shape that defeated hover on the desktop gear; by cascade reasoning only, not measured; it is a touch control.

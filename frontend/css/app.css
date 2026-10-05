@@ -517,11 +517,12 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
    :where(), so the reset carries no specificity and the .nav-item hover tint
    (one class, declared earlier) still wins on the gear. */
 .drawer-gear { text-align: left; cursor: pointer; margin-top: 0.25rem; }
-:where(.drawer-gear) { background: none; border: none; }
+:where(.drawer-gear) { background: none; border: none; font-family: inherit; }
 /* phone gear: the trailing item in #bottom-nav (itself hidden on desktop, so
    this needs no display toggle). Reset native button chrome so it reads like
    its sibling nav-item links; a compact trailing slot keeps label room. */
-.drawer-gear-bottom { background: none; border: none; cursor: pointer; }
+.drawer-gear-bottom { cursor: pointer; }
+:where(.drawer-gear-bottom) { background: none; border: none; font-family: inherit; }
 #bottom-nav .drawer-gear-bottom { flex: 0 0 auto; min-width: 48px; font-size: 1.2rem; }
 
 /* right slide-over + backdrop, both direct children of <body>. Closed, both
@@ -543,6 +544,7 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  padding-right: env(safe-area-inset-right, 0px);   /* fixed to the right edge: the landscape housing side */
   transform: translateX(100%);
   transition: transform var(--t-fast) var(--ease), display var(--t-fast) allow-discrete;
 }
@@ -838,7 +840,7 @@ h1, h2, h3 { text-wrap: balance; }
 /* Two-box editor (thinking + response): captions tell them apart; the
    thinking box is visually secondary (mono, like the rendered block). */
 .message-edit__label { text-transform: uppercase; letter-spacing: 0.04em; }
-.message-edit__thinking { font-family: var(--mono); font-size: var(--text-sm); min-height: 3rem; }
+.message-edit__thinking { font-family: var(--mono); min-height: 3rem; }  /* size comes from .message-edit textarea above; a smaller size here never applied (outranked) */
 
 /* Prompt preview (v1.79.62): the exact string the model is fed, special
    tokens marked. Lives in the editor (Save & Continue's view) and above the
@@ -1086,6 +1088,7 @@ h1, h2, h3 { text-wrap: balance; }
     inset: 0 20% calc(var(--bottom-nav-h) + env(safe-area-inset-bottom)) 0;
     z-index: var(--z-drawer);
     border-right: 1px solid var(--line-strong);
+    padding-left: env(safe-area-inset-left, 0px);   /* fixed to the left edge */
   }
   .chat--convs-open .chat__convs { display: flex; }
   .chat__convs-head {
@@ -1687,6 +1690,7 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
     inset: 0 20% calc(var(--bottom-nav-h) + env(safe-area-inset-bottom)) 0;
     z-index: var(--z-drawer);
     border-right: 1px solid var(--line-strong);
+    padding-left: env(safe-area-inset-left, 0px);   /* fixed to the left edge */
   }
   .notebook--list-open .notebook__list-pane { display: flex; }
   .notebook__list-head {
