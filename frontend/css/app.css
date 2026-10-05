@@ -513,11 +513,14 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .drawer-gear-bottom { background: none; border: none; cursor: pointer; }
 #bottom-nav .drawer-gear-bottom { flex: 0 0 auto; min-width: 48px; font-size: 1.2rem; }
 
-/* right slide-over + backdrop, both direct children of <body>. Closed state
-   is offscreen (translateX) + inert; visibility is delayed to the end of the
-   slide so an offscreen panel can't create a horizontal scrollbar. The global
-   prefers-reduced-motion kill switch (top of file) collapses the slide to a
-   snap -- no transitionend is relied on. */
+/* right slide-over + backdrop, both direct children of <body>. Closed, both
+   are inert and `display: none`, not merely hidden: a fixed, edge-touching
+   element that stays in the render tree is what Safari samples for its bar
+   tint, and an offscreen panel could add a horizontal scrollbar. The slide
+   survives the display switch: @starting-style gives the opening a state to
+   animate from, and `display ... allow-discrete` keeps the box for the length
+   of the closing slide. The global prefers-reduced-motion kill switch (top of
+   file) collapses both to a snap -- no transitionend is relied on. */
 .drawer {
   position: fixed;
   top: 0; right: 0; bottom: 0;
@@ -530,14 +533,9 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   flex-direction: column;
   overflow-y: auto;
   transform: translateX(100%);
-  visibility: hidden;
-  transition: transform var(--t-fast) var(--ease), visibility 0s linear var(--t-fast);
+  transition: transform var(--t-fast) var(--ease), display var(--t-fast) allow-discrete;
 }
-.drawer--open {
-  transform: translateX(0);
-  visibility: visible;
-  transition: transform var(--t-fast) var(--ease), visibility 0s linear 0s;
-}
+.drawer--open { transform: translateX(0); }
 
 .drawer__head {
   position: sticky;
@@ -564,13 +562,17 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   background: var(--scrim);
   z-index: var(--z-drawer);
   opacity: 0;
-  visibility: hidden;
-  transition: opacity var(--t-fast) var(--ease), visibility 0s linear var(--t-fast);
+  transition: opacity var(--t-fast) var(--ease), display var(--t-fast) allow-discrete;
 }
-.drawer-backdrop--open {
-  opacity: 1;
-  visibility: visible;
-  transition: opacity var(--t-fast) var(--ease), visibility 0s linear 0s;
+.drawer-backdrop--open { opacity: 1; }
+
+.drawer:not(.drawer--open),
+.drawer-backdrop:not(.drawer-backdrop--open) { display: none; }
+/* after the open rules above: at equal specificity the later one is the
+   state the opening animates from */
+@starting-style {
+  .drawer--open { transform: translateX(100%); }
+  .drawer-backdrop--open { opacity: 0; }
 }
 
 

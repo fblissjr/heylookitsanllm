@@ -114,10 +114,11 @@ export async function setSettingsInput(page, label, value) {
 // Close the drawer if open and GUARANTEE #app is interactable again. Clicks the
 // drawer's own Close button (it's inside the drawer, never inert), then clears
 // inert defensively so a leaked-open drawer never seals the page for the next click.
-// Waits for BOTH the drawer to go and the backdrop to actually hide -- the
-// backdrop's visibility transition is *delayed* ~140ms (reduced-motion doesn't
-// cancel a delay), and until it hides it still covers #app, so a too-early click
-// on page content lands on the backdrop instead of the button.
+// Waits for BOTH the drawer to go and the backdrop to leave the render tree --
+// closed, it is `display: none`, but that switch is held for the length of the
+// closing fade (`display ... allow-discrete` in app.css), and until it lands
+// the backdrop still covers #app, so a too-early click on page content lands
+// on the backdrop instead of the button.
 export async function closeDrawer(page) {
   await page.evaluate(() => {
     document.querySelector('.drawer--open .drawer__close')?.click();
@@ -127,7 +128,7 @@ export async function closeDrawer(page) {
   await page.waitForFunction(() => {
     if (document.querySelector('.drawer--open')) return false;
     const bd = document.querySelector('.drawer-backdrop');
-    return !bd || getComputedStyle(bd).visibility === 'hidden';
+    return !bd || getComputedStyle(bd).display === 'none';
   }, { timeout: 5000 });
 }
 

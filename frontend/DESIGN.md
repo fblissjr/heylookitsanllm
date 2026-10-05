@@ -329,6 +329,19 @@ owner: "equally well on desktop web and iPhone 17 Pro Safari").
   `inert` while closed; on open it seals `#app` with `inert` (Tab can't escape),
   moves focus to Close, and on close restores focus to the opener. Escape and a
   backdrop click both close.
+- **A closed overlay leaves the render tree.** The closed drawer and its
+  backdrop are `display: none`, not `visibility: hidden` and not merely
+  offscreen. Safari tints its bars from fixed elements that touch an edge, and
+  one that is only hidden is still there to be sampled. The slide survives the
+  switch: `@starting-style` gives the opening a state to animate from, and
+  `transition: display ... allow-discrete` keeps the box for the length of the
+  closing slide; the reduced-motion kill switch collapses both. Two things
+  depend on this shape. `settings-drawer.js` adds the open class and focuses
+  Close in the same task, which lands only because `focus()` flushes style
+  first, so an overlay that defers its open class must also defer the focus.
+  And a test that waits for an overlay to go waits on its `display`
+  (`closeDrawer` in `tests/e2e/lib/dom.mjs`). A new fixed overlay follows the
+  same pattern.
 - **Honest states are announced, not just shown.** Status lines carry
   `role="status"` (polite: streaming, "server busy — retrying", token counts,
   the preset bar's drift line `.preset-drift`); error surfaces (`.error-note`,
