@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.198]
+
+### Changed
+
+- **Presets get their own page; the drawer keeps only what a conversation
+  runs on.** The settings drawer's first line says where the prompt and
+  settings came from ("No preset", "From preset X", "X, modified: prompt and
+  one knob (temperature)"), and two buttons each open a sheet: Apply preset…
+  lists every preset with its own prompt before anything is copied; Save…
+  saves as a new preset, or, only when the conversation came from preset X
+  and differs from it, updates X. That update is the one write from the
+  drawer to an existing preset and nothing on screen can aim it elsewhere;
+  it refuses when X changed since the drawer read it. The new Presets page
+  (sidebar on desktop; "Manage presets" in the drawer on the phone) edits a
+  preset's prompt and settings in place, renames, duplicates and deletes.
+  Editing or deleting a preset never changes a conversation that came from
+  it. Removed from the drawer: the preset dropdown, the read-only preview,
+  Save (overwrite), Delete and the drift line. The applied-preset chip reads
+  "(modified)" and no longer names a preset the conversation merely happens
+  to match. Phase 3b of `docs/project/plan_dark_mode.md`; user guide
+  section 2, DESIGN.md section 6 and the frontend rules are rewritten to it.
+- The desktop picker block in `app.css` moves ahead of the touch-size block,
+  which DESIGN.md section 7 says stays last.
+- Not verified on a device. Checks (session mrgreen): backend suite,
+  `e2e:render` in both themes, the chat and pages suites live on one small
+  MLX model.
+
 ## [2.0.197]
 
 ### Fixed

@@ -530,7 +530,7 @@ Kept as a record rather than deleted, so this section reads as a ledger.
 
 - *The drawer mixed the conversation's own settings with preset management, so
   it was hard to tell which prompt was in force and what Apply, Save and Save
-  as new would each write where* — closed by dark mode phase 3b: the drawer
+  as new would each write where* — closed by dark mode phase 3b (v2.0.198): the drawer
   holds what the conversation runs on, one provenance line, and two verbs;
   presets are managed on their own page; the only write from the drawer to an
   existing preset goes to the one the conversation came from.

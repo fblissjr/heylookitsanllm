@@ -1965,24 +1965,6 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
   .preset-edit__row .input { min-height: 44px; }
 }
 
-/* ================= touch field size ================= */
-
-/* iOS zooms the page when a focused control's text is under 16px. Last in the
-   file on purpose: it has to beat the phone bar's own sizes above, which sit
-   at the same specificity. Not `maximum-scale=1`, which blocks pinch-zoom.
-   The rule only ever raises a size: .notebook__title is an .input that is
-   already larger, so it is excluded rather than pulled down. A field with its
-   own class and size (.cfg-tmpl__body) has to be named, because a bare
-   `textarea` loses to any class. tests/e2e/render.mjs holds the property. */
-@media (pointer: coarse) {
-  .input:not(.notebook__title), select, textarea, .sysprompt-input,
-  .chat__bar > select, .chat__load-select, .chat__ctx-select, .chat__ctx-custom,
-  .cfg-tmpl__body {
-    font-size: 16px;
-  }
-}
-
-
 /* ================= themed model picker (desktop) ================= */
 
 /* Safari 27 and current Chrome can style the OPEN picker of a <select>
@@ -2007,5 +1989,22 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
     }
     .chat__bar > select option:hover { background: var(--surface-2); }
     .chat__bar > select option:checked { background: var(--brand-tint); }
+  }
+}
+
+/* ================= touch field size ================= */
+
+/* iOS zooms the page when a focused control's text is under 16px. Last in the
+   file on purpose: it has to beat the phone bar's own sizes above, which sit
+   at the same specificity. Not `maximum-scale=1`, which blocks pinch-zoom.
+   The rule only ever raises a size: .notebook__title is an .input that is
+   already larger, so it is excluded rather than pulled down. A field with its
+   own class and size (.cfg-tmpl__body) has to be named, because a bare
+   `textarea` loses to any class. tests/e2e/render.mjs holds the property. */
+@media (pointer: coarse) {
+  .input:not(.notebook__title), select, textarea, .sysprompt-input,
+  .chat__bar > select, .chat__load-select, .chat__ctx-select, .chat__ctx-custom,
+  .cfg-tmpl__body {
+    font-size: 16px;
   }
 }
