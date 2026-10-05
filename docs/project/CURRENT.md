@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-09-26, v2.0.176, `main`.
+Last updated: 2026-10-05, v2.0.191, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md) (triaged 2026-09-25;
@@ -16,6 +16,7 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
+| v2.0.191 dark theme (Lamplight tokens; `docs/project/plan_dark_mode.md` Phase 1) | unit + contract green; `E2E_COLOR_SCHEME=dark bun run e2e:render` 105/105; screenshots of every page and both drawers in light and dark against a static copy with `/v1` stubbed. NOT run: the page suites under dark, the iPhone check (both open on the plan's task board) | v2.0.191 |
 | v2.0.190 Muse on MLX (recipient-channel reasoning parser) | unit + contract only. NOT run through heylook: any live generation on the MLX build, eval bank, smoke, `vlm_parity_probe.py`, `chain_probe.py`, e2e. In upstream mlx-vlm's own loop (pin `6ecadd76`), outside heylook, the 8-bit build answered text and three images correctly and ran with the publisher's assistant as a DFlash drafter; drafted and undrafted greedy text diverged on one prompt, undiagnosed | v2.0.190 |
 | unit + contract | green (1439 passed) | v2.0.173 |
 | v2.0.187 MLX speculative decoding | unit + contract 1455; in-process on qwen3.8 27b bf16 + MTP drafter: greedy ids identical undrafted / drafted cold / drafted restored; chain probe clean on it (drafted), Qwen3.5-0.8B, Qwen3-0.6B, gpt-oss-20b (two near-ties, as before). NOT run: perf_ab, smoke, eval bank, vlm_parity_probe | v2.0.187 |

@@ -8,8 +8,8 @@ How to use this file: one phase (or one Phase 4 step) per session, on a branch. 
 
 | Phase | State | Where |
 | --- | --- | --- |
-| 1 Tokens | Built, on branch `feat/dark-mode-phase1` (v2.0.191), awaiting merge | light theme unchanged; open questions 1 and 2 still open |
-| 2 Safari fixes | Not started | next up; now six fixes (the nav gear joined it) |
+| 1 Tokens | On main as v2.0.191 (merged 2026-10-05) | light theme unchanged; open questions 1 and 2 still open; the iPhone check and the page suites under dark not yet run |
+| 2 Safari fixes | In progress on `feat/dark-mode-phase2` | six fixes (the nav gear joined it) |
 | 3 Platform | Not started | |
 | 4 Toward Workbench | Not started | gated on A being live and measured |
 
