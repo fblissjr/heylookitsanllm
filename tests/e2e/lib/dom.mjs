@@ -85,10 +85,14 @@ export async function modelRowState(page, id) {
 }
 
 // Read / write a sampler-settings row's <input> by its label (chat settings panel).
+// A settings row's <label> is [name text node, source element, note element]
+// since v2.0.175 (settings.js: the blank field's default source sits under
+// its name), so the row is found by the label's FIRST text node, never by its
+// whole textContent -- that reads "Temperatureheylook default".
 export async function settingsInputValue(page, label) {
   return page.evaluate((lbl) => {
     const row = [...document.querySelectorAll('.settings-panel .settings-row')]
-      .find((r) => r.querySelector('label')?.textContent.trim() === lbl);
+      .find((r) => r.querySelector('label')?.firstChild?.textContent.trim() === lbl);
     return row?.querySelector('input')?.value ?? null;
   }, label);
 }
@@ -96,7 +100,7 @@ export async function settingsInputValue(page, label) {
 export async function setSettingsInput(page, label, value) {
   await page.evaluate((lbl, val) => {
     const row = [...document.querySelectorAll('.settings-panel .settings-row')]
-      .find((r) => r.querySelector('label')?.textContent.trim() === lbl);
+      .find((r) => r.querySelector('label')?.firstChild?.textContent.trim() === lbl);
     const input = row.querySelector('input');
     input.value = val;
     input.dispatchEvent(new Event('change', { bubbles: true }));

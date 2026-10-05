@@ -733,7 +733,9 @@ export async function runChatSuite({ suite, ctx, config }) {
   await suite.check('settings drawer opens with sampling controls', async () => {
     await openDrawer(page);
     await page.waitForSelector('.drawer--open .settings-panel', { timeout: 5000 });
-    const labels = await page.$$eval('.settings-panel .settings-row label', (els) => els.map((e) => e.textContent.trim()));
+    // The label's first text node is the name; the source and note elements
+    // that follow it (v2.0.175) are not part of it. Same rule as dom.mjs.
+    const labels = await page.$$eval('.settings-panel .settings-row label', (els) => els.map((e) => e.firstChild?.textContent.trim()));
     assert(labels.includes('Temperature'), `labels: ${labels.join(', ')}`);
     assert(labels.includes('Max tokens'), 'no Max tokens control');
   });
