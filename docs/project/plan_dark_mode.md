@@ -1,6 +1,6 @@
 # Plan: dark mode, Lamplight to Workbench
 
-Last updated: 2026-10-05 (Phases 1 and 2 on main; open questions 1 to 4 settled; Phase 2 snippets corrected as built; follow-ups listed)
+Last updated: 2026-10-05 (Phases 1 and 2 on main; open questions 1 to 4 settled; Phase 2 snippets corrected as built; follow-ups listed; Phase 3b, the preset manager, added and approved)
 
 How to use this file: one phase (or one Phase 4 step) per session, on a branch. The values and rules here become code in `frontend/css/app.css` and rules in `frontend/DESIGN.md` as each phase lands; once landed, those files are the source of truth, not this plan. Open decisions are at the end; settle the first two before Phase 1.
 
@@ -11,6 +11,7 @@ How to use this file: one phase (or one Phase 4 step) per session, on a branch. 
 | 1 Tokens | On main as v2.0.191 (merged 2026-10-05); light control borders raised to 3:1 in v2.0.192 | open questions 1 and 2 settled (below); page suites under dark green at v2.0.193; the iPhone check not yet run |
 | 2 Safari fixes | On main as v2.0.193 (merged 2026-10-05, built by session mrgreen) | six fixes; two of this file's snippets were wrong and are corrected below; Chrome suites green in both themes (page suites under dark: chat 53/53, pages 32/32); device checks not yet run; four follow-ups listed under Phase 2 |
 | 3 Platform | Not started | |
+| 3b Preset manager | Approved (owner, 2026-10-05, mock on the plan doc); next build | right after the on-device pass |
 | 4 Toward Workbench | Not started | gated on A being live and measured |
 
 Phase 1 checks run: backend suite, `E2E_COLOR_SCHEME=dark bun run e2e:render`, screenshots of every page in both themes. Not yet run: the page suites under dark, the iPhone check.
@@ -227,6 +228,26 @@ h1, h2, h3 { text-wrap: balance; }
 ```
 
 The option labels keep their ● / ○ residency text, so nothing depends on the new styling.
+
+## Phase 3b: presets get their own manager
+
+Owner, 2026-10-05: the settings drawer mixes the conversation's own settings with preset management, so it is hard to tell which system prompt is in force and what Apply, Save and Save as new would each do. The mock on the plan doc's task board is approved. This phase comes right after the on-device pass, before Phase 3's polish; Phase 4 step 5 (the readout line) should show the provenance line this phase introduces.
+
+**What changes.**
+
+- The drawer keeps only what the conversation runs on: the system prompt box, the samplers, and one provenance line in place of today's drift line: "From preset X", "X, modified: prompt and two knobs", or "No preset". Two actions: **Apply preset**, through a picker that shows each preset's own prompt before it is applied, armed ("Replace prompt?") only when it would replace a non-empty differing prompt; and **Save as new preset**, which always creates and never overwrites.
+- A **Presets** surface of its own (a page beside Models, so the drawer shrinks on the phone; the owner may prefer a drawer tab) lists presets and, per preset, edits the prompt and knobs in place, renames, duplicates and deletes. It is the only place a preset is overwritten, and editing one never touches a conversation.
+- Removed from the drawer: the preset's read-only preview block, the Save versus Save as new split, the drift line. The shared sections stay shared by chat and notebook (`preset-bar.js`, `prompt-section.js` are rewritten, not forked per page).
+
+**What it keeps** (owner rules with incidents behind them, `sharp_edges.md` "Presets and the system prompt"): what the model reads is one bag, the conversation's own prompt and samplers, stored, shown and sent; a preset is a copy, never a link; an empty preset prompt makes no claim. `applied_preset_id` keeps meaning "this document was stamped by an explicit Apply or Save as new"; the provenance line derives "modified" by comparing the document's bag to the stamped preset, the way the drift line does today.
+
+**Gates.**
+
+- The question "which prompt is this conversation using, and is it the preset's?" is answerable from the drawer at a glance, without opening anything.
+- No path in the drawer can overwrite a stored preset.
+- The chat and notebook e2e preset checks are rewritten with the new sections and pass live on a model; `e2e:render` stays green in both themes.
+- `docs/frontend_v3_user_guide.md` section 2 (Presets) is rewritten to the new model and its rough-edges list gains the closed entry.
+- DESIGN.md section 6's settings taxonomy names the Presets surface and the provenance line.
 
 ## Phase 4: the path to Workbench
 
