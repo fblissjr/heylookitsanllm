@@ -1315,6 +1315,39 @@ it, was read as a level (a cap of 3 tokens, typed as "level 3"). "On" now
 appears only where there is no default level, and the cap is a sub-row that
 names its unit and hides while thinking is off.
 
+### A typed value and a debounced write each belong to one moment
+
+Two losses with one shape: state read later than the moment it was true.
+
+A sampler value typed and not blurred was not in the panel. The number fields
+committed on `change`, which fires when a field blurs, and WebKit does not
+move focus to a button when it is tapped or clicked. On an iPhone (and in
+desktop Safari), typing a temperature and then tapping Save in the same drawer
+wrote the preset, and the conversation, without it (owner report, 2026-10-05).
+Chrome focuses the button, so nothing on a desktop Chrome or in the e2e suites
+showed it. The drawer's close path already blurred the focused field for this
+reason, which covered leaving the drawer and nothing inside it. The fields now
+commit on every `input` event (`commitAsTyped` in `settings.js`). A field
+whose text does not parse yet ("1." on the way to "1.3") commits nothing
+rather than clearing the value. The check drives the WebKit sequence by hand:
+real keystrokes, then the button's handler with focus left in the field.
+
+A debounced settings write went to the wrong document. `bindDocumentParams`
+scheduled a write on each change and, when the timer fired, asked which
+document was open and what the panel held. Both can move inside the window:
+New or a conversation switch changes the active document, and the panel is
+then silently re-hydrated from it. Apply followed at once by New left the old
+conversation with the preset's stamp and prompt (written immediately) and none
+of its settings, and sent those settings to the new one. The write now carries
+the document id and the bag captured when the change was made, and a change on
+another document flushes the one still owed. Any new debounced writer captures
+its target and its payload when it schedules, never when it fires.
+
+Known boundary, same family: a change made in the gap between a conversation
+becoming active and its stored settings arriving is taken from the previous
+conversation's panel, then replaced on screen by the hydrate. The e2e helper
+`newFreshConversation` waits that gap out; the page does not close it.
+
 ### Settings a model cannot use are removed, not kept
 
 Plan W2 kept a thinking depth the selected model did not offer: the value

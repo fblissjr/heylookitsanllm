@@ -1864,6 +1864,38 @@ async function main() {
       await typeDocPrompt('STABLE PRESET PROMPT, tuned');
     });
 
+    await suite.check('a sampler value typed and not blurred is in what Save writes', async () => {
+      // WebKit does not move focus to a button when it is tapped or clicked,
+      // so a field you typed in never blurs and never fires `change`. The
+      // number fields committed on `change` only: on an iPhone, type a
+      // temperature, tap Save…, tap an option, and the preset (and the
+      // conversation) were written without it. Chrome DOES focus the button,
+      // so this drives the WebKit sequence by hand: real keystrokes into the
+      // field, then the buttons' own handlers with focus left where it was.
+      const { page, reqs } = guard;
+      await page.evaluate(() => {
+        const box = document.getElementById('set-temperature');
+        box.value = '';
+        box.dispatchEvent(new Event('change', { bubbles: true }));
+        box.focus();
+      });
+      await settle(page);
+      let from = reqs.length;
+      await page.keyboard.type('1.3');
+      assert(await page.evaluate(() => document.activeElement?.id === 'set-temperature'),
+        'precondition: focus should still be in the temperature field');
+      await saveAsNewPreset(page, 'typed-not-blurred');
+      const post = await waitFor(() => presetWrites(reqs, from)[0],
+        { timeout: 5000, interval: 50, message: 'Save as new sent nothing' });
+      assert(JSON.parse(post.postData).params.temperature === 1.3,
+        `the preset was saved with ${post.postData}: the typed temperature is not in it`);
+      // ...and the conversation itself has it, without the field ever blurring.
+      await waitFor(() => reqs.slice(from).some((r) => r.method === 'PUT' && /\/v1\/conversations\/c1$/.test(r.url)
+        && JSON.parse(r.postData).params?.temperature === 1.3),
+      { timeout: 5000, interval: 50, message: 'the typed temperature never reached the conversation' });
+      await setSampler('temperature', '');
+    });
+
     // ---- the drawer says what it is doing (v1.79.25) ---------------------
     await suite.check('the sampler panel names what it applies to', async () => {
       // It is the active conversation's stored params, it is also the seed for
@@ -1946,6 +1978,27 @@ async function main() {
       assert(/^Choose a preset to copy into this conversation/.test(heading),
         `the Apply sheet is headed ${JSON.stringify(heading)}`);
       await closeDrawer(stamped.page);
+    });
+    await suite.check('a setting changed just before the conversation changes is written where it was changed', async () => {
+      // The params write is debounced. Its target and its payload used to be
+      // read when the timer FIRED, by which time New had made another
+      // conversation the active one: the change went to the new conversation
+      // and the one it was made on never got it. (Apply, then New at once,
+      // left a conversation with a preset's stamp and prompt and none of its
+      // settings.) Through the module's own setter, because the point is the
+      // window, and a drawer close would spend it.
+      const { page, reqs } = stamped;
+      const from = reqs.length;
+      await page.evaluate(async () => {
+        (await import('/js/settings.js')).setSetting('temperature', 0.55);
+      });
+      await clickByText(page, '.chat__convs-head button', 'New');
+      await sleep(1200); // well past the debounce, and past the new conversation's own load
+      const puts = reqs.slice(from)
+        .filter((r) => r.method === 'PUT' && /\/v1\/conversations\//.test(r.url) && r.postData?.includes('"params"'))
+        .map((r) => [r.url.replace(/^.*\/v1\/conversations\//, ''), JSON.parse(r.postData).params]);
+      assert(puts.length === 1 && puts[0][0] === 'c1' && puts[0][1].temperature === 0.55,
+        `expected the change on c1 alone, got ${JSON.stringify(puts)}`);
     });
     await stamped.page.close();
 

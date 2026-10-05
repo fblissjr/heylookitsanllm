@@ -189,12 +189,13 @@ function open(opener) {
 
 function close() {
   if (!isOpen) return;
-  // Flush before teardown: a field the user is still focused in commits on
-  // `change`, which never fires once replaceChildren removes the element --
-  // an Escape/hashchange close would silently discard the typed value (the
-  // bug that ate chat's system prompt). Blurring here fires it for EVERY
-  // commit-on-change field (sampler numbers included), at the one place all
-  // close paths converge.
+  // Flush before teardown: a field that commits on `change` never fires it
+  // once replaceChildren removes the element -- an Escape/hashchange close
+  // would silently discard the typed value (the bug that ate chat's system
+  // prompt). Blurring here fires it for EVERY such field, at the one place
+  // all close paths converge. The sampler panel's typed fields no longer rely
+  // on it (they commit per `input`, settings.js commitAsTyped); this stays as
+  // the backstop for any field that still commits on `change`.
   if (isEditingInDrawer()) document.activeElement.blur();
   isOpen = false;
   panelEl.classList.remove('drawer--open');

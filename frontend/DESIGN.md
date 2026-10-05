@@ -8,7 +8,8 @@
 > examples, not as a description of the current pages.
 
 Last updated: 2026-10-05 (§6 names the Presets surface, the provenance line
-and the drawer's two verbs; §7 gains the touch field size, closed overlay,
+and the drawer's two verbs; §7 gains the typed-field commit, touch field size,
+closed overlay,
 scroll owner and side safe-area rules; §1 gains the dark theme, Lamplight:
 every colour token is a `light-dark()` pair and the theme follows the system;
 the drawer's shadow and scrim became tokens. Earlier: 2026-07-23, §7 settings
@@ -406,6 +407,14 @@ owner: "equally well on desktop web and iPhone 17 Pro Safari").
   actions bump to 44px, the attach-thumb remove control is ≥24px. `btn--sm`
   (26px) is acceptable for dense desktop-hover action clusters (≥ the 24px AA
   floor) but never the sole phone affordance.
+- **A typed field is committed as it is typed, never only on `change`.**
+  `change` fires on blur, and WebKit does not move focus to a button that is
+  tapped or clicked, so on the phone a value typed just before pressing a
+  button in the same surface was never committed. A field whose value another
+  control reads (the sampler panel's numbers, the system prompt) commits on
+  `input`; a field read only by its own Save button may be read at press time
+  instead (the Presets page editor, a rename box). Text that does not parse
+  yet commits nothing rather than clearing the stored value.
 - **A text field is never under 16px on touch.** iOS zooms the page when a
   focused control's text is smaller, and desktop Chrome never shows it. One
   `@media (pointer: coarse)` block raises every `input`, `select` and

@@ -181,6 +181,9 @@ If X was changed somewhere else since the drawer read it (another tab, the
 Presets page on another device), nothing is written and the status line says
 so. Look at it under *Apply preset…* and save again if you still mean to.
 
+A value you have just typed into a settings field counts, whether or not you
+tapped away from the field first.
+
 ### The Presets page
 
 One card per preset, showing its settings and its own prompt.

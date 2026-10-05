@@ -328,7 +328,16 @@ export function messagesParams(model = null) {
 // one. `updateDoc(id, body, opts)` receives `{ keepalive }` on those flushes.
 export function bindDocumentParams({ activeId, updateDoc, onError, onHide, delay = 400 }) {
   let timer = null;
-  let pending = false;
+  // The write that is owed: WHICH document and WHAT bag, both fixed at the
+  // moment the change is made. Neither may be re-read at flush time. The
+  // active document can move inside the debounce window (New, a conversation
+  // switch), and the panel is then silently re-hydrated from the next one;
+  // a flush that asked "which document is open, and what does the panel
+  // hold" at that point sent the change to the document it was NOT made on,
+  // and the one it was made on never got it. Seen as Apply followed at once
+  // by New: the stamp and the prompt (written immediately) stayed on the old
+  // conversation, its settings went to the new one.
+  let pending = null;
   // Fire the debounced PUT NOW. Exposed as .flush on the returned teardown
   // so a generate can settle the store first: overrides carry SET panel
   // values past the debounce window, but a CLEARED value is expressed by
@@ -339,24 +348,26 @@ export function bindDocumentParams({ activeId, updateDoc, onError, onHide, delay
     clearTimeout(timer);
     timer = null;
     if (!pending) return Promise.resolve();
-    pending = false;
-    const id = activeId();
-    if (!id) return Promise.resolve();
-    return Promise.resolve(updateDoc(id, { params: snapshotSettings() }, opts))
+    const { id, params } = pending;
+    pending = null;
+    return Promise.resolve(updateDoc(id, { params }, opts))
       .catch(onError || (() => {}));
   };
   const unsub = onSettingsChange(() => {
     const id = activeId();
     if (!id) return;
-    pending = true;
+    // A change on a different document than the one still owed its write:
+    // that write goes now. It must not be replaced by this one.
+    if (pending && pending.id !== id) flush();
+    pending = { id, params: snapshotSettings() };
     clearTimeout(timer);
     timer = setTimeout(flush, delay);
   });
   const offHide = onHide?.(() => flush({ keepalive: true }));
   // Teardown FLUSHES (it used to cancel): leaving the page inside the
   // debounce window is the same typed-and-believed-saved shape as the
-  // drawer closing under focus. The id was captured when the edit was
-  // scheduled, so the write stays correct after the mount is gone.
+  // drawer closing under focus. The id and the bag were captured when the
+  // edit was made, so the write stays correct after the mount is gone.
   const teardown = () => { offHide?.(); unsub(); flush(); };
   teardown.flush = flush;
   return teardown;
@@ -428,11 +439,32 @@ function bindControl(key, meta, lookup = () => null, thinking = null, caps = [],
     placeholder: describe(key) ?? meta.blank ?? 'auto',
     value: cache[key] ?? '',
   });
-  input.addEventListener('change', () => {
-    const v = input.value.trim();
-    setSetting(key, v === '' ? null : Number(v));
-  });
+  commitAsTyped(input, key, (v) => Number(v));
   return input;
+}
+
+// Commit a typed field to the cache on EVERY `input` event, not only on
+// `change`. `change` fires when the field blurs, and WebKit does not move
+// focus to a button when it is tapped or clicked, so on an iPhone (and in
+// desktop Safari) a value typed here and followed by a tap on anything that
+// reads the panel -- Save, Update, a preset's Apply -- was never in the
+// cache: the preset and the conversation were written without it (owner
+// report 2026-10-05, a temperature typed before Save). The drawer's close
+// path blurs the focused field for the same reason, but that only covers
+// leaving the drawer. `change` stays as well, for a value set without typing.
+//
+// A field whose text is not a number YET ("1." on the way to "1.3", a lone
+// "-") reports an empty value with `badInput`; that is not the user clearing
+// the field, so nothing is committed until it parses.
+function commitAsTyped(input, key, parse) {
+  const commit = () => {
+    const v = input.value.trim();
+    if (v === '' && input.validity?.badInput) return;
+    const next = v === '' ? null : parse(v);
+    if (next !== cache[key]) setSetting(key, next);
+  };
+  input.addEventListener('input', commit);
+  input.addEventListener('change', commit);
 }
 
 // The one thinking control: Model default / Off / On / each level the
@@ -516,10 +548,7 @@ function bindDepthControl(key, lookup, thinking) {
     // a <datalist> renders nothing itself.
     input.suggestions = createEl('datalist', { id: listId },
       values.map((v) => createEl('option', { value: v })));
-    input.addEventListener('change', () => {
-      const v = input.value.trim();
-      setSetting(key, v === '' ? null : v);
-    });
+    commitAsTyped(input, key, (v) => v);
     return input;
   }
   const canonical = stored === null ? '' : (depth?.aliases?.[stored] ?? stored);
@@ -712,6 +741,8 @@ export function buildSettingsPanel({ caps = [], scope = null, modelDefaults = {}
     // updated by the time this reads it. Every row re-syncs, not just this
     // one: the thinking choice decides whether the cap row shows at all.
     control.addEventListener('change', () => { syncAll(); if (key === 'enable_thinking') syncDefaults(); });
+    // A typed field commits per keystroke (commitAsTyped), so its row follows.
+    if (control.tagName === 'INPUT' && control.type !== 'checkbox') control.addEventListener('input', syncAll);
     reset.addEventListener('click', () => {
       setSettings(Object.fromEntries(keys.map((k) => [k, null])));
       if (meta.type === 'checkbox') control.checked = false; else control.value = '';
