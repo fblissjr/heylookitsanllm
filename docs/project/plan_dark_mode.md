@@ -10,7 +10,7 @@ How to use this file: one phase (or one Phase 4 step) per session, on a branch. 
 | --- | --- | --- |
 | 1 Tokens | On main as v2.0.191 (merged 2026-10-05); light control borders raised to 3:1 in v2.0.192 | open questions 1 and 2 settled (below); page suites under dark green at v2.0.193; the iPhone check not yet run |
 | 2 Safari fixes | On main as v2.0.193 (merged 2026-10-05, built by session mrgreen) | six fixes; two of this file's snippets were wrong and are corrected below; Chrome suites green in both themes (page suites under dark: chat 53/53, pages 32/32); device checks not yet run; four follow-ups listed under Phase 2 |
-| 3 Platform | Not started | |
+| 3 Platform | Item 1 (Home Screen app) on main as v2.0.194; items 2 to 5 not started | the Home Screen check (own icon, no Safari bar, status bar clear) is the owner's |
 | 3b Preset manager | Approved (owner, 2026-10-05, mock on the plan doc); next build | right after the on-device pass |
 | 4 Toward Workbench | Not started | gated on A being live and measured |
 
@@ -185,9 +185,9 @@ Five additions that make A feel native on the phone and finished on desktop. The
 
 **1. A Home Screen web app.** Since iOS 26, a site added to the Home Screen opens as its own app with no Safari bar, which removes the bottom stacking problem. Four pieces make it look right:
 
-- `frontend/apple-touch-icon.png`, 180 × 180: the honey disc on `surface` (iOS fills a transparent icon with black). iOS asks for this path by convention.
+- `frontend/apple-touch-icon.png`, 180 × 180: the honey disc on the DARK `surface`, the owner's launch colour (iOS fills a transparent icon with black). iOS asks for this path by convention. Generated from the `:root` token values, never a retyped hex.
 - `frontend/manifest.json`: `{"name":"heylook","start_url":"/#/chat","display":"standalone","background_color":"#191713","theme_color":"#191713","icons":[{"src":"/apple-touch-icon.png","sizes":"180x180","type":"image/png"}]}`
-- `index.html`: `<link rel="manifest" href="manifest.json">`, `<link rel="apple-touch-icon" href="apple-touch-icon.png">`, `<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">`. The top bars already add `env(safe-area-inset-top)`, so content clears the status bar.
+- `index.html`: `<link rel="manifest" href="manifest.json">`, `<link rel="apple-touch-icon" href="apple-touch-icon.png">`, `<meta name="apple-mobile-web-app-title">`. As built (v2.0.194) WITHOUT `apple-mobile-web-app-status-bar-style=black-translucent`: on iOS 26 that style makes `env(safe-area-inset-top)` read 0 and the page runs under the status bar (reported widely; the owner saw the cut-off top once on 2026-10-05 before a reload). The default style starts the web view below an opaque status bar tinted from `theme-color`, and the top bars' inset padding then adds nothing, which is correct.
 - `src/heylook_llm/frontend_static.py`: two routes beside `/icon.svg`, because `mount_frontend` registers only the tree's real shape and has no catch-all.
 
 A Home Screen app keeps its own browser storage, so per-browser preferences start fresh there; conversations live on the server and are unaffected.

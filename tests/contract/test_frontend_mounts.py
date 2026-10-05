@@ -163,3 +163,27 @@ def test_text_assets_are_compressed(client):
     assert plain.headers.get("content-encoding") is None
     # Both spellings must deliver the same bytes.
     assert gz.content == plain.content
+
+
+def test_home_screen_app_files_are_served_and_linked(client):
+    """The manifest and the touch icon are the two top-level assets the Home
+    Screen app needs (plan_dark_mode.md Phase 3); with no catch-all each has
+    its own route, and index.html must link both or iOS never asks. The
+    manifest's icon list is read back rather than retyped, so an icon it names
+    must be fetchable; its colours must be hex, which is what a manifest takes.
+    """
+    html = client.get("/").text
+    assert 'rel="manifest" href="manifest.json"' in html
+    assert 'rel="apple-touch-icon" href="apple-touch-icon.png"' in html
+    r = client.get("/manifest.json")
+    assert r.status_code == 200
+    manifest = r.json()
+    assert manifest["display"] == "standalone"
+    assert manifest["start_url"].startswith("/#/")
+    for key in ("background_color", "theme_color"):
+        assert manifest[key].startswith("#") and len(manifest[key]) == 7, key
+    for icon in manifest["icons"]:
+        got = client.get(icon["src"])
+        assert got.status_code == 200, icon["src"]
+        assert got.headers["content-type"] == icon["type"], icon["src"]
+    assert client.get("/apple-touch-icon.png").headers["content-type"] == "image/png"

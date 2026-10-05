@@ -175,6 +175,16 @@ def mount_frontend(app: FastAPI) -> None:
     def serve_frontend_icon(request: Request):
         return _serve(FRONTEND_DIR / "icon.svg", request)
 
+    # Home Screen app files (plan_dark_mode.md Phase 3). iOS asks for the icon
+    # at this path by convention; the manifest is linked from index.html.
+    @app.api_route("/manifest.json", methods=["GET", "HEAD"], include_in_schema=False)
+    def serve_frontend_manifest(request: Request):
+        return _serve(FRONTEND_DIR / "manifest.json", request)
+
+    @app.api_route("/apple-touch-icon.png", methods=["GET", "HEAD"], include_in_schema=False)
+    def serve_frontend_touch_icon(request: Request):
+        return _serve(FRONTEND_DIR / "apple-touch-icon.png", request)
+
     @app.api_route("/js/{rest:path}", methods=["GET", "HEAD"], include_in_schema=False)
     def serve_frontend_js(request: Request, rest: str):
         return _serve(FRONTEND_DIR / "js" / rest, request)

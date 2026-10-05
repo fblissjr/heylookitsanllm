@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.194]
+
+### Added
+
+- **A Home Screen app.** `frontend/manifest.json` (standalone, start at the
+  chat page, the dark surface as launch and theme colour: owner decision) and
+  `frontend/apple-touch-icon.png` (the honey disc on the dark surface, drawn
+  from the `:root` token values), both linked from `index.html` and served by
+  their own routes in `frontend_static.py`, since the frontend has no
+  catch-all. No `apple-mobile-web-app-status-bar-style`: on iOS 26 the
+  translucent style zeroes the top safe-area inset and the page runs under
+  the status bar; the default style starts the web view below it. Phase 3
+  item 1 of `docs/project/plan_dark_mode.md`; a contract test reads the
+  manifest back and fetches what it names.
+
 ## [2.0.193]
 
 ### Fixed

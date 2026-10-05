@@ -1,0 +1,15 @@
+{
+  "name": "heylook",
+  "short_name": "heylook",
+  "start_url": "/#/chat",
+  "display": "standalone",
+  "background_color": "#191713",
+  "theme_color": "#191713",
+  "icons": [
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}

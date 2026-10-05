@@ -12,6 +12,14 @@
   <base href="/">
   <title>heylook</title>
   <link rel="icon" href="icon.svg">
+  <!-- Home Screen app (iOS 26 opens any added site as one). No
+       apple-mobile-web-app-status-bar-style: with black-translucent, iOS 26
+       reports env(safe-area-inset-top) as 0 and the page runs under the status
+       bar; the default style starts the web view below an opaque bar tinted
+       from theme-color, which is what the top bars' inset padding assumes. -->
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-title" content="heylook">
   <link rel="stylesheet" href="css/app.css">
   <link rel="modulepreload" href="js/app.js">
   <link rel="modulepreload" href="js/page.js">
