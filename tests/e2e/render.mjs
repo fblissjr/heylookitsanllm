@@ -2008,6 +2008,10 @@ async function main() {
         { id: 'p-owned', name: 'owned', system_prompt: 'THE PRESET PROMPT', params: { temperature: 0.3 }, updated_at: 'z' },
         { id: 'p-bare', name: 'bare', system_prompt: null, params: { top_p: 0.9 }, updated_at: 'z' },
         { id: 'p-stable', name: 'stable', system_prompt: 'STABLE PRESET PROMPT', params: {}, updated_at: 'z' },
+        // Values an editor could mangle on the way through: an explicit off,
+        // a zero, a number past the widget's own max, a level word.
+        { id: 'p-odd', name: 'odd', system_prompt: 'ODD', updated_at: 'z',
+          params: { enable_thinking: false, top_k: 0, temperature: 0.31, max_tokens: 100000, reasoning_effort: 'high', thinking_budget_tokens: 128 } },
       ],
       appliedPresetId: 'p-owned',
     });
@@ -2043,6 +2047,27 @@ async function main() {
       }));
       assert(nav.desktop && !nav.bottom,
         `Presets belongs in the sidebar and not the phone's bottom nav, got ${JSON.stringify(nav)}`);
+    });
+
+    await suite.check('an editor saved untouched writes back exactly what the preset stores', async () => {
+      // The editor offers every knob, set or not. Opening one and pressing
+      // Save must not pin anything: not a model's default shown as a value,
+      // not a blank read as zero, not an explicit off read as unset. One
+      // property over every preset on the page.
+      const canon = (o) => JSON.stringify(Object.keys(o).sort().map((k) => [k, o[k]]));
+      for (const before of mgr.store.remote.presets.map((p) => ({ ...p, params: { ...p.params } }))) {
+        const from = mgr.reqs.length;
+        await press(before.name, 'Edit');
+        await press(before.name, 'Save');
+        const put = await waitFor(() => presetWrites(mgr.reqs, from)[0],
+          { timeout: 5000, interval: 50, message: `an untouched Save on "${before.name}" sent nothing` });
+        await settle(mgr.page);
+        const body = JSON.parse(put.postData);
+        assert(canon(body.params) === canon(before.params),
+          `"${before.name}" stored ${JSON.stringify(before.params)} and an untouched Save wrote ${JSON.stringify(body.params)}`);
+        assert((body.system_prompt ?? null) === (before.system_prompt ?? null),
+          `"${before.name}": an untouched Save wrote the prompt ${JSON.stringify(body.system_prompt)}`);
+      }
     });
 
     await suite.check('editing a preset writes that preset and no conversation', async () => {

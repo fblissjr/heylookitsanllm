@@ -7,7 +7,7 @@
 // you edit IS the thing on screen -- the editor opens on the preset's own
 // stored text and knobs, and Save writes exactly that card back. The drawer
 // keeps Apply (preset -> document), Save as new (document -> a NEW preset)
-// and one overwrite it cannot aim: the Save sheet's "Update X", the document
+// and one overwrite it cannot aim: the Save sheet's "Overwrite X", the document
 // written back to the preset it is stamped with (preset-bar.js).
 //
 // Three rules this page keeps (sharp_edges.md "Presets and the system
@@ -249,26 +249,31 @@ function buildEditor(ctx, preset) {
   const promptValue = () => prompt.value.trim() || null;
 
   const readers = {};
+  const touched = new Set();
   const rows = Object.entries(PARAM_META).map(([key, meta]) => {
     const id = `preset-${preset.id}-${key}`;
     const control = knobControl(key, meta, preset.params?.[key] ?? null, id);
     readers[key] = control.read;
+    for (const ev of ['input', 'change']) control.el.addEventListener(ev, () => touched.add(key));
     return createEl('div', { class: 'preset-edit__row' }, [
       createEl('label', { for: id }, [meta.label]),
       control.el,
     ]);
   });
-  // The bag the editor would store: every key it has a control for, read
-  // from the control; any other stored key carried through untouched, because
-  // a PUT replaces `params` whole and a key left out is a key deleted.
+  // The bag the editor would store. It STARTS as what the preset stores and
+  // changes only for a control the user actually touched, so an editor opened
+  // and saved untouched writes the stored bag back by construction: nothing a
+  // browser fills in, defaults or restores into a field can pin a setting
+  // nobody chose. A PUT replaces `params` whole, so every stored key rides
+  // along, including one this page has no control for.
   const paramsValue = () => {
     const out = {};
     for (const [k, v] of Object.entries(preset.params ?? {})) {
-      if (!(k in PARAM_META) && v != null) out[k] = v;
-    }
-    for (const [k, read] of Object.entries(readers)) {
-      const v = read();
       if (v != null) out[k] = v;
+    }
+    for (const key of touched) {
+      const v = readers[key]();
+      if (v != null) out[key] = v; else delete out[key];
     }
     return out;
   };

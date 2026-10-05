@@ -190,7 +190,8 @@ One card per preset, showing its settings and its own prompt.
 
 - **Edit** opens the preset's prompt and every setting in place. **Save**
   writes that card and nothing else: no conversation or notebook changes. A
-  setting left as *not set* is not stored. Every setting is offered here
+  setting left as *not set* is not stored, and a setting you did not touch is
+  saved exactly as it was. Every setting is offered here
   whatever model you use; one a model cannot use is removed when the preset is
   applied to it. Emptying a stored prompt asks first ("Remove prompt?"), and a
   save is refused if the preset changed elsewhere after you opened it.

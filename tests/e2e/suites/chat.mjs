@@ -1030,6 +1030,66 @@ export async function runChatSuite({ suite, ctx, config }) {
       { message: 'inherited conversation not cleaned up' });
   });
 
+  await suite.check('Apply and New store a preset\'s settings, values equal to the model\'s own defaults included', async () => {
+    // Reported 2026-10-05 as conversations holding a preset's stamp and prompt
+    // and none of its settings. That one was the designed comparison (the
+    // preset was edited after they were stamped), but nothing here looked at
+    // the STORE after an Apply or a New, and nothing used values the model
+    // would have picked anyway. A value pinned at today's default is still a
+    // pin: it is what keeps the conversation the same when the default moves.
+    const row = await page.evaluate(async (id) =>
+      ((await (await fetch('/v1/models')).json()).data ?? []).find((m) => m.id === id) ?? null, config.model);
+    const pinned = { temperature: row?.sampler_defaults?.temperature ?? 1.0 };
+    // Only a model with a thinking switch can hold this key; on any other,
+    // Apply removes it and says so, which is a different check.
+    if ((row?.capabilities ?? []).includes('thinking')) pinned.enable_thinking = row.thinking_default ?? true;
+    const PROMPT = 'Pinned at the defaults.';
+    await deleteStoredPreset(page, 'e2e-defaults');
+    await page.evaluate(async (body) => {
+      await fetch('/v1/presets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    }, { name: 'e2e-defaults', system_prompt: PROMPT, params: pinned });
+    const stored = async (id) => serverGet(page, `/v1/conversations/${id}`);
+    const same = (params) => Object.keys(params ?? {}).length === Object.keys(pinned).length
+      && Object.keys(pinned).every((k) => params[k] === pinned[k]);
+    const holds = (id, why) => waitFor(async () => same((await stored(id))?.params),
+      { timeout: 5000, message: async () => `${why}: the conversation stores ${JSON.stringify((await stored(id))?.params)}, `
+          + `the preset pins ${JSON.stringify(pinned)}` });
+
+    // Apply, onto a fresh conversation. It starts as e2e-preset, whose prompt
+    // differs, so the entry arms (applyPreset throws if it does not).
+    const first = await newFreshConversation(page, { seed: false });
+    await openDrawer(page);
+    await applyPreset(page, 'e2e-defaults', { armed: true });
+    await holds(first, 'after Apply');
+    const applied = await stored(first);
+    assert(applied.applied_preset_id && applied.system_prompt === PROMPT,
+      `Apply left stamp ${JSON.stringify(applied.applied_preset_id)} and prompt ${JSON.stringify(applied.system_prompt)}`);
+    await provenanceIs('From preset e2e-defaults', 'after applying a preset pinned at the defaults');
+    await closeDrawer(page);
+
+    // New, from that conversation: it starts as the preset, and is still the
+    // preset once every debounced write has had time to land -- on both.
+    const second = await newFreshConversation(page, { seed: false });
+    await sleep(1000);
+    assert(same((await stored(second))?.params),
+      `the new conversation stores ${JSON.stringify((await stored(second))?.params)}, the preset pins ${JSON.stringify(pinned)}`);
+    assert(same((await stored(first))?.params),
+      `making a new conversation changed the one it was made from to ${JSON.stringify((await stored(first))?.params)}`);
+    assert((await stored(second)).system_prompt === PROMPT, 'the new conversation did not start with the preset\'s prompt');
+
+    // Leave the world as found (later checks index into the list): both
+    // conversations go, newest first, which lands back on the suite's own.
+    for (let i = 0; i < 2; i += 1) {
+      const before = await count(page, '.conv-item');
+      const del = await page.$('.conv-item--active .conv-item__delete');
+      await armedClick(del);
+      await del.dispose();
+      await waitFor(async () => (await count(page, '.conv-item')) === before - 1,
+        { message: 'a conversation this check made was not cleaned up' });
+    }
+    await deleteStoredPreset(page, 'e2e-defaults');
+  });
+
   await suite.check('a preset deleted on the Presets page leaves the conversation its own copy', async () => {
     // Deleting is the Presets page's job since Phase 3b. A preset is a copy,
     // never a link: the conversation stamped with it keeps its prompt, and
@@ -1978,5 +2038,55 @@ export async function runChatSuite({ suite, ctx, config }) {
     const state = await conversationStateById(page, convId);
     assert((state.lastUser.content_blocks ?? []).some((b) => b.type === 'image'),
       'the continuation cost the user turn its image');
+  });
+
+  // LAST, on purpose: it deletes every conversation to reach the one state no
+  // other check here is in.
+  await suite.check('with no conversation open, an applied preset reaches the conversation the first send creates', async () => {
+    // The draft: with nothing open the drawer IS the next conversation, Apply
+    // stamps it, and the first send creates a conversation from exactly what
+    // the drawer shows -- the preset's settings included, in the store.
+    await page.evaluate(async () => {
+      const { conversations } = await (await fetch('/v1/conversations')).json();
+      for (const c of conversations) await fetch(`/v1/conversations/${c.id}`, { method: 'DELETE' });
+    });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.chat');
+    await waitFor(async () => {
+      const opts = await page.$$eval(`${MODEL_SELECT} option`, (els) => els.map((e) => e.value));
+      return opts.includes(config.model);
+    }, { message: `model ${config.model} never appeared in the select` });
+    // The suite's model, explicitly: with nothing open the select is not
+    // restored from a conversation, and a send would load whatever it shows.
+    await page.select(MODEL_SELECT, config.model);
+    assert((await count(page, '.conv-item')) === 0, 'precondition: no conversation should be open');
+
+    const row = await page.evaluate(async (id) =>
+      ((await (await fetch('/v1/models')).json()).data ?? []).find((m) => m.id === id) ?? null, config.model);
+    const pinned = { temperature: 0.42, max_tokens: 16 };
+    if ((row?.capabilities ?? []).includes('thinking')) pinned.enable_thinking = false;
+    const PROMPT = 'Reply with one word.';
+    await deleteStoredPreset(page, 'e2e-draft');
+    await page.evaluate(async (body) => {
+      await fetch('/v1/presets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    }, { name: 'e2e-draft', system_prompt: PROMPT, params: pinned });
+
+    await openDrawer(page);
+    await applyPreset(page, 'e2e-draft'); // the draft has no prompt to replace, so nothing arms
+    await waitFor(async () => (await provenanceText(page)) === 'From preset e2e-draft',
+      { message: async () => `the draft reads ${JSON.stringify(await provenanceText(page))} after Apply` });
+    await closeDrawer(page);
+    await sendText(page, 'Say hi.');
+    await waitFor(async () => (await currentConversation(page))?.messages?.length > 0,
+      { timeout: 30000, message: 'the first send created no conversation' });
+    await waitIdle(page, 60000);
+    await sleep(1000); // past every debounced write
+    const conv = await currentConversation(page);
+    assert(Object.keys(conv.params ?? {}).length === Object.keys(pinned).length
+      && Object.keys(pinned).every((k) => conv.params[k] === pinned[k]),
+      `the conversation stores ${JSON.stringify(conv.params)}, the applied preset pins ${JSON.stringify(pinned)}`);
+    assert(conv.applied_preset_id && conv.system_prompt === PROMPT,
+      `the conversation has stamp ${JSON.stringify(conv.applied_preset_id)} and prompt ${JSON.stringify(conv.system_prompt)}`);
+    await deleteStoredPreset(page, 'e2e-draft');
   });
 }
