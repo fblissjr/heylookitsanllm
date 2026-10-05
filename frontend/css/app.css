@@ -496,8 +496,12 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 
 /* ================= settings drawer (app-shell singleton) ================= */
 
-/* desktop gear: a nav-item pinned to the foot of the sidebar rail */
+/* desktop gear: a nav-item pinned to the foot of the sidebar rail. It is a
+   <button>, so it gets the same native-chrome reset as the phone gear -- in
+   :where(), so the reset carries no specificity and the .nav-item hover tint
+   (one class, declared earlier) still wins on the gear. */
 .drawer-gear { text-align: left; cursor: pointer; margin-top: 0.25rem; }
+:where(.drawer-gear) { background: none; border: none; }
 /* phone gear: the trailing item in #bottom-nav (itself hidden on desktop, so
    this needs no display toggle). Reset native button chrome so it reads like
    its sibling nav-item links; a compact trailing slot keeps label room. */

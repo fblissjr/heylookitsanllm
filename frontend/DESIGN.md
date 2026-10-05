@@ -296,7 +296,8 @@ owner: "equally well on desktop web and iPhone 17 Pro Safari").
   phone path that already reaches the same outcome; if there isn't one, the
   interaction is not ready.
 - **The settings entry point is device-specific, one drawer.** Desktop = a gear
-  `nav-item` at the foot of the sidebar rail; phone = a trailing `⚙` item in
+  `nav-item` at the foot of the sidebar rail (a `<button>`: its native-chrome
+  reset sits in `:where()` so the `.nav-item` hover tint still wins on it); phone = a trailing `⚙` item in
   `#bottom-nav` (`.drawer-gear-bottom`). **Not a floating FAB** — a page with a
   *bottom* composer (chat) leaves no bottom-right corner free, so a FAB collides
   with Send. The bottom-nav gear rides `#bottom-nav`'s own `<=767px` show/hide
