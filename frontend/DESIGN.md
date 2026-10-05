@@ -7,7 +7,8 @@
 > path out) apply to whatever renders that shape next. Read them as worked
 > examples, not as a description of the current pages.
 
-Last updated: 2026-10-05 (§7 gains the touch field size, closed overlay,
+Last updated: 2026-10-05 (§6 names the Presets surface, the provenance line
+and the drawer's two verbs; §7 gains the touch field size, closed overlay,
 scroll owner and side safe-area rules; §1 gains the dark theme, Lamplight:
 every colour token is a `light-dark()` pair and the theme follows the system;
 the drawer's shadow and scrim became tokens. Earlier: 2026-07-23, §7 settings
@@ -231,8 +232,9 @@ Three things that outlived the toggle and are still load-bearing:
 The shared settings drawer therefore holds three kinds of thing, and the drawer's
 `registerSettings(contribution)` contract (`settings-drawer.js`) models them
 distinctly: **page-owned lead sections** (`sections()` — chat and notebook each
-contribute the shared preset bar, `preset-bar.js`, plus their own system-prompt
-editor), **generation params** (samplers — the existing `settings.js` store)
+contribute the shared preset section, `preset-bar.js`, plus their own
+system-prompt editor), **generation params** (samplers — the existing
+`settings.js` store)
 and **per-page extras**
 (`extras()` — a page-owned toggle or note that does not compose the
 document; the two examples this named, jspace's heatmap toggles and
@@ -240,6 +242,37 @@ explore's logprobs note, went with those pages in v1.79.74-75, so the
 contract currently has no live consumer). Sections
 render first, extras last; both are page-owned, but a section composes the
 document (prompt/preset), while an extra is a toggle or note that doesn't.
+
+**The drawer holds the document; the Presets surface holds the presets**
+(owner, 2026-10-05). What the model reads is one bag, the document's own
+prompt and samplers, and the drawer shows that bag and where it came from.
+Managing the store of presets is a different job with a different surface:
+
+- **The provenance line** is the drawer's first line (`.preset-provenance`,
+  from `provenance()` in `preset-bar.js`): "No preset", "From preset X", or
+  "X, modified: prompt and two knobs (...)". It reads the document's stamp
+  (`applied_preset_id`) and nothing else, and the bar chip and the picker's
+  "applied here" mark read the same function, so no two places can disagree
+  about which preset a document is running. It sits above the prompt box so
+  the answer is on screen without scrolling on the phone.
+- **Two verbs on the drawer's face, each opening a sheet in place:** "Apply
+  preset…" (every preset with its own prompt, one Apply per entry) and "Save…"
+  ("Save as a new preset", always; "Update X", only while the document came
+  from X and differs). No control on the face appears or disappears with the
+  document's state: a state-dependent control is complexity, so the
+  conditional choice lives inside the verb it belongs to.
+- **The Presets surface** is a page (`#/presets`, `pages/presets.js`): a card
+  per preset with Edit, Rename, Duplicate and Delete, edited in place. It is
+  in the sidebar and reached from the drawer's "Manage presets" link; it is
+  not a bottom-nav item. Its knob editor is built from `PARAM_META` against
+  the preset's own bag and offers every knob, because a preset is
+  model-agnostic. It must not reuse the drawer's sampler panel, which is a
+  view of the sampler cache chat and notebook share.
+- **One write from the drawer reaches an existing preset, and it cannot be
+  aimed:** "Update X" targets the document's stamped preset. Do not add a
+  select, a name box or any other control that can choose its target; that is
+  the shape that overwrote a preset nobody was looking at (`sharp_edges.md`
+  "Presets and the system prompt").
 
 **Editing is raw-token-honest (a hard rule, not subject to the toggle).** Any
 surface that lets the user *edit* a message — editing a chat turn, prefilling or
@@ -348,7 +381,7 @@ owner: "equally well on desktop web and iPhone 17 Pro Safari").
   same pattern.
 - **Honest states are announced, not just shown.** Status lines carry
   `role="status"` (polite: streaming, "server busy — retrying", token counts,
-  the preset bar's drift line `.preset-drift`); error surfaces (`.error-note`,
+  the preset section's provenance line `.preset-provenance`); error surfaces (`.error-note`,
   router mount-failure) carry `role="alert"` (assertive). `setStatus` writing
   `textContent` into a live region is what makes streaming/error legible to a
   screen reader.

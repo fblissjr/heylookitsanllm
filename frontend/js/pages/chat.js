@@ -135,12 +135,13 @@ export default createPage({
     // Shared preset bar (preset-bar.js), adapted to the active conversation.
     // The indicator feed drives the chat-bar chip (built in buildSkeleton).
     s.presetBar = createPresetBar(ctx, {
+      noun: 'conversation',
       getPrompt: () => s.systemPrompt,
       setPrompt: (v) => setSystemPrompt(ctx, v),
       onStatus: (text, isError) => showStatus(ctx, text, isError),
       docId: () => s.activeId,
       // One funnel for both chips: the bar calls this from syncIndicator
-      // (document switch/create/delete) AND updateDrift (every prompt
+      // (document switch/create/delete) AND updateProvenance (every prompt
       // keystroke + every sampler change), so neither chip can go stale
       // without the other noticing.
       onIndicator: (info) => { paintPresetChip(s.presetChip, info); paintSysPromptChip(ctx); },
@@ -422,7 +423,7 @@ function buildSkeleton(ctx) {
   settingsBtn.addEventListener('click', () => drawer.openSettings(settingsBtn));
 
   // Applied-preset chip: which preset this conversation is running (with an
-  // "(edited)" suffix once it drifts). Fed by the preset bar's onIndicator;
+  // "(modified)" suffix once it drifts). Fed by the preset bar's onIndicator;
   // clicking it opens the drawer at the preset controls.
   // Engine chip: which library runs the selected model. Opens a compact
   // panel UNDER the bar (the detail strip scrolls horizontally on a phone,
@@ -1023,7 +1024,7 @@ function buildPromptSection(ctx) {
       if (!s.activeId) writeDraftPrompt(v);
     },
     persist: (v, id, opts) => putSystemPrompt(ctx, id, v, opts),
-    onEdit: () => s.presetBar.updateDrift(), // prompt edits drift the selected preset live
+    onEdit: () => s.presetBar.updateProvenance(), // prompt edits move the provenance line live
     label: 'System prompt for this conversation',
   });
   return s.promptSection;

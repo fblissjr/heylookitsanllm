@@ -51,6 +51,7 @@ export default createPage({
     // Created AFTER buildSkeleton (chat parity) so the chip exists before
     // any indicator callback can fire.
     s.presetBar = createPresetBar(ctx, {
+      noun: 'notebook',
       getPrompt: () => s.systemPrompt || null,
       setPrompt: (v) => setSystemPrompt(ctx, v),
       onStatus: (text, isError) => showStatus(ctx, text, isError),
@@ -74,7 +75,7 @@ export default createPage({
       get: () => s.systemPrompt,
       set: (v) => { s.systemPrompt = v ?? ''; },
       persist: (v, id, opts) => putSystemPrompt(ctx, id, v, opts),
-      onEdit: () => s.presetBar.updateDrift(), // prompt edits drift the selected preset live
+      onEdit: () => s.presetBar.updateProvenance(), // prompt edits move the provenance line live
     label: 'System prompt for this notebook',
     });
 

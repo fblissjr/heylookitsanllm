@@ -237,7 +237,7 @@ export function dismissPaneOnOutsideClick(root, openClass, ...insideSelectors) {
 //
 // This has to live in the primitive. A consumer can wire disarm() to its own
 // controls, but the thing that changes the consequence is often OUTSIDE the
-// component: the preset bar's Save writes the DOCUMENT's system prompt, which
+// component: the preset bar's old Save wrote the DOCUMENT's system prompt, which
 // is edited in a different section of the drawer, so "click Save (arms on
 // 'replace this text'), clear the prompt box, click Save (blanks the preset)"
 // confirmed a write nobody previewed and no amount of disarm() wiring in the
@@ -279,8 +279,9 @@ export function armedConfirm(btn, action, armedLabel = 'Confirm?', when = null, 
   // Cancel a pending arm. `target` makes a stale arm HARMLESS; disarm makes it
   // VISIBLY gone, which is a different job -- a button still reading "Overwrite
   // prompt?" while aimed somewhere else is a lie even though clicking it is now
-  // safe. Consumers call this from controls that re-aim (the preset bar's
-  // select and name box). Exposed on the button, so a caller that never
+  // safe. Consumers call this from whatever re-aims or withdraws the action
+  // (the Presets page's editor on a prompt edit, the Save sheet when its
+  // Update option stops applying). Exposed on the button, so a caller that never
   // re-aims can ignore it.
   function disarm() {
     if (!armed) return;

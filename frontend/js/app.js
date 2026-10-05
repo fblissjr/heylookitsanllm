@@ -8,6 +8,10 @@ import { mountSettingsDrawer } from './settings-drawer.js';
 const ROUTES = {
   chat:     { title: 'Chat', short: 'Chat', load: () => import('./pages/chat.js') },
   notebook: { title: 'Notebook', short: 'Notes', load: () => import('./pages/notebook.js') },
+  // Not in the phone's bottom nav (`bottomNav: false`): it is already five
+  // items wide with the gear, and the phone reaches this page from the
+  // settings drawer's "Manage presets" link (plan_dark_mode.md Phase 3b).
+  presets:  { title: 'Presets', short: 'Presets', load: () => import('./pages/presets.js'), bottomNav: false },
   models:   { title: 'Models', short: 'Models', load: () => import('./pages/models.js'), admin: true },
   perf:     { title: 'Performance', short: 'Perf', load: () => import('./pages/perf.js'), admin: true },
 };
@@ -26,10 +30,12 @@ for (const [name, route] of Object.entries(ROUTES)) {
     sepAdded = true;
   }
   const desktop = createEl('a', { class: 'nav-item', href: `#/${name}`, dataset: { route: name } }, [route.title]);
-  const bottom = createEl('a', { class: 'nav-item', href: `#/${name}`, dataset: { route: name } }, [route.short]);
   navDesktop.append(desktop);
+  navLinks.push(desktop);
+  if (route.bottomNav === false) continue;
+  const bottom = createEl('a', { class: 'nav-item', href: `#/${name}`, dataset: { route: name } }, [route.short]);
   navBottom.append(bottom);
-  navLinks.push(desktop, bottom);
+  navLinks.push(bottom);
 }
 
 // App-shell singleton: a persistent gear + right slide-over shared by every

@@ -14,7 +14,7 @@
 //                                           hide-time flush -- pass it to the
 //                                           request so the write survives unload
 //   onEdit?():              void         -- optional, fires after every keystroke
-//                                           (preset-bar drift tracking)
+//                                           (the preset section's provenance line)
 //   label?:                 string       -- the section summary. Names WHOSE
 //                                           prompt this is; see the comment
 //                                           at the <details> below for why
@@ -109,14 +109,13 @@ export function createPromptSection(ctx, adapter) {
 
   // Always expanded: a collapsed-when-empty details hid the field behind an
   // extra click and read as "my prompt disappeared".
-  // The summary NAMES ITS OWNER. This box sits directly under the preset
-  // select, and it shows the DOCUMENT's prompt no matter which preset is
-  // picked up there -- the select is inert by design. Labelled only "System
-  // prompt", it read as the selected preset's, so every preset appeared to
-  // hold the same text and a Save "to keep what I'm looking at" overwrote a
-  // preset with the document's prompt (2026-08-28). The preset's own prompt
-  // now has its own read-only view in the section above; this one says whose
-  // it is.
+  // The summary NAMES ITS OWNER: this is the DOCUMENT's prompt, the one the
+  // model reads, whatever preset it came from. Labelled only "System prompt"
+  // under the old preset select, it read as the selected preset's, so every
+  // preset appeared to hold the same text and a Save "to keep what I'm
+  // looking at" overwrote a preset with the document's prompt (2026-08-28).
+  // A preset's own prompt is shown in the Apply picker and on the Presets
+  // page; nothing in the drawer overwrites one any more.
   const element = createEl('details', { class: 'sysprompt', open: true }, [
     createEl('summary', {}, [adapter.label ?? 'System prompt for this document']),
     input,

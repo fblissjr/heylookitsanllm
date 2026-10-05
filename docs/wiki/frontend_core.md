@@ -71,31 +71,43 @@ iOS Safari brings a backgrounded tab back with the heap it had, and every write 
 
 ## 3. The Preset & Override-Box System
 
-Presets in `heylookitsanllm` ([`preset-bar.js`](../../frontend/js/preset-bar.js)) manage bundled system prompts and sampling hyperparameters.
+A preset is a named bundle of a system prompt (optional) and sampler parameters, in one global store (`/v1/presets`). Two surfaces touch it, and the split between them is the design:
+
+- The **settings drawer** holds what the open *document* (a conversation or a notebook) runs on. Its preset section ([`preset-bar.js`](../../frontend/js/preset-bar.js), shared by chat and notebook) says where that came from and offers the two moves between a document and the store.
+- The **Presets page** ([`pages/presets.js`](../../frontend/js/pages/presets.js), `#/presets`) is where a preset itself is edited, renamed, duplicated and deleted.
+
+Three rules hold across both: what the model reads is one bag, the document's own prompt and samplers; a preset is a copy, never a link; an empty preset prompt makes no claim.
 
 ### 3.1. The Override-Box Rule
 - A preset can define both sampler parameters and an optional system prompt.
 - **Empty Means Unclaimed**: An empty prompt in a preset **never blanks the active document prompt**. It indicates that the preset makes no claim on the prompt, leaving the document's existing prompt intact.
 - **Stored, shown and sent are one bag.** One predicate in [`settings.js`](../../frontend/js/settings.js), `inapplicable(values, model)`, says which settings the selected model cannot use (a missing capability, a thinking depth its template does not offer, a cap its engine cannot enforce). `reconcileSettings` removes them from the panel, and so from the open document, whenever the model or the values can have changed under it (document load, model switch, preset apply, resume), and `droppedNote` names each on the status line. A preset save goes through `samplerParams(model)`, the same rule, so a preset holds what the panel showed. The server validates every `params` write against the request's own sampler fields (`schema/sampler_params.py`) but does not judge the model, since a document can change model.
 
-### 3.2. Loss Prevention: `wouldOverwritePresetPrompt`
-Both directions are armed, but they are not symmetric. **Apply** overwrites the *document* and is recoverable -- re-apply the preset. **Save** overwrites the *stored preset* with an UPDATE that keeps no history, so Save is the one where loss is real. It was the bare action, and the select **used to pre-fill** the save-as name box, so merely picking a preset to look at it armed that preset as Save's target; one click wrote a document's prompt over a long stored one. That pre-fill has since been removed -- the name box is created empty, with a placeholder only.
+### 3.2. Provenance: one function, read everywhere
+`provenance()` in `preset-bar.js` answers "which preset is this document running, and is it still that preset?". It reads the document's stamp (`applied_preset_id`, written only by Apply and by a save) and compares the document's bag to that preset: the prompt, unless the preset carries none, and each sampler key the selected model can use. The drawer's first line (`.preset-provenance`), the applied-preset chip and the picker's "applied here" mark all read it, so they cannot disagree. A document that merely equals some preset is not credited to it, and a stamp naming a deleted preset resolves to nothing, so the document reads "No preset".
 
-[`wouldOverwritePresetPrompt`](../../frontend/js/preset-bar.js) is an **ordered** set of questions, and the order is load-bearing:
-1. No stored prompt on the target -- **nothing to lose**, do not arm.
-2. Incoming prompt is identical to the stored one -- **no change**, do not arm.
-3. Incoming prompt is **empty**: **always arm**, even in the iterate loop below. A null write leaves an override-box preset present but inert, which surfaces later as "my preset disappeared".
-4. Otherwise: arm only if the document is **not** already running that preset. A save back onto the preset you are running is the apply/edit/save-back **iterate loop**, and charging it a confirmation would train exactly the click-through the guard exists to prevent.
+### 3.3. The drawer's two verbs
+```mermaid
+flowchart LR
+    D["Document<br/>(prompt + samplers + stamp)"]
+    P["Preset store"]
+    P -- "Apply preset… (copy in, stamp)" --> D
+    D -- "Save… → Save as a new preset (create, stamp)" --> P
+    D -- "Save… → Update X (X = the stamp, only when it differs)" --> P
+```
 
-**An arm is a promise about one action**, and that is enforced in the primitive rather than in consumer wiring. `armedConfirm` takes a `target()` describing destination, payload **and the stored value about to be destroyed**, captures it at arm time, and re-reads it on the confirming click -- re-arming instead of firing if any of the three moved. Including the stored value means a refresh landing between arm and confirm voids the arm. It cannot live in the bar: Save's payload is the *document's* prompt, edited in a different drawer section the bar gets no events from, so "arm, clear the prompt box, confirm" would blank a preset straight past the blanking check.
+- **Apply preset…** opens a list of every preset with its *own* prompt; each entry has one Apply button. Apply copies the preset onto the document and stamps it. It arms ("Replace prompt?") only when it would replace a differing non-empty prompt: sampler values are recoverable, a prompt is typed work.
+- **Save…** offers *Save as a new preset* always. It creates, refuses a name in use (against a freshly fetched list, with the server's 409 as the backstop) and keeps what was typed. Enter in its name box is safe because there is no arm to get past: it cannot overwrite.
+- **Save… → Update X** is the only write from the drawer to an existing preset. It exists only when the document is stamped with X and differs from it, and its target is the stamp: no select and no name box feeds it. It re-fetches first and refuses when X's `updated_at` is not the one this drawer read. It arms in one case, an empty prompt box over a stored prompt, because that write leaves the preset present but inert.
 
-`disarm()` remains for **visible honesty** -- a button still reading "Overwrite prompt?" while aimed elsewhere is a lie even once clicking it is safe. The **select** is the only control that re-aims, and it disarms all three buttons. The name box re-aims nothing and disarms nothing.
+No control on the drawer's face is conditional. The one conditional choice sits inside the Save sheet.
 
-Enter in the name box goes straight to **Save as new**, which is correct: the rule against a second entry point past an arm exists because that is the same hole with a keyboard on it, and Save as new has no arm to get past -- it cannot overwrite anything. Update, which can, is reachable only by its own button.
+### 3.4. Loss prevention
+The loss this design answers was a write aimed at a preset nobody was looking at: the old section's `<select>` pre-filled the save-as name, so browsing a preset aimed Save at it, and Save wrote the document's prompt over the stored one with an update that keeps no history. The guards that followed (an armed Save, a read-only preview, a drift line) each patched a reading failure of a section that did two jobs. Removing the select removed the aim: Update's target is a property of the document.
 
-There is a **second guard** past the arm: Update re-fetches first and then refuses outright if the stored prompt moved since the preview was painted, telling you to look again and press Update once more. That is what makes "you overwrite what the preview showed you" actually true rather than merely likely.
+**An arm is a promise about one action**, and that is enforced in the primitive rather than in consumer wiring. `armedConfirm` takes a `target()` describing destination, payload and the stored value about to be replaced, captures it at arm time, and re-reads it on the confirming click, re-arming instead of firing if any of them moved. It cannot live in the section: the payload is the *document's* prompt, edited in a different drawer section this one gets no events from.
 
-The reason that misclick was possible at all is structural: the drawer renders the preset section directly above the per-document prompt box, which shows the **document's** prompt whatever the select says, so every preset looked like it held the same text. The section now carries a read-only preview of the *selected preset's own* prompt, and the document's box names its owner.
+On the Presets page the thing edited is the thing on screen: an editor opens on the preset's own stored text and knobs, and Save writes that card. It refuses a row whose `updated_at` moved after the editor opened, and arms only to empty a stored prompt. Its knob editor is built from `PARAM_META` against the preset's own bag and offers every knob. It does not reuse the drawer's sampler panel, which is a view of the module-level cache chat and notebook share.
 
 ---
 

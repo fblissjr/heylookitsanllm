@@ -1196,9 +1196,37 @@ when the viewport changes under it, which on a phone is every keyboard open
 
 ### Presets and the system prompt
 
-Chat has a per-document system-prompt editor and a saved-preset bar: two
+Chat has a per-document system-prompt editor and a preset section: two
 shared drawer sections, `prompt-section.js` + `preset-bar.js`, used by chat
-and notebook.
+and notebook. Presets themselves are managed on their own page
+(`pages/presets.js`).
+
+Nothing in the drawer can be aimed at a stored preset (owner, 2026-10-05,
+dark mode phase 3b). The drawer section used to carry a preset select, a
+preview, Save, Save as new, Delete and a drift line beside the document's own
+prompt box, and every incident below is a reading failure of that mix: which
+prompt is this, and which preset does this button write to. The 35k-character
+loss of 2026-08-28 and the two presets that lost their prompts were each
+answered with another guard on the same section. Phase 3b split the jobs
+instead. The drawer holds what the document runs on and one provenance line
+("No preset", "From preset X", "X, modified: ..."), with two verbs: Apply
+copies preset to document, Save writes the document to a new preset or, only
+while the document is stamped with X and differs from it, back to X. That
+"Update X" is the one write from the drawer to an existing preset and its
+target is the document's stamp: there is no select and no name box that can
+feed it, which is the property the 2026-08-28 write lacked. Do not give it a
+way to choose a target, and do not add a second overwrite. It refuses when
+X's row moved since the drawer read it, and it arms only to write an empty
+prompt over a stored one (blanking always arms, as it has since v1.79.20).
+Edit, rename, duplicate and delete are the Presets page's, where the thing
+edited is the thing on screen. The page's knob editor is bound to the preset's
+own bag and must not reuse the drawer's sampler panel: that panel is a view of
+the cache chat and notebook share, so a preset edited through it would leak
+into the next document.
+
+The paragraphs below are the history that led there. The controls they name
+(Save, Update, the select, the preview, the drift line) are gone from the
+drawer; the rules they taught are kept.
 
 The system prompt is an override box (owner rule, v1.62.3). A preset owns a
 prompt and carries it, but a preset with an empty one makes no claim and
@@ -1213,11 +1241,9 @@ names. It was the bare one, and the select pre-fills the save-as name box, so
 picking a preset to look at it armed that preset as Save's target: one click
 wrote the document's prompt over a 35k-char stored one on 2026-08-28.
 
-Save's guard is an ordered set of questions in `wouldOverwritePresetPrompt`.
-Read it there: it carries the order, the reasons and its own known boundary
-(restating the branch list here would be exactly the hand-copied second copy
-the repo warns about). The shape: only a save onto a preset the document is
-not running arms, so the apply/edit/save-back iterate loop stays one click.
+Save's guard was an ordered set of questions in `wouldOverwritePresetPrompt`
+(removed with the drawer's Save in phase 3b; `git log -S` finds it). The
+shape: only a save onto a preset the document is not running arms, so the apply/edit/save-back iterate loop stays one click.
 v1.79.20 armed all of them and thereby charged the loop for the accident, the
 same click-through failure the rule exists to prevent, reintroduced by the fix
 for it. Blanking always arms, because a null write leaves an override-box

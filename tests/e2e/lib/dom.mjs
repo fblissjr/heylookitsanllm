@@ -24,9 +24,140 @@ export async function clickByText(page, selector, text) {
   await el.dispose();
 }
 
-// The shared preset bar's drift line: its text while visible, null while hidden.
-export async function driftText(page) {
-  return page.$eval('.preset-drift', (el) => (el.hidden ? null : el.textContent));
+// ---- the drawer's preset section (js/preset-bar.js) -------------------------
+// Every helper here needs the drawer OPEN, and dispatches the control's own
+// handler instead of hit-testing a click: checks leave the drawer scrolled
+// (the system-prompt chip focuses its textarea), and a coordinate click on a
+// row under the sticky header fails with "Node is either not clickable".
+
+// The provenance line: "No preset", "From preset X", or "X, modified: ...".
+export async function provenanceText(page) {
+  return page.$eval('.drawer--open .preset-provenance', (el) => el.textContent);
+}
+
+// Open the Apply picker (a no-op when it is already open) and wait for its
+// entries. Opening it copies nothing anywhere.
+export async function openPresetPicker(page) {
+  await page.evaluate(() => {
+    const root = document.querySelector('.drawer--open .preset-section');
+    if (!root.querySelector('.preset-picker').hidden) return;
+    [...root.querySelectorAll('.preset-row button')]
+      .find((b) => b.textContent.trim() === 'Apply preset…').click();
+  });
+  await page.waitForFunction(() => {
+    const picker = document.querySelector('.drawer--open .preset-picker');
+    return picker && !picker.hidden && picker.children.length > 0;
+  }, { timeout: 5000 });
+}
+
+// One click on a picker entry's Apply button. Returns the button's label
+// AFTER the click, or null when the click applied (the section rebuilds and
+// the entry is gone) -- so a caller can tell "armed" from "fired".
+export async function clickPresetApply(page, name) {
+  return page.evaluate((n) => {
+    const entry = [...document.querySelectorAll('.drawer--open .preset-option')]
+      .find((o) => o.dataset.name === n);
+    if (!entry) throw new Error(`no picker entry named ${n}`);
+    const btn = entry.querySelector('button');
+    btn.click();
+    return btn.isConnected ? btn.textContent.trim() : null;
+  }, name);
+}
+
+// Apply a preset through the picker. `armed` STATES THE EXPECTATION rather
+// than adapting to what happens: true = the entry must arm first ("Replace
+// prompt?") and is then confirmed; false = it must fire on the first click.
+// Either mismatch throws, because both are the behaviour under test.
+export async function applyPreset(page, name, { armed = false } = {}) {
+  await openPresetPicker(page);
+  const after = await clickPresetApply(page, name);
+  if (armed) {
+    if (after !== 'Replace prompt?') {
+      throw new Error(`Apply "${name}" was expected to arm, but ${after === null ? 'fired at once' : `reads "${after}"`}`);
+    }
+    await clickPresetApply(page, name);
+  } else if (after !== null) {
+    throw new Error(`Apply "${name}" was expected to fire at once, but it reads "${after}"`);
+  }
+}
+
+// Open the Save sheet (a no-op when it is already open).
+export async function openSaveSheet(page) {
+  await page.evaluate(() => {
+    const root = document.querySelector('.drawer--open .preset-section');
+    if (!root.querySelector('.preset-save').hidden) return;
+    [...root.querySelectorAll('.preset-row button')]
+      .find((b) => b.textContent.trim() === 'Save…').click();
+  });
+}
+
+// Save as a new preset, through the Save sheet: set the name, press the button.
+export async function saveAsNewPreset(page, name) {
+  await openSaveSheet(page);
+  await page.evaluate((n) => {
+    const sheet = document.querySelector('.drawer--open .preset-save');
+    const input = sheet.querySelector('input');
+    input.value = n;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    [...sheet.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Save as a new preset').click();
+  }, name);
+}
+
+// The Save sheet's "Update X" option as the sheet offers it right now: its
+// label, or null when it is not offered (no stamped preset, or nothing
+// differs from it). Opens the sheet.
+export async function updateOptionLabel(page) {
+  await openSaveSheet(page);
+  return page.evaluate(() => {
+    const btn = document.querySelector('.drawer--open .preset-save__update');
+    return btn && !btn.hidden ? btn.textContent.trim() : null;
+  });
+}
+
+// One click on the "Update X" option. Returns its label right after the
+// click: the armed question when it armed, its own label when it went ahead
+// (the write is asynchronous, so the caller waits on the wire or the store).
+export async function clickUpdateOption(page) {
+  await openSaveSheet(page);
+  return page.evaluate(() => {
+    const btn = document.querySelector('.drawer--open .preset-save__update');
+    if (!btn || btn.hidden) throw new Error('the Save sheet offers no Update option');
+    btn.click();
+    return btn.isConnected ? btn.textContent.trim() : null;
+  });
+}
+
+// ---- the preset STORE, read and cleaned up directly -------------------------
+// What a check asserts about a stored preset comes from the store, never from
+// a control that might be showing a cached list.
+export async function storedPresets(page) {
+  return page.evaluate(async () => (await (await fetch('/v1/presets')).json()).presets ?? []);
+}
+
+// Cleanup only (presets survive /v1/data/clear). A check that is ABOUT
+// deleting uses the Presets page's own button instead.
+export async function deleteStoredPreset(page, name) {
+  await page.evaluate(async (n) => {
+    const { presets } = await (await fetch('/v1/presets')).json();
+    for (const p of presets.filter((x) => x.name === n)) {
+      await fetch(`/v1/presets/${p.id}`, { method: 'DELETE' });
+    }
+  }, name);
+}
+
+// ---- the Presets page (js/pages/presets.js) ---------------------------------
+// A card's button by its label, as an ElementHandle (caller disposes).
+export async function presetCardButton(page, name, label) {
+  const handle = await page.evaluateHandle((n, l) => {
+    const card = [...document.querySelectorAll('.preset-card')].find((c) => c.dataset.name === n);
+    return [...(card?.querySelectorAll('button') ?? [])].find((b) => b.textContent.trim() === l) || null;
+  }, name, label);
+  const el = handle.asElement();
+  if (!el) {
+    await handle.dispose();
+    throw new Error(`no "${label}" button on the preset card "${name}"`);
+  }
+  return el;
 }
 
 // Two-tap destructive confirm (utils.armedConfirm): first click arms the button

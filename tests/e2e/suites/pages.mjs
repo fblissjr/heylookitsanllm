@@ -6,7 +6,8 @@
 
 import { assert, waitFor, sleep, skip, proveQuiet } from '../lib/harness.mjs';
 import { serverGet } from '../lib/server-state.mjs';
-import { clickByText, armedClick, count, textOf, waitForLabel, findModelRow, modelRowState, noHorizontalOverflow, openDrawer, closeDrawer, driftText, handleByText } from '../lib/dom.mjs';
+import { clickByText, armedClick, count, textOf, waitForLabel, findModelRow, modelRowState, noHorizontalOverflow, openDrawer, closeDrawer, handleByText,
+  provenanceText, applyPreset, saveAsNewPreset, storedPresets, deleteStoredPreset, presetCardButton } from '../lib/dom.mjs';
 
 // Record requests whose URL matches `regex` from the moment this is called until
 // stop(). Used to prove the perf page does NOT poll.
@@ -183,20 +184,19 @@ export async function runPagesSuite({ suite, ctx, config }) {
     await closeDrawer(page);
   });
 
-  await suite.check('notebook preset bar: save, drift, armed apply', async () => {
-    // Shared preset bar (preset-bar.js) contributed by notebook too; same
-    // grammar as chat: inert select, live drift line, explicit armed Apply.
+  await suite.check('notebook preset section: save, provenance, armed apply', async () => {
+    // Shared preset section (preset-bar.js) contributed by notebook too; same
+    // grammar as chat: a provenance line, Apply through the picker, Save as new.
     // ORDER-COUPLED: relies on the notebook's system prompt still being "You
     // are a marine biologist." from the prior check -- do not reorder or
-    // isolate without updating the drift-flip assertions below.
+    // isolate without updating the assertions below.
+    const provenanceIs = (want, why) => waitFor(async () => (await provenanceText(page)) === want,
+      { message: async () => `${why}: the provenance line reads ${JSON.stringify(await provenanceText(page))}` });
     await openDrawer(page);
     await page.waitForSelector('.preset-section');
     // save the current notebook state (marine-biologist prompt) as a preset
-    await page.click('.preset-section .input');
-    await page.type('.preset-section .input', 'nb-preset');
-    await clickByText(page, '.preset-section button', 'Save as new');
-    await waitFor(async () => (await driftText(page))?.includes('Matches'),
-      { message: 'drift line not "Matches" right after save' });
+    await saveAsNewPreset(page, 'nb-preset');
+    await provenanceIs('From preset nb-preset', 'right after Save as new');
     // NOTEBOOK CHIP: saving stamps the association -- the chip in the editor
     // row (behind the drawer backdrop, but readable) must name the preset.
     const chipText = () => page.$eval('.notebook__row .preset-chip', (el) => (el.hidden ? null : el.textContent));
@@ -208,23 +208,21 @@ export async function runPagesSuite({ suite, ctx, config }) {
       ta.value = 'You are a physicist.';
       ta.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    // The line reads "Prompt differs from <name> ..." since v1.79.62 (the chat
-    // suite's twin was updated then; this one still matched the old lead).
-    await waitFor(async () => /differs/i.test((await driftText(page)) ?? ''),
-      { message: 'drift line did not flip after a prompt edit' });
-    await waitFor(async () => (await chipText())?.includes('(edited)'),
-      { message: 'notebook chip did not gain (edited) after the prompt drift' });
+    await provenanceIs('nb-preset, modified: prompt', 'after a prompt edit');
+    await waitFor(async () => (await chipText())?.includes('(modified)'),
+      { message: 'notebook chip did not gain (modified) after the prompt drift' });
     // Apply arms first here: it would replace a differing non-empty prompt
-    const applyBtn = await handleByText(page, '.preset-section button', 'Apply');
-    await armedClick(applyBtn);
-    await applyBtn.dispose();
+    // (applyPreset throws if the entry fires without arming)
+    await applyPreset(page, 'nb-preset', { armed: true });
     await waitFor(async () => (await page.$eval('.sysprompt-input', (e) => e.value)).includes('marine biologist'),
       { message: 'apply did not restore the preset prompt' });
-    // cleanup so the preset doesn't leak (presets are excluded from /v1/data/clear)
-    await armedClick(await page.$('.preset-section .btn--ghost'));
-    await waitFor(async () => page.$eval('.preset-row select',
-      (s) => ![...s.options].some((o) => o.textContent === 'nb-preset')),
-      { message: 'preset not deleted' });
+    // Cleanup so the preset doesn't leak (presets are excluded from
+    // /v1/data/clear), and the rule that makes a delete elsewhere harmless:
+    // reopening the drawer re-reads the list, the notebook's stamp then names
+    // nothing, and both the line and the chip say so.
+    await deleteStoredPreset(page, 'nb-preset');
+    await openDrawer(page);
+    await provenanceIs('No preset', 'after its preset was deleted');
     await waitFor(async () => (await chipText()) === null,
       { message: 'notebook chip did not clear after preset delete' });
     await closeDrawer(page);
@@ -285,6 +283,64 @@ export async function runPagesSuite({ suite, ctx, config }) {
     await armedClick(del);
     await del.dispose();
     await waitFor(async () => (await count(page, '.notebook-item')) === before - 1, { message: 'notebook not removed' });
+  });
+
+  // ============================= PRESETS =================================
+  await suite.check('presets page: edit, rename, duplicate and delete reach the store', async () => {
+    // Seeded through the API: this is about the page's four actions against
+    // the REAL store (its name uniqueness, its validation of the settings
+    // bag), not about how a preset is first made -- that is the drawer's Save
+    // as new, checked on chat and notebook.
+    for (const stale of ['pg-preset', 'pg-renamed', 'pg-renamed copy']) await deleteStoredPreset(page, stale);
+    await page.evaluate(async () => {
+      await fetch('/v1/presets', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'pg-preset', system_prompt: 'Seeded prompt.', params: { temperature: 0.4 } }),
+      });
+    });
+    await ctx.open('#/presets');
+    await page.waitForSelector('.preset-card');
+    const stored = async (name) => (await storedPresets(page)).find((p) => p.name === name) ?? null;
+    const press = async (name, label) => {
+      const btn = await presetCardButton(page, name, label);
+      await btn.click();
+      await btn.dispose();
+    };
+
+    await press('pg-preset', 'Edit');
+    await page.evaluate(() => {
+      const root = document.querySelector('.preset-card[data-name="pg-preset"] .preset-edit');
+      const set = (el, v) => { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); };
+      set(root.querySelector('textarea'), 'Edited prompt.');
+      set(root.querySelector('input[id$="-temperature"]'), '0.6');
+    });
+    await press('pg-preset', 'Save');
+    await waitFor(async () => {
+      const p = await stored('pg-preset');
+      return p?.system_prompt === 'Edited prompt.' && p.params.temperature === 0.6;
+    }, { message: async () => `the edit did not reach the store: ${JSON.stringify(await stored('pg-preset'))}` });
+
+    await press('pg-preset', 'Rename');
+    await page.evaluate(() => {
+      const box = document.querySelector('.preset-card__rename');
+      box.value = 'pg-renamed';
+      box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    await waitFor(async () => Boolean(await stored('pg-renamed')) && !(await stored('pg-preset')),
+      { message: 'the rename did not reach the store' });
+    await page.waitForSelector('.preset-card[data-name="pg-renamed"]');
+
+    await press('pg-renamed', 'Duplicate');
+    await waitFor(async () => (await stored('pg-renamed copy'))?.system_prompt === 'Edited prompt.',
+      { message: 'the duplicate is not in the store with the source\'s prompt' });
+    await page.waitForSelector('.preset-card[data-name="pg-renamed copy"]');
+
+    for (const name of ['pg-renamed copy', 'pg-renamed']) {
+      const del = await presetCardButton(page, name, 'Delete');
+      await armedClick(del);
+      await del.dispose();
+      await waitFor(async () => !(await stored(name)), { message: `"${name}" was not deleted from the store` });
+    }
   });
 
   // ============================= PERF ====================================

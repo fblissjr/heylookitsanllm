@@ -78,45 +78,79 @@ Two consequences worth internalising:
 ### What a preset holds
 
 A name, a system prompt (optionally), and the sampler panel as it shows for the
-model you save it on — temperature, max tokens, top-p, top-k, thinking, and the
+model you save it on: temperature, max tokens, top-p, top-k, thinking, and the
 advanced knobs. A setting that model has no control for is not saved: a preset
 holds exactly what you saw.
 
 Presets are global. They are not per-conversation, per-model, or per-page; chat
 and the notebook share one store.
 
-A preset with no system prompt is listed as **"<name> — settings only"**. That
-is not an error state — it is a preset that carries sampler values and makes no
-claim about the prompt (see *Apply*, below).
+A preset with no system prompt reads **settings only** wherever it is named.
+That is not an error state. It is a preset that carries sampler values and makes
+no claim about the prompt (see *Apply*, below).
 
-### Seeing what is in one
+### Three rules that explain everything else
 
-Pick it from the **Preset** dropdown in the settings drawer. The section shows a
-collapsed **"<name> system prompt"** block — that is the preset's own text,
-read-only.
+- **What the model reads is one bag: the conversation's own prompt and
+  settings.** The settings drawer shows that bag and nothing else. A preset is
+  never read at send time.
+- **A preset is a copy, never a link.** Applying one copies it into the
+  conversation. After that, editing the conversation does not change the preset,
+  and editing the preset does not change the conversation.
+- **An empty preset prompt makes no claim.** It never means "set the prompt to
+  empty".
 
-This matters because directly below the preset section is a **System prompt for
-this conversation** box, and that box shows *the conversation's* prompt no
-matter which preset is selected. Before the preview existed, clicking through
-presets appeared to show the same prompt every time, because you were reading
-the conversation's prompt under a dropdown you had just changed.
+### Where things are
 
-### Apply
+The **settings drawer** holds what the open conversation runs on: its system
+prompt, its sampler settings, and at the top one line saying where they came
+from. Two buttons sit under that line, **Apply preset…** and **Save…**.
 
-Copies the preset onto the current conversation: sampler values, and the prompt
-**if the preset carries one**.
+The **Presets page** (in the sidebar; on the phone, *Manage presets* in the
+drawer) is where presets themselves are edited, renamed, duplicated and
+deleted.
 
-A preset with an empty system prompt makes no claim about the prompt. Applying
-it leaves the conversation's prompt exactly as it was. Empty never means "set it
-to empty" — this is deliberate, so a preset saved without a prompt can never
-silently wipe typed work.
+### The provenance line
+
+The first line of the drawer answers "which preset is this conversation
+running, and is it still that preset?":
+
+> **No preset**
+> **From preset p2**
+> **From preset p2** (settings only: the prompt is not the preset's)
+> **p2, modified**: prompt
+> **p2, modified**: one knob (temperature)
+> **p2, modified**: prompt and two knobs (temperature, max tokens)
+
+*Modified* means the conversation and the preset no longer hold the same thing,
+whichever of the two changed. Nothing is lost and nothing is hidden in that
+state: your change is on the conversation (a short debounce, then a write to
+the server) and it is what the model receives on your next message. The preset
+is untouched until you choose to write to it.
+
+Beside the model selector, a chip says the same in short and appends
+**(modified)**. With **no conversation open** the drawer is the next
+conversation: it is created from exactly what the drawer shows.
+
+### Apply preset…
+
+Opens a list of every preset, each showing its name, *settings only* if it
+carries no prompt, and **its own prompt text**. Read what a preset holds there;
+opening the list changes nothing. The preset the conversation came from is
+marked *applied here*.
+
+**Apply**, on an entry, copies that preset onto the conversation: sampler
+values, and the prompt **if the preset carries one**. A preset with an empty
+system prompt leaves the conversation's prompt exactly as it was.
 
 Apply asks for confirmation ("Replace prompt?") only when it would overwrite a
 prompt you have with a different one. Sampler values are trivially recoverable;
-a system prompt is typed work.
+a system prompt is typed work. The confirmation is the button itself changing
+for a few seconds; press it again to go through. If you edit the prompt in
+between, the confirmation is void and the button asks again.
 
-Apply also **stamps** the conversation: from then on the conversation records
-that it is running that preset, and the dropdown will open on it next time.
+Apply also **stamps** the conversation: from then on the provenance line names
+that preset.
 
 A preset saved on one model and applied on another may hold something the second
 one cannot use: thinking on a model without it, a thinking level its template
@@ -124,80 +158,52 @@ does not offer, a thinking cap its engine cannot enforce. Apply removes those
 and the status line names each one, with the levels the template does offer.
 The preset itself keeps them, and the conversation still counts as running it.
 
-### Save and Save as new
+### Save…
 
-Both buttons write the current conversation's prompt and the sampler panel (what
-it shows for the selected model) to a preset. They differ only in *which* preset. (Save was labelled
-**Update** before v1.79.62; nothing about what it does changed.)
+Opens the two places this conversation's prompt and settings can be written:
 
-There are **two** write buttons, and which preset you hit is decided by which
-one you press — not by what you type:
+- **Save as a new preset**, always there. Type a name and press it (or Enter).
+  It creates a preset and stamps the conversation with it. If the name is in
+  use it refuses and keeps what you typed. It can never overwrite.
+- **Update X with this conversation's prompt and settings**, offered first, and
+  only when the conversation came from preset X and now differs from it. This
+  is the ordinary loop: apply a preset, improve the prompt while you use it,
+  write the improvement back. X is always the preset named on the provenance
+  line. Nothing on screen can point this at a different preset.
 
-- **Save** overwrites the preset showing in the dropdown, the one the preview
-  directly above it is displaying. This is the only way to overwrite a preset.
-- **Save as new** creates one under the typed name. If that name is already in
-  use it refuses and tells you to use Save instead. It can never overwrite.
+Update goes through on one press, with two exceptions:
 
-Save asks for confirmation before it changes a preset's stored prompt, except
-in one case:
+- If the prompt box is empty and X stores a prompt, the button asks first
+  ("Remove X's prompt?"). Writing an empty prompt leaves X in the list as
+  *settings only*, which later reads as "my preset disappeared".
+- If X was changed somewhere else since the drawer read it (another tab, the
+  Presets page on another device), nothing is written and the status line says
+  so. Look at it under *Apply preset…* and save again if you still mean to.
 
-- **No confirmation** when you are updating the preset the conversation is
-  already running. This is the ordinary loop — apply a preset, tweak the prompt,
-  update it — and making you confirm it every time would train you to click
-  through the confirmation that matters.
-- **Confirmation** for everything else that would change a stored prompt,
-  including *blanking* one. Updating from a conversation with no system prompt
-  writes an empty prompt to the preset, and a preset with no prompt does nothing
-  when applied. It stays in the list but stops working, which reads as "my
-  preset disappeared."
+### The Presets page
 
-The confirmation is the button itself changing to **Overwrite prompt?** for a
-few seconds. Click it again to go through. Changing the dropdown cancels it, and
-so does editing the prompt underneath — the confirmation is a promise about one
-specific write, and if the write changes, the promise is void.
+One card per preset, showing its settings and its own prompt.
 
-### If you change a setting and never apply or save
-
-Nothing is lost and nothing is hidden. The change is on **the conversation**
-immediately (a short debounce, then a write to the server) and it is what the
-model receives on your next message.
-
-The preset is untouched. The drift line under the dropdown says which
-situation you are in, which half moved, and which knobs:
-
-> *Matches current settings.*
-> *Prompt differs from "p2" — Apply loads the preset's prompt here; Save writes this one into the preset.*
-> *Settings differ from "p2" (temperature, max tokens) — Apply loads the preset's values here; Save writes yours into the preset.*
-> *Prompt and settings differ from "p2" (…) — …*
-
-Read that as: your conversation and this preset have diverged. **Apply** discards
-your changes in favour of the preset's. **Save** discards the preset's in
-favour of yours. There is no merge and no third option.
-
-With **no conversation open** a preset you have only selected is not used —
-the next conversation is created from what the drawer shows, so the line says
-*"Not applied — the next conversation starts from what is shown here. Apply
-loads "p2"."* Apply it and it drifts like anywhere else.
-
-The *Preset* heading names what the open conversation is running, which is not
-always what the dropdown shows (the dropdown is for browsing): *Preset · p2*,
-*Preset · p2, edited*, or *Preset · none applied*. Beside the model selector, a
-chip says the same and appends **(edited)** once anything the preset speaks for
-has changed.
-
-### Delete
-
-Removes the preset. Conversations that were running it keep their prompt and
-settings — they are copies — they simply stop showing a preset name.
+- **Edit** opens the preset's prompt and every setting in place. **Save**
+  writes that card and nothing else: no conversation or notebook changes. A
+  setting left as *not set* is not stored. Every setting is offered here
+  whatever model you use; one a model cannot use is removed when the preset is
+  applied to it. Emptying a stored prompt asks first ("Remove prompt?"), and a
+  save is refused if the preset changed elsewhere after you opened it.
+- **Rename** changes the name only. A name in use is refused.
+- **Duplicate** makes a copy named *X copy*.
+- **Delete** asks once, then removes the preset. Conversations and notebooks
+  that came from it keep their prompt and settings, because they are copies;
+  their provenance line reads *No preset* from then on.
 
 ---
 
 ## 3. Conversations
 
 **New conversation**, pressed from an open conversation, starts from the
-selected preset if there is one (its prompt, its settings, and its stamp). With
-no preset selected it starts blank: nothing of the open conversation, prompt or
-settings, carries over. With no conversation open it is created from exactly
+preset that conversation came from, if there is one: the preset's prompt and
+settings as the preset stores them, and its stamp. Without one it starts blank:
+nothing of the open conversation, prompt or settings, carries over. With no conversation open it is created from exactly
 what the drawer shows, including a cleared prompt.
 
 **Switching** replaces the panel, the system prompt box, the model selector and
@@ -512,9 +518,22 @@ clear refusal naming the reason -- remove the attachment to continue that
 message, or generate a fresh reply. Continuing a text-only message is
 unaffected, and so is regenerating.
 
+**An unsaved preset edit survives a reload on a desktop, but not a page
+change and not a phone.** While a preset's editor is open on the Presets page
+the browser asks before you reload or close the tab. It does not ask when you
+click Chat or Notebook in the nav bar, and it does not ask reliably on iOS
+Safari. The edit is stored nowhere until Save.
+
 ### Closed
 
 Kept as a record rather than deleted, so this section reads as a ledger.
+
+- *The drawer mixed the conversation's own settings with preset management, so
+  it was hard to tell which prompt was in force and what Apply, Save and Save
+  as new would each write where* — closed by dark mode phase 3b: the drawer
+  holds what the conversation runs on, one provenance line, and two verbs;
+  presets are managed on their own page; the only write from the drawer to an
+  existing preset goes to the one the conversation came from.
 
 - *Thinking offered three names for one prompt, and the budget read like a
   level* — closed in v2.0.172: one *Default* entry, the template's levels with

@@ -17,7 +17,9 @@ async function requireCap(page, modelId, cap) {
   if (!caps.includes(cap)) skip(`${modelId} does not advertise ${cap}; this check needs a ${cap}-capable E2E_MODEL`);
 }
 import { serverGet } from '../lib/server-state.mjs';
-import { clickByText, armedClick, count, textOf, waitForLabel, settingsInputValue, setSettingsInput, noHorizontalOverflow, openDrawer, closeDrawer, driftText } from '../lib/dom.mjs';
+import { clickByText, armedClick, count, textOf, waitForLabel, settingsInputValue, setSettingsInput, noHorizontalOverflow, openDrawer, closeDrawer,
+  provenanceText, openPresetPicker, applyPreset, saveAsNewPreset, updateOptionLabel, clickUpdateOption,
+  storedPresets, deleteStoredPreset, presetCardButton } from '../lib/dom.mjs';
 
 const COMPOSER = '.chat__composer textarea';
 const SEND_BTN = '.chat__composer .btn--primary';
@@ -251,15 +253,15 @@ export async function runChatSuite({ suite, ctx, config }) {
   const { page } = ctx;
   await ctx.open('#/chat');
 
-  await suite.check('app boots with 4 nav routes', async () => {
+  await suite.check('app boots with its nav routes', async () => {
     await page.waitForSelector('#nav-desktop .nav-item');
     // The settings gear is also an #nav-desktop .nav-item but has no data-route;
-    // filter to real routes (defined dataset.route) before counting.
+    // filter to real routes (defined dataset.route) before comparing.
     const routes = await page.$$eval('#nav-desktop .nav-item', (els) =>
       [...new Set(els.map((e) => e.dataset.route).filter(Boolean))]);
-    assert(routes.length === 4, `expected 4 routes, got ${routes.join(',')}`);
-    assert(['chat', 'notebook', 'models', 'perf'].every((r) => routes.includes(r)),
-      `missing route in ${routes.join(',')}`);
+    const want = ['chat', 'notebook', 'presets', 'models', 'perf'];
+    assert(routes.length === want.length && want.every((r) => routes.includes(r)),
+      `expected routes ${want.join(',')}, got ${routes.join(',')}`);
   });
 
   await suite.check('default page is chat', async () => {
@@ -795,12 +797,11 @@ export async function runChatSuite({ suite, ctx, config }) {
   // the terse system prompt never silently degrades those generations.
   const SYS_PROMPT = 'Answer in exactly one word.';
 
-  // One owner for the "find a preset <option> by its label" lookup.
-  // By data-name: the option LABEL is decorated for a promptless preset
-  // ("<name> — settings only", v1.79.25), the raw name rides data-name.
-  const presetOptionValue = (name) => page.evaluate((n) =>
-    [...document.querySelectorAll('.preset-row select option')]
-      .find((o) => o.dataset.name === n || o.textContent === n)?.value ?? null, name);
+  const presetStored = async (name) => (await storedPresets(page)).some((p) => p.name === name);
+  const provenanceIs = (want, why) => waitFor(async () => {
+    const line = await provenanceText(page);
+    return typeof want === 'string' ? line === want : want.test(line);
+  }, { message: async () => `${why}: the provenance line reads ${JSON.stringify(await provenanceText(page))}` });
 
   await suite.check('system prompt edit persists without blur', async () => {
     // drawer is open from the checks above; the sysprompt editor is one of chat's
@@ -832,30 +833,71 @@ export async function runChatSuite({ suite, ctx, config }) {
   });
 
   await suite.check('preset save + apply round-trips sampler state', async () => {
+    // Before anything is saved this conversation came from no preset, so
+    // there is nothing it could be written back to.
+    await provenanceIs('No preset', 'on a conversation no preset was applied to');
+    assert((await updateOptionLabel(page)) === null,
+      'the Save sheet offers an Update on a conversation with no preset');
     await setSettingsInput(page, 'Temperature', '0.31');
-    await page.click('.preset-section .input');
-    await page.type('.preset-section .input', 'e2e-preset');
-    await clickByText(page, '.preset-row button', 'Save as new');
-    await waitFor(async () => (await presetOptionValue('e2e-preset')) !== null,
-      { message: 'saved preset not listed in the select' });
-    // fresh save selects the preset and matches by construction
-    await waitFor(async () => (await driftText(page))?.includes('Matches'),
-      { message: 'drift line not "Matches" right after save' });
-    // drift the panel: the line must flip live, and selection alone must NOT
-    // have touched the panel (apply is an explicit button now)
+    await saveAsNewPreset(page, 'e2e-preset');
+    await waitFor(() => presetStored('e2e-preset'), { message: 'the saved preset is not in the store' });
+    // a fresh save stamps the conversation, and matches by construction
+    await provenanceIs('From preset e2e-preset', 'right after Save as new');
+    // drift the panel: the line must flip live and name the knob
     await setSettingsInput(page, 'Temperature', '1.9');
-    await waitFor(async () => /differ/i.test((await driftText(page)) ?? ''),
-      { message: 'drift line did not flip to "Differs" after a sampler edit' });
-    await page.select('.preset-row select', await presetOptionValue('e2e-preset'));
+    await provenanceIs('e2e-preset, modified: one knob (temperature)', 'after a sampler edit');
+    // Looking at the presets copies nothing: the picker is a list to read,
+    // and only an entry's own Apply button moves anything.
+    await openPresetPicker(page);
     assert((await settingsInputValue(page, 'Temperature')) === '1.9',
-      'selecting a preset applied it (selection must be inert)');
+      'opening the picker applied a preset');
     // explicit Apply restores the pin (no arming: the prompt is unchanged)
-    await clickByText(page, '.preset-row button', 'Apply');
+    await applyPreset(page, 'e2e-preset');
     await waitFor(async () => (await settingsInputValue(page, 'Temperature')) === '0.31',
       { message: 'applying the preset did not restore temperature' });
-    await waitFor(async () => (await driftText(page))?.includes('Matches'),
-      { message: 'drift line not back to "Matches" after apply' });
+    await provenanceIs('From preset e2e-preset', 'after Apply');
     // back to cascade so nothing leaks into later generations
+    await setSettingsInput(page, 'Temperature', '');
+  });
+
+  await suite.check('the iterate loop: apply, tune the prompt, write it back to its preset', async () => {
+    // Apply a preset, improve the prompt inside the conversation, and store
+    // the improvement where it came from. The Save sheet offers "Update X"
+    // only because this conversation is stamped with X and now differs from
+    // it; nothing on screen chooses the target.
+    const typePrompt = (text) => page.$eval('.sysprompt-input', (el, v) => {
+      el.value = v;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    }, text);
+    const storedPreset = async () => (await storedPresets(page)).find((p) => p.name === 'e2e-preset');
+    await applyPreset(page, 'e2e-preset'); // the preset's temperature back, so only the prompt will differ
+    await provenanceIs('From preset e2e-preset', 'after Apply');
+    assert((await updateOptionLabel(page)) === null,
+      'Update is offered to a conversation that matches its preset');
+
+    const tuned = `${SYS_PROMPT} Be terse. Always.`;
+    await typePrompt(tuned);
+    await provenanceIs('e2e-preset, modified: prompt', 'after tuning the prompt');
+    const offered = await updateOptionLabel(page);
+    assert(offered === 'Update e2e-preset with this conversation\'s prompt and settings',
+      `the Save sheet offers ${JSON.stringify(offered)}`);
+    await clickUpdateOption(page);
+    await waitFor(async () => (await storedPreset())?.system_prompt === tuned,
+      { message: async () => `the update did not reach the store: ${JSON.stringify((await storedPreset())?.system_prompt)}` });
+    assert(String((await storedPreset()).params?.temperature) === '0.31',
+      `the update lost the preset's temperature: ${JSON.stringify((await storedPreset()).params)}`);
+    await provenanceIs('From preset e2e-preset', 'after the update');
+
+    // Re-applying shows the edit: the preset holds it now. (Arms, because it
+    // replaces a different prompt; applyPreset throws if it does not.)
+    await typePrompt('Something else entirely.');
+    await applyPreset(page, 'e2e-preset', { armed: true });
+    await waitFor(async () => (await page.$eval('.sysprompt-input', (el) => el.value)) === tuned,
+      { message: 're-applying the preset did not bring the tuned prompt back' });
+    await waitFor(async () => (await currentConversation(page))?.system_prompt === tuned,
+      { message: 'the re-applied prompt never reached the conversation server-side' });
+    // back to cascade, the way the check above left the panel
     await setSettingsInput(page, 'Temperature', '');
   });
 
@@ -899,28 +941,21 @@ export async function runChatSuite({ suite, ctx, config }) {
       el.value = '';
       el.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    // Set the name directly rather than click+type: the check above leaves
-    // the drawer scrolled to the system-prompt textarea (the chip focuses
-    // it), so a real click on the preset row can hit-test onto another
-    // element -- "Node is either not clickable". The value + input event is
-    // what the field's own listeners consume anyway.
-    await page.$eval('.preset-section .input', (el) => {
-      el.value = 'e2e-promptless';
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    await clickByText(page, '.preset-row button', 'Save as new');
-    await waitFor(async () => (await presetOptionValue('e2e-promptless')) !== null,
-      { message: 'promptless preset not listed in the select' });
+    await saveAsNewPreset(page, 'e2e-promptless');
+    await waitFor(() => presetStored('e2e-promptless'), { message: 'the promptless preset is not in the store' });
 
     await page.$eval('.sysprompt-input', (el, v) => {
       el.value = v;
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
     }, before);
+    // Save as new stamped the conversation with it. It carries no prompt, so
+    // the line must not credit it with this one.
+    await provenanceIs(/^From preset e2e-promptless \(settings only/, 'stamped with a promptless preset');
 
-    await page.select('.preset-row select', await presetOptionValue('e2e-promptless'));
     // no arming: a promptless preset replaces nothing, so Apply fires at once
-    await clickByText(page, '.preset-row button', 'Apply');
+    // (applyPreset throws if the entry arms instead)
+    await applyPreset(page, 'e2e-promptless');
     await sleep(400);
     const after = await page.$eval('.sysprompt-input', (el) => el.value);
     assert(after === before,
@@ -928,61 +963,46 @@ export async function runChatSuite({ suite, ctx, config }) {
 
     // ORDER COUPLING -- leave the world exactly as found, on BOTH axes:
     //
-    //  (1) the preset LIST. A promptless preset left behind is visible to
-    //      every later check's provenance inference, and the delete check
-    //      downstream asserts the chip goes empty. Delete it here.
-    //  (2) the STAMP. Save AND Apply both write applied_preset_id on the
-    //      active conversation, so this check has re-pointed the chip at
+    //  (1) the preset LIST. Deleted from the store directly: deleting is the
+    //      Presets page's job, and its own check is further down.
+    //  (2) the STAMP. Save as new AND Apply both write applied_preset_id on
+    //      the active conversation, so this check has re-pointed it at
     //      e2e-promptless; the two chip checks below assert e2e-preset WITH
-    //      "(edited)". Re-apply, then re-drift the panel.
-    await page.select('.preset-row select', await presetOptionValue('e2e-promptless'));
-    const delPromptless = await page.$('.preset-section .btn--ghost');
-    await armedClick(delPromptless);
-    await delPromptless.dispose();
-    await waitFor(async () => (await presetOptionValue('e2e-promptless')) === null,
-      { message: 'promptless preset not cleaned up' });
-
-    await page.select('.preset-row select', await presetOptionValue('e2e-preset'));
-    await clickByText(page, '.preset-row button', 'Apply');
+    //      "(modified)". Re-apply, then re-drift the panel.
+    await deleteStoredPreset(page, 'e2e-promptless');
+    await applyPreset(page, 'e2e-preset');
     await waitFor(async () => (await settingsInputValue(page, 'Temperature')) === '0.31',
       { message: 're-applying e2e-preset did not restore temperature' });
     await setSettingsInput(page, 'Temperature', '');   // drift it again
-    await waitFor(async () => /differ/i.test((await driftText(page)) ?? ''),
-      { message: 'panel not drifted off e2e-preset again' });
+    await provenanceIs(/^e2e-preset, modified: one knob \(temperature\)$/, 'drifted off e2e-preset again');
   });
 
   await suite.check('applied-preset chip shows in the chat bar', async () => {
     // The prior check saved+applied e2e-preset, then reset Temperature to
-    // cascade -- the panel is drifted, so the chip must carry "(edited)".
+    // cascade -- the panel is drifted, so the chip must carry "(modified)".
     const txt = await page.$eval('.chat__preset-chip', (el) => (el.hidden ? null : el.textContent));
     assert(txt?.includes('e2e-preset'), `chip="${txt}"`);
-    assert(txt.includes('(edited)'), `chip should be marked (edited), got "${txt}"`);
+    assert(txt.includes('(modified)'), `chip should be marked (modified), got "${txt}"`);
   });
 
-  await suite.check('applied-preset chip provenance survives a reload', async () => {
-    // The stamp lives on the CONVERSATION (applied_preset_id), so "(edited)"
-    // has to come back after a reload. Before that field existed this check
-    // could not pass at all: the panel is drifted, so exact-match inference
-    // finds nothing and the chip would simply be hidden.
+  await suite.check('applied-preset provenance survives a reload', async () => {
+    // The stamp lives on the CONVERSATION (applied_preset_id), so "modified"
+    // has to come back after a reload, on the bar chip and in the drawer.
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.chat');
     await waitFor(async () => {
       const t = await page.$eval('.chat__preset-chip', (el) => (el.hidden ? null : el.textContent));
-      return Boolean(t?.includes('e2e-preset') && t.includes('(edited)'));
+      return Boolean(t?.includes('e2e-preset') && t.includes('(modified)'));
     }, { message: 'chip lost its preset provenance across a reload' });
-    // Restore what the next check needs: the reload closed the drawer and
-    // cleared the select-box selection (that IS session state -- only the
-    // stamp is durable), and Del is disabled without a selected preset.
     await openDrawer(page);
-    await page.select('.preset-row select', await presetOptionValue('e2e-preset'));
+    await provenanceIs(/^e2e-preset, modified: one knob \(temperature\)$/, 'after a reload');
   });
 
-  await suite.check('new conversation starts as the selected preset', async () => {
-    // v1.59.0 inheritance: e2e-preset is selected (drawer state from the
-    // check above) and the panel is deliberately drifted from it -- a NEW
-    // conversation must start as the PRESET (prompt + params + stamp), not
-    // as the drifted panel. Server-side assertions: the stamp is written at
-    // create, not inferred client-side.
+  await suite.check('new conversation starts as the open one\'s preset', async () => {
+    // v1.59.0 inheritance: the open conversation is stamped e2e-preset and
+    // deliberately drifted from it -- a NEW conversation must start as the
+    // PRESET (prompt + params + stamp), not as the drifted panel. Server-side
+    // assertions: the stamp is written at create, not inferred client-side.
     await closeDrawer(page); // the drawer is modal; the New button lives in #app
     const convId = await newFreshConversation(page, { seed: false });
     const conv = await page.evaluate(async (id) =>
@@ -992,11 +1012,11 @@ export async function runChatSuite({ suite, ctx, config }) {
       `preset prompt not inherited (got ${JSON.stringify(conv.system_prompt)})`);
     assert(String(conv.params?.temperature) === '0.31',
       `preset params not inherited (got ${JSON.stringify(conv.params)})`);
-    // The inherited state hydrates the panel, so the chip reads un-edited.
+    // The inherited state hydrates the panel, so the chip reads unmodified.
     await waitFor(async () => {
       const chip = await page.$eval('.chat__preset-chip', (el) => (el.hidden ? null : el.textContent));
-      return Boolean(chip?.includes('e2e-preset') && !chip.includes('(edited)'));
-    }, { message: 'chip should show the inherited preset un-edited' });
+      return Boolean(chip?.includes('e2e-preset') && !chip.includes('(modified)'));
+    }, { message: 'chip should show the inherited preset unmodified' });
     // Leave the world as found: later checks index into the conv list
     // ('the second item is the older one with messages'), so the inherited
     // conversation must not survive this check. UI delete re-selects the
@@ -1007,23 +1027,33 @@ export async function runChatSuite({ suite, ctx, config }) {
     await delConv.dispose();
     await waitFor(async () => (await count(page, '.conv-item')) === before - 1,
       { message: 'inherited conversation not cleaned up' });
-    // Restore the delete check's preconditions (drawer open + selection).
-    await openDrawer(page);
-    await page.select('.preset-row select', await presetOptionValue('e2e-preset'));
   });
 
-  await suite.check('preset delete (armed) removes it from the select', async () => {
-    const delBtn = await page.$('.preset-section .btn--ghost');
-    await armedClick(delBtn);
-    await delBtn.dispose();
-    await waitFor(async () => (await presetOptionValue('e2e-preset')) === null,
-      { message: 'deleted preset still listed' });
-    await waitFor(async () => page.$eval('.chat__preset-chip', (el) => el.hidden),
-      // Name what it still claims: the chip can survive a delete either by a
-      // stamp another check left behind or by provenance inference matching
-      // some other preset, and those need different fixes.
-      { message: async () => 'applied-preset chip did not clear after delete; still shows '
-          + JSON.stringify(await page.$eval('.chat__preset-chip', (el) => el.textContent)) });
+  await suite.check('a preset deleted on the Presets page leaves the conversation its own copy', async () => {
+    // Deleting is the Presets page's job since Phase 3b. A preset is a copy,
+    // never a link: the conversation stamped with it keeps its prompt, and
+    // its stamp now names nothing, so it reads "No preset".
+    await page.evaluate(() => { location.hash = '#/presets'; });
+    await page.waitForSelector('.preset-card', { timeout: 10000 });
+    const del = await presetCardButton(page, 'e2e-preset', 'Delete');
+    await armedClick(del);
+    await del.dispose();
+    await waitFor(async () => !(await presetStored('e2e-preset')), { message: 'deleted preset still in the store' });
+
+    await page.evaluate(() => { location.hash = '#/chat'; });
+    await page.waitForSelector('.chat');
+    // Wait for the conversation to be BACK before reading the chip: it is
+    // hidden on a page that has not loaded anything yet, too.
+    await waitFor(async () => (await textOf(page, '.chat__sysprompt-chip')) === 'System prompt: custom',
+      { message: async () => 'the conversation did not come back with its own prompt; the chip reads '
+          + JSON.stringify(await textOf(page, '.chat__sysprompt-chip')) });
+    assert(await page.$eval('.chat__preset-chip', (el) => el.hidden),
+      'applied-preset chip still shows after its preset was deleted');
+    await openDrawer(page);
+    await provenanceIs('No preset', 'after the stamped preset was deleted');
+    const conv = await currentConversation(page);
+    assert((conv?.system_prompt ?? '').includes('Be terse.'),
+      `deleting the preset changed the conversation's prompt to ${JSON.stringify(conv?.system_prompt)}`);
     // done with the drawer -- close it so #app is interactable again.
     await closeDrawer(page);
   });

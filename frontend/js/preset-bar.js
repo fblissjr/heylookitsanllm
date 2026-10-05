@@ -1,71 +1,68 @@
-// Shared preset bar -- the drawer section for any page whose document carries
-// a system prompt + sampler params (chat conversations, notebooks). One
-// grammar everywhere:
+// Shared preset section -- the drawer section for any page whose document
+// carries a system prompt + sampler params (chat conversations, notebooks).
 //
-//   - the <select> is INERT toward the document: it records the selection and
-//     drives the drift line, the preview and Update's target -- it never
-//     writes to the document, and it no longer prefills the save-as name
-//     (that prefill is what aimed a write at whatever you were reading). It
-//     does READ, though: with no explicit pick it shows the
-//     document's applied_preset_id, so the control that asks "which preset
-//     is this?" can answer it (it used to say "Presets…" on a document that
-//     was running one, which is what sent people clicking through it)
-//   - Apply is an explicit button that COPIES the preset onto the document
-//     (LM Studio semantics -- no live binding; later edits don't touch the
-//     preset until Save), armed-confirmed ("Replace prompt?") only when it
-//     would replace a differing non-empty prompt -- sampler knobs are
-//     trivially recoverable, the prompt is typed work
-//   - Apply and Save are both armed, and Save is the one that matters:
-//     Apply overwrites the DOCUMENT (re-apply to get it back), Save
-//     overwrites the STORED PRESET with a write that keeps no history. See
-//     wouldOverwritePresetPrompt() for the three questions it asks, and why
-//     the iterate loop is deliberately exempt. Save as new is never armed --
-//     it cannot overwrite anything
-//   - re-aiming DISARMS: an arm is a promise about one target, so changing
-//     the select cancels a pending confirm. The name box re-aims nothing --
-//     it feeds Save as new, which is never armed. Safety does not rest on
-//     that wiring in any case: armedConfirm's `target` re-reads destination
-//     AND payload on the confirming click, which is what catches a prompt
-//     edited in another drawer section the bar gets no events from
+// The drawer holds what the DOCUMENT runs on, and this section says where
+// that came from and offers the two moves between a document and the preset
+// store. Managing presets (edit, rename, duplicate, delete) is the Presets
+// page's job (pages/presets.js), and that split is the point (owner,
+// 2026-10-05): this section used to carry a preset <select>, a read-only
+// preview of the selected preset, Save (overwrite), Save as new, Delete and a
+// drift line, beside the document's own prompt box, and it was hard to say
+// which prompt was in force or what each button would write where.
+//
+//   - TWO VERBS on the drawer's face, "Apply preset…" and "Save…", each
+//     opening a sheet in place. No button here appears or disappears with the
+//     document's state (owner, 2026-10-05: a better design, never at the cost
+//     of added complexity; a state-dependent control is complexity)
+//   - ONE PATH HERE OVERWRITES A STORED PRESET, and it cannot be aimed. Apply
+//     copies preset -> document. The Save sheet always offers "Save as a new
+//     preset" (document -> a NEW preset; a name in use is refused), and,
+//     only while the document is stamped with X and differs from it, "Update
+//     X": the document written back to the preset it came from. That is the
+//     iterate loop (apply, tune the prompt in a conversation, write it back),
+//     and its target is a property of the DOCUMENT, never of a control: no
+//     select and no name box feeds it. The old Save took its target from a
+//     select that browsing moved and a name box the select pre-filled, and
+//     that cost a 35k-character prompt on 2026-08-28. Update names X on its
+//     face and refuses when X's stored row moved since this drawer read it.
+//     It arms in one case only: when the document has no prompt and X has
+//     one, because that write leaves X in the list but inert ("my preset
+//     disappeared"), the rule every version of this section has kept. Do not
+//     give Update a way to choose a target
+//   - the PROVENANCE LINE answers "which preset is this document running, and
+//     is it still that preset?" without opening anything: "No preset", "From
+//     preset X", or "X, modified: prompt and two knobs (...)". It reads the
+//     document's stamp (applied_preset_id) and compares the document's bag to
+//     that preset -- it is the old drift line's comparison, asked about the
+//     one preset that matters instead of whichever one a select was parked on
+//   - Apply is a PICKER: a list of every preset showing its own prompt, with
+//     one Apply button per entry. You read what a preset holds before it is
+//     copied anywhere, which is what the old preview existed for. It copies
+//     (LM Studio semantics -- no live binding), and arms ("Replace prompt?")
+//     only when it would replace a differing non-empty prompt: sampler knobs
+//     are trivially recoverable, the prompt is typed work
 //   - the prompt is an OVERRIDE BOX: a preset OWNS a system prompt and
 //     carries it onto whatever it is applied to, but a preset with NO prompt
-//     changes nothing -- the conversation keeps its own prompt (or the
-//     model's default). Empty means "does not speak for the prompt", never
-//     "set it to empty" (owner rule 2026-08-11) -- see presetPrompt() below
-//   - TWO writes, and which one you get is which BUTTON you press, not what
-//     you typed. Save overwrites the SELECTED preset (the one the preview
-//     is showing) and is the only path to an overwrite; Save as new creates
-//     under the typed name and REFUSES a name in use, pointing at Save.
-//     (The overwrite was labelled "Update" from v1.79.26 to v1.79.61; the
-//     drift line's direction words are what carry the difference now.)
-//     One control used to do both -- the select pre-filled the save-as name,
-//     so browsing a preset aimed a write at it -- and that is what cost a
-//     35k-char prompt on 2026-08-28. Save as new decides "is this name free"
-//     against a FRESH list, with the server's 409 as the real backstop
-//   - the section carries a read-only preview of the SELECTED preset's own
-//     prompt. The per-document prompt box below is a DIFFERENT thing and
-//     says so in its own label; without the preview there was no way to see
-//     what a preset held short of applying it
-//   - the drift line says what Apply/Save would DO to the selected preset,
-//     which half drifted (prompt, settings, or both) and WHICH knobs, and with
-//     no document open what the next new document will start from -- updated in place; the
-//     drawer's focus guard means a rebuild can't be relied on while the user
-//     is typing in a field
-//   - the dropdown marks a preset carrying no prompt as "settings only": it
-//     is inert toward the prompt, and looking identical to every other entry
-//     is what made applying one read as "my preset disappeared"
-//   - a NEW document is the one exception to "the select never touches the
-//     document": it starts as the selected (or, after a reload, the stamped)
-//     preset -- prompt + params + stamp -- via presetForNewDoc(). Existing
-//     documents still change only on an explicit Apply.
+//     changes nothing -- the document keeps its own. Empty means "does not
+//     speak for the prompt", never "set it to empty" (owner rule 2026-08-11)
+//     -- see presetPrompt() below. Such a preset reads "settings only"
+//     wherever it is named
+//   - a preset is a COPY, never a link: editing the document never changes
+//     the preset, and editing the preset (on its page) never changes the
+//     document. After either, the provenance line says "modified"
+//   - a NEW document made from an open one starts as that document's stamped
+//     preset -- prompt + params + stamp -- via presetForNewDoc(), or blank.
+//     With no document open the drawer is the draft and the next document is
+//     created from exactly what it shows; Apply is the only way a preset gets
+//     in, and it stamps the draft.
 //
 // Presets are global (one /v1/presets store); the prompt side is the page's
-// document, adapted via getPrompt/setPrompt. The bar subscribes to sampler
-// changes itself (onSettingsChange, torn down with the mount); the page owns
-// what the bar can't see: calling updateDrift() from its prompt-input
-// handler, wiring onDrawerOpen into its drawer contribution, and -- when it
-// renders the applied-preset chip -- supplying docId/onIndicator, calling
-// refresh() eagerly at mount (the chip needs preset names before the
+// document, adapted via getPrompt/setPrompt. The section subscribes to
+// sampler changes itself (onSettingsChange, torn down with the mount); the
+// page owns what it can't see: calling updateProvenance() from its
+// prompt-input handler, wiring onDrawerOpen into its drawer contribution, and
+// -- when it renders the applied-preset chip -- supplying docId/onIndicator,
+// calling refresh() eagerly at mount (the chip needs preset names before the
 // drawer's first lazy fetch), and calling syncIndicator() at EVERY point the
 // active document changes (select/create/delete, including failure paths).
 
@@ -73,6 +70,10 @@ import { createEl, armedConfirm } from './utils.js';
 import { api } from './api.js';
 import { applySettings, snapshotSettings, samplerParams, withoutInapplicable, reconcileSettings, droppedNote, PARAM_META, onSettingsChange } from './settings.js';
 import * as drawer from './settings-drawer.js';
+
+const COUNT_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
+  'eleven', 'twelve'];
+const countWord = (n) => COUNT_WORDS[n] ?? String(n);
 
 // adapter = {
 //   getPrompt():        string|null  -- the document's current system prompt
@@ -89,64 +90,34 @@ import * as drawer from './settings-drawer.js';
 //   model?():           {caps, thinking}|null -- the selected model
 //                                       (settings.rowModel): a save keeps what
 //                                       it can use, an apply removes the rest
-//                                       and says so, drift ignores it
+//                                       and says so, provenance ignores it
+//   noun?:              string       -- what the page calls its document
+//                                       ('conversation', 'notebook'), for the
+//                                       Save sheet's own words
 // }
 // A preset holds what the panel showed when it was saved (owner, 2026-09-27):
 // saving on one model and applying on another removes what the second cannot
 // use, named on the status line, rather than keeping it silently unused.
 export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, onIndicator, getStamp, setStamp,
-                                       model = () => null }) {
+                                       model = () => null, noun = 'document' }) {
   let presets = [];
-  // Select-box state only -- applying copies, it never binds. THREE states,
-  // not two: `undefined` = no explicit pick yet, so the select FOLLOWS the
-  // active document's stamp; `null` = explicitly deselected; an id = an
-  // explicit pick. See effectiveId().
-  let presetId;
-  let selectionDoc = null; // the document the explicit pick was made on
-  let driftEl = null;    // latest built section's line; detached writes are harmless
-  let runningEl = null;  // the heading's "what this document runs" half
-  let previewEl = null;  // read-only view of the SELECTED preset's own prompt
-  let previewSummaryEl = null;
-  let previewBodyEl = null;
-  // The stored prompt the PREVIEW last rendered. updateSelected compares the
-  // freshly-fetched row against this to answer "did it change since you
-  // looked?" -- the question that must block a confirmed overwrite. It is
-  // also in Update's armedConfirm `target`, so an in-process refresh landing
-  // between arm and confirm re-arms rather than fires.
-  let shownPrompt = null;
+  let provEl = null;  // latest built section's provenance line; detached writes are harmless
+  let syncUpdate = null; // latest built section's "Update X" option: offered or not, with the line
   // The stamp -- which preset a document EXPLICITLY had applied/saved onto
   // it -- lives on the DOCUMENT (getStamp/setStamp -> applied_preset_id), so
   // provenance survives a reload and is the same on every device, like every
-  // other piece of per-document state in v3. What is stored stays strictly
-  // explicit: apply/save write it, delete clears it, and NOTHING else. A
-  // document whose state merely equals a preset is reported live by
-  // indicatorInfo() and never written -- a stored inference could bind the
-  // WRONG doc's state to a doc id (mid-switch, failed load) and then persist
-  // as a false "(edited)" claim. A stamp naming a preset that no longer
-  // exists is self-healing: it simply falls through to inference below.
+  // other piece of per-document state. What is stored stays strictly
+  // explicit: Apply and Save as new write it and NOTHING else does. A
+  // document whose state merely equals some preset is not claimed for it
+  // (that inference fed the chip until Phase 3b; a second source of
+  // "which preset is this" is how the chip and the drawer came to disagree).
+  // A stamp naming a preset that no longer exists is self-healing: it
+  // resolves to nothing here and the document reads "No preset".
 
   const fingerprint = () => JSON.stringify(presets.map((p) => [p.id, p.name, p.updated_at]));
 
-  // Which preset the select shows. An explicit pick wins, but only for the
-  // document it was made ON -- switching documents falls back to the new
-  // document's stamp, so the dropdown reports what the document is actually
-  // running rather than sitting on "Presets…" (or, worse, on the previous
-  // document's pick while the prompt box below shows this document's text).
-  // A stamp naming a deleted preset resolves to nothing -- the same
-  // self-healing described in the stamp note above.
-  const effectiveId = () => {
-    const doc = docId?.() ?? null;
-    if (presetId !== undefined && selectionDoc === doc) return presetId;
-    return doc ? (getStamp?.() ?? null) : (presetId ?? null);
-  };
-  const selected = () => presets.find((p) => p.id === effectiveId());
-
-  // Record an explicit pick. Always paired with the document it was made on
-  // -- an id without one would leak the pick onto the next document.
-  function pick(id) {
-    presetId = id;
-    selectionDoc = docId?.() ?? null;
-  }
+  // The preset the document is stamped with, from the live list.
+  const stamped = () => presets.find((p) => p.id === (getStamp?.() ?? null));
 
   // A preset's system_prompt is an OVERRIDE, not a value (owner rule
   // 2026-08-11): the preset OWNS a prompt and carries it onto whatever it is
@@ -155,40 +126,26 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   // rather than blanking it. Consequences, all deliberate: only a preset that
   // actually carries a prompt can replace one (so the armed "Replace prompt?"
   // is the true test of loss), a promptless preset can never eat typed work,
-  // and drift/match ignore the prompt for such a preset because it makes no
-  // claim about it. This is also what defuses the accidental blank Save: a
-  // preset stored with no prompt is inert, not destructive.
+  // and provenance ignores the prompt for such a preset because it makes no
+  // claim about it.
   const presetPrompt = (p) => p?.system_prompt || null;
 
-  // How a preset reads in the dropdown. A promptless preset is inert toward
-  // the prompt (see above) but looked identical to any other in the list, so
-  // applying one and watching the prompt not change is the state that reads as
-  // "my preset disappeared". The preview already said so -- but you CHOOSE
-  // from the dropdown, so that is where it has to be said. Positive framing:
-  // it describes what the preset is, not what it lacks.
-  const presetLabel = (p) => (presetPrompt(p) ? p.name : `${p.name} — settings only`);
-
   // The preset a NEW document should start from when one is created FROM an
-  // open document (owner decision 2026-08-11: the selected preset is the unit
-  // of continuity across documents). The explicit bar selection wins; else
-  // the active document's stamp, so the behavior survives a reload
-  // (selection is session state, the stamp is durable). Returns null when
-  // neither exists -- the page then starts the document blank, never from
-  // the open document's own values (owner, 2026-09-26: they leaked into
-  // every new chat). Starting-as counts as an apply, so the page passes the
-  // id as applied_preset_id at create.
+  // open document (owner decision 2026-08-11: the preset is the unit of
+  // continuity across documents): the open document's stamped preset, as the
+  // PRESET stores it, not as the document has since drifted. Returns null
+  // without one -- the page then starts the document blank, never from the
+  // open document's own values (owner, 2026-09-26: they leaked into every new
+  // chat). Starting-as counts as an apply, so the page passes the id as
+  // applied_preset_id at create.
   //
   // With NO document open the page does not ask: the drawer then IS the next
   // document, and it is created from exactly what the drawer shows -- a
-  // preset reaches it through Apply, like anywhere else. A selected but
-  // unapplied preset used to fill in behind an empty prompt box, which made
-  // "clear the prompt" impossible to mean.
-  // (effectiveId already folds the stamp in behind an explicit pick, so
-  // selected() alone expresses both halves of that rule.)
-  const presetForNewDoc = () => (docId?.() ? (selected() ?? null) : null);
+  // preset reaches it through Apply, like anywhere else.
+  const presetForNewDoc = () => (docId?.() ? (stamped() ?? null) : null);
 
-  // Resolves true when the list (or the selection's validity) actually
-  // changed, so cosmetic repaints can be skipped.
+  // Resolves true when the list actually changed, so cosmetic repaints can be
+  // skipped.
   async function refresh() {
     const before = fingerprint();
     try {
@@ -197,40 +154,23 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     } catch (err) {
       if (ctx.alive) onStatus(`Could not load presets: ${err.message}`, true);
     }
-    let changed = fingerprint() !== before;
-    // Only an EXPLICIT pick is cleared when it goes missing; a stamp that no
-    // longer resolves is left alone and self-heals through effectiveId.
-    if (presetId != null && !presets.some((p) => p.id === presetId)) {
-      presetId = null;
-      changed = true;
-    }
-    return changed;
-  }
-
-  async function refreshAndRepaint() {
-    await refresh();
-    if (ctx.alive) drawer.requestRebuild({ force: true });
+    return fingerprint() !== before;
   }
 
   // Drawer onOpen hook: lazily refresh the list, repaint only if it changed.
-  // The preview and drift line are repainted DIRECTLY as well, because the
-  // rebuild above is skipped whenever focus is in the drawer -- and without
-  // that the preview kept rendering the old prompt and character count while
-  // the guard and the write both used the fresh row. "Overwrite prompt?" then
-  // got confirmed against a preview describing content that no longer
-  // existed: the precise reading failure the preview was added to end.
+  // The provenance line is repainted DIRECTLY as well, because the rebuild is
+  // skipped whenever focus is in the drawer body.
   function onDrawerOpen() {
     refresh().then((changed) => {
       if (!ctx.alive || !changed) return;
       drawer.requestRebuild();
-      paintPreview();
-      updateDrift();
+      updateProvenance();
     });
   }
 
-  // Does the selected preset match the live state (document prompt + the
-  // whole sampler panel)? Field-by-field over PARAM_META, not JSON compare --
-  // key order round-trips through the server and can't be trusted.
+  // Which knobs differ between a preset and the live panel. Field-by-field
+  // over PARAM_META, not JSON compare -- key order round-trips through the
+  // server and can't be trusted.
   function samplerDrift(preset) {
     // Only what THIS model can use: a preset saved on another model is still
     // the one running when its other keys were removed on apply.
@@ -238,15 +178,11 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     const saved = withoutInapplicable(preset.params, model());
     return Object.keys(PARAM_META).filter((k) => (now[k] ?? null) !== (saved[k] ?? null));
   }
-  function samplersMatch(preset) {
-    return samplerDrift(preset).length === 0;
-  }
 
-  // DRIFT sense, for a preset the document explicitly carries: has anything
-  // this preset SPEAKS FOR changed? Split into its two halves because the
-  // drift LINE has to name which -- one binary string covered both "you nudged
-  // temperature" and "you rewrote the whole prompt", so it read as alarming
-  // after a trivial edit and identical after a total rewrite.
+  // Has anything this preset SPEAKS FOR changed? In its two halves, because
+  // the provenance line names which -- one word covering both "you nudged
+  // temperature" and "you rewrote the whole prompt" read as alarming after a
+  // trivial edit and identical after a total rewrite.
   //
   // A promptless preset makes no claim about the prompt, so `prompt` is false
   // for it by construction -- the override-box rule falls out of presetPrompt()
@@ -256,97 +192,63 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     const fields = samplerDrift(preset);
     return {
       prompt: Boolean(incoming && incoming !== (getPrompt() ?? null)),
-      samplers: fields.length > 0,
-      // Which knobs, by their panel labels -- the drift line names them so
-      // "Settings differ" after a max-tokens nudge reads as exactly that.
+      // Which knobs, by their panel labels.
       fields: fields.map((k) => PARAM_META[k].label.toLowerCase()),
     };
   }
 
-  // Derived, never a second copy of the comparison above.
-  function matchesState(preset) {
-    const { prompt, samplers } = driftParts(preset);
-    return !prompt && !samplers;
+  // THE answer to "which preset is this document running, and is it still
+  // that preset?". One function: the drawer's line, the bar chip and the
+  // picker's "applied here" mark all read it, so they cannot disagree.
+  // Null = no preset. The draft (no document open) has a stamp of its own,
+  // written by Apply; the pages clear it whenever they enter that state.
+  function provenance() {
+    const preset = stamped();
+    if (!preset) return null;
+    const { prompt, fields } = driftParts(preset);
+    return {
+      id: preset.id,
+      name: preset.name,
+      carriesPrompt: Boolean(presetPrompt(preset)),
+      prompt,
+      fields,
+      modified: prompt || fields.length > 0,
+    };
   }
 
-  // IDENTITY sense, for the unstamped fallback in indicatorInfo(): does this
-  // preset account for the document's WHOLE state, prompt included? Strictly
-  // stricter than matchesState on purpose -- the drift sense would let a
-  // promptless preset at default samplers "match" any default conversation,
-  // so the chip would claim provenance for a hand-typed prompt the preset
-  // never carried. Presets that lost their prompt to the v1.62.3 bug are
-  // exactly the ones that would have made that false claim.
-  function equalsState(preset) {
-    return (preset.system_prompt ?? null) === (getPrompt() ?? null) && samplersMatch(preset);
+  // The same answer in words: a bold lead that stands alone, and the detail.
+  function provenanceText() {
+    const p = provenance();
+    if (!p) return { lead: 'No preset', detail: '' };
+    if (!p.modified) {
+      return {
+        lead: `From preset ${p.name}`,
+        detail: p.carriesPrompt ? '' : ' (settings only: the prompt is not the preset\'s)',
+      };
+    }
+    const what = [];
+    if (p.prompt) what.push('prompt');
+    if (p.fields.length) {
+      what.push(`${countWord(p.fields.length)} ${p.fields.length === 1 ? 'knob' : 'knobs'} (${p.fields.join(', ')})`);
+    }
+    return { lead: `${p.name}, modified`, detail: `: ${what.join(' and ')}` };
   }
 
-  // Would applying overwrite a non-empty document prompt with something
-  // different? (The one destructive thing Apply can do.) A preset carrying no
-  // prompt overrides nothing, so it is never destructive and never arms.
-  function wouldReplacePrompt() {
-    const incoming = presetPrompt(selected());
+  // Would applying `preset` overwrite a non-empty document prompt with
+  // something different? (The one destructive thing Apply can do.) A preset
+  // carrying no prompt overrides nothing, so it is never destructive and
+  // never arms.
+  function wouldReplacePrompt(preset) {
+    const incoming = presetPrompt(preset);
     const prompt = getPrompt();
     return Boolean(incoming && prompt && incoming !== prompt);
   }
 
-  // The mirror of wouldReplacePrompt, for the direction that ACTUALLY loses
-  // work. Apply overwrites the DOCUMENT, which is recoverable -- the preset is
-  // still there to re-apply. Update overwrites the STORED PRESET with an
-  // UPDATE that keeps no history, so its prompt is gone the moment it lands.
-  //
-  // Its target is now unambiguous -- the selected preset, the one the preview
-  // directly above is showing -- so this asks only about that preset. The old
-  // version resolved a TYPED NAME to a row, which is what let Save aim at
-  // something nothing on screen was describing; that whole shape is gone with
-  // the name box's power to overwrite.
-  //
-  // Three questions, in order:
-  //
-  //  1. Is there anything to lose? A preset carrying no prompt has nothing at
-  //     stake, and neither does a write that changes nothing -- a confirm
-  //     there only trains click-through, which is what makes the real one
-  //     worthless.
-  //  2. Would this BLANK it? An Update from a promptless document writes NULL,
-  //     and an override-box preset with no prompt is present but inert --
-  //     "my preset disappeared". That always arms, including on the preset the
-  //     document runs: clearing the box is not editing it.
-  //  3. Otherwise, is the document already RUNNING this preset? Then this is
-  //     apply -> edit -> update, the iterate loop, and it stays one click.
-  //
-  // The KNOWN BOUNDARY of (3), accepted rather than patched: the stamp is
-  // written by apply/update and cleared only by delete, so a document whose
-  // prompt is later replaced WHOLESALE -- retyped, or adopted from another
-  // device on resume -- still counts as running that preset, and updating
-  // writes the new prompt over the old with no confirm. That is the trade (3)
-  // exists to make; "the document is running P and you saved it" is the loop's
-  // own definition, and the alternative is a drift-magnitude threshold, which
-  // is a number nobody can defend. If this ever needs closing, clear the STAMP
-  // when the prompt stops resembling the preset -- do not add a percentage.
-  function wouldOverwritePresetPrompt() {
-    const target = selected();
-    const stored = target?.system_prompt || null;
-    if (!stored) return false;                       // (1) nothing to lose
-    const incoming = getPrompt() ?? null;
-    if (incoming === stored) return false;           // (1) no change either
-    if (!incoming) return true;                      // (2) blanking always arms
-    const stamp = docId?.() ? (getStamp?.() ?? null) : null;
-    return stamp !== target.id;                      // (3) the iterate loop
-  }
-
-  // The applied-preset info for the active document. An explicit stamp
-  // (apply/save) tracks drift ("edited"); without one, an exact state match
-  // is reported live -- true in effect under copy semantics -- but NOT
-  // stored, so a coincidental or stale-state match can never turn into a
-  // persistent false claim (it disappears the moment state diverges).
+  // The applied-preset chip's feed, for the active document.
   function indicatorInfo() {
-    const doc = docId?.();
-    if (!doc) return null;
-    const stamped = presets.find((p) => p.id === getStamp?.());
-    if (stamped) return { name: stamped.name, edited: !matchesState(stamped) };
-    // equalsState, not matchesState: an inferred (unstamped) claim must
-    // account for the prompt too -- see the two comments above.
-    const match = presets.find((p) => equalsState(p));
-    return match ? { name: match.name, edited: false } : null;
+    if (!docId?.()) return null;
+    const p = provenance();
+    return p ? { name: p.name, edited: p.modified } : null;
   }
 
   // What is in force for the SYSTEM PROMPT specifically, for a page that
@@ -358,137 +260,63 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
   // nothing, so it can neither claim the prompt nor be "modified" from.
   function promptState() {
     const prompt = getPrompt() ?? null;
-    // With no document open the stamp is the DRAFT's (an Apply before the
-    // first send). The pages clear it whenever they enter that state, so it
-    // is never the previous document's.
-    const stamped = presets.find((p) => p.id === getStamp?.());
-    const source = presetPrompt(stamped);
+    const preset = stamped();
+    const source = presetPrompt(preset);
     return {
       prompt,
-      presetName: source ? stamped.name : null,
+      presetName: source ? preset.name : null,
       modified: Boolean(source && prompt !== source),
     };
   }
 
   // Feed the page's chip. Public: pages call it on document switch/create --
-  // the drawer may be closed then, so the drift-line path can't be relied on.
+  // the drawer may be closed then, so the provenance path can't be relied on.
   function syncIndicator() {
     onIndicator?.(indicatorInfo());
   }
 
-  // The selected preset's OWN prompt, read-only. Without it there was no way
-  // to see what a preset holds short of applying it, so browsing meant
-  // clicking through the select -- whose section sits directly above the
-  // DOCUMENT's prompt box, which never changes with the selection. Every
-  // preset therefore appeared to carry whatever the open document carried
-  // ("it copied it over to all of them"), and that reading is what turned
-  // "let me see what that preset holds" into a Save that overwrote it.
-  // No isConnected guard here (unlike the settings-change path's driftEl
-  // check): both callers -- buildSection, and the select handler bound to
-  // that same build -- run against the current build's element, and at build
-  // time it is not appended yet, so an isConnected test would discard the
-  // very element it is about to paint.
-  function paintPreview() {
-    if (!previewEl) return;
-    const preset = selected();
-    previewEl.hidden = !preset;
-    if (!preset) { shownPrompt = null; return; }
-    const stored = preset.system_prompt || null;
-    shownPrompt = stored;
-    previewSummaryEl.textContent = stored
-      ? `"${preset.name}" system prompt — ${stored.length.toLocaleString()} characters`
-      : `"${preset.name}" carries no system prompt`;
-    previewBodyEl.textContent = stored
-      ?? 'Applying it leaves this document\'s prompt exactly as it is.';
-    previewBodyEl.classList.toggle('preset-preview__body--none', !stored);
-  }
-
-  // The drift line, in words that carry their DIRECTION. "Apply copies it
-  // here, Update overwrites it" left both verbs pointing at an unnamed "it"
-  // (owner report 2026-09-04: "Apply vs update?? this is not good UX"), so
-  // each sentence now says what moves where, and which knobs moved.
-  //
-  // With NO document open the drawer is the next conversation, created from
-  // exactly what it shows (presetForNewDoc), so an unapplied selection says
-  // it will not be used; an applied one drifts like any document.
-  function driftLine(preset) {
-    const name = `"${preset.name}"`;
-    const drift = driftParts(preset);
-    const which = drift.fields.length ? ` (${drift.fields.join(', ')})` : '';
-    if (!docId?.() && getStamp?.() !== preset.id && !matchesState(preset)) {
-      return `Not applied — the next conversation starts from what is shown here. Apply loads ${name}.`;
-    }
-    if (drift.prompt && drift.samplers) {
-      return `Prompt and settings differ from ${name}${which} — Apply loads the preset's here; `
-        + 'Save writes this conversation\'s into the preset.';
-    }
-    if (drift.prompt) {
-      return `Prompt differs from ${name} — Apply loads the preset's prompt here; `
-        + 'Save writes this one into the preset.';
-    }
-    if (drift.samplers) {
-      return `Settings differ from ${name}${which} — Apply loads the preset's values here; `
-        + 'Save writes yours into the preset.';
-    }
-    return 'Matches current settings.';
-  }
-
-  // What the document is RUNNING, in the section heading -- a different
-  // question from the drift line's (which is about the SELECTED preset, and
-  // the select browses). Mixing the two in one place is what made "is this
-  // preset on?" unanswerable without reading every line.
-  function runningText() {
-    const info = indicatorInfo();
-    if (!info) return docId?.() ? 'none applied' : null;
-    return info.edited ? `${info.name}, edited` : info.name;
-  }
-
-  function updateDrift() {
-    syncIndicator(); // chip tracks the same edits the drift line does
-    if (runningEl) {
-      const text = runningText();
-      if (runningEl.textContent !== (text ?? '')) runningEl.textContent = text ?? '';
-      runningEl.hidden = !text;
-    }
-    if (!driftEl) return;
-    const preset = selected();
-    const next = preset ? driftLine(preset) : '';
+  function paintProvenance(el) {
+    const { lead, detail } = provenanceText();
+    const [leadEl, detailEl] = el.children;
     // write-on-change: this runs per keystroke in the prompt editors
-    if (driftEl.textContent !== next) driftEl.textContent = next;
-    if (driftEl.hidden !== !preset) driftEl.hidden = !preset;
+    if (leadEl.textContent !== lead) leadEl.textContent = lead;
+    if (detailEl.textContent !== detail) detailEl.textContent = detail;
   }
 
-  // The bar owns the sampler half of drift-tracking (settings.js is global,
-  // no page mediation needed); a consumer can't forget it and go stale.
-  // After a drawer close the last section is detached -- drop the reference
-  // so the dead subtree can be collected and later changes cost one check.
+  function updateProvenance() {
+    syncIndicator(); // the chip tracks the same edits the line does
+    if (provEl) paintProvenance(provEl);
+    syncUpdate?.(); // the Save sheet offers "Update X" only while the line reads "X, modified"
+  }
+
+  // The section owns the sampler half of provenance-tracking (settings.js is
+  // global, no page mediation needed); a consumer can't forget it and go
+  // stale. After a drawer close the last section is detached -- drop the
+  // reference so the dead subtree can be collected.
   ctx.onTeardown(onSettingsChange(ctx.guard(() => {
-    // No early return: with the drawer closed the drift line is gone, but
-    // the applied-preset chip still needs the sampler-edit sync.
-    if (driftEl && !driftEl.isConnected) driftEl = null;
-    if (runningEl && !runningEl.isConnected) runningEl = null;
-    updateDrift();
+    // No early return: with the drawer closed the line is gone, but the
+    // applied-preset chip still needs the sampler-edit sync.
+    if (provEl && !provEl.isConnected) { provEl = null; syncUpdate = null; }
+    updateProvenance();
   })));
 
-  function apply() {
-    const preset = selected();
-    if (preset) {
-      applySettings(preset.params ?? {});
-      const removed = droppedNote(reconcileSettings(model()));
-      // Override box: carry the prompt when the preset has one, otherwise
-      // leave whatever the conversation (or the model's own default) uses.
-      const incoming = presetPrompt(preset);
-      if (incoming) setPrompt(incoming);
-      // A draft (no document yet) is stamped too: the page carries it into
-      // the document the first send creates.
-      setStamp?.(preset.id);
-      onStatus((incoming
-        ? `Preset "${preset.name}" applied.`
-        : `Preset "${preset.name}" applied — it carries no system prompt, so this one is unchanged.`)
-        + (removed ? ` ${removed}` : ''));
-    }
+  function apply(preset) {
+    applySettings(preset.params ?? {});
+    const removed = droppedNote(reconcileSettings(model()));
+    // Override box: carry the prompt when the preset has one, otherwise
+    // leave whatever the document (or the model's own default) uses.
+    const incoming = presetPrompt(preset);
+    if (incoming) setPrompt(incoming);
+    // A draft (no document yet) is stamped too: the page carries it into
+    // the document the first send creates.
+    setStamp?.(preset.id);
+    onStatus((incoming
+      ? `Preset "${preset.name}" applied.`
+      : `Preset "${preset.name}" applied. It carries no system prompt, so this one is unchanged.`)
+      + (removed ? ` ${removed}` : ''));
     // Force: the Apply button lives in the drawer, so the focus guard would
-    // otherwise skip the repaint that shows the applied values.
+    // otherwise skip the repaint that shows the applied values (and closes
+    // the picker).
     drawer.requestRebuild({ force: true });
     // Explicitly, not via the settings-change listener: that fires from
     // applySettings BEFORE the prompt and stamp are written above, so relying
@@ -497,265 +325,260 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     syncIndicator();
   }
 
-  // The two writes, deliberately separate. ONE control used to do both: the
-  // select pre-filled the save-as name, so browsing a preset silently aimed
-  // Save at it, and a name that happened to match overwrote by typing. That
-  // cost a 35k-char prompt on 2026-08-28. Now the destination is a property of
-  // WHICH BUTTON you press, and it is written on the button:
-  //
-  //   Update       -> always the preset in the dropdown, which the preview
-  //                   above it is showing. The only way to overwrite.
-  //   Save as new  -> always the typed name, and REFUSES a name in use.
-  //                   There is no typing path to an overwrite any more.
-  //
-  // Both land through one commit so the post-write bookkeeping cannot drift.
-  function commitSaved(saved, verb) {
-    const idx = presets.findIndex((p) => p.id === saved.id);
-    if (idx >= 0) presets[idx] = saved;
-    else presets.unshift(saved);
-    pick(saved.id);
-    // saving snapshots the current doc state -- the doc IS this preset now
-    // (a draft included, as in apply)
-    setStamp?.(saved.id);
-    drawer.requestRebuild({ force: true });
-    // Same reason apply() calls it: the document now names this preset, and
-    // the bar chips are outside the drawer the rebuild above repaints.
-    syncIndicator();
-    onStatus(`Preset "${saved.name}" ${verb}.`);
-  }
-
-  // One sentence, one place. It was assembled two different ways -- a
-  // concatenation in the local check, a literal in the 409 catch -- identical
-  // today, silently divergent after any reword or a rename of the button.
+  // One sentence, one place: the local check and the server's 409 say it.
   const nameTakenNote = (name) =>
-    `A preset named "${name}" already exists — select it above and press Save to overwrite it.`;
+    `A preset named "${name}" already exists. Pick another name, or edit that one on the Presets page.`;
 
-  // Overwrite the SELECTED preset with the document's current prompt + panel.
-  async function updateSelected() {
-    const id = effectiveId();
-    if (!id) {
-      // Never silently do nothing: refresh() can null a deleted preset while
-      // the focus guard skips the rebuild that would have disabled this
-      // button, so a confirmed click can land with no target at all.
-      onStatus('No preset selected — pick one above to update.', true);
-      return;
-    }
-    try {
-      // Refetch FIRST. The fetch used to live on save(); the split left it on
-      // the harmless create while the one destructive write decided AND
-      // executed against a cache refreshed only at drawer-open. A preset whose
-      // prompt was written from another tab reads here as "nothing to lose",
-      // so the arm never fires and a long prompt goes under one click.
-      await refresh();
-      if (!ctx.alive) return;
-      const target = presets.find((p) => p.id === id);
-      if (!target) {
-        onStatus('That preset no longer exists — it was deleted elsewhere.', true);
-        await refreshAndRepaint();
-        return;
-      }
-      // "Did it CHANGE since you looked", not "is this still destructive".
-      // Re-asking the guard would refuse every confirmed update, because the
-      // answer that granted the arm is still true a click later. What must
-      // block is the row moving under us: the preview showed one prompt, the
-      // server now holds another, and confirming would overwrite something
-      // the user never saw.
-      if ((target.system_prompt ?? null) !== shownPrompt) {
-        onStatus(`"${target.name}" changed elsewhere since you looked — `
-          + 'check the preview and press Update again.', true);
-        drawer.requestRebuild({ force: true });
-        return;
-      }
-      // No `name`: PUT patches only the fields it is given, and re-sending a
-      // cached name reverts a rename made on another device -- or 409s and
-      // throws the whole confirmed write away.
-      const saved = await api.updatePreset(target.id, {
-        system_prompt: getPrompt(), params: samplerParams(model()),
-      });
-      if (!ctx.alive) return;
-      commitSaved(saved, 'updated');
-    } catch (err) {
-      // A 404 means it was deleted elsewhere -- refresh so the select stops
-      // offering a row the server no longer has.
-      if (!ctx.alive) return;
-      onStatus(`Preset update failed: ${err.message}`, true);
-      refreshAndRepaint();
-    }
-  }
-
-  // Create under the typed name. Never overwrites: a taken name is a REFUSAL
-  // that names the other action, not a silent clobber. Decided against a FRESH
-  // list, because the local cache can miss a name another device just added
-  // (and the server's own 409 is the real backstop).
+  // Create under the typed name. Never overwrites: a taken name is a REFUSAL,
+  // not a silent clobber. Decided against a FRESH list, because the local
+  // cache can miss a name another device just added (and the server's own 409
+  // is the real backstop). Resolves true when a preset was created.
   async function saveAsNew(name) {
     name = name.trim();
-    if (!name) return;
+    if (!name) return false;
     try {
       await refresh();
-      if (!ctx.alive) return;
+      if (!ctx.alive) return false;
       if (presets.some((p) => p.name === name)) {
         // NO rebuild: force:true bypasses the focus guard, replaces the
         // section, and the name you just typed is gone -- with the keyboard
-        // closed, on a phone -- at the exact moment you are told to go do
-        // something else with it.
+        // closed, on a phone -- at the exact moment you are told to pick
+        // another.
         onStatus(nameTakenNote(name), true);
-        return;
+        return false;
       }
       const saved = await api.createPreset({
         name, system_prompt: getPrompt(), params: samplerParams(model()),
       });
-      if (!ctx.alive) return;
-      commitSaved(saved, 'saved');
+      if (!ctx.alive) return false;
+      presets.unshift(saved);
+      // saving snapshots the current doc state -- the doc IS this preset now
+      // (a draft included, as in apply)
+      setStamp?.(saved.id);
+      drawer.requestRebuild({ force: true });
+      syncIndicator();
+      onStatus(`Preset "${saved.name}" saved.`);
+      return true;
     } catch (err) {
-      if (!ctx.alive) return;
+      if (!ctx.alive) return false;
       onStatus(err.status === 409 ? nameTakenNote(name) : `Preset save failed: ${err.message}`, true);
+      return false;
     }
   }
 
-  async function remove() {
-    const removedId = effectiveId();
-    if (!removedId) return;
+  // Write the document back to the preset it is stamped with: the iterate
+  // loop's second half. `built` is the stamped preset as the section that
+  // owns the option read it; everything is re-asked here, because the click
+  // is the only moment that matters and a hidden option can still be clicked
+  // by a script.
+  async function updateStamped(built) {
+    const now = provenance();
+    // Stamped with THIS preset, and differing from it: the only state in
+    // which there is anything to write, and the only one the option shows in.
+    if (!now || now.id !== built.id || !now.modified) return;
     try {
-      await api.deletePreset(removedId);
+      // Refetch FIRST. The write keeps no history, so it must not land on a
+      // row that changed after the line above was computed from it.
+      await refresh();
+      if (!ctx.alive) return;
+      const target = presets.find((p) => p.id === built.id);
+      if (!target) {
+        onStatus(`Preset "${built.name}" no longer exists: it was deleted elsewhere.`, true);
+        drawer.requestRebuild({ force: true });
+        syncIndicator();
+        return;
+      }
+      if (target.updated_at !== built.updated_at) {
+        onStatus(`"${target.name}" changed elsewhere since this drawer read it. Nothing was written: `
+          + 'look at it under Apply preset, then save again if you still mean to.', true);
+        drawer.requestRebuild({ force: true });
+        syncIndicator();
+        return;
+      }
+      // No `name`: PUT patches only the fields it is given, and re-sending a
+      // cached name reverts a rename made on another device.
+      const prompt = getPrompt() ?? null;
+      const saved = await api.updatePreset(target.id, {
+        system_prompt: prompt, params: samplerParams(model()),
+      });
+      if (!ctx.alive) return;
+      presets[presets.indexOf(target)] = saved;
+      drawer.requestRebuild({ force: true });
+      syncIndicator();
+      // An empty prompt is written as none (the override-box rule): the
+      // preset stays in the list and carries settings only. Say so, because
+      // that is the write that reads as "my preset disappeared" later.
+      onStatus(prompt
+        ? `Preset "${saved.name}" updated from this one.`
+        : `Preset "${saved.name}" updated from this one. It now carries no system prompt (settings only).`);
     } catch (err) {
-      if (ctx.alive) onStatus(`Preset delete failed: ${err.message}`, true);
-      return;
+      if (!ctx.alive) return;
+      onStatus(`Preset update failed: ${err.message}`, true);
     }
-    if (!ctx.alive) return;
-    pick(null); // explicit deselect, so the select does not fall back to the stamp
-    // Only the ACTIVE document is cleared. Other documents may still name the
-    // deleted preset, which is harmless -- indicatorInfo resolves stamps
-    // against the live preset list, so a dangling id reads as "no stamp".
-    if (getStamp?.() === removedId) setStamp?.(null);
-    await refreshAndRepaint();
-    syncIndicator(); // rebuild no-ops while the drawer is closed -- sync anyway
+  }
+
+  // One entry of the Apply picker: the preset's name, what it carries, its
+  // OWN prompt, and the button that copies it here. The text shown is the
+  // object applied, so what was read is what lands.
+  function buildOption(preset, current) {
+    const carries = presetPrompt(preset);
+    const applyBtn = armedConfirm(
+      createEl('button', {
+        type: 'button', class: 'btn btn--sm',
+        title: carries ? 'Copy this preset here (prompt + settings)' : 'Copy this preset\'s settings here',
+        'aria-label': `Apply preset ${preset.name}`,
+      }, ['Apply']),
+      () => apply(preset),
+      'Replace prompt?',
+      () => wouldReplacePrompt(preset),
+      // What this Apply would do: copy THIS preset over THIS prompt. Either
+      // half moving voids the arm (the prompt box is another drawer section
+      // this one gets no events from).
+      () => JSON.stringify([preset.id, getPrompt() ?? null]),
+    );
+    const marks = [];
+    if (!carries) marks.push('settings only');
+    if (current?.id === preset.id) marks.push(current.modified ? 'applied here, modified since' : 'applied here');
+    return createEl('div', { class: 'preset-option', dataset: { name: preset.name } }, [
+      createEl('div', { class: 'preset-option__head' }, [
+        createEl('span', { class: 'preset-option__name' }, [preset.name]),
+        ...marks.map((m) => createEl('span', { class: 'preset-option__mark' }, [m])),
+        applyBtn,
+      ]),
+      carries
+        ? createEl('div', { class: 'preset-option__prompt' }, [carries])
+        : createEl('div', { class: 'preset-option__prompt preset-option__prompt--none' }, [
+          'Carries no system prompt: applying it changes the settings and leaves the prompt as it is.',
+        ]),
+    ]);
   }
 
   function buildSection() {
-    const current = selected();
-
-    // aria-label, not just title: `title` is a tooltip whose exposure as an
-    // accessible name is inconsistent, and neither control has a visible
-    // label to associate (the bar is deliberately one compact row).
-    const select = createEl('select', {
-      title: 'Select a saved preset', 'aria-label': 'Select a saved preset',
+    // role=status: the line changes live as the prompt or a knob is edited
+    // -- announced, not just shown (DESIGN.md §7). .preset-provenance is the
+    // E2E hook.
+    provEl = createEl('div', {
+      class: 'preset-provenance', role: 'status',
+      title: 'A preset is a copy. Applying one stamps it here; later edits on either side '
+        + 'never reach the other.',
     }, [
-      createEl('option', { value: '' }, ['Presets…']),
-      // data-name carries the RAW name: the label is display only, while the
-      // name is the identity Update writes back and Save as new checks
-      // against. Nothing may read the decorated label back.
-      ...presets.map((p) => createEl('option',
-        { value: p.id, 'data-name': p.name }, [presetLabel(p)])),
+      createEl('strong', { class: 'preset-provenance__lead' }),
+      createEl('span', { class: 'preset-provenance__detail muted' }),
     ]);
-    select.value = effectiveId() ?? '';
+    paintProvenance(provEl);
 
-    // Apply / Save / Save as new: the file-menu pair everyone already knows.
-    // "Update" was the overwrite's name from v1.79.26 to v1.79.61 and read as
-    // a sibling of Apply with no direction; Save beside "Save as new" says
-    // which one creates and which one overwrites, and the drift line says
-    // what each moves where.
-    const applyBtn = armedConfirm(
-      createEl('button', {
-        class: 'btn btn--sm', disabled: !current,
-        title: 'Copy this preset here (prompt + sampler settings)',
-      }, ['Apply']),
-      apply,
-      'Replace prompt?',
-      wouldReplacePrompt,
-      // What Apply would do: copy THIS preset over THIS prompt. Either half
-      // moving voids the arm.
-      () => JSON.stringify([effectiveId(), getPrompt() ?? null]),
-    );
-    // Overwrites the SELECTED preset -- sits beside the select and the preview
-    // that name and show it, so the destination is what you are looking at.
-    const updateBtn = armedConfirm(
-      createEl('button', {
-        class: 'btn btn--sm', disabled: !current,
-        title: 'Overwrite this preset with the document\'s prompt and settings',
-      }, ['Save']),
-      updateSelected,
-      'Overwrite prompt?',
-      wouldOverwritePresetPrompt,
-      // Destination AND payload: the prompt is edited in another drawer
-      // section this bar gets no events from, which is why it must be re-read
-      // at confirm time rather than wired to a control here.
-      // Destination, payload AND the stored value being destroyed: a refresh
-      // resolving between arm and confirm changes what the write costs, and
-      // the preview the user read is no longer what is there.
-      () => JSON.stringify([effectiveId(), getPrompt() ?? null, shownPrompt]),
-    );
-    const delBtn = armedConfirm(
-      createEl('button', { class: 'btn btn--sm btn--ghost', disabled: !current, title: 'Delete this preset' }, ['Delete']),
-      remove,
-      'Confirm?',
-      null,
-      () => effectiveId(),
-    );
+    // ---- the Apply sheet: every preset, with its own prompt ---------------
+    const pickerEl = createEl('div', {
+      class: 'preset-sheet preset-picker', id: 'preset-picker', hidden: true,
+      role: 'group', 'aria-label': 'Presets to apply',
+    });
+    const fillPicker = () => {
+      const current = provenance();
+      pickerEl.replaceChildren(...(presets.length
+        ? presets.map((p) => buildOption(p, current))
+        : [createEl('div', { class: 'settings-note muted small' }, [
+          'No presets yet. Save makes one from what is shown here.',
+        ])]));
+    };
 
-    // Creates only. Deliberately NOT pre-filled from the select any more --
-    // that pre-fill is what made browsing a preset aim a write at it.
+    // ---- the Save sheet: where this document's bag can be written ---------
+    // "Update X" is built only for a document that HAS a stamped preset,
+    // bound to that preset, and offered only while the document differs from
+    // it. It sits first because it is the answer when it applies at all.
+    const built = stamped();
+    const blanks = () => Boolean(presetPrompt(presets.find((p) => p.id === built?.id)) && !getPrompt());
+    const updateBtn = built ? armedConfirm(
+      createEl('button', {
+        type: 'button', class: 'btn btn--sm preset-save__update', hidden: true,
+        title: `Overwrites the stored preset "${built.name}"`,
+      }, [`Update ${built.name} with this ${noun}'s prompt and settings`]),
+      () => updateStamped(built),
+      `Remove ${built.name}'s prompt?`,
+      // The one write here that costs something nothing on screen shows: an
+      // empty prompt box written over a prompt the preset stores.
+      blanks,
+      // Destination, payload and the stored row being replaced: the prompt is
+      // edited in another drawer section this one gets no events from, and a
+      // list refresh can move the row. Any of them moving voids the arm.
+      () => JSON.stringify([getStamp?.() ?? null, getPrompt() ?? null,
+        presets.find((p) => p.id === built.id)?.updated_at ?? null]),
+    ) : null;
+    syncUpdate = updateBtn ? () => {
+      const now = provenance();
+      const offer = Boolean(now && now.id === built.id && now.modified);
+      if (!offer || !blanks()) updateBtn.disarm();
+      if (updateBtn.hidden === offer) updateBtn.hidden = !offer;
+    } : null;
+    syncUpdate?.();
+
+    // Creates only. Enter in the name box goes straight to the create, which
+    // is safe because there is no arm to get past: this cannot overwrite.
     const nameInput = createEl('input', {
-      class: 'input', placeholder: 'Save as new…',
+      class: 'input', placeholder: 'Name for a new preset',
       'aria-label': 'Name for a new preset',
     });
-    const saveNewBtn = createEl('button', { class: 'btn btn--sm' }, ['Save as new']);
-    saveNewBtn.addEventListener('click', () => saveAsNew(nameInput.value));
-    // No arm: this cannot overwrite anything. A name in use is refused.
+    const createBtn = createEl('button', { type: 'button', class: 'btn btn--sm' }, ['Save as a new preset']);
+    createBtn.addEventListener('click', () => saveAsNew(nameInput.value));
     nameInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') saveAsNew(nameInput.value);
     });
-
-    // Re-aiming disarms -- for HONESTY, not safety (the `target` callbacks
-    // above already make a stale arm refuse to fire). A button still reading
-    // "Overwrite prompt?" while aimed at a preset you just switched away from
-    // is a lie. The select is the only control that re-aims, so it is the only
-    // one that disarms. The name box deliberately disarms NOTHING: Save as new
-    // is never armed, and reaching over to disarm Apply from here silently
-    // cancelled an apply the user was part-way through confirming, just
-    // because they started typing a save-as name.
-    select.addEventListener('change', () => {
-      applyBtn.disarm(); updateBtn.disarm(); delBtn.disarm();
-      pick(select.value || null);
-      const p = selected();
-      applyBtn.disabled = updateBtn.disabled = delBtn.disabled = !p;
-      paintPreview();
-      updateDrift();
-    });
-    // .preset-drift is the E2E hook; styling rides the shared settings-note.
-    // role=status: the line flips live (Matches/Differs) -- announced, not
-    // just shown (DESIGN.md §7).
-    driftEl = createEl('div', {
-      class: 'preset-drift settings-note muted small', hidden: true, role: 'status',
-      title: 'Presets are copies: Apply stamps the preset onto this document; '
-        + 'later edits here never change the preset until you press Save.',
-    });
-    // Collapsed by default: it answers "what does this preset hold?" on
-    // demand without pushing the rest of the drawer off-screen on a phone.
-    previewSummaryEl = createEl('summary', {});
-    previewBodyEl = createEl('div', { class: 'preset-preview__body' });
-    previewEl = createEl('details', { class: 'preset-preview' }, [
-      previewSummaryEl, previewBodyEl,
+    const saveEl = createEl('div', {
+      class: 'preset-sheet preset-save', id: 'preset-save', hidden: true,
+      role: 'group', 'aria-label': 'Save this prompt and these settings',
+    }, [
+      updateBtn,
+      createEl('div', { class: 'preset-row' }, [nameInput, createBtn]),
     ]);
-    runningEl = createEl('span', { class: 'preset-section__running muted' });
-    paintPreview();
-    updateDrift();
+
+    // ---- the two verbs ----------------------------------------------------
+    const pickBtn = createEl('button', {
+      type: 'button', class: 'btn btn--sm', 'aria-expanded': 'false', 'aria-controls': 'preset-picker',
+      title: 'Choose a preset to copy here. The list shows each preset\'s own prompt first.',
+    }, ['Apply preset…']);
+    const saveBtn = createEl('button', {
+      type: 'button', class: 'btn btn--sm', 'aria-expanded': 'false', 'aria-controls': 'preset-save',
+      title: 'Store this prompt and these settings as a preset',
+    }, ['Save…']);
+    // One sheet at a time, under the verb that opened it.
+    const show = (which) => {
+      for (const [btn, sheet] of [[pickBtn, pickerEl], [saveBtn, saveEl]]) {
+        const open = sheet === which;
+        sheet.hidden = !open;
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      }
+    };
+    pickBtn.addEventListener('click', () => {
+      if (!pickerEl.hidden) { show(null); return; }
+      // Shown from the cache at once, then again if the store has moved: a
+      // preset edited on its page a moment ago must read as it is now.
+      fillPicker();
+      show(pickerEl);
+      refresh().then((changed) => { if (ctx.alive && changed && !pickerEl.hidden) fillPicker(); });
+    });
+    saveBtn.addEventListener('click', () => {
+      if (!saveEl.hidden) { show(null); return; }
+      show(saveEl);
+    });
 
     return createEl('div', { class: 'preset-section' }, [
-      createEl('h3', {}, ['Preset', runningEl]),
-      createEl('div', { class: 'preset-row' }, [select, applyBtn, updateBtn, delBtn]),
-      driftEl,
-      previewEl,
-      createEl('div', { class: 'preset-row' }, [nameInput, saveNewBtn]),
+      provEl,
+      createEl('div', { class: 'preset-row' }, [
+        pickBtn, saveBtn,
+        // A real link: the hash change closes the drawer and the router
+        // mounts the page, the same way a nav item does.
+        createEl('a', { class: 'preset-manage', href: '#/presets' }, ['Manage presets']),
+      ]),
+      saveEl,
+      pickerEl,
     ]);
   }
 
-  return { buildSection, onDrawerOpen, updateDrift, refresh, syncIndicator, presetForNewDoc, promptState };
+  return { buildSection, onDrawerOpen, updateProvenance, refresh, syncIndicator, presetForNewDoc, promptState };
 }
 
 // The bar chip's one renderer -- fed by onIndicator above, so it lives here
-// rather than in each page. Chat and notebook carried byte-identical copies,
-// both commented "the bar chip's ONE renderer", which was true of neither.
+// rather than in each page.
 export function paintPresetChip(chip, info) {
   chip.hidden = !info;
-  chip.textContent = info ? (info.edited ? `${info.name} (edited)` : info.name) : '';
+  chip.textContent = info ? (info.edited ? `${info.name} (modified)` : info.name) : '';
 }

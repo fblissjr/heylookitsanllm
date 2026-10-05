@@ -149,19 +149,25 @@ composer focus is worth building.
   document, fetched from inside the page so it shares the app's origin and
   session. The suites' state readers (message counts, notebook rows) compose on
   it instead of each re-implementing evaluate + fetch + json.
-- `lib/dom.mjs` — shared DOM helpers (`clickByText`/`handleByText`, `driftText`
-  (the shared preset bar's drift-line reader), `armedClick` two-tap confirm,
-  overflow check, `settingsInputValue`/`setSettingsInput`, and
-  `openDrawer`/`closeDrawer` — see the drawer note below).
+- `lib/dom.mjs` — shared DOM helpers (`clickByText`/`handleByText`, `armedClick`
+  two-tap confirm, overflow check, `settingsInputValue`/`setSettingsInput`,
+  `openDrawer`/`closeDrawer` — see the drawer note below — and the preset
+  helpers: `provenanceText` (the drawer's provenance line), `applyPreset`
+  (through the Apply picker; its `armed` option states whether the entry must
+  arm), `saveAsNewPreset` and `updateOptionLabel`/`clickUpdateOption` (the Save
+  sheet), `storedPresets`/`deleteStoredPreset` (the store itself, for
+  assertions and cleanup), `presetCardButton` (the Presets page)).
 - `suites/chat.mjs` — 40 checks: streaming, a client-side streaming-cadence
   regression guard (see below), edit/regenerate/delete truncation,
   stop=partial-saved, post-abort health, settings + seed, the chat-bar gear
   opening the same drawer, applied-preset chip provenance across a reload (proves
   `applied_preset_id`, not inference, is doing the work),
   system-prompt persistence (no-blur commit +
-  Escape-close survival), preset save/apply round-trip (inert selection,
-  explicit Apply, drift states), the applied-preset chip (shows/(edited)/
-  clears-on-delete), conversation CRUD, 390px mobile, and a capability/
+  Escape-close survival), preset save/apply round-trip (the picker copies
+  nothing until an entry's Apply, provenance states), the iterate loop
+  (apply, tune the prompt, Update X from the Save sheet, re-apply shows the
+  edit), the applied-preset chip (shows/(modified)/clears when its preset is
+  deleted on the Presets page), conversation CRUD, 390px mobile, and a capability/
   thinking/image section: gating (the thinking toggle tracks the selected
   model's capabilities, negative model discovered from /v1/models and never
   loaded), the thinking
@@ -207,8 +213,9 @@ only be measured on a fast model, so running it everywhere would manufacture a
 red per slow arm.
 
 - `suites/pages.mjs` — 36 checks: notebook autosave + generate-at-cursor tail
-  preservation, notebook preset bar (save/drift/armed apply + the
-  applied-preset chip), perf no-polling proof + ranges, models list/load/unload
+  preservation, notebook preset section (save/provenance/armed apply + the
+  applied-preset chip), the Presets page's edit/rename/duplicate/delete against
+  the real store, perf no-polling proof + ranges, models list/load/unload
   + HF scan, danger-zone clear.
 
 ## Settings drawer (interaction gotcha)

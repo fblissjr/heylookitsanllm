@@ -401,38 +401,43 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .settings-panel summary { cursor: pointer; color: var(--ink-muted); font-size: var(--text-sm); }
 .settings-panel details > div { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem; }
 
-/* drawer lead sections shared by chat + notebook: preset bar + the
-   per-document system prompt (prompt-section.js's createPromptSection) */
+/* drawer lead sections shared by chat + notebook: the preset section
+   (preset-bar.js) + the per-document system prompt (prompt-section.js's
+   createPromptSection) */
 .preset-section { display: flex; flex-direction: column; gap: 0.4rem; }
-/* What the document is running, beside the heading (preset-bar.js
-   runningText); the select below browses, so the two can differ. */
-.preset-section__running { font-weight: 400; }
-.preset-section__running::before { content: " · "; }
-/* Wraps, and the select keeps a floor. The row carries four controls since
-   Update joined it (v1.79.26), and an ARMED button relabels itself to
-   "Overwrite prompt?" -- so at phone width a nowrap row either overflows or
-   crushes the select, which is the one control naming what Update would hit.
-   flex-basis gives it a floor and the buttons drop to the next line instead. */
-.preset-row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
-.preset-row select,
+/* Where the document's prompt and settings came from, and whether they still
+   match (preset-bar.js provenanceText). The lead is bold and stands alone;
+   the detail says what moved. Wraps: a modified line names its knobs. */
+.preset-provenance { font-size: var(--text-ui); line-height: 1.4; overflow-wrap: anywhere; }
+.preset-provenance__detail { font-weight: 400; }
+/* Wraps: an ARMED button relabels itself, and at phone width a nowrap row
+   overflows the drawer. The name box keeps a floor and the button drops to
+   the next line instead. */
+.preset-row { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center; }
 .preset-row .input { flex: 1 1 8rem; min-width: 0; text-align: left; }
-/* read-only view of the SELECTED preset's own prompt -- deliberately styled
-   apart from .sysprompt (the editable per-document box below it), because
-   the whole failure this fixes was reading one as the other */
-.preset-preview {
-  border: 1px dashed var(--line);
+.preset-manage { margin-left: auto; font-size: var(--text-sm); white-space: nowrap; }
+/* Apply's picker: every preset with its OWN prompt, read-only, before
+   anything is copied. Deliberately styled apart from .sysprompt (the editable
+   per-document box), because reading one as the other is what once aimed a
+   write at the wrong preset. */
+.preset-sheet { display: flex; flex-direction: column; gap: 0.5rem; }
+/* The Save sheet's "Update X" option: a full-width choice that names its
+   target, so its label wraps rather than truncating the preset's name. */
+.preset-save__update { text-align: left; white-space: normal; height: auto; }
+.preset-option {
+  border: 1px dashed var(--line-strong);
   border-radius: var(--r-card);
-  padding: 0.4rem 0.6rem;
+  padding: 0.45rem 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
 }
-.preset-preview summary {
-  cursor: pointer;
-  color: var(--ink-muted);
-  font-size: var(--text-sm);
-  user-select: none;
-}
-.preset-preview__body {
-  margin-top: 0.5rem;
-  max-height: 14rem;
+.preset-option__head { display: flex; align-items: center; gap: 0.4rem 0.5rem; flex-wrap: wrap; }
+.preset-option__name { font-weight: 550; font-size: var(--text-ui); overflow-wrap: anywhere; }
+.preset-option__mark { font-size: var(--text-sm); color: var(--ink-muted); white-space: nowrap; }
+.preset-option__head .btn { margin-left: auto; }
+.preset-option__prompt {
+  max-height: 7rem;
   overflow-y: auto;
   overscroll-behavior: contain;
   white-space: pre-wrap;
@@ -441,7 +446,7 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   line-height: 1.45;
   color: var(--ink-muted);
 }
-.preset-preview__body--none { font-style: italic; }
+.preset-option__prompt--none { font-style: italic; }
 .sysprompt {
   border: 1px solid var(--line);
   border-radius: var(--r-card);
@@ -477,7 +482,7 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .settings-note { margin-top: 0.25rem; }
 
 /* applied-preset chip (chat bar, notebook row): names the preset the active
-   document is running, "(edited)" once it drifts; click opens the drawer.
+   document is running, "(modified)" once it drifts; click opens the drawer.
    Brand-tint = the chosen-item fill from the selection grammar (§3). */
 .preset-chip {
   background: var(--brand-tint);
@@ -1874,6 +1879,91 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
   .perf-bar--sm { width: 3rem; }
 }
 
+
+/* ==== page: presets ==== */
+
+/* The one place a stored preset is edited (js/pages/presets.js). A card per
+   preset; its editor opens in place, so what is edited is what is on screen. */
+.presets {
+  height: 100%;
+  overflow-y: auto;
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+  width: 100%;
+}
+.presets__lede { margin: 0.35rem 0 0; font-size: var(--text-ui); }
+.presets__status { min-height: 1.2rem; margin-top: 0.5rem; font-size: var(--text-ui); }
+.presets__list { margin-top: 0.75rem; display: flex; flex-direction: column; gap: 0.75rem; }
+.presets__list .empty-state { text-align: left; padding: 1rem 0; }
+
+.preset-card {
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  padding: 0.75rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.preset-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 0.75rem;
+  flex-wrap: wrap;
+}
+.preset-card__title { display: flex; align-items: baseline; gap: 0.5rem; min-width: 0; flex: 1 1 12rem; }
+.preset-card__name { font-size: var(--text-body); overflow-wrap: anywhere; }
+.preset-card__tag {
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-ctl);
+  padding: 0 0.35rem;
+  white-space: nowrap;
+}
+.preset-card__actions { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+.preset-card__rename-row { display: flex; gap: 0.4rem; flex-wrap: wrap; flex: 1; }
+.preset-card__rename { flex: 1 1 10rem; min-width: 0; }
+.preset-card__body { display: flex; flex-direction: column; gap: 0.5rem; }
+/* The preset's own prompt, read-only and bounded: one preset may hold tens of
+   thousands of characters, and the list has to stay a list. */
+.preset-card__prompt {
+  max-height: 9rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--ink-muted);
+  border-left: 2px solid var(--line);
+  padding-left: 0.6rem;
+}
+.preset-card__prompt--none { font-style: italic; }
+
+.preset-edit { display: flex; flex-direction: column; gap: 0.4rem; }
+.preset-edit__prompt { width: 100%; resize: vertical; min-height: 8rem; line-height: 1.5; }
+.preset-edit__knobs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 0.4rem 1rem;
+  margin-top: 0.4rem;
+}
+.preset-edit__row { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.preset-edit__row .input { width: 7.5rem; flex: 0 0 auto; text-align: right; }
+.preset-edit__row select.input { text-align: left; }
+.preset-edit__buttons { display: flex; gap: 0.4rem; margin-top: 0.4rem; }
+
+@media (max-width: 767px) {
+  .presets { padding: calc(1rem + env(safe-area-inset-top, 0px)) 1rem 2.5rem; }
+  .preset-card__actions .btn,
+  .preset-card__rename-row .btn,
+  .preset-edit__buttons .btn { min-height: 44px; padding: 0.55rem 0.9rem; }
+  .preset-card__rename,
+  .preset-edit__row .input { min-height: 44px; }
+}
 
 /* ================= touch field size ================= */
 

@@ -42,7 +42,8 @@ import { fileURLToPath } from 'node:url';
 
 import { launchBrowser } from './lib/browser.mjs';
 import { Suite, printSummary, assert, waitFor, sleep, skip } from './lib/harness.mjs';
-import { openDrawer, closeDrawer, clickByText, armedClick } from './lib/dom.mjs';
+import { openDrawer, closeDrawer, clickByText, armedClick, provenanceText, openPresetPicker, clickPresetApply,
+  applyPreset, saveAsNewPreset, updateOptionLabel, clickUpdateOption, presetCardButton } from './lib/dom.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const V3_ROOT = process.env.E2E_V3_ROOT
@@ -234,6 +235,7 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
     c2Generating: false, stopDelayMs: 0, cloneDelayMs: 0, bodyDelayMs: 0, bodyReleasedAt: null,
     applied_preset_id: appliedPresetId };
   let cloneCount = 0;
+  let presetSeq = 0;
   // Conversations the page creates (the New button), served back by id so a
   // check can read what a new conversation was created WITH.
   const created = new Map();
@@ -332,23 +334,41 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
         system_prompt: remote.system_prompt, applied_preset_id: remote.applied_preset_id, params: {},
         generating: remote.generating, messages };
     }
+    // The preset store, with the three refusals the page relies on: a name
+    // in use is a 409 (on create AND on rename), a row that is gone is a 404,
+    // and every write moves `updated_at` -- the Presets page refuses to save
+    // over a row whose stamp is not the one its editor opened on. `__status`
+    // is read by the responder below; anything without it is a 200.
     if (url.endsWith('/v1/presets') && method === 'POST') {
-      const row = { id: `p${remote.presets.length + 1}`, name: body.name,
-        system_prompt: body.system_prompt ?? null, params: body.params ?? {}, updated_at: 'y' };
+      if (remote.presets.some((p) => p.name === body.name)) {
+        return { __status: 409, detail: 'Preset name already exists' };
+      }
+      presetSeq += 1;
+      const row = { id: `p-new${presetSeq}`, name: body.name,
+        system_prompt: body.system_prompt ?? null, params: body.params ?? {}, updated_at: `w${presetSeq}` };
       remote.presets.push(row);
       return row;
     }
-    // The overwrite half of the preset store. Modelling it matters: the guard
-    // under test is about a PUT that must NOT be sent, and a stub that only
-    // answered POST would let a real overwrite fall through to `{}` and look
-    // like nothing happened either way.
-    if (url.includes('/v1/presets/') && method === 'PUT') {
+    // The overwrite half. Modelling it matters: several checks are about a
+    // write that must NOT be sent, and a stub that only answered POST would
+    // let a real overwrite fall through to `{}` and look like nothing
+    // happened either way.
+    if (url.includes('/v1/presets/') && (method === 'PUT' || method === 'DELETE')) {
       const id = url.match(/\/v1\/presets\/([^/?]+)/)?.[1];
       const row = remote.presets.find((p) => p.id === id);
-      if (!row) return {};
+      if (!row) return { __status: 404, detail: 'Preset not found' };
+      if (method === 'DELETE') {
+        remote.presets = remote.presets.filter((p) => p.id !== id);
+        return { status: 'deleted', id };
+      }
+      if ('name' in body && remote.presets.some((p) => p.id !== id && p.name === body.name)) {
+        return { __status: 409, detail: 'Preset name already exists' };
+      }
       if ('name' in body) row.name = body.name;
       if ('system_prompt' in body) row.system_prompt = body.system_prompt ?? null;
       if ('params' in body) row.params = body.params ?? {};
+      presetSeq += 1;
+      row.updated_at = `w${presetSeq}`;
       return { ...row };
     }
     if (url.endsWith('/v1/presets')) return { presets: remote.presets };
@@ -613,8 +633,10 @@ async function openChat(browser, base, {
       setTimeout(answer, store.remote.cloneDelayMs);
       return;
     }
-    const body = JSON.stringify(store.handle(url, req.method(), req.postData()));
-    const send = () => req.respond({ status: 200, contentType: 'application/json', body });
+    const result = store.handle(url, req.method(), req.postData());
+    const status = result?.__status ?? 200;
+    const body = JSON.stringify(result, (k, v) => (k === '__status' ? undefined : v));
+    const send = () => req.respond({ status, contentType: 'application/json', body });
     if (residencyDelayMs && url.endsWith('/v1/admin/models')) {
       setTimeout(send, residencyDelayMs);
       return;
@@ -1487,10 +1509,12 @@ async function main() {
     await suite.check('resume adopts prompt, presets and new rows without rebuilding unchanged ones', async () => {
       const { page, reqs, store } = resumed;
       const total = await stampRows(page);
-      // "another session" edits the prompt, saves a preset and appends a row
+      // "another session" edits the prompt, saves it as a preset (which
+      // stamps the conversation) and appends a row
       store.remote.system_prompt = 'Set on another device.';
       store.remote.updated_at = 't2';
       store.remote.presets = [{ id: 'p-remote', name: 'remote', system_prompt: 'Set on another device.', params: {}, updated_at: 'x' }];
+      store.remote.applied_preset_id = 'p-remote';
       store.messages.push({ id: 'm-remote', role: 'assistant', content: 'appended elsewhere',
         position: store.messages[store.messages.length - 1].position + 1 });
       const from = reqs.length;
@@ -1527,10 +1551,8 @@ async function main() {
       // rebuild is focus-guarded on its own, so the box can look right while
       // the page's prompt STATE was silently replaced -- and the next preset
       // Save snapshots state, not the box. Save one and read what went out.
-      await page.evaluate(() => { const n = document.querySelector('.drawer--open .preset-section .input'); n.focus(); n.select(); });
-      await page.keyboard.type('after-resume');
       const beforeSave = reqs.length;
-      await clickByText(page, '.drawer--open .preset-row button', 'Save as new');
+      await saveAsNewPreset(page, 'after-resume');
       const post = await waitFor(() => reqs.slice(beforeSave).find((r) => r.method === 'POST' && r.url.endsWith('/v1/presets')),
         { timeout: 5000, interval: 50, message: 'preset Save sent no POST' });
       const saved = JSON.parse(post.postData);
@@ -1559,80 +1581,32 @@ async function main() {
     });
     await resumed.page.close();
 
-    // ---- boot 4c: Save must not silently overwrite a preset's prompt ------
-    // The 2026-08-28 loss: the preset <select> pre-fills the save-as name, so
-    // picking a preset to LOOK at it arms Save on that preset -- and Save
-    // writes the DOCUMENT's prompt over the stored one with an UPDATE that
-    // keeps no history. Apply (which overwrites the recoverable side) was
-    // armed; Save (which overwrites the unrecoverable side) was not.
+    // ---- boot 4c: nothing in the drawer can overwrite a stored preset -----
+    // The 2026-08-28 loss: the drawer's preset <select> pre-filled the
+    // save-as name, so picking a preset to LOOK at it aimed Save at that
+    // preset, and Save wrote the DOCUMENT's prompt over a stored one with an
+    // UPDATE that keeps no history. An armed guard followed, then a preview,
+    // then a drift line. Since Phase 3b the drawer has two verbs: Apply
+    // copies preset -> document, and Save writes the document either to a NEW
+    // preset or back to the one preset it is stamped with ("Update X"), which
+    // nothing on screen can re-aim. Everything else about a stored preset is
+    // the Presets page's (boot 4e).
     //
-    // These assert on THE WIRE, not on the DOM. The arm changes the button's
-    // label, so a DOM assertion would pass whether or not the request was
-    // actually held back -- which is the whole claim.
+    // These assert on THE WIRE and on the stub store, not on the DOM. A
+    // button's label says what it claims to do; the request log says what it
+    // did.
     const guard = await openChat(browser, base);
-    {
-      const { page, store } = guard;
-      store.remote.presets.push({
-        id: 'p-owned', name: 'owned', system_prompt: 'THE PRESET PROMPT', params: {}, updated_at: 'z',
-      });
-      store.remote.presets.push({
-        id: 'p-bare', name: 'bare', system_prompt: null, params: {}, updated_at: 'z',
-      });
-      // The iterate-loop fixture: the loop check applies it, edits, and saves
-      // BACK onto it, so its stored prompt is deliberately rewritten mid-block.
-      store.remote.presets.push({
-        id: 'p-pristine', name: 'pristine', system_prompt: 'PRISTINE PRESET PROMPT', params: {}, updated_at: 'z',
-      });
-      // The one fixture NOTHING in this block writes to, so a check can state
-      // its stored prompt as a constant and stay true under reordering.
-      store.remote.presets.push({
-        id: 'p-stable', name: 'stable', system_prompt: 'STABLE PRESET PROMPT', params: {}, updated_at: 'z',
-      });
-      // Likewise promptless and likewise never written to -- "bare" acquires a
-      // prompt from the arming checks, so it cannot answer "is a promptless
-      // preset labelled?" by the time that check runs.
-      store.remote.presets.push({
-        id: 'p-samplers', name: 'samplers-only', system_prompt: null, params: {}, updated_at: 'z',
-      });
-      // A second arm-worthy target, so a pending arm can be shown NOT to
-      // carry across a change of selection.
-      store.remote.presets.push({
-        id: 'p-other', name: 'other', system_prompt: 'SOME OTHER PRESET PROMPT', params: {}, updated_at: 'z',
-      });
-      await openDrawer(page);
-      await settle(page);
-    }
-    // ONE spelling of "find the preset controls". Three had grown -- a select
-    // query, a row filtered by its select, a row filtered by its input -- and
-    // the two row variants would silently match the WRONG row after a markup
-    // change rather than throw.
-    const PRESET = {
-      select: '.drawer--open .preset-section select',
-      // By TITLE, not by position. `nth-of-type` silently RE-AIMS at whatever
-      // button ends up in that slot, so reordering the row -- or inserting one
-      // -- would leave every check below green while pressing the wrong
-      // control, and Update is the destructive one. The titles are stable
-      // anchors: armedConfirm relabels `textContent` when armed and never
-      // touches `title`, which is also why a text lookup is not the answer.
-      applyBtn: '.drawer--open .preset-section .preset-row button[title^="Copy this preset here"]',
-      updateBtn: '.drawer--open .preset-section .preset-row button[title^="Overwrite this preset"]',
-      nameInput: '.drawer--open .preset-section .preset-row:has(input.input) input.input',
-      saveNewBtn: '.drawer--open .preset-section .preset-row:has(input.input) button',
-      preview: '.drawer--open .preset-preview__body',
-    };
-    // Matches data-name, NOT the option text: a preset carrying no prompt is
-    // labelled "<name> — settings only", so a text match would miss exactly
-    // the promptless fixture these checks lean on.
-    const selectPreset = async (name) => {
-      await guard.page.evaluate((sel, n) => {
-        const el = document.querySelector(sel);
-        const opt = [...el.options].find((o) => o.dataset.name === n);
-        if (!opt) throw new Error(`no preset option named ${n}`);
-        el.value = opt.value;
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-      }, PRESET.select, name);
-      await settle(guard.page);
-    };
+    guard.store.remote.presets.push(
+      { id: 'p-owned', name: 'owned', system_prompt: 'THE PRESET PROMPT', params: {}, updated_at: 'z' },
+      // Carries NO prompt: under the override-box rule it speaks for the
+      // settings only, and has to say so wherever it is named.
+      { id: 'p-bare', name: 'bare', system_prompt: null, params: {}, updated_at: 'z' },
+      { id: 'p-stable', name: 'stable', system_prompt: 'STABLE PRESET PROMPT', params: {}, updated_at: 'z' },
+    );
+    await openDrawer(guard.page);
+    await settle(guard.page);
+
+    const docPrompt = () => guard.page.$eval('.drawer--open .sysprompt-input', (el) => el.value);
     const typeDocPrompt = async (text) => {
       await guard.page.evaluate((t) => {
         const box = document.querySelector('.drawer--open .sysprompt-input');
@@ -1643,17 +1617,6 @@ async function main() {
       }, text);
       await settle(guard.page);
     };
-    // By SELECTOR, not by text: an armed button relabels itself ("Overwrite
-    // prompt?"), so a text lookup would miss exactly the second click these
-    // checks need to make.
-    const clickApply = async () => {
-      await guard.page.click(PRESET.applyBtn);
-      await settle(guard.page);
-    };
-    const saveLabel = () => guard.page.$eval(PRESET.updateBtn, (el) => el.textContent);
-    // Hand-type a save-as name, the way a user renaming the target would --
-    // this is the one control that can aim Save somewhere the select is not
-    // pointing.
     // Drive a sampler control the way the drawer's own listeners see it.
     const setSampler = async (key, value) => {
       await guard.page.evaluate((k, v) => {
@@ -1664,238 +1627,225 @@ async function main() {
       }, key, value);
       await settle(guard.page);
     };
-    const typePresetName = async (name) => {
-      await guard.page.evaluate((sel, n) => {
-        const box = document.querySelector(sel);
-        box.value = n;
-        box.dispatchEvent(new Event('input', { bubbles: true }));
-      }, PRESET.nameInput, name);
-      await settle(guard.page);
-    };
-    // Clear a pending arm without waiting out armedConfirm's real timer.
-    // These checks share one page in a chain, so several need a KNOWN
-    // disarmed start -- and sleeping 8.2s to arrange it cost five checks
-    // 41 seconds, 39% of this suite's entire runtime, to set up state that is
-    // not what any of them is testing. `armedConfirm` exposes `disarm` on the
-    // button node for exactly this. It must reach EVERY armed control in the
-    // section: Apply, Save and Del each own their own arm and their own
-    // timer, so disarming only the one the next check clicks leaves the
-    // others carrying whatever the last check armed. The timer itself is
-    // checked once, on its own, at the foot of this block.
-    //
-    // It COUNTS what it disarmed and throws on zero. An `$$eval` over an empty
-    // NodeList is a silent no-op, and `disarm?.()` optional-chains away on a
-    // node that is not an armedConfirm button -- so a markup change would turn
-    // this into a helper that does nothing, and its callers would go on
-    // passing: they mostly assert `puts.length === 0`, which is exactly what
-    // an unexpectedly-ARMED button produces. Green-when-broken, in the
-    // direction the checks cannot see.
-    const resetArms = async () => {
-      const cleared = await guard.page.$$eval('.drawer--open .preset-section button',
-        (els) => els.filter((el) => typeof el.disarm === 'function')
-          .map((el) => { el.disarm(); return true; }).length);
-      assert(cleared > 0,
-        'resetArms found no armedConfirm buttons -- the selector or the markup moved, '
-        + 'and every check that resets through it is now inheriting arms silently');
-      await settle(guard.page);
-    };
-    // Counts BOTH preset writes, not just PUT. A check asserting "zero
-    // requests" must not be blind to the shape where the save landed as a
-    // CREATE -- a name absent from the local list makes save() POST, and a
-    // PUT-only filter would report that unconfirmed write as nothing at all.
-    const clickSave = async () => {
+    // EVERY write to the preset store, create included: a check asserting
+    // "nothing was overwritten" must not be blind to the shape where the
+    // write landed under another verb.
+    const presetWrites = (reqs, from) => reqs.slice(from)
+      .filter((r) => /\/v1\/presets(\/|$)/.test(r.url) && r.method !== 'GET');
+    const applyLabel = (name) => guard.page.evaluate((n) =>
+      [...document.querySelectorAll('.drawer--open .preset-option')]
+        .find((o) => o.dataset.name === n)?.querySelector('button').textContent.trim() ?? null, name);
+
+    await suite.check('no control in the preset section can be aimed at a preset the conversation did not come from', async () => {
+      assert((await provenanceText(guard.page)) === 'No preset',
+        `an unstamped conversation reads ${JSON.stringify(await provenanceText(guard.page))}`);
+      assert((await guard.page.$('.drawer--open .preset-save__update')) === null,
+        'a conversation with no stamped preset was built an Update option');
+      await typeDocPrompt('the document prompt, not any preset\'s');
+      const before = JSON.stringify(guard.store.remote.presets);
       const from = guard.reqs.length;
-      await guard.page.click(PRESET.updateBtn);
-      await settle(guard.page);
-      await sleep(250); // save() awaits a refresh before it would write
-      return guard.reqs.slice(from).filter((r) =>
-        (r.method === 'PUT' && r.url.includes('/v1/presets/'))
-        || (r.method === 'POST' && r.url.endsWith('/v1/presets')));
-    };
-
-    await suite.check('the first Save over a preset that owns a prompt sends nothing', async () => {
-      await typeDocPrompt('the document prompt, not the preset\'s');
-      await selectPreset('owned');
-      const puts = await clickSave();
-      assert(puts.length === 0,
-        `Save overwrote preset "owned" on the first click -- sent ${puts.length} PUT(s): ${JSON.stringify(puts.map((p) => p.postData))}`);
-      const stored = guard.store.remote.presets.find((p) => p.id === 'p-owned').system_prompt;
-      assert(stored === 'THE PRESET PROMPT', `the stored prompt changed to ${JSON.stringify(stored)}`);
-    });
-
-    await suite.check('the armed second Save goes through', async () => {
-      const puts = await clickSave();
-      assert(puts.length === 1, `a confirmed Save sent ${puts.length} PUT(s), expected 1`);
-      assert(JSON.parse(puts[0].postData).system_prompt === 'the document prompt, not the preset\'s',
-        'the confirmed Save did not carry the document prompt');
-    });
-
-    await suite.check('a Save that would blank a preset\'s prompt also arms', async () => {
-      // The quieter half of the same loss: an empty document prompt writes
-      // NULL over a stored one, and an override-box preset with no prompt is
-      // inert -- so the preset does not vanish from the list, it just stops
-      // doing anything. That reads as "my preset disappeared".
-      await selectPreset('bare'); // park the selection off the target first
-      await typeDocPrompt('');
-      await selectPreset('owned');
-      const puts = await clickSave();
-      assert(puts.length === 0,
-        'Save blanked a preset\'s stored prompt on the first click');
-    });
-
-    await suite.check('saving a preset that owns no prompt does not arm', async () => {
-      // Nothing to lose, so the guard must stay out of the way -- a confirm
-      // that fires when nothing is at stake only trains click-through.
-      await typeDocPrompt('anything');
-      await selectPreset('bare');
-      const puts = await clickSave();
-      assert(puts.length === 1,
-        `Save over a promptless preset asked for confirmation (sent ${puts.length} PUTs, expected 1)`);
-    });
-
-    await suite.check('the preset section shows the preset\'s own prompt, not the document\'s', async () => {
-      await typeDocPrompt('DOCUMENT TEXT');
-      await selectPreset('stable');
-      const body = await guard.page.$eval(PRESET.preview, (el) => el.textContent);
-      assert(body.includes('STABLE PRESET PROMPT'),
-        `the preview shows ${JSON.stringify(body.slice(0, 80))} -- not the selected preset's own prompt`);
-      assert(!body.includes('DOCUMENT TEXT'),
-        'the preview is showing the document prompt, the exact confusion this fixes');
-    });
-
-    // ---- the iterate loop stays one click (v1.79.21) ---------------------
-    // Guarding Save cost the loop this bar exists for: apply a preset, edit
-    // the prompt, save it back. That armed every time, and an arm the user
-    // meets dozens of times a day is an arm they stop reading -- which is
-    // what makes the one protecting them worthless. The exemption is narrow:
-    // the document must already be RUNNING the preset being saved onto.
-    await suite.check('saving back onto the preset the document runs does not arm', async () => {
-      await selectPreset('pristine');
-      await clickApply(); await clickApply(); // armed: it replaces a differing prompt
-      await settle(guard.page);
-      const applied = await guard.page.$eval('.drawer--open .sysprompt-input', (el) => el.value);
-      assert(applied === 'PRISTINE PRESET PROMPT', `Apply did not carry the prompt (got ${JSON.stringify(applied.slice(0, 40))})`);
-      await typeDocPrompt('PRISTINE PRESET PROMPT -- plus my edit');
-      const puts = await clickSave();
-      assert(puts.length === 1,
-        `the apply -> edit -> save-back loop asked for confirmation (sent ${puts.length} PUTs, expected 1)`);
-      assert(JSON.parse(puts[0].postData).system_prompt === 'PRISTINE PRESET PROMPT -- plus my edit',
-        'the loop save did not carry the edited prompt');
-    });
-
-    await suite.check('a refusal does not eat the name you typed', async () => {
-      // The refusal used to force a drawer rebuild, which replaces the section
-      // -- so the name was gone (and on a phone the keyboard closed) at the
-      // exact moment the user was told to go do something else with it.
-      await resetArms();
-      await typePresetName('owned');
-      await guard.page.click(PRESET.saveNewBtn);
-      await settle(guard.page);
-      await sleep(250);
-      const kept = await guard.page.$eval(PRESET.nameInput, (el) => el.value);
-      assert(kept === 'owned', `the refusal cleared the name box (now ${JSON.stringify(kept)})`);
-      const status = await guard.page.$eval('.chat__status', (el) => el.textContent);
-      assert(/already exists/i.test(status), `no refusal was shown: ${JSON.stringify(status)}`);
-    });
-
-    await suite.check('a name already in use is refused, never overwritten', async () => {
-      // The accident class, removed rather than guarded: there is no typing
-      // path to an overwrite any more. Save as new creates or refuses; only
-      // Update (beside the select, under the preview) overwrites, and only
-      // ever the preset it is showing.
-      await resetArms();
-      await typeDocPrompt('a prompt that is not what pristine stores');
-      await selectPreset('other');          // Update is aimed at "other"
-      await typePresetName('pristine');     // ...and the name box names another
-      const from = guard.reqs.length;
-      await guard.page.click(PRESET.saveNewBtn);
-      await settle(guard.page);
-      await sleep(250);
-      const writes = guard.reqs.slice(from).filter((r) =>
-        (r.method === 'PUT' && r.url.includes('/v1/presets/'))
-        || (r.method === 'POST' && r.url.endsWith('/v1/presets')));
-      assert(writes.length === 0,
-        `"Save as new" wrote to a name already in use (${writes.length} writes: `
-        + `${JSON.stringify(writes.map((w) => [w.method, w.postData]))})`);
-      const status = await guard.page.$eval('.chat__status', (el) => el.textContent);
-      assert(/already exists/i.test(status) && /press Save to overwrite/i.test(status),
-        `the refusal did not name the other action: ${JSON.stringify(status)}`);
-    });
-
-    await suite.check('but saving onto a preset the document does NOT run still arms', async () => {
-      // The shape that caused the loss: running one preset, saving onto
-      // another. The exemption
-      // must not generalise into "any Save is fine once something is stamped".
-      await selectPreset('owned');
-      const puts = await clickSave();
-      assert(puts.length === 0,
-        `Save onto an unrelated preset went through unconfirmed (${puts.length} PUTs)`);
-    });
-
-    await suite.check('and blanking the running preset still arms', async () => {
-      // Clearing the box is not editing it, so the running-preset exemption
-      // does not cover it -- a NULL write leaves the preset inert.
-      await selectPreset('pristine');
-      await typeDocPrompt('');
-      const puts = await clickSave();
-      assert(puts.length === 0,
-        `Save blanked the running preset's prompt unconfirmed (${puts.length} PUTs)`);
-    });
-
-    await suite.check('changing the target cancels a pending confirm', async () => {
-      // An arm is a promise about ONE preset. Arming on one and then picking
-      // another left the next click confirming something never previewed --
-      // the same accident in two steps. Both targets here own a prompt and
-      // neither is the one the document runs, so both must arm on their own.
+      // Press EVERY button the section holds, twice each (the second press is
+      // what gets past an arm), with the name box holding a name in use, and
+      // hidden buttons included: a script, or a stale handler, does not care
+      // what is visible. By index over a fresh query, because an Apply
+      // rebuilds the section. Swept TWICE: the first sweep stamps the
+      // conversation part-way through, so only the second one meets every
+      // button a stamped conversation has (its Update option among them).
+      // A button added later is pressed too, which is the point: this is a
+      // property of the section, not a list of the buttons it has today.
       //
-      // Start from a KNOWN disarmed state rather than inheriting one: a
-      // previous check leaves the button armed, and letting the feature under
-      // test be what clears it makes the first assertion fail with a message
-      // about arming when the real regression is in cancelling.
-      await resetArms();
-      assert((await saveLabel()) === 'Save', `Save was still armed at the start of the check: ${await saveLabel()}`);
-      await typeDocPrompt('a prompt that differs from both');
-      await selectPreset('owned');
-      let writes = await clickSave();
-      assert(writes.length === 0, 'the first Save on "owned" should have armed');
-      assert((await saveLabel()) !== 'Save', 'the first Save did not visibly arm');
-      await selectPreset('other');
-      assert((await saveLabel()) === 'Save', 'picking another preset left the button visibly armed');
-      writes = await clickSave();
+      // Nothing may reach the store, because at no point here does the
+      // conversation differ from the preset it is stamped with: each Apply
+      // leaves it equal to what was applied. That is the one state in which
+      // Update may write (the next check but two).
+      const buttons = async () => {
+        await openPresetPicker(guard.page);
+        return guard.page.$$eval('.drawer--open .preset-section button', (els) => els.map((e) => e.textContent.trim()));
+      };
+      const labels = await buttons();
+      assert(labels.filter((l) => l === 'Apply').length === 3,
+        `expected one Apply per preset in the picker, got ${JSON.stringify(labels)}`);
+      const pressed = new Set();
+      for (let sweep = 0; sweep < 2; sweep += 1) {
+        for (let i = 0; i < (await buttons()).length; i += 1) {
+          for (let press = 0; press < 2; press += 1) {
+            await buttons();
+            pressed.add(await guard.page.evaluate((idx) => {
+              const root = document.querySelector('.drawer--open .preset-section');
+              const box = root.querySelector('.preset-save input');
+              box.value = 'owned';
+              box.dispatchEvent(new Event('input', { bubbles: true }));
+              const btn = root.querySelectorAll('button')[idx];
+              btn.click();
+              return btn.className.includes('preset-save__update') ? 'update' : 'other';
+            }, i));
+            await settle(guard.page);
+          }
+        }
+      }
+      assert(pressed.has('update'), 'the sweep never reached an Update option, so it proved nothing about one');
+      // ...and the keyboard path into the same create.
+      await guard.page.evaluate(() => {
+        const box = document.querySelector('.drawer--open .preset-save input');
+        box.value = 'owned';
+        box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      });
+      await sleep(300); // saveAsNew awaits a fresh list before it would write
+      const writes = presetWrites(guard.reqs, from);
       assert(writes.length === 0,
-        `the arm carried across the selection change and overwrote "other" unconfirmed (${writes.length} writes)`);
+        `the drawer wrote to the preset store: ${JSON.stringify(writes.map((w) => [w.method, w.url, w.postData]))}`);
+      assert(JSON.stringify(guard.store.remote.presets) === before, 'a stored preset changed');
     });
 
-    await suite.check('editing the prompt under an armed Save voids the confirm', async () => {
-      // The hole a consumer cannot close by wiring its own controls: Save's
-      // PAYLOAD is the document prompt, edited in a different drawer section
-      // this bar gets no events from. Arm on "replace it with this text", then
-      // clear the box -- the second click used to fire whatever the button was
-      // now aimed at, blanking the preset with no confirm and skipping the
-      // blanking guard entirely.
-      await resetArms();
-      await typeDocPrompt('text that will be cleared in a moment');
-      await selectPreset('owned');
-      let writes = await clickSave();
-      assert(writes.length === 0, 'the first Save on "owned" should have armed');
-      await typeDocPrompt(''); // the payload moves under the armed button
-      writes = await clickSave();
-      assert(writes.length === 0,
-        `the armed Save fired against a payload the user never previewed and blanked "owned" (${writes.length} writes)`);
-      const stored = guard.store.remote.presets.find((p) => p.id === 'p-owned').system_prompt;
-      assert(stored, 'the stored prompt was blanked without a confirmation');
+    await suite.check('Save as new creates, refuses a name in use, and keeps what was typed', async () => {
+      await typeDocPrompt('a prompt worth keeping');
+      let from = guard.reqs.length;
+      await saveAsNewPreset(guard.page, 'owned');
+      await sleep(300);
+      assert(presetWrites(guard.reqs, from).length === 0, 'a name in use was not refused');
+      const kept = await guard.page.$eval('.drawer--open .preset-save input', (el) => el.value);
+      assert(kept === 'owned', `the refusal cleared the typed name (box reads ${JSON.stringify(kept)})`);
+      // The positive control: the same control DOES write when the name is
+      // free, so "sent nothing" above is a refusal and not a dead button.
+      from = guard.reqs.length;
+      await saveAsNewPreset(guard.page, 'fresh-one');
+      const post = await waitFor(() => presetWrites(guard.reqs, from)[0],
+        { timeout: 5000, interval: 50, message: 'Save as new sent nothing for a free name' });
+      await settle(guard.page);
+      assert(post.method === 'POST' && JSON.parse(post.postData).system_prompt === 'a prompt worth keeping',
+        `Save as new sent ${post.method} ${post.postData}`);
+      assert(presetWrites(guard.reqs, from).length === 1, 'Save as new sent more than its one create');
+      // It stamps: the conversation IS that preset now.
+      assert((await provenanceText(guard.page)) === 'From preset fresh-one',
+        `after Save as new the line reads ${JSON.stringify(await provenanceText(guard.page))}`);
     });
 
-    await suite.check('a Save that changes no prompt at all does not arm', async () => {
-      // Ordinary traffic: nudge a sampler, Save it back, prompt untouched.
-      // Nothing is at stake, so an arm here is pure click-through training --
-      // the failure this whole release is about.
-      await resetArms();
-      await typeDocPrompt('STABLE PRESET PROMPT'); // exactly what "stable" stores
-      await selectPreset('stable');
-      const writes = await clickSave();
-      assert(writes.length === 1,
-        `Save asked for confirmation although it would not change the stored prompt (${writes.length} writes)`);
+    await suite.check('the picker shows each preset\'s own prompt, and opening it changes nothing', async () => {
+      // What the old read-only preview was for: reading what a preset holds
+      // before it is copied anywhere. The document's prompt box never moves
+      // with it, and the document's own text is not shown as any preset's.
+      await typeDocPrompt('THE DOCUMENT PROMPT');
+      const from = guard.reqs.length;
+      await openPresetPicker(guard.page);
+      const entries = Object.fromEntries(await guard.page.$$eval('.drawer--open .preset-option',
+        (els) => els.map((e) => [e.dataset.name, e.textContent])));
+      assert(entries.owned?.includes('THE PRESET PROMPT'), `"owned" shows ${JSON.stringify(entries.owned)}`);
+      assert(entries.stable?.includes('STABLE PRESET PROMPT'), `"stable" shows ${JSON.stringify(entries.stable)}`);
+      assert(/settings only/i.test(entries.bare ?? ''), `the promptless preset reads ${JSON.stringify(entries.bare)}`);
+      assert(!/settings only/i.test(entries.owned), 'a preset that DOES carry a prompt was marked settings only');
+      assert(!Object.values(entries).some((t) => t.includes('THE DOCUMENT PROMPT')),
+        'the picker shows the document\'s prompt as a preset\'s');
+      assert((await docPrompt()) === 'THE DOCUMENT PROMPT', 'opening the picker changed the prompt box');
+      assert(!guard.reqs.slice(from).some((r) => r.method === 'PUT'), 'opening the picker wrote something');
+    });
+
+    await suite.check('Apply arms only to replace a different prompt, and an arm dies with the prompt it was about', async () => {
+      await typeDocPrompt('mine');
+      await openPresetPicker(guard.page);
+      assert((await clickPresetApply(guard.page, 'owned')) === 'Replace prompt?', 'replacing a different prompt did not arm');
+      assert((await docPrompt()) === 'mine', 'the first click replaced the prompt');
+      // The prompt box is another drawer section the picker gets no events
+      // from. The arm was a promise about replacing "mine"; this is not that.
+      await typeDocPrompt('mine, and now longer');
+      assert((await clickPresetApply(guard.page, 'owned')) === 'Replace prompt?',
+        'an arm made over one prompt fired over another');
+      assert((await docPrompt()) === 'mine, and now longer', 'the stale arm replaced a prompt nobody confirmed');
+      assert((await clickPresetApply(guard.page, 'owned')) === null, 'the confirming click did not apply');
+      await settle(guard.page);
+      assert((await docPrompt()) === 'THE PRESET PROMPT', `Apply carried ${JSON.stringify(await docPrompt())}`);
+
+      // A preset carrying no prompt replaces nothing, so it never arms and
+      // the prompt stays; the line says whose the prompt is not.
+      await typeDocPrompt('keep me');
+      await applyPreset(guard.page, 'bare');
+      await settle(guard.page);
+      assert((await docPrompt()) === 'keep me', `a promptless preset changed the prompt to ${JSON.stringify(await docPrompt())}`);
+      assert(/^From preset bare \(settings only/.test(await provenanceText(guard.page)),
+        `a settings-only preset reads ${JSON.stringify(await provenanceText(guard.page))}`);
+
+      // Nothing at stake when the prompt is already the preset's.
+      await typeDocPrompt('STABLE PRESET PROMPT');
+      await applyPreset(guard.page, 'stable');
+      await settle(guard.page);
+    });
+
+    await suite.check('the provenance line names the preset and what moved, and the chip agrees', async () => {
+      const line = () => provenanceText(guard.page);
+      const chip = () => guard.page.$eval('.chat__preset-chip', (el) => (el.hidden ? null : el.textContent));
+      await setSampler('temperature', '');
+      assert((await line()) === 'From preset stable', `an exact match reads ${JSON.stringify(await line())}`);
+      assert((await chip()) === 'stable', `the chip reads ${JSON.stringify(await chip())}`);
+
+      await typeDocPrompt('STABLE PRESET PROMPT, edited');
+      assert((await line()) === 'stable, modified: prompt', `a prompt edit reads ${JSON.stringify(await line())}`);
+      assert((await chip()) === 'stable (modified)', `the chip reads ${JSON.stringify(await chip())}`);
+
+      await typeDocPrompt('STABLE PRESET PROMPT');
+      await setSampler('temperature', '0.7');
+      assert((await line()) === 'stable, modified: one knob (temperature)', `a knob edit reads ${JSON.stringify(await line())}`);
+
+      await typeDocPrompt('STABLE PRESET PROMPT, edited again');
+      assert((await line()) === 'stable, modified: prompt and one knob (temperature)',
+        `both edited reads ${JSON.stringify(await line())}`);
+      await setSampler('temperature', ''); // leave the panel as we found it
+    });
+
+    await suite.check('Save offers "Update X" only to a conversation that came from X and differs, and it writes only X', async () => {
+      // The iterate loop: apply, tune in the conversation, write it back.
+      // The conversation is stamped "stable" with an edited prompt.
+      const stable = () => guard.store.remote.presets.find((p) => p.id === 'p-stable');
+      const label = 'Update stable with this conversation\'s prompt and settings';
+      assert((await updateOptionLabel(guard.page)) === label,
+        `the Save sheet offers ${JSON.stringify(await updateOptionLabel(guard.page))}`);
+      // ...and stops offering it the moment there is nothing to write back.
+      await typeDocPrompt('STABLE PRESET PROMPT');
+      assert((await updateOptionLabel(guard.page)) === null, 'Update is offered to a conversation that matches its preset');
+
+      await typeDocPrompt('STABLE PRESET PROMPT, tuned');
+      await setSampler('temperature', '0.7');
+      let from = guard.reqs.length;
+      assert((await clickUpdateOption(guard.page)) === label, 'an ordinary update asked for confirmation');
+      const put = await waitFor(() => presetWrites(guard.reqs, from)[0],
+        { timeout: 5000, interval: 50, message: 'Update sent nothing' });
+      await settle(guard.page);
+      const body = JSON.parse(put.postData);
+      assert(put.method === 'PUT' && put.url.endsWith('/v1/presets/p-stable'), `the write was ${put.method} ${put.url}`);
+      assert(body.system_prompt === 'STABLE PRESET PROMPT, tuned' && body.params.temperature === 0.7,
+        `the write carried ${put.postData}`);
+      assert(!('name' in body), 'the update re-sent the preset\'s name');
+      assert(presetWrites(guard.reqs, from).length === 1, 'Update sent more than its one write');
+      await waitFor(async () => (await provenanceText(guard.page)) === 'From preset stable',
+        { timeout: 5000, interval: 50, message: 'the line did not return to a match after the update' });
+      assert((await updateOptionLabel(guard.page)) === null, 'Update is still offered right after it wrote');
+      // Re-applying brings the tuned prompt back: the preset holds it now.
+      await typeDocPrompt('something else entirely');
+      await applyPreset(guard.page, 'stable', { armed: true });
+      await settle(guard.page);
+      assert((await docPrompt()) === 'STABLE PRESET PROMPT, tuned', `re-applying carried ${JSON.stringify(await docPrompt())}`);
+
+      // Another device writes the row after this drawer read it. The update
+      // must not land on a preset its author never saw.
+      await typeDocPrompt('STABLE PRESET PROMPT, tuned further');
+      stable().updated_at = 'moved-elsewhere';
+      from = guard.reqs.length;
+      await clickUpdateOption(guard.page);
+      await sleep(300); // it re-reads the store before it would write
+      await settle(guard.page);
+      assert(presetWrites(guard.reqs, from).length === 0, 'an update landed on a preset that had changed elsewhere');
+      assert(stable().system_prompt === 'STABLE PRESET PROMPT, tuned', 'the stored prompt changed');
+
+      // An empty prompt box written over a stored prompt leaves the preset in
+      // the list but inert ("my preset disappeared"). The one case that arms.
+      await typeDocPrompt('');
+      from = guard.reqs.length;
+      assert((await clickUpdateOption(guard.page)) === 'Remove stable\'s prompt?',
+        'emptying a stored prompt through Update did not arm');
+      await sleep(300);
+      assert(presetWrites(guard.reqs, from).length === 0, 'the first click blanked the preset');
+      // The arm was about an empty box. With text back in it, it is gone.
+      await typeDocPrompt('STABLE PRESET PROMPT, tuned');
+      assert((await updateOptionLabel(guard.page)) === null && stable().system_prompt === 'STABLE PRESET PROMPT, tuned',
+        'the blanking arm outlived the empty prompt box');
     });
 
     // ---- the drawer says what it is doing (v1.79.25) ---------------------
@@ -1919,7 +1869,7 @@ async function main() {
       // and writes that onto the open conversation -- "Reset to defaults" read
       // as something global.
       // `.settings-panel button` was a RACE, not an oracle. The panel carries a
-      // hidden per-row reset (`\u21ba`) for every sampler control, all of them
+      // hidden per-row reset (`↺`) for every sampler control, all of them
       // ahead of this button in document order, so `$eval` returned whichever
       // existed when it looked: it passed only while the read beat the rows
       // being populated, and went red under CPU load with the button perfectly
@@ -1933,90 +1883,200 @@ async function main() {
       assert(label === 'Clear all overrides', `the reset button reads ${JSON.stringify(label)}`);
     });
 
-    await suite.check('a preset carrying no prompt says so where you pick it', async () => {
-      const opts = await guard.page.$eval(PRESET.select, (el) =>
-        [...el.options].map((o) => [o.dataset.name ?? null, o.textContent]));
-      const bare = opts.find(([n]) => n === 'samplers-only');
-      const owned = opts.find(([n]) => n === 'owned');
-      assert(bare && /settings only/i.test(bare[1]),
-        `the promptless preset renders as ${JSON.stringify(bare?.[1])}`);
-      assert(owned && owned[1] === 'owned',
-        `a preset that DOES carry a prompt was decorated: ${JSON.stringify(owned?.[1])}`);
-    });
-
-    await suite.check('the drift line names which half drifted', async () => {
-      const drift = () => guard.page.$eval('.drawer--open .preset-drift', (el) => el.textContent);
-      // Start from an exact match, then break one half at a time.
-      await selectPreset('stable');
-      await typeDocPrompt('STABLE PRESET PROMPT');
-      await setSampler('temperature', '');
-      assert(/matches current settings/i.test(await drift()),
-        `expected a match, got ${JSON.stringify(await drift())}`);
-
-      await typeDocPrompt('STABLE PRESET PROMPT, edited');
-      let line = await drift();
-      assert(/^Prompt differs/.test(line), `prompt-only edit reads ${JSON.stringify(line)}`);
-
-      await typeDocPrompt('STABLE PRESET PROMPT');
-      await setSampler('temperature', '0.7');
-      line = await drift();
-      assert(/^Settings differ/.test(line), `sampler-only edit reads ${JSON.stringify(line)}`);
-
-      await typeDocPrompt('STABLE PRESET PROMPT, edited again');
-      line = await drift();
-      assert(/^Prompt and settings differ/.test(line), `both edited reads ${JSON.stringify(line)}`);
-      await setSampler('temperature', ''); // leave the panel as we found it
-    });
-
     await suite.check('an arm expires on its own after the confirm window', async () => {
-      // The ONE place the 8s timer is exercised, and the reason every other
-      // check in this block resets with `resetArms()` instead of sleeping:
-      // five of them did, at 8.2s each, and the coverage they bought was
-      // incidental to what they were about.
-      //
-      // What is at stake is honesty, not safety -- armedConfirm's `target()`
-      // already makes a stale arm refuse to fire, so the timer only clears a
-      // button still reading "Overwrite prompt?" while aimed elsewhere. That
-      // is worth one slow check and not five.
-      await resetArms();
+      // The ONE place armedConfirm's 8s timer is exercised. What is at stake
+      // is honesty, not safety -- its `target()` already makes a stale arm
+      // refuse to fire, so the timer only clears a button still reading
+      // "Replace prompt?" long after anyone meant it. Worth one slow check.
       await typeDocPrompt('a prompt that differs from what "owned" stores');
-      await selectPreset('owned');
-      const writes = await clickSave();
-      assert(writes.length === 0, 'the first Save should have armed');
-      assert((await saveLabel()) !== 'Save', 'the first Save did not visibly arm');
+      await openPresetPicker(guard.page);
+      assert((await clickPresetApply(guard.page, 'owned')) === 'Replace prompt?', 'the first Apply should have armed');
       await sleep(8200); // armedConfirm's own 8s window, plus slack
-      assert((await saveLabel()) === 'Save',
-        `the arm outlived its window and still reads ${JSON.stringify(await saveLabel())}`);
+      assert((await applyLabel('owned')) === 'Apply',
+        `the arm outlived its window and still reads ${JSON.stringify(await applyLabel('owned'))}`);
     });
 
     await guard.page.close();
 
-    // ---- boot 4d: the select reports what the document is running ---------
-    // With no explicit pick the select showed "Presets…" even on a
-    // conversation carrying an applied_preset_id -- so the one place that
-    // could have answered "which preset is this?" said nothing, and finding
-    // out meant clicking through the dropdown. That is the click that lands
-    // on the Save button with a preset name already in the box.
+    // ---- boot 4d: a stamped conversation says so without being asked ------
+    // The old select showed "Presets…" on a conversation carrying an
+    // applied_preset_id, so finding out which preset it ran meant clicking
+    // through the dropdown -- the click that used to land on Save with a
+    // preset's name already in the box.
     const stamped = await openChat(browser, base, {
-      presets: [{ id: 'p-run', name: 'running-one', system_prompt: 'STAMPED PRESET PROMPT', params: {}, updated_at: 'z' }],
+      presets: [
+        { id: 'p-run', name: 'running-one', system_prompt: 'STAMPED PRESET PROMPT', params: {}, updated_at: 'z' },
+        { id: 'p-idle', name: 'idle-one', system_prompt: 'STAMPED PRESET PROMPT', params: {}, updated_at: 'z' },
+      ],
       appliedPresetId: 'p-run',
     });
-    await suite.check('the select opens on the preset the document is running', async () => {
+    await suite.check('a stamped conversation names its preset in the drawer and in the picker', async () => {
       await openDrawer(stamped.page);
       await settle(stamped.page);
-      const shown = await stamped.page.evaluate(() => {
-        const sel = document.querySelector('.drawer--open .preset-section select');
-        return sel.options[sel.selectedIndex]?.textContent ?? null;
-      });
-      assert(shown === 'running-one',
-        `the select shows ${JSON.stringify(shown)} on a conversation stamped with "running-one"`);
-    });
-    await suite.check('and its preview names that preset\'s own prompt', async () => {
-      const body = await stamped.page.$eval('.drawer--open .preset-preview__body', (el) => el.textContent);
-      assert(body.includes('STAMPED PRESET PROMPT'),
-        `the preview shows ${JSON.stringify(body.slice(0, 60))}`);
+      // The stub conversation has no prompt of its own, so it has drifted
+      // from the preset it is stamped with, and the line says how.
+      const line = await provenanceText(stamped.page);
+      assert(line === 'running-one, modified: prompt', `the line reads ${JSON.stringify(line)}`);
+      await openPresetPicker(stamped.page);
+      const marks = Object.fromEntries(await stamped.page.$$eval('.drawer--open .preset-option',
+        (els) => els.map((e) => [e.dataset.name, [...e.querySelectorAll('.preset-option__mark')].map((m) => m.textContent)])));
+      assert(marks['running-one']?.some((m) => /applied here/.test(m)),
+        `the stamped preset is not marked in the picker: ${JSON.stringify(marks)}`);
+      // The stamp is the claim, not a resemblance: an identical preset that
+      // was never applied here is not credited.
+      assert(!marks['idle-one']?.some((m) => /applied here/.test(m)),
+        'a preset that was never applied is marked as applied');
     });
     await stamped.page.close();
+
+    // ---- boot 4e: the Presets page, the one place a preset is written -----
+    const mgr = await openChat(browser, base, {
+      presets: [
+        { id: 'p-owned', name: 'owned', system_prompt: 'THE PRESET PROMPT', params: { temperature: 0.3 }, updated_at: 'z' },
+        { id: 'p-bare', name: 'bare', system_prompt: null, params: { top_p: 0.9 }, updated_at: 'z' },
+        { id: 'p-stable', name: 'stable', system_prompt: 'STABLE PRESET PROMPT', params: {}, updated_at: 'z' },
+      ],
+      appliedPresetId: 'p-owned',
+    });
+    mgr.store.remote.system_prompt = 'THE PRESET PROMPT';
+    const gotoPresets = async () => {
+      await mgr.page.evaluate(() => { location.hash = '#/presets'; });
+      await mgr.page.waitForSelector('.preset-card', { timeout: 5000 });
+      await settle(mgr.page);
+    };
+    const card = (name) => mgr.page.evaluate((n) => {
+      const el = [...document.querySelectorAll('.preset-card')].find((c) => c.dataset.name === n);
+      return el ? { text: el.textContent, editing: Boolean(el.querySelector('.preset-edit')) } : null;
+    }, name);
+    const press = async (name, label) => {
+      const btn = await presetCardButton(mgr.page, name, label);
+      await btn.evaluate((b) => b.click());
+      await btn.dispose();
+      await settle(mgr.page);
+    };
+    const pageStatus = () => mgr.page.$eval('.presets__status', (el) => el.textContent);
+    await gotoPresets();
+
+    await suite.check('the Presets page lists each preset with its own prompt and settings', async () => {
+      const owned = await card('owned');
+      const bare = await card('bare');
+      assert(owned?.text.includes('THE PRESET PROMPT') && owned.text.includes('temperature 0.3'),
+        `"owned" reads ${JSON.stringify(owned?.text)}`);
+      assert(/settings only/i.test(bare?.text ?? '') && bare.text.includes('top-p 0.9'),
+        `"bare" reads ${JSON.stringify(bare?.text)}`);
+      const nav = await mgr.page.evaluate(() => ({
+        desktop: Boolean(document.querySelector('#nav-desktop a[href="#/presets"]')),
+        bottom: Boolean(document.querySelector('#bottom-nav a[href="#/presets"]')),
+      }));
+      assert(nav.desktop && !nav.bottom,
+        `Presets belongs in the sidebar and not the phone's bottom nav, got ${JSON.stringify(nav)}`);
+    });
+
+    await suite.check('editing a preset writes that preset and no conversation', async () => {
+      const from = mgr.reqs.length;
+      await press('owned', 'Edit');
+      await mgr.page.evaluate(() => {
+        const root = document.querySelector('.preset-card[data-name="owned"] .preset-edit');
+        const set = (el, v) => { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); };
+        set(root.querySelector('textarea'), 'THE PRESET PROMPT, EDITED');
+        set(root.querySelector('input[id$="-temperature"]'), '0.5');
+      });
+      await press('owned', 'Save');
+      const put = await waitFor(() => presetWrites(mgr.reqs, from)[0],
+        { timeout: 5000, interval: 50, message: 'Save on the Presets page sent nothing' });
+      await settle(mgr.page);
+      const body = JSON.parse(put.postData);
+      assert(put.method === 'PUT' && put.url.endsWith('/v1/presets/p-owned'), `the write was ${put.method} ${put.url}`);
+      assert(body.system_prompt === 'THE PRESET PROMPT, EDITED' && body.params.temperature === 0.5,
+        `the write carried ${put.postData}`);
+      // A re-sent cached name would revert a rename made on another device.
+      assert(!('name' in body), 'an edit re-sent the preset\'s name');
+      const others = mgr.reqs.slice(from).filter((r) => r.method !== 'GET' && !/\/v1\/presets/.test(r.url));
+      assert(others.length === 0,
+        `editing a preset wrote elsewhere: ${JSON.stringify(others.map((r) => [r.method, r.url]))}`);
+      assert((await card('owned')).text.includes('THE PRESET PROMPT, EDITED'), 'the card does not show what was saved');
+    });
+
+    await suite.check('blanking a stored prompt arms, and a preset that changed elsewhere is not overwritten', async () => {
+      await press('stable', 'Edit');
+      await mgr.page.evaluate(() => {
+        const box = document.querySelector('.preset-card[data-name="stable"] .preset-edit textarea');
+        box.value = '';
+        box.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      let from = mgr.reqs.length;
+      await press('stable', 'Save');
+      await sleep(250); // save() re-reads the store before it would write
+      assert(presetWrites(mgr.reqs, from).length === 0, 'emptying a stored prompt went through on the first click');
+      // Another device writes the row while this editor is open. The
+      // confirming click must not land the edit on a row its author never saw.
+      mgr.store.remote.presets.find((p) => p.id === 'p-stable').updated_at = 'moved-elsewhere';
+      from = mgr.reqs.length;
+      await press('stable', 'Remove prompt?');
+      await sleep(250);
+      assert(presetWrites(mgr.reqs, from).length === 0, 'a save landed on a preset that had changed elsewhere');
+      assert(/changed elsewhere/.test(await pageStatus()), `the refusal reads ${JSON.stringify(await pageStatus())}`);
+      assert((await card('stable')).editing, 'the refusal closed the editor and took the typed work with it');
+      assert(mgr.store.remote.presets.find((p) => p.id === 'p-stable').system_prompt === 'STABLE PRESET PROMPT',
+        'the stored prompt changed');
+      // Cancel throws the edit away and puts the stored preset back on screen.
+      await press('stable', 'Cancel');
+      const after = await card('stable');
+      assert(!after.editing && after.text.includes('STABLE PRESET PROMPT'),
+        `Cancel left the card reading ${JSON.stringify(after.text.slice(0, 80))}`);
+    });
+
+    await suite.check('rename refuses a name in use, duplicate never reuses one, delete arms', async () => {
+      const rename = async (to) => {
+        await mgr.page.evaluate((t) => {
+          const box = document.querySelector('.preset-card__rename');
+          box.value = t;
+          box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        }, to);
+        await sleep(200);
+        await settle(mgr.page);
+      };
+      await press('bare', 'Rename');
+      await rename('owned');
+      assert(/already exists/.test(await pageStatus()), `renaming onto a name in use reads ${JSON.stringify(await pageStatus())}`);
+      const kept = await mgr.page.$eval('.preset-card__rename', (el) => el.value).catch(() => null);
+      assert(kept === 'owned', `the refusal dropped the rename box (${JSON.stringify(kept)})`);
+      await rename('bare2');
+      assert(await card('bare2'), 'the rename did not land');
+
+      await press('bare2', 'Duplicate');
+      await sleep(200);
+      await press('bare2', 'Duplicate');
+      await sleep(200);
+      const names = mgr.store.remote.presets.map((p) => p.name);
+      assert(names.includes('bare2 copy') && names.includes('bare2 copy 2'),
+        `two duplicates produced ${JSON.stringify(names)}`);
+      assert(mgr.store.remote.presets.find((p) => p.name === 'bare2 copy 2').params.top_p === 0.9,
+        'a duplicate did not carry the settings');
+
+      const from = mgr.reqs.length;
+      await press('bare2 copy 2', 'Delete');
+      assert(!mgr.reqs.slice(from).some((r) => r.method === 'DELETE'), 'Delete went through on the first click');
+      await press('bare2 copy 2', 'Delete?');
+      await sleep(200);
+      assert(!mgr.store.remote.presets.some((p) => p.name === 'bare2 copy 2'), 'the confirmed delete did not land');
+      assert((await card('bare2 copy 2')) === null, 'the deleted preset is still listed');
+    });
+
+    await suite.check('a preset edited on its page leaves the conversation that runs it alone', async () => {
+      // A preset is a copy, never a link. The conversation was stamped with
+      // "owned" and held its prompt; the preset has since been edited above.
+      await mgr.page.evaluate(() => { location.hash = '#/chat'; });
+      await mgr.page.waitForSelector('.chat', { timeout: 5000 });
+      await openDrawer(mgr.page);
+      await settle(mgr.page);
+      const prompt = await mgr.page.$eval('.drawer--open .sysprompt-input', (el) => el.value);
+      assert(prompt === 'THE PRESET PROMPT', `the conversation's prompt became ${JSON.stringify(prompt)}`);
+      const line = await provenanceText(mgr.page);
+      assert(line === 'owned, modified: prompt and one knob (temperature)', `the line reads ${JSON.stringify(line)}`);
+      await closeDrawer(mgr.page);
+    });
+    await mgr.page.close();
 
     // ---- boot 5: editor repair across the residency render ----------------
     const dur = await openChat(browser, base, { residencyDelayMs: 1500 });
@@ -2110,34 +2170,36 @@ async function main() {
       assert(!fit.overflow, 'an editor textarea overflows the phone viewport');
       assert(!fit.pageOverflow, 'the page scrolls horizontally at phone width');
     });
-    await suite.check('touch: the preset row fits the phone, armed or not', async () => {
-      // Update joined a row that already held a select, Apply and Del, and an
-      // armed button relabels itself to "Overwrite prompt?". At 390px a
-      // nowrap row would either overflow the drawer or crush the select --
-      // the one control that names what Update is aimed at.
+    await suite.check('touch: the preset section fits the phone, picker open and armed', async () => {
+      // The section's row holds two buttons and a link, and a picker entry's
+      // Apply relabels itself to "Replace prompt?" when it arms. At 390px a
+      // nowrap row overflows the drawer; both rows wrap instead.
+      mob.store.remote.presets.push({
+        id: 'p-long', name: 'a preset with a fairly long name', system_prompt: 'SOME PRESET PROMPT', params: {}, updated_at: 'z',
+      });
       await openDrawer(mob.page);
+      await mob.page.evaluate(() => {
+        const box = document.querySelector('.drawer--open .sysprompt-input');
+        box.value = 'a prompt the preset would replace';
+        box.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      await openPresetPicker(mob.page);
+      const armed = await clickPresetApply(mob.page, 'a preset with a fairly long name');
+      assert(armed === 'Replace prompt?', `the entry did not arm (reads ${JSON.stringify(armed)})`);
       await settle(mob.page);
-      const measure = () => mob.page.evaluate(() => {
-        const row = document.querySelector('.drawer--open .preset-section .preset-row');
-        const sel = row.querySelector('select');
+      const m = await mob.page.evaluate(() => {
+        const over = (el) => el.scrollWidth - el.clientWidth;
+        const drawerRight = document.querySelector('.drawer--open').getBoundingClientRect().right;
         return {
-          overflow: row.scrollWidth - row.clientWidth,
-          selectWidth: sel.getBoundingClientRect().width,
+          row: over(document.querySelector('.drawer--open .preset-section .preset-row')),
+          head: over(document.querySelector('.drawer--open .preset-option__head')),
+          past: [...document.querySelectorAll('.drawer--open .preset-section button, .drawer--open .preset-manage')]
+            .filter((el) => el.getClientRects().length && el.getBoundingClientRect().right > drawerRight + 1).length,
         };
       });
-      let m = await measure();
-      assert(m.overflow <= 1, `the preset row overflows by ${m.overflow}px at phone width`);
-      assert(m.selectWidth >= 100, `the preset select is crushed to ${Math.round(m.selectWidth)}px`);
-
-      // Arm the longest label the row can show and measure again.
-      await mob.page.evaluate(() => {
-        const row = document.querySelector('.drawer--open .preset-section .preset-row');
-        [...row.querySelectorAll('button')].forEach((b) => { b.textContent = 'Overwrite prompt?'; });
-      });
-      await settle(mob.page);
-      m = await measure();
-      assert(m.overflow <= 1, `the armed preset row overflows by ${m.overflow}px at phone width`);
-      assert(m.selectWidth >= 100, `the armed preset row crushes the select to ${Math.round(m.selectWidth)}px`);
+      assert(m.row <= 1, `the preset row overflows by ${m.row}px at phone width`);
+      assert(m.head <= 1, `an armed picker entry overflows by ${m.head}px at phone width`);
+      assert(m.past === 0, `${m.past} preset control(s) extend past the drawer's edge`);
       await closeDrawer(mob.page);
     });
     await suite.check('touch: no field is small enough to make iOS zoom on focus', async () => {
