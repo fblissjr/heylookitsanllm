@@ -542,6 +542,12 @@ async function openChat(browser, base, {
       ],
     });
   }
+  // E2E_COLOR_SCHEME=dark|light runs every check under that theme. The
+  // stylesheet follows the system (color-scheme: light dark), so without this
+  // a headless run is light-only and a dark-only regression goes unseen.
+  if (process.env.E2E_COLOR_SCHEME) {
+    await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: process.env.E2E_COLOR_SCHEME }]);
+  }
 
   await page.setRequestInterception(true);
   page.on('request', (req) => {

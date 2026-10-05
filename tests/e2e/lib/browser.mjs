@@ -131,6 +131,12 @@ export function createPageContext(page, { base, maxTokens }) {
     // thinking (it did, once the seed became a whole-bag write).
     // Pages with no sampler panel (models, perf) seed nothing and need nothing.
     async open(hash = '#/chat', settings = DEFAULT_PARAMS) {
+      // E2E_COLOR_SCHEME=dark|light runs the suite under that theme; the
+      // stylesheet follows the system, so a headless run is light-only
+      // without it. Same knob as render.mjs.
+      if (process.env.E2E_COLOR_SCHEME) {
+        await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: process.env.E2E_COLOR_SCHEME }]);
+      }
       await page.goto(`${base}/${hash}`, { waitUntil: 'domcontentloaded' });
       await page.reload({ waitUntil: 'domcontentloaded' });
       await page.waitForSelector('#app', { timeout: 15000 });

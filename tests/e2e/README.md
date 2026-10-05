@@ -63,6 +63,10 @@ yourself that a check you doubt can actually fail. It is a tool, not a step:
 write the check and move on unless its ability to fail is genuinely in
 question.
 
+Run any suite under the dark theme with `E2E_COLOR_SCHEME=dark` (or `light`):
+the stylesheet follows the system's colour scheme, so a headless run is
+light-only unless the media feature is emulated.
+
 Known false positive: after an mlx version bump, the FIRST run pays Metal
 shader JIT compilation and the streaming-cadence guard can read low (seen:
 25.3/s vs the 30/s floor on the 0.32.0 upgrade day; warm re-run passed at

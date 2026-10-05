@@ -1,36 +1,53 @@
 /* heylook v3 -- single stylesheet, no build step.
-   Palette: pure white writing surface; warmth lives in the honey-bronze
-   brand color and type rhythm, not in surface tints (seed oklch(0.842 0.165 91.3)).
+   Palette: pure white writing surface in light, warm near-black in dark
+   (Lamplight); warmth lives in the honey-bronze brand color and type rhythm,
+   not in surface tints (seed oklch(0.842 0.165 91.3)). Every colour token is
+   one light-dark() pair and the theme follows the system (color-scheme).
    The written design language (token roles, the data-strength chip formula,
    selection/pin grammar) is ../DESIGN.md -- keep the two in sync. */
 
 /* ================= tokens ================= */
 
 :root {
-  --bg: oklch(1 0 0);
-  --surface: oklch(0.974 0.007 91);      /* warm paper: sidebar, panels, user bubbles */
-  --surface-2: oklch(0.948 0.010 91);    /* hover / pressed / code bg */
-  --ink: oklch(0.28 0.02 78);
-  --ink-muted: oklch(0.49 0.02 82);
-  --ink-faint: oklch(0.60 0.018 85); /* placeholders ONLY -- ~3.5:1 on --bg, below the 4.5:1 floor for real text (status lines use --ink-muted) */
-  --line: oklch(0.905 0.012 88);
-  --line-strong: oklch(0.83 0.015 88);
+  /* Follow the system. A future light/dark toggle sets `light` or `dark`
+     here and nowhere else: every colour below is one light-dark() pair, so
+     the two themes cannot drift apart. Dark is Lamplight (direction A);
+     the plan and the contrast table are docs/project/plan_dark_mode.md, and
+     tests/unit/test_css_token_contrast.py recomputes the table from these
+     values. The light half is the v3 palette as built. */
+  color-scheme: light dark;
+  /*                        light                              dark (Lamplight) */
+  --bg:          light-dark(oklch(1 0 0),                 oklch(0.17 0.008 78));
+  --surface:     light-dark(oklch(0.974 0.007 91),        oklch(0.205 0.009 80));  /* warm paper: sidebar, panels, user bubbles */
+  --surface-2:   light-dark(oklch(0.948 0.010 91),        oklch(0.25 0.010 82));   /* hover / pressed / code bg */
+  --ink:         light-dark(oklch(0.28 0.02 78),          oklch(0.93 0.012 85));
+  --ink-muted:   light-dark(oklch(0.49 0.02 82),          oklch(0.74 0.015 85));
+  --ink-faint:   light-dark(oklch(0.60 0.018 85),         oklch(0.58 0.014 85));   /* placeholders ONLY -- under the 4.5:1 floor for real text (status lines use --ink-muted) */
+  --line:        light-dark(oklch(0.905 0.012 88),        oklch(0.29 0.010 82));
+  --line-strong: light-dark(oklch(0.83 0.015 88),         oklch(0.52 0.014 85));
 
-  --brand: oklch(0.842 0.165 91.3);      /* honey gold: selection glints only */
-  --brand-tint: oklch(0.962 0.05 95);    /* selected-item background */
-  --accent: oklch(0.47 0.10 78);         /* deep bronze: actions, links, focus */
-  --accent-hover: oklch(0.40 0.10 78);
+  --brand:       oklch(0.842 0.165 91.3);                                          /* honey gold, the seed: selection glints only; same in both themes */
+  --brand-tint:  light-dark(oklch(0.962 0.05 95),         oklch(0.30 0.055 88));   /* selected-item background */
+  /* Dark lifts accent from bronze to a lit honey, so on-accent turns dark
+     (a primary button is honey with dark brown text) and hover goes
+     lighter, not darker. */
+  --accent:      light-dark(oklch(0.47 0.10 78),          oklch(0.80 0.115 84));   /* actions, links, focus */
+  --accent-hover:light-dark(oklch(0.40 0.10 78),          oklch(0.86 0.10 86));
   /* Accent's tint surface, built the way --warn-tint and --danger-tint are
      (same lightness, low chroma, the base hue). It was REFERENCED before it
      existed, and var()'s fallback hid that: every reset-button hover painted
      the warning colour on a neutral control. A fallback on a token that is
      simply missing is a bug that can never report itself. */
-  --accent-tint: oklch(0.962 0.03 78);
-  --on-accent: oklch(1 0 0);
-  --danger: oklch(0.50 0.18 29);
-  --danger-tint: oklch(0.962 0.03 29);
-  --warn: oklch(0.55 0.12 75);           /* amber: degraded-but-working (fit meter WARN) */
-  --warn-tint: oklch(0.962 0.04 85);
+  --accent-tint: light-dark(oklch(0.962 0.03 78),         oklch(0.27 0.04 84));
+  --on-accent:   light-dark(oklch(1 0 0),                 oklch(0.20 0.03 78));
+  --danger:      light-dark(oklch(0.50 0.18 29),          oklch(0.72 0.15 29));
+  --danger-tint: light-dark(oklch(0.962 0.03 29),         oklch(0.27 0.05 29));
+  /* Dark warn sits at hue 62 so "degraded" stops matching the action colour.
+     The light value is as built (plan open question 2). */
+  --warn:        light-dark(oklch(0.55 0.12 75),          oklch(0.78 0.13 62));    /* amber: degraded-but-working (fit meter WARN) */
+  --warn-tint:   light-dark(oklch(0.962 0.04 85),         oklch(0.27 0.045 62));
+  --scrim:       light-dark(oklch(0.28 0.02 78 / 0.28),   oklch(0 0 0 / 0.55));    /* drawer backdrop */
+  --shadow-ink:  light-dark(oklch(0.28 0.02 78 / 0.12),   oklch(0 0 0 / 0.5));     /* the drawer's edge, the one shadow */
 
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
@@ -63,6 +80,7 @@ html, body {
   margin: 0;
   height: 100%;
 }
+html { background: var(--bg); }   /* overscroll, and Safari's fallback bar tint */
 
 body {
   font-family: var(--font);
@@ -497,7 +515,7 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   width: min(26rem, 100vw);
   background: var(--surface);
   border-left: 1px solid var(--line-strong);
-  box-shadow: -4px 0 24px oklch(0.28 0.02 78 / 0.12);
+  box-shadow: -4px 0 24px var(--shadow-ink);
   z-index: var(--z-drawer);
   display: flex;
   flex-direction: column;
@@ -534,7 +552,7 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .drawer-backdrop {
   position: fixed;
   inset: 0;
-  background: oklch(0.28 0.02 78 / 0.28);
+  background: var(--scrim);
   z-index: var(--z-drawer);
   opacity: 0;
   visibility: hidden;

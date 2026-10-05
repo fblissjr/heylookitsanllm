@@ -7,10 +7,10 @@
 > path out) apply to whatever renders that shape next. Read them as worked
 > examples, not as a description of the current pages.
 
-Last updated: 2026-07-23 (§7 settings entry points: pages may add an in-context
-opener — chat's top-bar gear — alongside the two shell gears; §6 settings
-taxonomy now names the drawer's page-owned lead sections — the shared preset
-bar + system-prompt editor — as a fourth kind alongside samplers/display/extras)
+Last updated: 2026-10-05 (§1 gains the dark theme, Lamplight: every colour
+token is a `light-dark()` pair and the theme follows the system; the drawer's
+shadow and scrim became tokens. Earlier: 2026-07-23, §7 settings entry points
+and §6 settings taxonomy.)
 
 The written form of the design system that previously lived only in `css/app.css`
 comments. It formalizes what v3 does so that new UI — starting with the j-space
@@ -27,20 +27,35 @@ first, desktop + iPhone Safari co-primary, no SaaS-dashboard grammar.
 
 ## 1. Tokens (authoritative values in `css/app.css` `:root`)
 
-All color is **OKLCH**. The palette is a pure-white writing surface with warmth
-carried by the honey-bronze brand pair, never by surface tints.
+All color is **OKLCH**, and every colour token is one `light-dark(light, dark)`
+pair on a single line, so the two themes cannot drift apart. `:root` sets
+`color-scheme: light dark` and the theme follows the system; a future toggle
+changes that one declaration and nothing else. Light is a pure-white writing
+surface with warmth carried by the honey-bronze brand pair, never by surface
+tints. Dark is **Lamplight**: warm near-black grounds, cream ink, and the
+accent lifted from bronze to a lit honey so `--on-accent` turns dark (a primary
+button is honey with dark brown text; hover goes lighter, not darker). The
+same layout, type and grammar apply in both. The data-strength chips (§2) are
+data, not theme, and keep their light values in dark.
 
-| Role | Token | Note |
-|------|-------|------|
-| page | `--bg` | pure white |
-| panels/sidebars | `--surface`, `--surface-2` | warm paper; `-2` = hover/pressed/code |
-| text | `--ink`, `--ink-muted` | muted stays ≥4.5:1 on `--bg` |
-| placeholders only | `--ink-faint` | ~3.5:1 — never real text |
-| hairlines | `--line`, `--line-strong` | |
-| selection glints | `--brand` (honey gold), `--brand-tint` | active nav, chosen rows |
-| actions/links/focus | `--accent` (deep bronze), `--accent-hover`, `--on-accent` | |
-| destructive | `--danger`, `--danger-tint` | |
-| degraded-but-working | `--warn` (amber), `--warn-tint` | fit meter WARN; never for refusals (that's danger) |
+| Role | Token | Light | Dark (Lamplight) |
+|------|-------|-------|------------------|
+| page | `--bg` | pure white | warm near-black |
+| panels/sidebars | `--surface`, `--surface-2` | warm paper; `-2` = hover/pressed/code | one and two steps up from `--bg` |
+| text | `--ink`, `--ink-muted` | muted stays ≥4.5:1 on `--bg` | cream; muted stays ≥4.5:1 on every surface |
+| placeholders only | `--ink-faint` | below 4.5:1 — never real text | meets only the 3:1 non-text floor — never real text |
+| hairlines | `--line`, `--line-strong` | control borders are a settled soft look (plan open question 1) | `--line-strong` meets 3:1 on `--bg` and `--surface` |
+| selection glints | `--brand` (honey gold), `--brand-tint` | active nav, chosen rows | `--brand` is the seed and is identical in both; the tint darkens |
+| actions/links/focus | `--accent` (deep bronze), `--accent-hover`, `--on-accent` | `--on-accent` is white | `--accent` is lit honey, `--on-accent` deep brown, hover lighter |
+| destructive | `--danger`, `--danger-tint` | | lifted, on a dark red-brown tint |
+| degraded-but-working | `--warn` (amber), `--warn-tint` | fit meter WARN; never for refusals (that's danger); light hue is as built (plan open question 2) | hue 62, so "degraded" no longer matches the action colour |
+| drawer backdrop | `--scrim` | ink at low alpha | black at higher alpha |
+| the one shadow | `--shadow-ink` | ink at low alpha; the drawer's left edge | black at higher alpha |
+
+`tests/unit/test_css_token_contrast.py` recomputes the contrast of every text
+and border pair above in both themes from the `:root` values, and fails on any
+colour literal outside `:root`. The dark pairs all meet their floors; the light
+misses it names are the open questions in `docs/project/plan_dark_mode.md`.
 
 Type: system stack (`--font`) + `--mono` for anything numeric, token-literal, or
 telemetry. Scale: `--text-sm 0.8125rem / --text-ui 0.875rem / --text-body 1rem /
