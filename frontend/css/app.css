@@ -72,6 +72,17 @@
   --z-drawer: 20;
 }
 
+/* iOS's Increase Contrast and the equivalent desktop settings reach the page
+   as prefers-contrast: more. The three quiet tokens rise in both themes; the
+   contrast test overlays this block on :root and checks the pairs again. */
+@media (prefers-contrast: more) {
+  :root {
+    --ink-muted:   light-dark(oklch(0.40 0.02 82),          oklch(0.84 0.012 85));
+    --line:        light-dark(oklch(0.80 0.012 88),         oklch(0.40 0.010 82));
+    --line-strong: light-dark(oklch(0.62 0.015 88),         oklch(0.66 0.014 85));
+  }
+}
+
 /* ================= base ================= */
 
 * { box-sizing: border-box; }
@@ -760,6 +771,10 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 }
 
 .message-content { overflow-wrap: break-word; }
+/* Safari 26 and Chrome both wrap paragraphs without one-word last lines;
+   older engines ignore the property. Headings balance their lines. */
+.message-content :is(p, li) { text-wrap: pretty; }
+h1, h2, h3 { text-wrap: balance; }
 .message-content > :first-child { margin-top: 0; }
 .message-content > :last-child { margin-bottom: 0; }
 .message-content pre {

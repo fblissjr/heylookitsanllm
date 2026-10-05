@@ -10,7 +10,7 @@ How to use this file: one phase (or one Phase 4 step) per session, on a branch. 
 | --- | --- | --- |
 | 1 Tokens | On main as v2.0.191 (merged 2026-10-05); light control borders raised to 3:1 in v2.0.192 | open questions 1 and 2 settled (below); page suites under dark green at v2.0.193; the iPhone check not yet run |
 | 2 Safari fixes | On main as v2.0.193 (merged 2026-10-05, built by session mrgreen) | six fixes; two of this file's snippets were wrong and are corrected below; Chrome suites green in both themes (page suites under dark: chat 53/53, pages 32/32); device checks not yet run; four follow-ups listed under Phase 2 |
-| 3 Platform | Item 1 (Home Screen app) on main as v2.0.194; items 2 to 5 not started | the Home Screen check (own icon, no Safari bar, status bar clear) is the owner's |
+| 3 Platform | Items 1 to 3 on main (v2.0.194, v2.0.195); items 4 and 5 not started | the Home Screen and Increase Contrast checks are the owner's |
 | 3b Preset manager | Approved (owner, 2026-10-05, mock on the plan doc); next build | right after the on-device pass |
 | 4 Toward Workbench | Not started | gated on A being live and measured |
 

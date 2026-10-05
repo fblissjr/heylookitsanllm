@@ -53,9 +53,12 @@ data, not theme, and keep their light values in dark.
 | drawer backdrop | `--scrim` | ink at low alpha | black at higher alpha |
 | the one shadow | `--shadow-ink` | ink at low alpha; the drawer's left edge | black at higher alpha |
 
+Under `prefers-contrast: more` (iOS Increase Contrast, the desktop equivalents)
+the three quiet tokens rise in both themes: `--ink-muted`, `--line`,
+`--line-strong`; the values sit in a second `:root` block in `app.css`.
 `tests/unit/test_css_token_contrast.py` recomputes the contrast of every text
-and border pair above in both themes from the `:root` values, and fails on any
-colour literal outside `:root`. Every pair meets its floor in both themes except light warn on its tint, kept
+and border pair above in both themes from the `:root` values, again with that
+block laid over it, and fails on any colour literal outside `:root`. Every pair meets its floor in both themes except light warn on its tint, kept
 by decision and named in the test.
 
 Type: system stack (`--font`) + `--mono` for anything numeric, token-literal, or

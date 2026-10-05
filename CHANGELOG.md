@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.195]
+
+### Added
+
+- **Increase Contrast and better wrapping.** Under `prefers-contrast: more`
+  (iOS Increase Contrast) the three quiet tokens rise in both themes:
+  `--ink-muted`, `--line`, `--line-strong`. The contrast test lays that
+  block over `:root` and checks every pair again, so the overlay can only
+  raise contrast. Message paragraphs and list items wrap with
+  `text-wrap: pretty` and headings balance their lines, on engines that
+  support it. Phase 3 items 2 and 3 of `docs/project/plan_dark_mode.md`.
+
 ## [2.0.194]
 
 ### Added

@@ -123,6 +123,22 @@ TOKENS = _tokens()
 THEMES = ("light", "dark")
 
 
+def _more_contrast_tokens() -> dict[str, dict[str, str]]:
+    """TOKENS with the `@media (prefers-contrast: more)` :root block laid over it."""
+    css = _strip_comments(CSS.read_text())
+    m = re.search(r"@media \(prefers-contrast: more\)\s*\{\s*:root\s*\{(.*?)\}", css, flags=re.S)
+    assert m, "app.css has no prefers-contrast: more block (plan_dark_mode.md Phase 3)"
+    out = {k: dict(v) for k, v in TOKENS.items()}
+    for name, raw in re.findall(r"--([\w-]+)\s*:\s*([^;]+);", m.group(1)):
+        values = re.findall(r"oklch\([^)]*\)", raw)
+        assert raw.strip().startswith("light-dark(") and len(values) == 2, f"--{name} in the contrast block: {raw!r}"
+        out[name] = {"light": values[0], "dark": values[1]}
+    return out
+
+
+MORE_CONTRAST = _more_contrast_tokens()
+
+
 def test_every_colour_token_is_a_light_dark_pair():
     # --brand is the seed and is the same in both themes by design.
     block = _root_block(_strip_comments(CSS.read_text()))
@@ -133,8 +149,10 @@ def test_every_colour_token_is_a_light_dark_pair():
 
 
 def test_no_colour_literal_outside_root():
+    # Every `:root { ... }` block is a token block (the base one and the
+    # prefers-contrast overlay); colour may live in those and nowhere else.
     css = _strip_comments(CSS.read_text())
-    rest = css.replace(_root_block(css), "", 1)
+    rest = re.sub(r":root\s*\{.*?\}", "", css, flags=re.S)
     literals = re.findall(r"oklch\([^)]*\)|#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)", rest)
     assert not literals, f"colour literals outside :root (make them tokens): {literals}"
 
@@ -167,3 +185,18 @@ def test_theme_color_meta_is_the_surface_token(theme):
     assert scheme and scheme.group(1) == "light dark", "index.html must declare the scheme :root follows"
     assert html.index(scheme.group(0)) < html.index('rel="stylesheet"'), (
         "color-scheme must come before the stylesheet, or the first paint is light")
+
+
+@pytest.mark.parametrize("theme", THEMES)
+@pytest.mark.parametrize("fg,bg,floor", PAIRS, ids=lambda x: str(x))
+def test_pair_meets_floor_under_increase_contrast(theme, fg, bg, floor):
+    """Under prefers-contrast: more every pair holds at least its normal ratio
+    and still meets its floor, so the overlay can only raise contrast. The one
+    light exemption (warn on warn-tint) is untouched by the overlay and keeps
+    its known value."""
+    base = _contrast(_oklch_to_luminance(TOKENS[fg][theme]), _oklch_to_luminance(TOKENS[bg][theme]))
+    more = _contrast(_oklch_to_luminance(MORE_CONTRAST[fg][theme]), _oklch_to_luminance(MORE_CONTRAST[bg][theme]))
+    assert more >= base - 1e-9, f"{theme}: {fg} on {bg} fell from {base:.2f} to {more:.2f} under more contrast"
+    if theme == "light" and (fg, bg) in KNOWN_LIGHT_MISSES:
+        return
+    assert more >= floor, f"{theme} (more contrast): {fg} on {bg} is {more:.2f}:1, floor {floor}"
