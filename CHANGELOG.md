@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.196]
+
+### Added
+
+- **A themed model picker on desktop.** Where the engine supports
+  `appearance: base-select` (Safari 27, current Chrome) and the pointer is
+  fine, the chat bar's open model picker uses heylook's tokens instead of
+  the system menu; the phone keeps the native wheel and the option labels
+  keep their residency marks, so nothing depends on it. Phase 3 item 5 of
+  `docs/project/plan_dark_mode.md`; item 4 (native switches) is recorded as
+  not applicable, since no boolean sampler control exists.
+
 ## [2.0.195]
 
 ### Added

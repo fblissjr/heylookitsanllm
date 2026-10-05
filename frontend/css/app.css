@@ -1887,3 +1887,31 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
     font-size: 16px;
   }
 }
+
+
+/* ================= themed model picker (desktop) ================= */
+
+/* Safari 27 and current Chrome can style the OPEN picker of a <select>
+   (appearance: base-select). Pointer devices only: the phone keeps the native
+   wheel, which is the right control for a thumb. The closed select keeps the
+   .input styling above. The option labels still carry their text residency
+   marks, so nothing depends on this block being honoured. */
+@supports (appearance: base-select) {
+  @media (pointer: fine) {
+    .chat__bar > select,
+    .chat__bar > select::picker(select) { appearance: base-select; }
+    .chat__bar > select::picker(select) {
+      background: var(--surface);
+      color: var(--ink);
+      border: 1px solid var(--line-strong);
+      border-radius: var(--r-card);
+      padding: 0.25rem;
+    }
+    .chat__bar > select option {
+      padding: 0.375rem 0.5rem;
+      border-radius: var(--r-ctl);
+    }
+    .chat__bar > select option:hover { background: var(--surface-2); }
+    .chat__bar > select option:checked { background: var(--brand-tint); }
+  }
+}

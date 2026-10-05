@@ -10,7 +10,7 @@ How to use this file: one phase (or one Phase 4 step) per session, on a branch. 
 | --- | --- | --- |
 | 1 Tokens | On main as v2.0.191 (merged 2026-10-05); light control borders raised to 3:1 in v2.0.192 | open questions 1 and 2 settled (below); page suites under dark green at v2.0.193; the iPhone check not yet run |
 | 2 Safari fixes | On main as v2.0.193 (merged 2026-10-05, built by session mrgreen) | six fixes; two of this file's snippets were wrong and are corrected below; Chrome suites green in both themes (page suites under dark: chat 53/53, pages 32/32); device checks not yet run; four follow-ups listed under Phase 2 |
-| 3 Platform | Items 1 to 3 on main (v2.0.194, v2.0.195); items 4 and 5 not started | the Home Screen and Increase Contrast checks are the owner's |
+| 3 Platform | Items 1, 2, 3 and 5 on main (v2.0.194 to v2.0.196); item 4 not applicable (no boolean control exists) | the Home Screen, Increase Contrast and desktop-picker checks are the owner's |
 | 3b Preset manager | Approved (owner, 2026-10-05, mock on the plan doc); next build | right after the on-device pass |
 | 4 Toward Workbench | Not started | gated on A being live and measured |
 
@@ -211,7 +211,7 @@ A Home Screen app keeps its own browser storage, so per-browser preferences star
 h1, h2, h3 { text-wrap: balance; }
 ```
 
-**4. Native switches for on/off settings.** Add the `switch` attribute to the boolean sampler checkbox (`settings.js`, the `type: 'checkbox'` control) and tint it with `accent-color: var(--accent)`. iOS renders its own switch, with haptics; other browsers show a checkbox.
+**4. Native switches for on/off settings.** NOT APPLICABLE as of 2026-10-05: the only boolean sampler control became a three-state select in v1.79.62 (model default / on / off), and no `type: 'checkbox'` control is built today. If a boolean control returns, give it the `switch` attribute and `accent-color: var(--accent)`; iOS renders its own switch, with haptics, other browsers a checkbox.
 
 **5. A themed model picker on desktop.** Safari 27 and current Chrome support `appearance: base-select`, so the open picker can use heylook's tokens instead of the system menu. Pointer devices only; the phone keeps the native wheel.
 
@@ -227,7 +227,7 @@ h1, h2, h3 { text-wrap: balance; }
 }
 ```
 
-The option labels keep their ● / ○ residency text, so nothing depends on the new styling.
+The option labels keep their ● / ○ residency text, so nothing depends on the new styling. As built (v2.0.196): the block above plus option padding, a hover fill and a rounded option; verified in Chrome only, since the open picker cannot be screenshotted headless; Safari 27 is the owner's check.
 
 ## Phase 3b: presets get their own manager
 
