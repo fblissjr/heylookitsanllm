@@ -9,6 +9,29 @@ was classed done, obsolete, open or mixed with evidence
 to internal/archive/todo_closed_2026-09-25.md. Mixed sections stay whole: their
 checked-off items are history kept beside the open ones.*
 
+## Cache follow-ups from the Context Language Models paper (2026-10-05)
+
+Three measurements, none a feature; each through the real path with its
+conditions written down. Source: arXiv 2609.37725 and its code (SCR is a
+SGLang patch; the recurrent-state checkpoints it asks for already exist on
+both heylook arms). Mirrored on the dark-mode plan doc's task board.
+
+- [ ] **Reasoning-strip re-prefill on the gguf arm.** heylook sends prior
+  thinking as `reasoning_content` and the Qwen template drops it from
+  non-final turns, so the prefix match should stop at the previous assistant
+  message every turn. Read it from the perf store (prompt vs cached tokens
+  and cause, per turn of a thinking conversation). Expected: one answer's
+  length per turn; if so, accept and record the figure in `internal/`.
+- [ ] **`--cache-reuse` on a full-attention gguf.** llama-server's own
+  KV-shift reuse of matching chunks after a mid-prompt edit, the analogue of
+  the paper's Suffix Cache Reuse; `gguf_describe` already reads it as
+  "shift". `scripts/perf_ab.py`, arms by config, on the edit-an-earlier-message
+  flow. Decide whether it becomes a default for non-recurrent models.
+- [ ] **`--checkpoint-min-step` on a hybrid gguf.** llama-server's default
+  spacing between recurrent-state checkpoints is coarser than a chat turn.
+  `scripts/perf_ab.py` on multi-turn chat, `scripts/chain_probe.py` for
+  correctness.
+
 ## Next session: open owner calls and queued work (2026-09-25, mrpurple handoff)
 
 The three-phase plan is done (v2.0.150 - v2.0.167; CURRENT.md handoff). What
