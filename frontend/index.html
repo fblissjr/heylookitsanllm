@@ -3,6 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <!-- Before the stylesheet, so the first paint is already in the right
+       scheme. theme-color is --surface (the bottom nav) for browsers that
+       still read it; tests/unit/test_css_token_contrast.py derives both. -->
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f8f6f1">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#191713">
   <base href="/">
   <title>heylook</title>
   <link rel="icon" href="icon.svg">

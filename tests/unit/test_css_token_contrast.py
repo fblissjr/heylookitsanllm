@@ -10,6 +10,10 @@ with a delay (AGENTS.md "Derive, never hand-copy").
 
 Known light-theme misses are listed by name, each tied to the plan's open
 question that would close it; dark has none.
+
+`frontend/index.html` cannot read a CSS variable, so its `theme-color` metas
+are a hex copy of `--surface`. The last test derives the hex from the token,
+so the copy cannot drift from it.
 """
 import math
 import re
@@ -19,6 +23,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 CSS = ROOT / "frontend" / "css" / "app.css"
+INDEX = ROOT / "frontend" / "index.html"
 
 TEXT_FLOOR = 4.5      # WCAG 2 AA, body text
 NON_TEXT_FLOOR = 3.0  # WCAG 2 AA, UI component borders and placeholders
@@ -64,8 +69,8 @@ def _root_block(css: str) -> str:
     return m.group(1)
 
 
-def _oklch_to_luminance(value: str) -> float:
-    """CSS oklch(L C H [/ a]) -> WCAG relative luminance, sRGB-clipped."""
+def _oklch_to_linear_srgb(value: str) -> tuple[float, float, float]:
+    """CSS oklch(L C H [/ a]) -> linear sRGB, clipped to gamut."""
     m = re.fullmatch(r"oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*(?:/.*)?\)", value.strip())
     assert m, f"not a bare oklch() value: {value!r}"
     L, C, h = (float(x) for x in m.groups())
@@ -77,7 +82,19 @@ def _oklch_to_luminance(value: str) -> float:
     g = -1.2684380046 * l_ + 2.6097574011 * m_ - 0.3413193965 * s_
     bl = -0.0041960863 * l_ - 0.7034186147 * m_ + 1.7076147010 * s_
     clip = lambda x: min(1.0, max(0.0, x))  # noqa: E731
-    return 0.2126 * clip(r) + 0.7152 * clip(g) + 0.0722 * clip(bl)
+    return clip(r), clip(g), clip(bl)
+
+
+def _oklch_to_luminance(value: str) -> float:
+    """CSS oklch(L C H [/ a]) -> WCAG relative luminance."""
+    r, g, bl = _oklch_to_linear_srgb(value)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * bl
+
+
+def _oklch_to_hex(value: str) -> str:
+    """CSS oklch(L C H) -> the #rrggbb a browser paints for it."""
+    encode = lambda x: 12.92 * x if x <= 0.0031308 else 1.055 * x ** (1 / 2.4) - 0.055  # noqa: E731
+    return "#" + "".join(f"{round(encode(x) * 255):02x}" for x in _oklch_to_linear_srgb(value))
 
 
 def _contrast(fg: float, bg: float) -> float:
@@ -135,3 +152,18 @@ def test_pair_meets_floor(theme, fg, bg, floor):
             f"({KNOWN_LIGHT_MISSES[(fg, bg)]})")
         return
     assert ratio >= floor, f"{theme}: {fg} on {bg} is {ratio:.2f}:1, floor {floor}"
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_theme_color_meta_is_the_surface_token(theme):
+    # --surface is the bottom nav, the element that touches the browser's bar.
+    html = INDEX.read_text()
+    m = re.search(
+        rf'<meta name="theme-color" media="\(prefers-color-scheme: {theme}\)" content="([^"]+)">', html)
+    assert m, f"index.html has no theme-color meta for {theme}"
+    want = _oklch_to_hex(TOKENS["surface"][theme])
+    assert m.group(1).lower() == want, f"{theme} theme-color is {m.group(1)}, --surface is {want}"
+    scheme = re.search(r'<meta name="color-scheme" content="([^"]+)">', html)
+    assert scheme and scheme.group(1) == "light dark", "index.html must declare the scheme :root follows"
+    assert html.index(scheme.group(0)) < html.index('rel="stylesheet"'), (
+        "color-scheme must come before the stylesheet, or the first paint is light")
