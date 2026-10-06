@@ -291,14 +291,16 @@ Owner, 2026-10-06: heavy battery drain on the iPhone over an evening of use. Not
 
 1. **A probe.** An opt-in instrument beside the render suite: it drip-feeds a fixed reply into the real chat page (the suite's `serveV3` stream) under CPU throttling and reads Chrome's own counters for the run (script, layout, style and task time). Arms are frontend trees (`E2E_V3_ROOT`), run in alternating order, and there is no verdict unless two runs of the same tree agree. Chrome is a proxy here: it ranks suspects, it does not certify WebKit.
    - Gate: a control pair agrees, and a planted cost (the painter at one paint per frame) shows up.
+   - As built: `tests/e2e/paint_cost.mjs` (`bun run e2e:cost`, described in `tests/e2e/README.md`). Its gate run, a control pair plus the planted painter, is recorded in `internal/claude/perf/`.
 2. **A baseline on the phone** (the owner's). Settings, Battery, for the evening: which app carried it (the Home Screen app or the browser), on screen or in the background. Then Web Inspector attached to the phone for one long streamed reply and one idle minute.
    - Gate: the drain is placed: streaming, idle, or neither (screen time).
+   - Owner, 2026-10-06: probably the browser, not sure, and possibly unrelated to the app. So the Battery screen is still worth a look if the phone keeps that evening, and the Web Inspector pass is what places the drain.
 3. **Rank the suspects**, one change per arm: `pretty` off for the streaming message only; the caret held still; a longer paint interval; coalesced deltas from the server only if the per-chunk task shows.
    - Gate: each arm has a record in `internal/` with its conditions.
 4. **Cut what ranks above noise**, one commit each.
    - Gate: the probe shows the drop, tail-follow and the streaming checks in `e2e:render` stay green, and the owner's next evening agrees.
 
-Steps 1 and 2 do not depend on Phase 4 and can run before it finishes. The cuts come last, after the phone chrome stops moving: Phase 4 steps 5 and 6 change what a paint costs.
+DECIDED 2026-10-06 (owner): steps 1 and 2 run before Phase 4 step 2. The cuts come last, after the phone chrome stops moving: Phase 4 steps 5 and 6 change what a paint costs.
 
 ## Verification
 

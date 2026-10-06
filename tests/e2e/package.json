@@ -9,6 +9,7 @@
     "e2e:chat": "node run.mjs chat",
     "e2e:pages": "node run.mjs pages",
     "e2e:render": "node render.mjs",
+    "e2e:cost": "node paint_cost.mjs run",
     "e2e:ios": "node ios-sim.mjs"
   },
   "dependencies": {

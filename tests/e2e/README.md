@@ -115,6 +115,30 @@ scroll, and a never-failing report of where the nav and top bar ended up plus
 how far the page scrolled. Those last numbers decide whether hiding the nav on
 composer focus is worth building.
 
+## `e2e:cost`: what a streamed reply costs the page
+
+`bun run e2e:cost -- --arm base=../../frontend --arm new=<another frontend dir>`
+is an instrument, not a suite. It asserts nothing about the app; it measures
+and writes a record with its conditions, the way `scripts/perf_ab.py` does for
+the server. It streams one fixed reply into the real chat page (phone
+emulation, CPU throttled, the render suite's stub store and drip server) and
+reads Chrome's own counters either side of the stream: task, script, layout
+and style time, and the number of layouts and style recalcs.
+
+- An arm is a frontend tree. Each arm run gets a fresh Chrome, the first
+  stream in it is warmup and is dropped, and rounds alternate the arm order.
+- Give the same directory twice to get a control pair. Two arms whose ranges
+  overlap are reported as noise; a control pair that is not noise marks the
+  whole run contaminated and the command exits 3.
+- The record goes to `internal/claude/perf/` (unversioned) unless `--out`
+  says otherwise. No figure from it belongs in a tracked doc.
+- It ranks suspects in Chrome. It does not measure the phone: WebKit on the
+  device decides whether a ranked suspect matters there.
+
+Flags: `--reps`, `--rounds`, `--throttle`, `--out`. It honours `E2E_CHROME`
+and `E2E_COLOR_SCHEME` (dark when unset). Like the suites it needs an
+unsandboxed shell (a local port and Chrome).
+
 ## Config (env vars)
 
 | var                   | default                              | meaning |

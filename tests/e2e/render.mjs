@@ -78,7 +78,7 @@ const DRIP_DEFAULTS = {
   tailPauseMs: 0, omitSaved: false, progress: [], progressDelayMs: 0,
 };
 
-function serveV3() {
+export function serveV3() {
   const drip = { ...DRIP_DEFAULTS, progress: [] };
   // Mutates in place: streamDrip reads `drip` at REQUEST time, so the object
   // identity has to survive. `progress` gets a fresh array so a default is
@@ -522,7 +522,7 @@ function watchPageErrors(page, openedAt) {
   return pageErrors;
 }
 
-async function openChat(browser, base, {
+export async function openChat(browser, base, {
   residencyDelayMs = 0, sseDelayMs = 0, unsaved = false, mobile = false, caps = [],
   secondModel = null, withMedia = false, dripGenerate = false, presets = [], appliedPresetId = null,
 } = {}) {
@@ -771,7 +771,7 @@ async function parkMidThread(page) {
 // subtree painter and an incremental one are told apart by how many nodes a
 // single paint removes, and enough shapes (fence with a blank line inside,
 // loose list, table, quote) that a bad split boundary shows up as a diff.
-const STREAM_DOC = [
+export const STREAM_DOC = [
   'Here is the short answer, followed by the detail you asked for.',
   '## What is happening',
   'The painter re-parsed the whole message on every frame, which is why the '
@@ -816,7 +816,7 @@ async function waitStreamEnd(page) {
   await settle(page);
 }
 
-async function sendAndWait(page, text = 'go') {
+export async function sendAndWait(page, text = 'go') {
   await startSend(page, text);
   await waitStreamEnd(page);
 }
@@ -4007,7 +4007,13 @@ async function main() {
   process.exit(failed > 0 || fatal ? 1 : 0);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// tests/e2e/paint_cost.mjs imports this file as `./render.mjs?lib` for the
+// stub store, the page opener and the drip stream. The query string is the
+// whole switch: no environment variable and no argv test can turn the suite
+// off by accident, so a plain `node render.mjs` always runs it.
+if (!new URL(import.meta.url).searchParams.has('lib')) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
