@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.201]
+
+### Added
+
+- **`bun run e2e:cost`: a paint-cost probe for the chat page.** An opt-in
+  instrument beside the render suite, in the family of `scripts/perf_ab.py`.
+  It streams one fixed reply into the real chat page under phone emulation
+  and a CPU throttle and reads Chrome's task, script, layout and style
+  counters either side of the stream. Arms are frontend trees; two arms on
+  the same tree are a control pair, and a control pair that is not noise
+  voids the run. It ranks suspects in Chrome and does not measure the phone.
+  This is step 1 of Phase 5 (phone battery) in the dark mode plan.
+- `tests/e2e/render.mjs` exports the stub server, the page opener and the
+  drip stream for the probe. It still runs its suite on a plain invocation;
+  only an import as `render.mjs?lib` skips it.
+- Checks: the probe's own gate (a control pair came out as noise, a planted
+  per-frame painter came out as a difference; the record is local, in
+  `internal/claude/perf/`); `e2e:render` in light after the export change;
+  the backend suite. No app code changed.
+
 ## [2.0.200]
 
 ### Changed
