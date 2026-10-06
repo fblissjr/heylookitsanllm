@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.200]
+
+### Changed
+
+- **Spacing in `app.css` reads tokens.** Padding, margin and gap use
+  `--space-N` (N is the step's multiple of 0.25rem) wherever the value was
+  already on that grid; a value off the grid stays a literal. Nothing moves
+  on screen. This is step 1 of Phase 4 in the dark mode plan.
+- The dark mode plan records the owner's decisions for Phase 4 steps 1, 3, 4
+  and 5 under those steps, records the device pass as closed by the owner
+  without an item-by-item check, and gains Phase 5 (phone battery), which
+  measures before it changes anything.
+- Checks: expanding the tokens back reproduces the previous stylesheet text;
+  page screenshots taken from the render suite's stub store are
+  pixel-identical before and after in light and in dark, after a control pair
+  of the base commit came out identical; `e2e:render` in both themes; the
+  backend suite. Not run: the live chat and pages suites, anything on a
+  device.
+
 ## [2.0.199]
 
 ### Fixed

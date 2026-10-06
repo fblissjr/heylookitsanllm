@@ -1,6 +1,6 @@
 # Plan: dark mode, Lamplight to Workbench
 
-Last updated: 2026-10-06 (the owner closed the device pass; Phase 5, phone battery, added; Phase 4 step 1 built on a branch; four Phase 4 decisions recorded under their steps; before that, 2026-10-05: Phases 1 and 2 on main; open questions 1 to 4 settled; Phase 2 snippets corrected as built; follow-ups listed; Phase 3b, the preset manager, added and approved)
+Last updated: 2026-10-06 (the owner closed the device pass; Phase 5, phone battery, added; Phase 4 step 1 on main as v2.0.200; four Phase 4 decisions recorded under their steps; before that, 2026-10-05: Phases 1 and 2 on main; open questions 1 to 4 settled; Phase 2 snippets corrected as built; follow-ups listed; Phase 3b, the preset manager, added and approved)
 
 How to use this file: one phase (or one Phase 4 step) per session, on a branch. The values and rules here become code in `frontend/css/app.css` and rules in `frontend/DESIGN.md` as each phase lands; once landed, those files are the source of truth, not this plan. Open decisions are at the end; settle the first two before Phase 1.
 
@@ -12,7 +12,7 @@ How to use this file: one phase (or one Phase 4 step) per session, on a branch. 
 | 2 Safari fixes | On main as v2.0.193 (merged 2026-10-05, built by session mrgreen) | six fixes; two of this file's snippets were wrong and are corrected below; Chrome suites green in both themes (page suites under dark: chat 53/53, pages 32/32); device checks not yet run; four follow-ups listed under Phase 2 |
 | 3 Platform | Items 1, 2, 3 and 5 on main (v2.0.194 to v2.0.196); item 4 not applicable (no boolean control exists) | the Home Screen, Increase Contrast and desktop-picker checks are the owner's |
 | 3b Preset manager | On main as v2.0.198, fixes from the device pass as v2.0.199 (session mrgreen) | the owner's retest on the phone: a typed value then straight to Save; the Presets editor's untouched Save |
-| 4 Toward Workbench | Not started | gated on A being live and measured |
+| 4 Toward Workbench | Step 1 (spacing tokens) on main as v2.0.200; steps 2 to 7 not started | each step has its gate under Phase 4; the device pass no longer gates them |
 | 5 Phone battery | Not started | measure first; the cuts come after Phase 4 |
 
 Device pass: closed by the owner on 2026-10-06 after an evening of use on the iPhone. It was not checked item by item, so the rows above that name a device check keep their wording. Its one new finding is battery drain, which Phase 5 takes.
