@@ -165,9 +165,14 @@ def mount_frontend(app: FastAPI) -> None:
     # `data:image/svg+xml,...` href; some client reached this server on every
     # page load asking for `/>data:image/svg+xml,...` -- the href verbatim with
     # a `>` glued on front, resolved against `<base href="/">` because `>data`
-    # is not a scheme. Our markup was well-formed, so the mis-parse was theirs;
-    # a plain relative path has nothing left to mis-parse. Measured 2026-09-06:
-    # the logged path was byte-for-byte `"/>" + href`.
+    # is not a scheme. Our markup was well-formed, so the mis-parse was theirs.
+    # Measured 2026-09-06: the logged path was byte-for-byte `"/>" + href`.
+    # A plain relative path does NOT stop it: on 2026-10-06 a client on the
+    # owner's phone asked for `/>apple-touch-icon.png` the same way. What the
+    # file buys is that the stray request is one short 404, where it used to
+    # be a whole data: URI in the log on every page load. Nothing is mounted
+    # for the mis-parsed path: the real icon is served, and this tree mounts
+    # only its real shape.
     # /favicon.ico serves the same SVG: a browser asks for it by convention
     # on any response that names no icon (a JSON error page, a 403).
     @app.api_route("/icon.svg", methods=["GET", "HEAD"], include_in_schema=False)
