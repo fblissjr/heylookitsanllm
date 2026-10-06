@@ -1,6 +1,6 @@
 # Plan: dark mode, Lamplight to Workbench
 
-Last updated: 2026-10-06 (Phase 4 step 1 built on a branch; four Phase 4 decisions recorded under their steps; before that, 2026-10-05: Phases 1 and 2 on main; open questions 1 to 4 settled; Phase 2 snippets corrected as built; follow-ups listed; Phase 3b, the preset manager, added and approved)
+Last updated: 2026-10-06 (the owner closed the device pass; Phase 5, phone battery, added; Phase 4 step 1 built on a branch; four Phase 4 decisions recorded under their steps; before that, 2026-10-05: Phases 1 and 2 on main; open questions 1 to 4 settled; Phase 2 snippets corrected as built; follow-ups listed; Phase 3b, the preset manager, added and approved)
 
 How to use this file: one phase (or one Phase 4 step) per session, on a branch. The values and rules here become code in `frontend/css/app.css` and rules in `frontend/DESIGN.md` as each phase lands; once landed, those files are the source of truth, not this plan. Open decisions are at the end; settle the first two before Phase 1.
 
@@ -13,6 +13,9 @@ How to use this file: one phase (or one Phase 4 step) per session, on a branch. 
 | 3 Platform | Items 1, 2, 3 and 5 on main (v2.0.194 to v2.0.196); item 4 not applicable (no boolean control exists) | the Home Screen, Increase Contrast and desktop-picker checks are the owner's |
 | 3b Preset manager | On main as v2.0.198, fixes from the device pass as v2.0.199 (session mrgreen) | the owner's retest on the phone: a typed value then straight to Save; the Presets editor's untouched Save |
 | 4 Toward Workbench | Not started | gated on A being live and measured |
+| 5 Phone battery | Not started | measure first; the cuts come after Phase 4 |
+
+Device pass: closed by the owner on 2026-10-06 after an evening of use on the iPhone. It was not checked item by item, so the rows above that name a device check keep their wording. Its one new finding is battery drain, which Phase 5 takes.
 
 Phase 1 checks run: backend suite, `E2E_COLOR_SCHEME=dark bun run e2e:render`, screenshots of every page in both themes. Not yet run: the page suites under dark, the iPhone check.
 
@@ -273,6 +276,30 @@ Seven steps take A to B, ordered so the cheapest and most reversible land first 
 7. **The Workbench palette and shape.** Swap the dark half of each `light-dark()` pair to graphite with honey as the only accent, and set radii to 9, 16 and 22px. The light theme keeps Lamplight's values unless decided otherwise (open question 5).
    - Gate: the contrast table passes in both themes.
 
+## Phase 5: phone battery
+
+Owner, 2026-10-06: heavy battery drain on the iPhone over an evening of use. Nothing here is a finding yet. The phone renders, holds a stream open and lights a screen, and an evening of any of that drains a battery; a spot observation is not a performance test (AGENTS.md). This phase measures first and changes only what the measurement ranks.
+
+**What the code says before any measurement.**
+
+- Idle, the page runs nothing of its own: outside `vendor/` there is no `setInterval` and no observer in `frontend/js/` (`grep -rn "setInterval\|Observer" frontend/js`), and the store mirror never polls (`.claude/rules/frontend.md`). If the drain came with the app open and idle, the screen is a likelier cause than the page.
+- While a reply streams, the painter runs once per `PAINT_INTERVAL_MS` (`chat.js`, `notebook.js`), re-renders the tail segment through marked and DOMPurify (`markdown-stream.js`), reads the scroll geometry and writes `scrollTop`. That is bounded by design (`sharp_edges.md`, "Incremental streaming render") and `e2e:render` holds the repaint rate.
+- Three things ride on those paints and have never been costed: `text-wrap: pretty` on message paragraphs (v2.0.195, landed 2026-10-05; the tail paragraph is laid out again at every paint), the streaming caret's endless blink, and one JS task per stream chunk between paints.
+- Dark is already the cheap direction on an OLED screen.
+
+**Steps.**
+
+1. **A probe.** An opt-in instrument beside the render suite: it drip-feeds a fixed reply into the real chat page (the suite's `serveV3` stream) under CPU throttling and reads Chrome's own counters for the run (script, layout, style and task time). Arms are frontend trees (`E2E_V3_ROOT`), run in alternating order, and there is no verdict unless two runs of the same tree agree. Chrome is a proxy here: it ranks suspects, it does not certify WebKit.
+   - Gate: a control pair agrees, and a planted cost (the painter at one paint per frame) shows up.
+2. **A baseline on the phone** (the owner's). Settings, Battery, for the evening: which app carried it (the Home Screen app or the browser), on screen or in the background. Then Web Inspector attached to the phone for one long streamed reply and one idle minute.
+   - Gate: the drain is placed: streaming, idle, or neither (screen time).
+3. **Rank the suspects**, one change per arm: `pretty` off for the streaming message only; the caret held still; a longer paint interval; coalesced deltas from the server only if the per-chunk task shows.
+   - Gate: each arm has a record in `internal/` with its conditions.
+4. **Cut what ranks above noise**, one commit each.
+   - Gate: the probe shows the drop, tail-follow and the streaming checks in `e2e:render` stay green, and the owner's next evening agrees.
+
+Steps 1 and 2 do not depend on Phase 4 and can run before it finishes. The cuts come last, after the phone chrome stops moving: Phase 4 steps 5 and 6 change what a paint costs.
+
 ## Verification
 
 Each phase is proved on the device it is for; desktop Chrome cannot show Safari's toolbar, focus zoom or Home Screen behaviour.
@@ -289,6 +316,7 @@ Each phase is proved on the device it is for; desktop Chrome cannot show Safari'
 | 3 | Add to Home Screen: own icon, no Safari bar, status bar clear of content | iPhone 17 Pro |
 | 3 | Increase Contrast on: muted text and borders strengthen | iPhone 17 Pro |
 | 4 | Each step's gate, with the message viewport read in Web Inspector as `document.querySelector('.chat__messages').clientHeight` | iPhone 17 Pro + chat E2E |
+| 5 | The probe's control pair and each arm; the phone's Battery screen and Web Inspector timeline | desktop Chrome via the render harness, then iPhone 17 Pro |
 
 Per AGENTS.md's done rules, each phase lands with its docs: DESIGN.md section 1 gains a dark column, section 7 gains the touch-size, closed-overlay and scroll-owner rules, and CHANGELOG plus `__version__` move together (proposed in the report when the work is on a branch).
 
