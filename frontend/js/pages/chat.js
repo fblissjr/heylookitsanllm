@@ -480,8 +480,10 @@ function buildSkeleton(ctx) {
       convsToggle,
       s.modelSelect,
       createEl('div', { class: 'chat__bar-detail' }, [
-        s.loadPanel.element,
-        s.loadNowBtn,
+        // The load settings and Load are one group, so the phone layout can
+        // keep them inside the strip's visible width together (app.css):
+        // display:contents on desktop, like the wrapper around them.
+        createEl('div', { class: 'chat__bar-load' }, [s.loadPanel.element, s.loadNowBtn]),
         s.presetChip,
         s.sysPromptChip,
         s.engineChip,

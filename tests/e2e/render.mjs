@@ -2595,6 +2595,101 @@ async function main() {
       assert(info.options.some((o) => /\(max\)$/.test(o)), `no ceiling offered: ${JSON.stringify(info.options)}`);
       assert(info.h >= 44, `phone touch target under 44px: ${info.h}px`);
     });
+    await suite.check('touch: every chat bar control fits or scrolls into view at the iOS text sizes', async () => {
+      // On touch the root takes iOS's body text style (app.css, "touch text
+      // size"), so 1rem is 17px at the default Text Size and 23px at the
+      // largest standard one (Apple's Dynamic Type sizes for Body); 16 is the
+      // root every other engine keeps. Chrome does not know
+      // `-apple-system-body`, so the root is set by hand: this holds the
+      // LAYOUT at those sizes. Whether WebKit honours the keyword is a device
+      // check.
+      //
+      // Measured with a COLD model selected, because that is when the bar's
+      // second line is fullest: the context select, the load settings and
+      // Load. That line is a strip that scrolls sideways (DESIGN.md §7), so
+      // "fits" has two parts. The load controls sit fully inside the strip
+      // with nothing scrolled: v2.0.202 pushed Load past the right edge on
+      // the owner's phone while the first line and the composer were fine,
+      // and the check that shipped with it looked only at those two.
+      // Everything else on the strip (the chips) has to come fully into view
+      // when the strip is scrolled to it.
+      const ROOT_PX = [16, 17, 23];
+      const { page } = ctxm;
+      const problems = [];
+      for (const px of ROOT_PX) {
+        const m = await page.evaluate((rootPx) => {
+          const root = document.documentElement;
+          root.style.fontSize = `${rootPx}px`;
+          const w = window.innerWidth;
+          const shown = (els) => [...els].filter((el) => el.getClientRects().length);
+          const name = (el) => `${el.tagName.toLowerCase()}${el.className ? '.' + el.className.split(' ').join('.') : ''}`;
+          const strip = document.querySelector('.chat__bar-detail');
+          strip.scrollLeft = 0;
+          const box = strip.getBoundingClientRect();
+          const inStrip = (el, slack = 0.5) => {
+            const r = el.getBoundingClientRect();
+            return r.left >= box.left - slack && r.right <= box.right + slack;
+          };
+          const onScreen = (el) => {
+            const r = el.getBoundingClientRect();
+            return r.left >= -0.5 && r.right <= w + 0.5;
+          };
+          const tierOne = shown(document.querySelectorAll(
+            '.chat__bar > .chat__convs-toggle, .chat__bar > select, .chat__bar > .chat__settings-btn'));
+          const load = shown(strip.querySelectorAll('.chat__load select, .chat__load input, .chat__load-btn'));
+          const rest = shown(strip.querySelectorAll('button, select, input')).filter((el) => !load.includes(el));
+          const composer = shown(document.querySelectorAll('.chat__composer > button, .chat__composer > textarea'));
+          const lines = tierOne.map((el) => el.getBoundingClientRect());
+          const out = {
+            coarse: matchMedia('(pointer: coarse)').matches,
+            tierOne: tierOne.length,
+            loadBtn: load.some((el) => el.classList.contains('chat__load-btn')),
+            loadSelects: load.filter((el) => el.tagName === 'SELECT').length,
+            rest: rest.length,
+            pageOverflow: root.scrollWidth - w,
+            offScreen: [...tierOne, ...composer].filter((el) => !onScreen(el)).map(name),
+            // One line: every first-line control overlaps every other vertically.
+            oneLine: Math.max(...lines.map((r) => r.top)) < Math.min(...lines.map((r) => r.bottom)),
+            loadCut: load.filter((el) => !inStrip(el)).map(name),
+            // Shrinking must not slide one control under its neighbour.
+            overlapping: [...load]
+              .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left)
+              .filter((el, i, all) => i > 0
+                && el.getBoundingClientRect().left < all[i - 1].getBoundingClientRect().right - 0.5)
+              .map(name),
+            clippedNav: shown(document.querySelectorAll('#bottom-nav .nav-item'))
+              .filter((el) => el.scrollWidth > el.clientWidth).map((el) => el.textContent),
+            fieldPx: parseFloat(getComputedStyle(document.querySelector('.chat__bar > select')).fontSize),
+            messages: document.querySelector('.chat__messages').clientHeight,
+          };
+          // Measured last: it moves the strip.
+          out.unreachable = rest.filter((el) => {
+            el.scrollIntoView({ inline: 'end', block: 'nearest' });
+            return !inStrip(el, 1);   // a scroll offset is a whole pixel
+          }).map(name);
+          strip.scrollLeft = 0;
+          root.style.fontSize = '';
+          return out;
+        }, px);
+        // Is this the state the check is about? If not, nothing below means anything.
+        assert(m.coarse, 'the touch emulation is not live, so this measured the desktop layout');
+        assert(m.tierOne === 3, `expected Chats, the model select and the gear in the bar's first line, found ${m.tierOne}`);
+        assert(m.loadBtn, 'Load is not showing, so the selected model is not cold and this is not the reported state');
+        assert(m.loadSelects >= 2, `expected the context select and a load setting on the strip, found ${m.loadSelects} select(s)`);
+        assert(m.rest >= 1, 'no chip on the strip, so the scroll-into-view half measured nothing');
+        const at = (text) => problems.push(`${px}px root: ${text}`);
+        if (m.pageOverflow > 0) at(`the page scrolls sideways by ${m.pageOverflow}px`);
+        if (m.offScreen.length) at(`these leave the screen: ${m.offScreen.join(', ')}`);
+        if (!m.oneLine) at("the bar's first line wraps");
+        if (m.loadCut.length) at(`cut off by the edge of the bar's second line: ${m.loadCut.join(', ')}`);
+        if (m.overlapping.length) at(`these overlap the control before them on the second line: ${m.overlapping.join(', ')}`);
+        if (m.unreachable.length) at(`these do not come fully into view when the second line is scrolled: ${m.unreachable.join(', ')}`);
+        if (m.clippedNav.length) at(`these nav labels are clipped: ${m.clippedNav.join(', ')}`);
+        if (m.fieldPx < px) at(`the model select is ${m.fieldPx}px and does not follow the root`);
+        if (m.messages <= 0) at('the message list has no height left');
+      }
+      assert(problems.length === 0, problems.join('\n      '));
+    });
     // The ladder is a convenience, not the range. Driven by REAL typing and a
     // real Enter, not a dispatched change: the commit path runs off the
     // input's own keydown, and a synthetic event aimed at a convenient node

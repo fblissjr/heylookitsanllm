@@ -747,6 +747,7 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 /* Desktop: the detail group is invisible to layout (see chat.js); the phone
    block below turns it into the bar's second line. */
 .chat__bar-detail { display: contents; }
+.chat__bar-load { display: contents; }
 
 .chat__messages {
   flex: 1;
@@ -1189,18 +1190,43 @@ h1, h2, h3 { text-wrap: balance; }
   .chat__bar-detail::-webkit-scrollbar {
     display: none;
   }
+  /* The load settings and Load are one group that never grows past the
+     strip's VISIBLE width: a percentage max-width on a flex item resolves
+     against the scroller's own box, not its scrolled content. Inside it the
+     selects give way and Load never does, so Load is on screen at any text
+     size. The context select gives way first: its width comes from its
+     longest option, not from what it shows.
+     Load was cut off at the right edge once the root followed the iOS Text
+     Size (v2.0.202, reverted), and sat a few pixels over it before that. The
+     chips after the group still scroll. */
+  .chat__bar-load {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex: 0 0 auto;
+    max-width: 100%;
+    min-width: 0;
+  }
+  /* Flat: the selects are the group's own flex items, so each one's
+     min-width holds when the group runs out of room. As shrinkable boxes
+     around them, these wrappers shrank past their own select and the two
+     selects overlapped. */
   .chat__load,
   .chat__load-extras,
-  .chat__ctx { flex: 0 0 auto; }
+  .chat__ctx { display: contents; }
   .chat__load-select,
   .chat__ctx-select,
   .chat__ctx-custom {
-    flex: 0 0 auto;
+    flex: 0 1 auto;
+    min-width: 4rem;
     min-height: 44px;
-    max-width: 9rem;
     padding: var(--space-1) var(--space-2);
     font-size: var(--text-sm);
+    text-overflow: ellipsis;
   }
+  /* First to give way, all the way to its min-width, before a load setting
+     loses any of its label: that label is the setting's current value. */
+  .chat__ctx-select { flex-shrink: 100; }
   /* DESIGN.md §7: the custom box is a touch target like everything else on
      this bar, and it appears BESIDE the select, so it gets its own width
      rather than inheriting the select's. */
@@ -2018,6 +2044,19 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
   }
 }
 
+/* ================= touch text size ================= */
+
+/* On touch the root takes iOS's body text style, so 1rem is the reader's own
+   Text Size setting and every rem in this file follows it, where it used to
+   be a fixed 16px. `font` is a shorthand and resets the family, so the next
+   declaration restores ours. Only WebKit knows the keyword: other engines
+   drop the declaration and keep their default root size, which is why Chrome
+   shows no change. body sets its own line-height, so the shorthand's does not
+   reach the page. */
+@media (pointer: coarse) {
+  html { font: -apple-system-body; font-family: var(--font); }
+}
+
 /* ================= touch field size ================= */
 
 /* iOS zooms the page when a focused control's text is under 16px. Last in the
@@ -2026,11 +2065,13 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
    The rule only ever raises a size: .notebook__title is an .input that is
    already larger, so it is excluded rather than pulled down. A field with its
    own class and size (.cfg-tmpl__body) has to be named, because a bare
-   `textarea` loses to any class. tests/e2e/render.mjs holds the property. */
+   `textarea` loses to any class. max(), not a bare 16px: 16px is the floor
+   that stops the zoom, and above it a field follows the root like the text
+   around it (the block above). tests/e2e/render.mjs holds both properties. */
 @media (pointer: coarse) {
   .input:not(.notebook__title), select, textarea, .sysprompt-input,
   .chat__bar > select, .chat__load-select, .chat__ctx-select, .chat__ctx-custom,
   .cfg-tmpl__body {
-    font-size: 16px;
+    font-size: max(16px, 1rem);
   }
 }
