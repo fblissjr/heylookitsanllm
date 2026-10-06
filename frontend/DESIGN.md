@@ -69,6 +69,12 @@ telemetry. Scale: `--text-sm 0.8125rem / --text-ui 0.875rem / --text-body 1rem /
 --r-big 14px`. Motion: `--t-fast 140ms var(--ease)`; every animation has a
 `prefers-reduced-motion` fallback (global kill switch in `app.css`).
 
+Spacing: `--space-N`, where N is the step's multiple of 0.25rem (`--space-2` is
+0.5rem, `--space-12` is 3rem; the list is in `:root`). Padding, margin and gap
+read a token wherever the value is on that grid. A value off the grid stays a
+literal: write one only to match a neighbour that already uses it, and reach
+for a token first in new rules.
+
 ## 2. The data-strength color system (chips)
 
 v3 encodes scalar "strength" (probability, confidence, rank) as the **background
