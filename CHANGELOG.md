@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.204]
+
+### Changed
+
+- **On a touch device, text follows the iOS Text Size setting (second
+  attempt).** As in v2.0.202: the root takes iOS's body text style, everything
+  sized in rem follows the reader's setting, the phone layout is slightly
+  larger at the default setting, and touch fields keep the 16px floor that
+  stops the focus zoom. Only WebKit knows the keyword.
+- **Load stays on screen.** On the chat bar's second line the context select,
+  the load settings and Load are now one group that never grows wider than
+  the visible line. The selects shrink to make room, the context select
+  first, and Load does not. This is what v2.0.202 lacked: with a model that
+  was not loaded, Load was cut off at the right edge, and it had sat a few
+  pixels over that edge before.
+- Still true at the largest text size: the load setting's label is shortened,
+  and the chips after Load sit past the edge until the line is scrolled, as
+  they already did with an unloaded model. The readout line planned as step
+  5 of Phase 4 replaces that line.
+- NOT verified on a device at release. The owner checks it on the iPhone with
+  an unloaded model at the default and the largest Text Size; a miss is
+  reverted.
+- Checks: the render check now runs with an unloaded model selected and
+  covers every control in the chat bar at three root sizes. Run against the
+  previous frontend first it failed at all three, and nothing else failed;
+  `e2e:render` passes in both themes; page screenshots match the previous
+  release in dark for the loaded-model views; the backend suite.
+
 ## [2.0.203]
 
 ### Changed
