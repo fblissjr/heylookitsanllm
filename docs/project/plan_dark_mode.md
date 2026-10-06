@@ -12,7 +12,7 @@ How to use this file: one phase (or one Phase 4 step) per session, on a branch. 
 | 2 Safari fixes | On main as v2.0.193 (merged 2026-10-05, built by session mrgreen) | six fixes; two of this file's snippets were wrong and are corrected below; Chrome suites green in both themes (page suites under dark: chat 53/53, pages 32/32); device checks not yet run; four follow-ups listed under Phase 2 |
 | 3 Platform | Items 1, 2, 3 and 5 on main (v2.0.194 to v2.0.196); item 4 not applicable (no boolean control exists) | the Home Screen, Increase Contrast and desktop-picker checks are the owner's |
 | 3b Preset manager | On main as v2.0.198, fixes from the device pass as v2.0.199 (session mrgreen) | the owner's retest on the phone: a typed value then straight to Save; the Presets editor's untouched Save |
-| 4 Toward Workbench | Step 1 (spacing tokens) on main as v2.0.200; steps 2 to 7 not started | each step has its gate under Phase 4; the device pass no longer gates them |
+| 4 Toward Workbench | Step 1 (spacing tokens) on main as v2.0.200; step 2 (iOS text size) on main as v2.0.202, its gate OPEN until the owner's check on the iPhone; steps 3 to 7 not started | each step has its gate under Phase 4; the device pass no longer gates them |
 | 5 Phone battery | Step 1 (the probe) on main as v2.0.201; step 2 (the phone baseline) is the owner's; steps 3 and 4 not started | the cuts come after Phase 4 |
 
 Device pass: closed by the owner on 2026-10-06 after an evening of use on the iPhone. It was not checked item by item, so the rows above that name a device check keep their wording. Its one new finding is battery drain, which Phase 5 takes.

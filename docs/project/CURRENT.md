@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-10-06, v2.0.201, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
+Last updated: 2026-10-06, v2.0.202, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md) (triaged 2026-09-25;
@@ -16,6 +16,7 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
+| v2.0.202 dark mode phase 4 step 2 (on touch the root takes iOS's body text style; touch fields `max(16px, 1rem)`) | unit + contract 1542; `e2e:render` 105/105 light and dark, including the new layout check at the two iOS root sizes; against the previous frontend that check fails and nothing else does. NOT run: anything on a device. Chrome drops the keyword, so whether WebKit applies it and the Text Size setting moves the page is OPEN until the owner's iPhone check | v2.0.202 |
 | v2.0.201 the paint-cost probe (`bun run e2e:cost`, dark mode plan Phase 5 step 1; no app code changed) | unit + contract 1542; `e2e:render` 104/104 light after `render.mjs` gained its exports; the probe's gate: a control pair NOISE on every counter, a planted per-frame painter DIFFERS on every counter but wall time (local record in `internal/claude/perf/`). NOT run: `e2e:render` under dark for this change; anything on a device (the probe is a Chrome proxy by design) | v2.0.201 |
 | v2.0.200 dark mode phase 4 step 1 (on-grid spacing literals become `--space-N` tokens, no visual change) | unit + contract 1542; `e2e:render` 104/104 light and dark; expanding the tokens back reproduces the previous `app.css` text; page screenshots from the render suite's stub store identical before and after in both themes, with a control pair of the base commit identical first and a one-token mutant differing in every view. NOT run: the live chat and pages suites; anything on a device | v2.0.200 |
 | v2.0.199 phase 3b fixes from the owner's device pass (typed value commits as typed; debounced write keeps its target; Save sheet order and arm; editor safeguard) | unit + contract 1542; `e2e:render` 104/104 light and dark; live chat 56/56 (1 skipped) and pages 33/33 on Qwen3.5-0.8B (mrgreen). The owner's controlled repro on the iPhone (blur-then-save stores the value, straight-to-save did not) is the WebKit confirmation of the cause; the fix itself is unverified on a device | v2.0.199 |

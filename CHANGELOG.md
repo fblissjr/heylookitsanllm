@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.202]
+
+### Changed
+
+- **On a touch device, text follows the iOS Text Size setting.** The page's
+  root takes iOS's body text style, so everything sized in rem (type, spacing,
+  the chat bar) follows the reader's setting. At the default setting the phone
+  layout is slightly larger than before, because iOS's body size is larger
+  than the fixed root it replaces. Fields on touch keep the 16px floor that
+  stops the focus zoom and otherwise follow the root. Only WebKit knows the
+  keyword, so nothing changes in other engines. This is step 2 of Phase 4 in
+  the dark mode plan.
+- NOT verified on a device at release: that WebKit applies the keyword and
+  that the Text Size setting moves the page. The owner checks it on the
+  iPhone after this release; a miss is reverted, not patched.
+- Checks: `e2e:render` in both themes with one new check that sets the root to
+  the iOS body sizes at the default and the largest standard Text Size and
+  holds the phone chat bar and composer; run against the previous frontend
+  that check fails on the fixed-size field and nothing else fails; the
+  backend suite.
+
 ## [2.0.201]
 
 ### Added
