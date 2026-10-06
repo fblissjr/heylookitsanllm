@@ -1,6 +1,6 @@
 # Plan: dark mode, Lamplight to Workbench
 
-Last updated: 2026-10-05 (Phases 1 and 2 on main; open questions 1 to 4 settled; Phase 2 snippets corrected as built; follow-ups listed; Phase 3b, the preset manager, added and approved)
+Last updated: 2026-10-06 (Phase 4 step 1 built on a branch; four Phase 4 decisions recorded under their steps; before that, 2026-10-05: Phases 1 and 2 on main; open questions 1 to 4 settled; Phase 2 snippets corrected as built; follow-ups listed; Phase 3b, the preset manager, added and approved)
 
 How to use this file: one phase (or one Phase 4 step) per session, on a branch. The values and rules here become code in `frontend/css/app.css` and rules in `frontend/DESIGN.md` as each phase lands; once landed, those files are the source of truth, not this plan. Open decisions are at the end; settle the first two before Phase 1.
 
@@ -256,14 +256,18 @@ Seven steps take A to B, ordered so the cheapest and most reversible land first 
 
 1. **Spacing tokens, no visual change.** Name the ten steps app.css already uses as `--space-*` with their current values and replace the literals. B's 4px grid then becomes a change to token values only.
    - Gate: `e2e:render` and page screenshots identical before and after.
+   - DECIDED 2026-10-06 (owner): only values already on the 0.25rem grid become tokens, named `--space-N` by their multiple of it; `app.css` uses more spacing values than that, and the ones off the grid stay literals until step 7 moves pixels anyway. Owner also allowed this step ahead of the device pass, since it moves no pixel.
+   - As built: the screenshot comparison is only trustworthy with focus cleared and one full repaint forced before each capture. Without that, two runs of the same commit differed in the corner pixels of rounded outlines (a focus ring, nav items), so a control pair of the base commit comes first.
 2. **iOS text size on touch.** Under `@media (pointer: coarse)`, set `html { font: -apple-system-body; font-family: var(--font); }`. Body becomes 17pt (iOS's own default) and every rem follows the user's Text Size setting.
    - Gate: the phone chat bar and composer fit at the default and at the largest non-accessibility size.
 3. **Page navigation moves to the top on the phone.** A segmented control (Chat, Notes, Models, Perf) in the app shell's header replaces `#bottom-nav`; the gear moves beside it. DESIGN.md section 7's settings-entry rule is rewritten in the same change.
-   - Gate: measured message viewport on the phone rises by at least 54pt (the bottom nav's height).
+   - Gate: measured message viewport on the phone rises by `--bottom-nav-h` less the height of the new header row. REVISED 2026-10-06 (owner): the first gate asked for the whole bottom-nav height, which this step cannot reach, because the header it adds is itself a row.
 4. **Capsule composer.** The field and its tool buttons share one rounded border; Send becomes an icon button with `aria-label="Send"`. Touch targets stay 44pt.
    - Gate: the field is at least 260pt wide at 402pt, and the chat E2E suite passes.
+   - DECIDED 2026-10-06 (owner): two rows inside the one border, the field above the tools and Send. At 402pt with 44pt targets a single row keeps the gate's field width only beside Send and one tool, and the composer has three; hiding tools behind a button was the alternative and was not chosen.
 5. **A readout line.** Tier two of the phone chat bar becomes one mono line: context, cache reuse, tok/s, preset and system-prompt state. The system-prompt state stays visible, as DESIGN.md requires.
    - Gate: every fact the chips showed is still on screen without a tap.
+   - DECIDED 2026-10-06 (owner): tier two also holds controls (the context select, Load, the engine chip). They move into the panel that already opens under the bar for the engine chip, and a tap on the readout line opens it.
 6. **The document as the phone scroller.** Let the page scroll instead of `.chat__messages`, so Safari can retract its toolbar. Reports disagree on whether iOS retracts it for inner scrollers ([root scroller only](https://github.com/aparte-luxurious-homes/landing-page/pull/143), [inner elements too](https://developer.apple.com/forums/thread/690835)), so test first on iOS 27; skip this step if it already retracts.
    - Gate: toolbar retracts on device and tail-follow passes the chat E2E suite.
 7. **The Workbench palette and shape.** Swap the dark half of each `light-dark()` pair to graphite with honey as the only accent, and set radii to 9, 16 and 22px. The light theme keeps Lamplight's values unless decided otherwise (open question 5).
