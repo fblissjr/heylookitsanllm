@@ -2018,6 +2018,19 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
   }
 }
 
+/* ================= touch text size ================= */
+
+/* On touch the root takes iOS's body text style, so 1rem is the reader's own
+   Text Size setting and every rem in this file follows it, where it used to
+   be a fixed 16px. `font` is a shorthand and resets the family, so the next
+   declaration restores ours. Only WebKit knows the keyword: other engines
+   drop the declaration and keep their default root size, which is why Chrome
+   shows no change. body sets its own line-height, so the shorthand's does not
+   reach the page. */
+@media (pointer: coarse) {
+  html { font: -apple-system-body; font-family: var(--font); }
+}
+
 /* ================= touch field size ================= */
 
 /* iOS zooms the page when a focused control's text is under 16px. Last in the
@@ -2026,11 +2039,13 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
    The rule only ever raises a size: .notebook__title is an .input that is
    already larger, so it is excluded rather than pulled down. A field with its
    own class and size (.cfg-tmpl__body) has to be named, because a bare
-   `textarea` loses to any class. tests/e2e/render.mjs holds the property. */
+   `textarea` loses to any class. max(), not a bare 16px: 16px is the floor
+   that stops the zoom, and above it a field follows the root like the text
+   around it (the block above). tests/e2e/render.mjs holds both properties. */
 @media (pointer: coarse) {
   .input:not(.notebook__title), select, textarea, .sysprompt-input,
   .chat__bar > select, .chat__load-select, .chat__ctx-select, .chat__ctx-custom,
   .cfg-tmpl__body {
-    font-size: 16px;
+    font-size: max(16px, 1rem);
   }
 }
