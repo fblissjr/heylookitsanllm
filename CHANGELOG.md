@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.203]
+
+### Changed
+
+- **Reverted: text following the iOS Text Size setting (v2.0.202).** On the
+  owner's iPhone, with a model that is not loaded, the Load button on the
+  second line of the chat bar was cut off at the right edge. The larger root
+  size widened everything on that line, which is a strip that scrolls
+  sideways and has no room to spare. The step's gate asks for the chat bar to
+  fit, so the step is reverted, not patched. The frontend and the render
+  suite are back to their v2.0.201 state.
+- The check that shipped with the step looked at the bar's first line and the
+  composer and never at the second line, which is why it passed. The plan now
+  says what a second attempt has to hold.
+- Checks: the miss was reproduced in the render suite's phone emulation at the
+  old and the new root size before the revert; the backend suite on the
+  reverted tree.
+
 ## [2.0.202]
 
 ### Changed
