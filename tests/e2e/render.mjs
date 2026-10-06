@@ -2330,55 +2330,6 @@ async function main() {
         `fields under 16px on touch: ${got.small.map((f) => `${f.el} ${f.px}px`).join(', ')}`);
     });
 
-    await suite.check('touch: the chat bar and composer fit at the iOS text sizes', async () => {
-      // On touch the root takes iOS's body text style (app.css, "touch text
-      // size"), so 1rem is 17px at the default Text Size and 23px at the
-      // largest standard one (Apple's Dynamic Type sizes for Body). Chrome does
-      // not know `-apple-system-body` and keeps 16px, so the root size is set
-      // by hand: this holds the LAYOUT at those sizes, and that a field
-      // follows the root. Whether WebKit honours the keyword is a device check.
-      const IOS_BODY_PX = [17, 23];
-      for (const px of IOS_BODY_PX) {
-        const m = await mob.page.evaluate((rootPx) => {
-          const root = document.documentElement;
-          root.style.fontSize = `${rootPx}px`;
-          const w = window.innerWidth;
-          const shown = (sel) => [...document.querySelectorAll(sel)].filter((el) => el.getClientRects().length);
-          const name = (el) => `${el.tagName.toLowerCase()}${el.className ? '.' + el.className.split(' ').join('.') : ''}`;
-          const tierOne = shown('.chat__bar > .chat__convs-toggle, .chat__bar > select, .chat__bar > .chat__settings-btn');
-          const controls = [...tierOne, ...shown('.chat__composer > button, .chat__composer > textarea')];
-          const rects = tierOne.map((el) => el.getBoundingClientRect());
-          const out = {
-            coarse: matchMedia('(pointer: coarse)').matches,
-            tierOne: tierOne.length,
-            pageOverflow: root.scrollWidth - w,
-            outside: controls.filter((el) => {
-              const r = el.getBoundingClientRect();
-              return r.left < -0.5 || r.right > w + 0.5;
-            }).map(name),
-            // One line: every tier-one control overlaps every other vertically.
-            oneLine: Math.max(...rects.map((r) => r.top)) < Math.min(...rects.map((r) => r.bottom)),
-            clippedNav: shown('#bottom-nav .nav-item').filter((el) => el.scrollWidth > el.clientWidth).map((el) => el.textContent),
-            // The model select, not the composer field: the composer has its own
-            // rem size from an older rule, so only a field the touch block
-            // governs can tell max(16px, 1rem) from a fixed 16px.
-            fieldPx: parseFloat(getComputedStyle(document.querySelector('.chat__bar > select')).fontSize),
-            messages: document.querySelector('.chat__messages').clientHeight,
-          };
-          root.style.fontSize = '';
-          return out;
-        }, px);
-        assert(m.coarse, 'the touch emulation is not live, so this measured the desktop layout');
-        assert(m.tierOne === 3, `expected Chats, the model select and the gear in the bar's first line, found ${m.tierOne}`);
-        assert(m.pageOverflow <= 0, `at a ${px}px root the page scrolls sideways by ${m.pageOverflow}px`);
-        assert(m.outside.length === 0, `at a ${px}px root these leave the screen: ${m.outside.join(', ')}`);
-        assert(m.oneLine, `at a ${px}px root the bar's first line wraps`);
-        assert(m.clippedNav.length === 0, `at a ${px}px root these nav labels are clipped: ${m.clippedNav.join(', ')}`);
-        assert(m.fieldPx >= px, `at a ${px}px root the model select is ${m.fieldPx}px: it does not follow the root`);
-        assert(m.messages > 0, `at a ${px}px root the message list has no height left`);
-      }
-    });
-
     await mob.page.close();
 
     // ---- boot 7: drag/drop + paste attachment staging ---------------------

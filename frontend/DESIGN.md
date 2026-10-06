@@ -421,19 +421,10 @@ owner: "equally well on desktop web and iPhone 17 Pro Safari").
   `input`; a field read only by its own Save button may be read at press time
   instead (the Presets page editor, a rename box). Text that does not parse
   yet commits nothing rather than clearing the stored value.
-- **On touch, 1rem is the reader's Text Size.** A `@media (pointer: coarse)`
-  block gives the root iOS's body text style (`font: -apple-system-body`,
-  then our family again, because `font` is a shorthand). Every rem follows
-  the iOS Text Size setting from there: type, spacing tokens, the bar. Only
-  WebKit knows the keyword, so other engines keep their default root and
-  Chrome shows no change. New phone chrome has to hold at the default and at
-  the largest standard size; `tests/e2e/render.mjs` sets those root sizes by
-  hand and checks that the chat bar and composer still fit.
 - **A text field is never under 16px on touch.** iOS zooms the page when a
   focused control's text is smaller, and desktop Chrome never shows it. One
   `@media (pointer: coarse)` block raises every `input`, `select` and
-  `textarea` to `max(16px, 1rem)` (the floor, or the root when the reader's
-  text size is larger), and it is the last block in `app.css` on purpose: the phone
+  `textarea`, and it is the last block in `app.css` on purpose: the phone
   bar's own sizes sit at the same specificity, so it wins by source order
   only. Add nothing after it. The block only raises: a field that is already
   larger is excluded from it (`.notebook__title`), and a field with its own
