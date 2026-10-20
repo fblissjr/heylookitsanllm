@@ -100,6 +100,7 @@ class Setting(BaseModel):
 class EngineDescription(BaseModel):
     """What one model runs on, with what, and why. Same keys on every engine."""
     runtime: Fact[str] = Field(description="The engine library: mlx-vlm or llama.cpp.")
+    embedding: Optional[Dict[str, Any]] = Field(default=None, description="Embedding operation metadata; null for generation models.")
     context: ContextFacts
     template: TemplateFacts
     settings: Dict[str, Setting] = Field(
@@ -368,6 +369,24 @@ def describe(model_config: Any, router: Any = None) -> EngineDescription:
 
     describer = _describers()[model_config.provider]
     cfg = config_dict(model_config.config)
+    from heylook_llm.embedding_models import embedding_info, gguf_embedding_profile
+    embedding = embedding_info(model_config.provider, cfg)
+    if embedding:
+        live = router.get_loaded_models().get(model_config.id) if router is not None else None
+        context = embedding["max_input_tokens"]
+        if model_config.provider == "gguf":
+            profile = gguf_embedding_profile(cfg)
+            context = profile["ctx_size"]
+            embedding = {**embedding, "load_profile": profile}
+        na = Fact(provenance="not_applicable", source="embedding operation")
+        return EngineDescription(
+            runtime=Fact(value="mlx-vlm" if model_config.provider == "mlx" else "llama.cpp",
+                         provenance="derived", source="provider"),
+            context=ContextFacts(length=Fact(value=context, provenance="derived", source="embedding context limit"),
+                                 running=Fact(value=getattr(live, "running_ctx", None), provenance="observed" if live else "unknown")),
+            template=TemplateFacts(origin=na, path=na, sha256=na, running_sha256=na),
+            settings={}, embedding=embedding,
+        )
     written, derived = _provenance_inputs(model_config.id, router)
     key = (model_config.provider, model_config.id)
     current = stamp(describer.static_inputs(model_config.id, cfg, written, derived))

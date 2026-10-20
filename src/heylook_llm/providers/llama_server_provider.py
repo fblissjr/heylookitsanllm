@@ -925,6 +925,16 @@ class LlamaServerProvider(BaseProvider):
             "-ngl", str(cfg.get("n_gpu_layers", 999)),
             "--no-webui",
         ]
+        if self.embedding:
+            from heylook_llm.embedding_models import gguf_embedding_profile
+            profile = gguf_embedding_profile(cfg)
+            args += ["--embeddings", "--pooling", "mean",
+                     "--ctx-size", str(profile["ctx_size"]),
+                     "-b", str(profile["n_batch"]), "-ub", str(profile["n_ubatch"]),
+                     "-fa", effective_flash_attn(cfg)[0]]
+            if cfg.get("mmproj_path"):
+                args += ["--mmproj", cfg["mmproj_path"]]
+            return args
         if cfg.get("ctx_size"):
             args += ["--ctx-size", str(cfg["ctx_size"])]
         # Always explicit: llama-server's own default is auto (on where the
@@ -1157,7 +1167,8 @@ class LlamaServerProvider(BaseProvider):
         # built AFTER the file pre-flight: the auto micro-batch sizes the
         # model's files against the Metal ceiling, and a missing file must
         # fail with the message that names the field, not inside sizing.
-        resolved_template, template_origin = self._resolve_chat_template()
+        resolved_template, template_origin = ((None, "not applicable: embedding") if self.embedding
+                                               else self._resolve_chat_template())
 
         # Pre-flight EVERY configured file HERE, not in _build_args (which
         # stays pure -- it is exercised by the argv/metadata drift test with
@@ -1199,9 +1210,14 @@ class LlamaServerProvider(BaseProvider):
                 f"longer means the embedded template unconditionally."
             )
 
-        self._drop_drafter_if_short()
-        auto_ubatch = self._auto_ubatch()
-        self._last_image_cap = self._image_token_cap(auto_ubatch)
+        if self.embedding:
+            from heylook_llm.embedding_models import gguf_embedding_profile
+            auto_ubatch = gguf_embedding_profile(self.config)["n_ubatch"]
+            self._last_image_cap = None
+        else:
+            self._drop_drafter_if_short()
+            auto_ubatch = self._auto_ubatch()
+            self._last_image_cap = self._image_token_cap(auto_ubatch)
         args = self._build_args(binary, port, resolved_template, True,
                                 auto_ubatch=auto_ubatch,
                                 image_max_tokens=self._last_image_cap)
@@ -1859,6 +1875,8 @@ class LlamaServerProvider(BaseProvider):
         return prompt
 
     def create_chat_completion(self, request: ChatRequest, abort_event=None) -> Generator:
+        if self.embedding:
+            raise InvalidGenerationRequest("Embedding models accept /v1/embeddings, not generation")
         if self._base_url is None:
             raise GenerationFailed(f"Model '{self.model_id}' is not loaded")
         payload = self._build_payload(request)

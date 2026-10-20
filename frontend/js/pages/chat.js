@@ -220,7 +220,7 @@ export default createPage({
     ]);
     if (!ctx.alive) return;
 
-    s.models = models.data ?? [];
+    s.models = (models.data ?? []).filter((m) => !m.engine?.embedding);
     s.conversations = convList.conversations ?? [];
     fillModelSelect(ctx);
     s.committedModelId = s.modelSelect.value || null;

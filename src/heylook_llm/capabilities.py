@@ -369,6 +369,12 @@ def derived_model_facts(model_config, router=None) -> ModelFacts:
     providers' observed halves. Both routes pass it.
     """
     resolved = config_dict(model_config.config)
+    from heylook_llm.embedding_models import embedding_info
+    embedding = embedding_info(model_config.provider, resolved)
+    if embedding:
+        return ModelFacts(resolved=resolved, capabilities=["embedding", *embedding["modalities"]],
+                          thinking_default=False, sampler_defaults={}, sampler_sources={},
+                          engine=describe(model_config, router))
     # ONE resolution, three consumers. `effective_capabilities` derives the
     # vision capability from this same value (v1.79.43), so letting it
     # resolve its own would rebuild the dump and re-run the router per row.

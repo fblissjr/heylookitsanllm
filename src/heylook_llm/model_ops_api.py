@@ -165,6 +165,10 @@ async def load_and_warm(router, model_id: str, warm: bool):
         )
 
         def _consume() -> None:
+            if provider.embedding:
+                from heylook_llm.schema.embeddings import EmbeddingRequest
+                provider.embed(EmbeddingRequest(model=model_id, input="hi"))
+                return
             # A warm that yields NOTHING is not a warm. An engine that fails
             # in its first decode without raising (the shape an unhandled
             # engine error frame had until v2.0.13) would otherwise report
@@ -186,7 +190,14 @@ async def load_and_warm(router, model_id: str, warm: bool):
 
         start = time.time()
         try:
-            await asyncio.to_thread(_consume)
+            if provider.embedding:
+                from heylook_llm.streaming_utils import _executor_pool
+                executor = _executor_pool.acquire()
+                future = asyncio.get_running_loop().run_in_executor(executor, _consume)
+                future.add_done_callback(lambda done: _executor_pool.release(executor))
+                await asyncio.shield(future)
+            else:
+                await asyncio.to_thread(_consume)
             result["warmed"] = True
             result["warm_ms"] = int((time.time() - start) * 1000)
         except Exception as e:

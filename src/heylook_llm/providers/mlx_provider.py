@@ -1115,6 +1115,10 @@ class MLXProvider(BaseProvider):
                     source=self.drafter_skipped or "loaded without a drafter")
 
     def load_model(self):
+        if self.embedding:
+            from .mlx_embeddings import load
+            load(self)
+            return
         model_path = self.config['model_path']
 
         logging.info(f"Loading model with mlx-vlm from: {model_path}")
@@ -1518,6 +1522,8 @@ class MLXProvider(BaseProvider):
 
             Path decision logic is pre-compiled and cached to minimize runtime overhead.
             """
+            if self.embedding:
+                raise InvalidGenerationRequest("Embedding models accept /v1/embeddings, not generation")
             if abort_event is None:
                 abort_event = AbortEvent()
 
@@ -1672,6 +1678,8 @@ class MLXProvider(BaseProvider):
         synthetic-image warmup once the request-events log shows VLM
         cold-start pain.
         """
+        if self.embedding:
+            return
         tok = self.get_tokenizer()
         if tok is None:
             logging.debug(f"warmup: {self.model_id} has no tokenizer; skipping")

@@ -132,7 +132,7 @@ export default createPage({
     ]);
     if (!ctx.alive) return;
 
-    s.models = models.data ?? [];
+    s.models = (models.data ?? []).filter((m) => !m.engine?.embedding);
     s.notebooks = list.notebooks ?? [];
     fillModelSelect(ctx);
     renderList(ctx);

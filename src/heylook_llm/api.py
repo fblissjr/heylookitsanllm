@@ -142,6 +142,7 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json",
     openapi_tags=[
+        {"name": "Embeddings", "description": "Multimodal embeddings through MLX and llama-server"},
         {
             "name": "Models",
             "description": "Model lifecycle an INFERENCE client may drive: load (and optionally warm) a model before generating, so a cold multi-GB load happens in a request the client can show progress against rather than inside an opaque generate call. Gated like inference, not like admin -- a generate request already loads and can evict"
@@ -237,6 +238,8 @@ app.add_middleware(RequestIdEchoMiddleware)
 # Import and include Messages API router
 from heylook_llm.messages_api import messages_router
 app.include_router(messages_router)
+from heylook_llm.embeddings_api import embeddings_router
+app.include_router(embeddings_router)
 
 # Model load for inference clients (NOT admin: a generate request already
 # loads and can evict, so the admin token was gating nothing)

@@ -231,6 +231,8 @@ class BaseProvider(ABC):
         self.model_id = model_id
         self.config = config
         self.verbose = verbose
+        from heylook_llm.embedding_models import embedding_info
+        self._embedding = embedding_info(self.provider_name, config)
         # How many generations are in flight on this provider RIGHT NOW.
         #
         # Lives here, not in a subclass, because the router needs one question
@@ -243,6 +245,10 @@ class BaseProvider(ABC):
         # protection of its own.
         self._active_generations = 0
         self._active_lock = threading.Lock()
+
+    @property
+    def embedding(self):
+        return getattr(self, "_embedding", None)
 
     @property
     def active_generations(self) -> int:
@@ -343,6 +349,28 @@ class BaseProvider(ABC):
     @abstractmethod
     def load_model(self):
         raise NotImplementedError
+
+    def embed(self, request, abort_event=None):
+        """Execute one bounded embedding request under the existing GPU gate."""
+        from .common.embedding import check_cancel, resolved_items, finish
+        if not self.embedding:
+            raise InvalidGenerationRequest(f"{self.model_id} is not a supported embedding model")
+        if request.dimensions is not None and request.dimensions not in self.embedding["dimensions"]:
+            raise InvalidGenerationRequest(f"Unsupported dimensions: {request.dimensions}")
+        self.check_capacity()
+        with self.generation_active():
+            self._gen_gate.acquire(cancel_check=abort_event.is_set if abort_event is not None else None)
+            try:
+                check_cancel(abort_event)
+                with resolved_items(request, self.embedding, abort_event) as items:
+                    if self.provider_name == "mlx":
+                        from .mlx_embeddings import embed
+                    else:
+                        from .gguf_embeddings import embed
+                    vectors, tokens = embed(self, items, abort_event)
+                    return finish(request, self.embedding, vectors, tokens)
+            finally:
+                self._gen_gate.release()
 
     @abstractmethod
     def create_chat_completion(self, request: ChatRequest, abort_event=None) -> Generator:

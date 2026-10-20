@@ -230,6 +230,9 @@ class ModelImporter:
         config.json's ``use_bidirectional_attention: true``, or a
         sentence-transformers ``*_Dense`` projection directory.
         """
+        from .embedding_models import EMBEDDING_GEMMA2
+        if config_data and config_data.get("model_type") == EMBEDDING_GEMMA2["mlx"]:
+            return False  # served by mlx-vlm through the embedding operation
         if config_data and config_data.get("use_bidirectional_attention") is True:
             return True
         try:
