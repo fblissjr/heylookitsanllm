@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.205]
+
+### Added
+
+- **`apps/embedding-apps/`: self-contained apps on `POST /v1/embeddings`.** A
+  stdlib launcher (`serve.py`) serves the static pages and forwards three
+  allowlisted routes (`GET /v1/models`, `POST /v1/embeddings`,
+  `DELETE /v1/requests/{id}`), because the server sends no CORS headers by
+  design. A shared `kit/embed-kit.js` holds batching, retry, cancel, an
+  IndexedDB vector store keyed by model, dimensions and prompt, and a flat
+  cosine search. The first app, Media Finder, indexes a folder of images, audio
+  and video and searches it by words, an example file, or both. The server is
+  unchanged.
+- `tests/unit/test_embedding_apps_proxy.py`: the proxy forwards the allowlist
+  and refuses everything else. NOT run: Media Finder in a browser or against a
+  live server.
+
 ## [2.0.204]
 
 ### Changed

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Media Finder</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <h1>Media Finder</h1>
+    <p class="muted">Index a folder of photos, audio and video, then search it by words or by example. Everything stays in this browser; only the files you index are sent to your heylook server.</p>
+
+    <section aria-labelledby="setup">
+      <h2 id="setup">1. Index</h2>
+      <div class="row">
+        <label>Model <select id="model"></select></label>
+        <label>Dimensions <select id="dims"></select></label>
+        <label>Index prompt <select id="docPrompt"></select></label>
+      </div>
+      <div class="row">
+        <label class="btn">Choose folder
+          <input id="folder" type="file" webkitdirectory multiple hidden>
+        </label>
+        <label class="btn">Choose files
+          <input id="files" type="file" multiple accept="image/*,audio/*,video/*" hidden>
+        </label>
+        <button id="stop" type="button" hidden>Stop</button>
+        <button id="clear" type="button">Clear this index</button>
+      </div>
+      <progress id="progress" max="1" value="0" hidden></progress>
+      <p id="status" role="status" aria-live="polite">Loading models…</p>
+      <details id="problems" hidden><summary>Files that were skipped</summary><ul id="problemList"></ul></details>
+    </section>
+
+    <section aria-labelledby="search">
+      <h2 id="search">2. Search</h2>
+      <form id="searchForm" class="row">
+        <label class="grow">Words <input id="query" type="search" placeholder="a dog running on a beach"></label>
+        <label>Query prompt <select id="queryPrompt"></select></label>
+        <label class="btn">Or an example
+          <input id="example" type="file" accept="image/*,audio/*,video/*" hidden>
+        </label>
+        <span id="exampleName" class="muted"></span>
+        <button type="submit" id="go" disabled>Search</button>
+      </form>
+      <p id="count" class="muted"></p>
+      <ol id="results" class="grid"></ol>
+    </section>
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

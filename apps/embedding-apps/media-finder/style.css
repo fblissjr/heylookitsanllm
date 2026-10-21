@@ -1,0 +1,25 @@
+:root { color-scheme: light dark; --gap: 0.75rem; --line: color-mix(in srgb, currentColor 20%, transparent); }
+* { box-sizing: border-box; }
+body { margin: 0; font: 16px/1.5 system-ui, sans-serif; }
+main { max-width: 64rem; margin: 0 auto; padding: 1.5rem 1rem 4rem; }
+h1 { margin: 0 0 0.25rem; }
+h2 { font-size: 1.1rem; margin: 1.75rem 0 0.5rem; }
+.muted { opacity: 0.7; }
+.row { display: flex; flex-wrap: wrap; gap: var(--gap); align-items: end; margin: var(--gap) 0; }
+.grow { flex: 1 1 14rem; }
+label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.85rem; }
+label.btn { flex-direction: row; }
+input, select, button, .btn { font: inherit; padding: 0.4rem 0.7rem; border: 1px solid var(--line); border-radius: 0.5rem; background: Canvas; color: CanvasText; }
+button, .btn { cursor: pointer; }
+button:disabled { opacity: 0.5; cursor: default; }
+:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
+progress { width: 100%; }
+.grid { list-style: none; padding: 0; display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); }
+.card { border: 1px solid var(--line); border-radius: 0.6rem; overflow: hidden; display: flex; flex-direction: column; }
+.card button { all: unset; cursor: pointer; display: flex; flex-direction: column; height: 100%; }
+.card button:focus-visible { outline: 2px solid Highlight; outline-offset: -2px; }
+.thumb { aspect-ratio: 1; width: 100%; object-fit: cover; background: color-mix(in srgb, currentColor 8%, transparent); display: grid; place-items: center; font-size: 2rem; }
+.meta { padding: 0.4rem 0.6rem; font-size: 0.8rem; overflow-wrap: anywhere; }
+.score { font-variant-numeric: tabular-nums; opacity: 0.7; }
+dialog { max-width: min(90vw, 60rem); border: 1px solid var(--line); border-radius: 0.6rem; }
+dialog img, dialog video { max-width: 100%; max-height: 70vh; }
