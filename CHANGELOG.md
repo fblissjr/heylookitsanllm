@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.206]
+
+### Added
+
+- **Embedding Lab (`apps/embedding-apps/embedding-lab/`).** A retrieval-quality
+  probe on the embeddings endpoint. A folder holds `set.json` (cases of query,
+  positives and negatives; each item is text, a file or both) and the media it
+  names. Each configuration (model, dimensions, query prompt, document prompt)
+  is run and reported as Recall@1, Recall@3, MRR and the margin of the best right
+  answer over the best wrong one, per configuration and per case, so engines,
+  dimension sizes and prompts compare side by side. Every case ranks against the
+  pool of all cases' documents; a pool item identical to the case's own query is
+  left out of that case, and a query identical to its own positive is rejected.
+  Ships a sample set (text cases plus four generated shapes).
+- `metrics.test.mjs`: `node --test apps/embedding-apps/embedding-lab/metrics.test.mjs`
+  (8 tests). Run live once in a browser against MLX and GGUF EmbeddingGemma 2 on
+  the sample set. NOT run: audio or video cases, a larger set, Media Finder in a
+  browser.
+
 ## [2.0.205]
 
 ### Added

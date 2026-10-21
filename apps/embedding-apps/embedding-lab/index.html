@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Embedding Lab</title>
+  <link rel="stylesheet" href="../media-finder/style.css">
+  <link rel="stylesheet" href="lab.css">
+</head>
+<body>
+  <main>
+    <h1>Embedding Lab</h1>
+    <p class="muted">Measure how well a model, engine, dimension size and task prompt retrieve the right thing. You supply cases (a query, what should match, what should not); the Lab ranks every case's query against all documents and compares configurations side by side.</p>
+
+    <section aria-labelledby="s1">
+      <h2 id="s1">1. Test set</h2>
+      <div class="row">
+        <label class="btn">Choose folder
+          <input id="folder" type="file" webkitdirectory multiple hidden>
+        </label>
+        <span id="setInfo" class="muted">A folder holding <code>set.json</code> and any media it names. Try <code>embedding-lab/sample/</code>.</span>
+      </div>
+      <details><summary>set.json format</summary>
+<pre>{ "cases": [
+  { "id": "optional-unique-name",
+    "query": "text" | { "text": "...", "file": "a.png" },
+    "positives": [ "text" | { "file": "a.png" } ],
+    "negatives": [ ... ] } ] }</pre>
+        <p class="muted">Items are text, a file, or both. Files are paths inside the chosen folder. Every document from every case forms one pool, so a case also competes against the other cases' documents.</p>
+      </details>
+    </section>
+
+    <section aria-labelledby="s2">
+      <h2 id="s2">2. Configurations</h2>
+      <div class="row">
+        <label>Model <select id="model"></select></label>
+        <label>Dimensions <select id="dims"></select></label>
+        <label>Query prompt <select id="queryPrompt"></select></label>
+        <label>Document prompt <select id="docPrompt"></select></label>
+        <button id="add" type="button">Add configuration</button>
+      </div>
+      <ul id="configs" class="configs"></ul>
+      <div class="row">
+        <button id="run" type="button" disabled>Run all</button>
+        <button id="stop" type="button" hidden>Stop</button>
+        <button id="download" type="button" disabled>Download results</button>
+      </div>
+      <progress id="progress" max="1" value="0" hidden></progress>
+      <p id="status" role="status" aria-live="polite">Loading models…</p>
+    </section>
+
+    <section aria-labelledby="s3">
+      <h2 id="s3">3. Results</h2>
+      <div id="summary" class="scroll" tabindex="0" aria-label="Summary by configuration"></div>
+      <div id="detail" class="scroll" tabindex="0" aria-label="Per-case results"></div>
+    </section>
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+code, pre { font: 0.85rem ui-monospace, monospace; }
+pre { background: color-mix(in srgb, currentColor 8%, transparent); padding: 0.6rem; border-radius: 0.5rem; overflow-x: auto; }
+.configs { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.configs li { display: flex; gap: var(--gap); align-items: center; border: 1px solid var(--line); border-radius: 0.5rem; padding: 0.3rem 0.6rem; }
+.configs li span { flex: 1; font-size: 0.9rem; overflow-wrap: anywhere; }
+.scroll { overflow-x: auto; margin: var(--gap) 0; }
+table { border-collapse: collapse; font-size: 0.85rem; }
+caption { text-align: left; font-weight: 600; padding: 0.3rem 0; }
+th, td { border: 1px solid var(--line); padding: 0.3rem 0.6rem; text-align: left; vertical-align: top; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.fail { font-weight: 700; }
+.best { text-decoration: underline; }

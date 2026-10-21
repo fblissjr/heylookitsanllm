@@ -1,0 +1,53 @@
+{
+  "name": "Sample: text retrieval with hard negatives, plus four generated shapes",
+  "cases": [
+    {
+      "id": "sql-join",
+      "query": "how do I combine rows from two tables in SQL",
+      "positives": ["A JOIN clause merges rows from two tables based on a related column, for example INNER JOIN users ON users.id = orders.user_id."],
+      "negatives": ["A carpenter joint such as a dovetail joins two pieces of wood without nails.", "SQL indexes speed up lookups by keeping a sorted structure beside the table."]
+    },
+    {
+      "id": "sourdough",
+      "query": "why is my sourdough starter not rising",
+      "positives": ["A sluggish starter is usually too cold or underfed; keep it near 24 C and feed it flour and water at regular intervals."],
+      "negatives": ["Sourdough bread gets its tang from lactic and acetic acids produced during long fermentation.", "To brown a loaf evenly, bake it in a preheated Dutch oven."]
+    },
+    {
+      "id": "python-copy",
+      "query": "make an independent copy of a nested list in python",
+      "positives": ["copy.deepcopy(items) recursively duplicates nested containers so changes to the copy never touch the original."],
+      "negatives": ["A shallow copy such as items[:] still shares the inner lists with the original.", "Pythons are non-venomous constrictors found in Africa and Asia."]
+    },
+    {
+      "id": "river",
+      "query": "a quiet walk beside a river at dawn",
+      "positives": ["Mist hung over the water as we strolled along the bank in the early morning light."],
+      "negatives": ["The river basin supplies drinking water to four million people.", "At noon the market square filled with shouting vendors."]
+    },
+    {
+      "id": "text-to-image-red",
+      "query": "a solid red circle on a white background",
+      "positives": [{ "file": "red-circle.png" }],
+      "negatives": [{ "file": "blue-square.png" }, { "file": "green-triangle.png" }, { "file": "black-cross.png" }]
+    },
+    {
+      "id": "text-to-image-blue",
+      "query": "a blue square",
+      "positives": [{ "file": "blue-square.png" }],
+      "negatives": [{ "file": "red-circle.png" }, { "file": "green-triangle.png" }, { "file": "black-cross.png" }]
+    },
+    {
+      "id": "text-to-image-triangle",
+      "query": "a green triangle pointing up",
+      "positives": [{ "file": "green-triangle.png" }],
+      "negatives": [{ "file": "red-circle.png" }, { "file": "blue-square.png" }]
+    },
+    {
+      "id": "image-to-text",
+      "query": { "file": "black-cross.png" },
+      "positives": ["a black plus sign on a white background"],
+      "negatives": ["a solid red circle on a white background", "a blue square"]
+    }
+  ]
+}
