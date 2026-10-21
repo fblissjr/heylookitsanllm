@@ -14,6 +14,27 @@ orienting paragraph each. For the build contract see
 
 ---
 
+## Embeddings workbench
+
+Open **Embeddings** in the desktop sidebar, or **Settings → Embeddings workbench**
+on a phone. Select an embedding model and output dimensions. Edit the starter
+texts or attach images, audio and video. An item produces one vector; combine
+blocks inside it for a joint embedding, or add items to compare them separately.
+Blocks can be removed or moved up to control their order.
+
+Put a search query first and candidate documents/media after it, then choose
+**Embed & compare**. The result ranks candidates against the first item and shows
+all pairwise cosine similarities. Classification works the same way using label
+descriptions as candidates. Task choices come from the checkpoint's prompt
+catalog; “No task prefix” leaves content unprefixed. Scores are similarities,
+not probabilities. Video uses frames; attach its audio separately for sound.
+
+**Download vectors** exports labels and the complete result as JSON. Inputs and
+results exist only on this page and are discarded when leaving it. Editing any
+input clears stale results. **Stop** requests cancellation; an active forward
+may finish before it can stop. Loading or switching models uses the normal model
+residency policy, so it can unload a chat model.
+
 ## 1. The one thing to understand first
 
 Almost every "why did it do that?" in this app comes from the same source:

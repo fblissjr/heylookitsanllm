@@ -14,7 +14,9 @@ paths:
 - MLXProvider does text and vision. LlamaServerProvider (gguf) runs one llama-server subprocess per loaded model: "loaded" means "running process", so LRU and idle-unload are spawn and SIGTERM. It is pure stdlib with no MLX import.
 - Provider output is the owned, slotted `GenerationChunk` (`providers/base.py`). New telemetry is a field there, absorbed in `perf_collector.ChunkTelemetry`, never an attribute patch. `thinking` carries engine-pre-split reasoning (e.g. llama-server's `reasoning_content`). Errors raise `GenerationFailed` / `InvalidGenerationRequest`; they are never chunks.
 - One engine contract (`providers/contract.py`): `/v1/models` and the admin row carry one `engine` object (runtime, context, template, every setting with `{value, configured, auto, reason, provenance}`), built from a static half per engine (`mlx_describe`/`gguf_describe`, config-only, answers unloaded) plus `provider.describe_observed()` (recorded at load, never a call into the process). The report calls the SAME decision functions the spawn and request paths use; never re-derive for the report. "Configured" means stored AND different from what discovery derives (`router.written_ids`/`derived_configs`); a materialized copy reads as derived. No absolute paths in `engine`. A slot a later workstream fills is an explicit null until reported. `tests/contract/test_engine_contract.py` checks it through both routes.
-- Audio input (`input_audio` parts) is gguf-only and must fail loudly on MLX, where audio towers are stripped at load. The 400 guard lives in `MLXProvider.create_chat_completion`.
+- Generation audio input (`input_audio` parts) is gguf-only and must fail loudly on MLX, where audio towers are stripped at load. The 400 guard lives in `MLXProvider.create_chat_completion`.
+
+- Embeddings are an operation on the same two providers (`embed`), with metadata from `embedding_models.py`. Full MLX embedding towers are retained, including audio. Embedding outputs are pooled vectors, not `GenerationChunk`s; no generation sampler, template policy or APC applies. The shared resolver drives discovery and both model reports.
 
 ## Thinking
 

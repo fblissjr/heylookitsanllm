@@ -1932,8 +1932,32 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
 }
 
 
-/* ==== page: presets ==== */
+/* ==== page: embeddings ==== */
+.embeddings {
+  height: 100%; overflow-y: auto; width: 100%; max-width: 64rem;
+  margin: 0 auto; padding: var(--space-6) var(--space-4) var(--space-12);
+}
+.embeddings__controls { border: 0; padding: 0; margin: var(--space-4) 0; min-width: 0; }
+.embeddings__toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: var(--space-2); }
+.embeddings__field { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; flex: 1 1 12rem; }
+.embeddings__field select, .embeddings__field input { max-width: 100%; min-width: 0; }
+.embeddings__items, .embeddings__blocks { display: grid; gap: var(--space-3); margin: var(--space-3) 0; }
+.embeddings__item { border: 1px solid var(--line); border-radius: var(--r-card); padding: var(--space-3); min-width: 0; }
+.embeddings__block { display: grid; gap: var(--space-2); overflow-wrap: anywhere; }
+.embeddings__block textarea { width: 100%; min-height: 6rem; resize: vertical; }
+.embeddings__table-scroll { overflow-x: auto; margin: var(--space-3) 0; }
+.embeddings__matrix { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+.embeddings__matrix th, .embeddings__matrix td { padding: var(--space-2); border: 1px solid var(--line); text-align: right; }
+.embeddings__matrix th { text-align: left; }
+.embeddings__results pre { max-height: 20rem; overflow: auto; }
+@media (max-width: 767px) {
+  .embeddings { padding-top: calc(var(--space-4) + env(safe-area-inset-top, 0px)); }
+}
+@media (hover: none) {
+  .embeddings .btn, .embeddings .input, .embeddings select { min-height: 44px; }
+}
 
+/* ==== page: presets ==== */
 /* The one place a stored preset is edited (js/pages/presets.js). A card per
    preset; its editor opens in place, so what is edited is what is on screen. */
 .presets {

@@ -966,3 +966,37 @@ here — a streamed refusal arrives in-band, not as the 400 this document
 named. Neither review found it alone; the same author had read past it in
 both files. Diffing one against the code, rather than reading either on its
 own, is what produced it.
+
+## Embeddings
+
+`POST /v1/embeddings` is the separate, non-streaming embedding operation.
+Discover models with `engine.embedding` in `GET /v1/models`; do not offer those
+models in a chat selector. Both `mlx` and `gguf` use the same request schema.
+
+```json
+{
+  "model": "<discovered embedding model id>",
+  "dimensions": 256,
+  "input": [
+    {"prompt_name": "SearchQuery", "content": [{"type": "text", "text": "a dog on a beach"}]},
+    {"content": [{"type": "image", "source": {"type": "url", "media_type": "image/jpeg", "url": "https://example.org/dog.jpg"}}]}
+  ]
+}
+```
+
+Choose prompt names and dimensions from `engine.embedding`, not this example.
+Omit `prompt_name` for no prefix. `input` also accepts a string or list of strings.
+Each item produces one vector, including when it combines multiple ordered text,
+image, audio and video blocks. A list of items is a batch of independent vectors.
+Media sources are HTTP(S) URLs or base64 (`data` instead of `url`). Video embeds
+visual frames; include a separate audio block for its soundtrack.
+
+Read `data[].embedding` in `index` order. Vectors are L2-normalized after optional
+supported dimension truncation. Scores from their dot product are cosine
+similarities, not probabilities. Store the model identity, engine, prompt choice
+and dimensions with an index; matching widths do not imply different checkpoints
+or engines are interchangeable. The API stores neither media nor vectors.
+
+Use `X-Request-ID` and `DELETE /v1/requests/{id}` for cooperative cancellation.
+A running forward can finish before cancellation takes effect. The detailed
+limits, response and error contract are in [spec §4](frontend_v3_spec.md#4-backend-api-contract-integration-surface--verified-against-source).

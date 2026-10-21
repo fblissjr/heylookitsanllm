@@ -66,3 +66,10 @@ class TestCoverageReport:
         assert "mlx-text   covered" in text
         assert "mlx-vision UNCOVERED -- 1 model(s) served, none run" in text
         assert "gguf       UNCOVERED -- no model served for this arm" in text
+
+
+def test_embedding_models_are_not_generation_smoke_candidates():
+    cov = classify('x', get_json=_server(
+        models=[{'id': 'embed', 'engine': {'embedding': {'modalities': ['text']}}}],
+        admin_models=[_row('embed', 'llama.cpp')]))
+    assert not cov.by_engine and not cov.unclassified

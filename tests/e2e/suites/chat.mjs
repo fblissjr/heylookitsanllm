@@ -11,8 +11,12 @@ import { assert, waitFor, sleep, skip } from '../lib/harness.mjs';
 // assumes one then fails on the suite's assumption, not on the app -- and
 // leaves the drawer open for the next check to trip over. A check whose
 // subject IS a capability skips when the model lacks it (v1.79.67).
+async function chatModels(page) {
+  return page.evaluate(async () => ((await (await fetch('/v1/models')).json()).data ?? [])
+    .filter((m) => !m.engine?.embedding));
+}
 async function requireCap(page, modelId, cap) {
-  const models = await page.evaluate(async () => (await (await fetch('/v1/models')).json()).data ?? []);
+  const models = await chatModels(page);
   const caps = models.find((m) => m.id === modelId)?.capabilities ?? [];
   if (!caps.includes(cap)) skip(`${modelId} does not advertise ${cap}; this check needs a ${cap}-capable E2E_MODEL`);
 }
@@ -259,7 +263,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     // filter to real routes (defined dataset.route) before comparing.
     const routes = await page.$$eval('#nav-desktop .nav-item', (els) =>
       [...new Set(els.map((e) => e.dataset.route).filter(Boolean))]);
-    const want = ['chat', 'notebook', 'presets', 'models', 'perf'];
+    const want = ['chat', 'notebook', 'embeddings', 'presets', 'models', 'perf'];
     assert(routes.length === want.length && want.every((r) => routes.includes(r)),
       `expected routes ${want.join(',')}, got ${routes.join(',')}`);
   });
@@ -1240,7 +1244,7 @@ export async function runChatSuite({ suite, ctx, config }) {
   // report SKIPPED, which is the opposite lie. The log-and-return sites in this
   // file predate skip() (added v1.79.66); they were never migrated.
   await suite.check('capability gating: a model LACKING a cap hides its control', async () => {
-    const models = await page.evaluate(async () => (await (await fetch('/v1/models')).json()).data ?? []);
+    const models = await chatModels(page);
     const hasCap = (m, cap) => (m.capabilities ?? []).includes(cap);
     // Selecting a model in the chat bar is pure metadata (fillModelSelect +
     // the change listener) -- it does NOT load the model, so probing an
@@ -1280,7 +1284,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     // NB this suite's conversation is often text-only, in which case there is
     // nothing to lose and the silent-switch branch below is the real path;
     // the loss warning itself is exercised by the image checks above.
-    const models = await page.evaluate(async () => (await (await fetch('/v1/models')).json()).data ?? []);
+    const models = await chatModels(page);
     const other = models.find((m) => m.id !== config.model);
     if (!other) {
       skip('only one model configured, so there is nothing to switch TO -- '
@@ -1368,7 +1372,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     await page.select(MODEL_SELECT, config.model);
     const convId = await newFreshConversation(page);
     await page.waitForSelector(THINK_BTN, { timeout: 5000 });
-    const models = await page.evaluate(async () => (await (await fetch('/v1/models')).json()).data ?? []);
+    const models = await chatModels(page);
     const def = models.find((m) => m.id === config.model)?.thinking_default;
     assert(typeof def === 'boolean', `/v1/models row for ${config.model} carries no boolean thinking_default`);
     const pressed = async () => (await page.$eval(THINK_BTN, (b) => b.getAttribute('aria-pressed'))) === 'true';
@@ -1474,7 +1478,7 @@ export async function runChatSuite({ suite, ctx, config }) {
     // (conversation_generate_api._CAP_GATED, unit-pinned): the client wire
     // carries no sampler keys at all. This check pins that structural
     // property on the wire the browser actually sends.
-    const models = await page.evaluate(async () => (await (await fetch('/v1/models')).json()).data ?? []);
+    const models = await chatModels(page);
     const negative = models.find((m) => m.id !== config.model && !(m.capabilities ?? []).includes('thinking'));
     if (!negative) {
       skip('no served model lacks the thinking capability, so the cap filter has '

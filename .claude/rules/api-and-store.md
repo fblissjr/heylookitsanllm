@@ -14,9 +14,10 @@ paths:
 - A Pydantic model with custom headers: `Response(content=model.model_dump_json(), media_type="application/json", headers=...)` (`JSONResponse` double-serializes).
 - Pydantic `Field` defaults use keyword form (`Field(default=None, ...)`); `test_field_keyword_defaults.py` enforces it.
 
-## One inference wire
+## Inference operations
 
 - `/v1/messages` (Anthropic Messages-conformant plus documented heylook extensions) and `/v1/conversations/{id}/generate`, which shares its grammar. Do not re-add an OpenAI wire. `/v1/models` keeps the OpenAI list shape because clients read `data`; that is a shape, not a wire.
+- `/v1/embeddings` is a separate non-streaming operation with ordered multimodal items, one pooled vector per item. Its own strict schema rejects generation knobs; cancellation uses the same request registry. It adds no result store.
 - `ChatRequest` stays as the internal request every provider takes, in OpenAI vocabulary; the rename to Anthropic's happens once, in `converters`. Nothing binds `ChatRequest` as a request body, so a guard refusing a removed or renamed field belongs on `MessageCreateRequest`. A test for such a guard must go through the route.
 - Messages conformance: media blocks accept both nested `source` and flat `source_type` (`source` is a declared `MediaSource` field so it reaches the JSON Schema). Thinking blocks and `thinking_delta` carry text under both `thinking` and `text`; keep both. `stop_reason` comes from one table, `converters.STOP_REASON_FROM_FINISH_REASON`, and `TestStopReasonHasOneMapper` asserts it is the only writer across both routes. An aborted generate run reports `max_tokens`. `error` is not a stop reason. The `/v1/conversations` store accepts only nested `source`. Deliberate differences from Anthropic's spec are hand-listed in `docs/api_integration.md` and can be wrong.
 - Cancellation (`request_registry.py`): `DELETE /v1/requests/{request_id}` sets a run's `AbortEvent`. It makes a run stoppable, not self-stopping; disconnect polling was deliberately not built (owner call). The id comes from `X-Request-ID` via the shared `resolve_request_id` (bounded and charset-restricted). The registry maps an id to a set. Register a streaming body by wrapping the generator (`tracked_stream`), never with a `with` around the return.

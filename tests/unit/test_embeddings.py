@@ -115,3 +115,30 @@ def test_gguf_wire_preserves_mixed_content_and_batch_indices(info):
     assert [p["type"] for p in parts] == ["text", "input_video", "input_audio"]
     assert parts[1]["input_video"]["data"] == "data:video/mp4;base64,eA=="
     assert tokens == 4 and len(vectors) == 1
+
+
+def test_mlx_load_materializes_private_buffers_across_workers():
+    mx = pytest.importorskip('mlx.core')
+    if not mx.metal.is_available():
+        pytest.skip('Metal unavailable')
+    import mlx.nn as nn
+    from heylook_llm.providers.mlx_embeddings import materialize_state
+    from heylook_llm.streaming_utils import _executor_pool
+    stream = mx.new_thread_local_stream(mx.default_device())
+    first, second = _executor_pool.acquire(), _executor_pool.acquire()
+    try:
+        def build():
+            with mx.stream(stream):
+                model = nn.Module()
+                model._private = mx.arange(4) + 1
+                assert '_private' not in model.parameters()
+                materialize_state(model)
+                return model
+        model = first.submit(build).result()
+        def consume():
+            with mx.stream(stream):
+                return (model._private * 2).tolist()
+        assert second.submit(consume).result() == [2,4,6,8]
+    finally:
+        _executor_pool.release(first)
+        _executor_pool.release(second)

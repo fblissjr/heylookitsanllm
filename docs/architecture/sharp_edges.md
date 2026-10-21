@@ -2118,3 +2118,14 @@ The print of `heylook_llm.__file__` is not optional, and the second-order
 failure is why: the setup step can fail silently. A sandboxed `mktemp -d` is
 blocked, the `tar`/`cp` after it fails, and the probe still prints a confident
 answer about the wrong tree. Verified in both directions.
+
+## Embedding load: private MLX buffers cross threads too
+
+The first live EmbeddingGemma 2 text request failed with “There is no Stream(gpu,
+1) in current thread” even though load evaluated `model.parameters()`. Upstream's
+rotary frequencies are private module state and are excluded from `parameters()`.
+Loading and inference leased different persistent workers, exposing the remaining
+lazy graph. The embedding loader now materializes all arrays in `model.state` on
+the loading worker. This is an ownership boundary, not a replacement architecture
+or an upstream model patch. A real-Metal cross-worker check uses a private lazy
+buffer so a parameters-only implementation fails.

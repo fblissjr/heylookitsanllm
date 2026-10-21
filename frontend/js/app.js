@@ -8,6 +8,7 @@ import { mountSettingsDrawer } from './settings-drawer.js';
 const ROUTES = {
   chat:     { title: 'Chat', short: 'Chat', load: () => import('./pages/chat.js') },
   notebook: { title: 'Notebook', short: 'Notes', load: () => import('./pages/notebook.js') },
+  embeddings: { title: 'Embeddings', short: 'Embed', load: () => import('./pages/embeddings.js'), bottomNav: false },
   // Not in the phone's bottom nav (`bottomNav: false`): it is already five
   // items wide with the gear, and the phone reaches this page from the
   // settings drawer's "Manage presets" link (plan_dark_mode.md Phase 3b).

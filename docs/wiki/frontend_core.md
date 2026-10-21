@@ -25,12 +25,13 @@ Navigation occurs exclusively via the URL hash. Every link the app builds is of 
 
 ## 2. Page Hierarchy & Lifecycles
 
-The application is structured around four primary pages created via [`createPage`](../../frontend/js/page.js):
+The application is structured around pages created via [`createPage`](../../frontend/js/page.js):
 
 | Page | Controller | Primary Role & API Grammar |
 | :--- | :--- | :--- |
 | **Chat** | [`chat.js`](../../frontend/js/pages/chat.js) | Full multi-turn conversation UI, system prompt editor, preset bar, attachments, thinking toggle, and model selection. An engine chip in the bar names the selected model's runtime and opens a compact panel (runtime, context, template). Drives `POST /v1/conversations/{id}/generate`. |
 | **Notebook** | [`notebook.js`](../../frontend/js/pages/notebook.js) | A single continuous text document per notebook -- one textarea, a Generate button that **continues writing** into it, its own system prompt and model select, and a notebook list. Stopping keeps the partial text. Drives stateless `POST /v1/messages`. There is no branching or side-by-side comparison. |
+| **Embeddings** | [`embeddings.js`](../../frontend/js/pages/embeddings.js) | Ephemeral multimodal items, task prompts and dimensions, cosine matrix, query ranking and vector JSON export through `POST /v1/embeddings`. Desktop sidebar; phone settings drawer. |
 | **Models** | [`models.js`](../../frontend/js/pages/models.js) | Registry browser with residency ("Loaded") state, watch-folder settings (everything under a watch folder is served; a model's own settings live in its folder's `model.heylook.toml`), per-model **Configure** via the schema-driven editor, a per-row **Engine** panel rendering the engine contract through [`engine.js`](../../frontend/js/engine.js) (every setting with provenance, grouped by effect), and a danger zone. |
 | **Perf** | [`perf.js`](../../frontend/js/pages/perf.js) | Titled "Performance", with **two** sections: **System** (RAM, CPU, currently loaded models on both engines; a reading the server does not know shows as "--", never 0, and a model's memory is labelled with what it measures, which differs by engine) and **Profile** (a timing breakdown by operation, a per-model **Cache** table -- share of prompt tokens reused, outcomes, and the causes the server reported -- and recent trends by hour, with token-weighted cache share and the two draft rates as columns that appear only when the range reported them). A Refresh control and a set of time ranges sit alongside. |
 

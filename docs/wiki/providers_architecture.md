@@ -26,6 +26,26 @@ flowchart TD
     MLX --> VLMVision["VLMVisionStrategy (Pre-filled Cache)"]
 ```
 
+### Embedding operation
+
+The same two providers implement `BaseProvider.embed()`. Recognition and semantic
+metadata live in `embedding_models.py`; media ownership and result validation
+live in `providers/common/embedding.py`. The route leases a persistent worker,
+reserves model activity against eviction and enters the process-wide inference
+gate. Cancellation and failures retain ownership until work and cleanup finish.
+
+MLX loads the full upstream mlx-vlm embedding model and processor, including
+image and audio towers, and consumes its pooled `text_embeds`. All model state,
+including private lazy buffers, is materialized on the loading worker before it
+can move to an inference worker. GGUF launches its existing llama-server process
+in embedding mode with mean pooling and a non-causal batch covering the context;
+its adapter translates ordered content to llama-server's multimodal endpoint.
+Neither path passes embedding inputs through generation, chat samplers or APC.
+
+A new upstream embedding family extends recognition/metadata and any necessary
+processor adapter, with reference fixtures. It does not add a provider, registry,
+scheduler or HTTP route. See [the API contract](../frontend_v3_spec.md#4-backend-api-contract-integration-surface--verified-against-source).
+
 ### 1.1. BaseProvider Interface Contract
 Only two members are `@abstractmethod`; the rest are concrete base-class behaviour a provider may override.
 

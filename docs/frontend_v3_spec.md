@@ -210,6 +210,39 @@ Base: same-origin. One opt-in auth gate: `HEYLOOK_ADMIN_TOKEN` (`X-Heylook-Admin
 `/v1/data/clear`. Inference, conversations/notebooks/models-list/metrics/profile are unauthenticated
 (no inference API key since v2.0.127).
 
+**Embeddings** `POST /v1/embeddings`: non-streaming, shared by `mlx` and `gguf`.
+The JSON body has `model`, `input` and optional `dimensions` only. `input` is a
+string, a list of strings, or a list of items `{content: [...], prompt_name?: str}`.
+An item's ordered content contains `{type: "text", text}` or
+`{type: "image"|"audio"|"video", source: {type: "base64", media_type, data}}`;
+HTTP(S) media uses `source: {type: "url", media_type, url}`. Each item yields one
+joint vector. Multiple items stay independent and ordered. No role/chat template
+or generation parameters are accepted. Video uses visual frames; its soundtrack
+requires a separate audio block.
+
+Discover support in `engine.embedding`: `modalities`, `dimensions`,
+`native_dimensions`, `max_input_tokens`, `prompts`, `normalization`, `video_audio`
+and `provenance`. GGUF also reports its `load_profile`. These are checkpoint and
+architecture facts; codecs must be installed for media decoding. The prompt map
+comes from the checkpoint's `config_sentence_transformers.json`. An omitted
+`prompt_name` adds no prefix. A selected prompt is applied once before content.
+
+Limits: 16 items, 32 blocks/item, 131072 characters/text block, 32 MiB decoded
+bytes/media block and 64 MiB total media. Expanded input must fit model context;
+there is no automatic truncation. EmbeddingGemma 2 supports 128/256/512/768 output
+dimensions (default 768). Final vectors are truncated then L2-normalized.
+Response: `{model, dimensions, data: [{index, embedding: number[], prompt_name}],
+input_tokens: number|null, request_id, elapsed_ms}`. Failure is atomic, never a
+partial result. Unknown model = 404; unsupported model/modality/dimensions/prompt
+or invalid decoded input = 400; schema violation = 422; queue saturation = 503;
+cooperative cancellation = 409. Unexpected backend failures remain 500.
+
+`X-Request-ID` is echoed; `DELETE /v1/requests/{id}` requests cancellation.
+Media and the GPU slot remain owned until the current operation actually ends.
+Embeddings use the existing load/eviction policy and global inference queue.
+Chat/notebook selectors exclude embedding models. The `#/embeddings` page uses
+this operation for comparison and export, without storing inputs or vectors.
+
 **Chat completions** `POST /v1/chat/completions` and **Batch** `POST /v1/batch/chat/completions`:
 REMOVED in v1.79.66, together with the OpenAI SSE grammar (`choices[].delta` chunks, `data: [DONE]`,
 the `: keepalive` comment), `stream_options.include_usage` and the usage chunk's `timing`, the

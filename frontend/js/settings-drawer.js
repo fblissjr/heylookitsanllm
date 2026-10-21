@@ -241,5 +241,7 @@ function render() {
 
   if (current?.extras) children.push(...current.extras());
 
+  children.push(createEl('a', { href: '#/embeddings', class: 'btn btn--sm' }, ['Embeddings workbench']));
+
   bodyEl.replaceChildren(...children);
 }

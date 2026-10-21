@@ -162,3 +162,18 @@ Not a behavior eval. It asserts that each engine *runs and persists*, never
 that an answer is good — vision correctness, thinking splits and stop
 discipline belong to `tests/eval/`. Not part of `/test-suite` either: it needs
 a running server, real weights and Metal.
+
+## Embedding operation
+
+Generation arm selection excludes `engine.embedding` models. Run the separate
+embedding probe against each engine's checkpoint on an isolated server:
+
+```bash
+uv run python tests/smoke/embeddings.py --server http://127.0.0.1:8991 --model <id>
+```
+
+It checks text ranking, image/audio/video/joint-input sensitivity, batch versus
+singleton, dimensions and normalized finite output using synthetic media and
+ffmpeg. This is transport and encoder coverage; it is not a retrieval-quality
+benchmark or publisher-reference certification. `--output` saves the full result
+locally for comparison; keep those outputs in `internal/`.

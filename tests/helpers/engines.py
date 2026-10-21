@@ -108,6 +108,9 @@ def classify(server: str, *, get_json=None) -> Coverage:
 
     cov = Coverage()
     for entry in (models.get("data") or []):
+        # These arms exercise generation. Embeddings have their own live probe.
+        if (entry.get("engine") or {}).get("embedding"):
+            continue
         mid = entry["id"]
         caps = set(entry.get("capabilities") or [])
         row = admin_by_id.get(mid) or {}

@@ -20,8 +20,17 @@ def _load(provider):
     from mlx_vlm.generate.common import generation_stream
     with mx.stream(generation_stream):
         provider.model, provider.processor = load_model(provider.config["model_path"])
-        mx.eval(provider.model.parameters())
+        materialize_state(provider.model)
     provider.context_length = provider.embedding["max_input_tokens"]
+
+
+def materialize_state(model):
+    """Detach every array from the loading worker's lazy stream graph."""
+    import mlx.core as mx
+    from mlx.utils import tree_flatten
+    # parameters() excludes private buffers (e.g. rotary _frequencies).
+    # Those are model state too, and inference may lease a different worker.
+    mx.eval([value for _, value in tree_flatten(model.state) if isinstance(value, mx.array)])
 
 
 def embed(provider, items, abort):
