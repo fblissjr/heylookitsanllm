@@ -101,15 +101,29 @@ Instead, [`src/heylook_llm/providers/common/mlx_pipeline.py`](../../src/heylook_
      --model Qwen3.5-0.8B-MLX-8bit \
      --ratios 0.8,0.2
    ```
-2. **Create a `hosts.json` file for `mlx.launch`** (pointing Rank 0 at the primary Mac and Rank 1 at the secondary Mac over Thunderbolt Bridge):
+2. **Run across two Macs over Thunderbolt Bridge (SSH-free `--peers` mode)**:
+   - On the secondary Mac (`<worker-ip>`, Rank 1):
+     ```bash
+     uv run python scripts/mlx_pipeline_worker.py \
+       --rank 1 --peers <primary-ip>,<worker-ip> \
+       --model-path <mlx-model-path> \
+       --ratios 0.8,0.2
+     ```
+   - On the primary Mac (`<primary-ip>`, Rank 0):
+     ```bash
+     uv run python scripts/mlx_pipeline_worker.py \
+       --rank 0 --peers <primary-ip>,<worker-ip> \
+       --model-path <mlx-model-path> \
+       --ratios 0.8,0.2 \
+       --smoke-prompt "The capital of France is"
+     ```
+3. **Alternative: Launch both ranks from Rank 0 via `mlx.launch` (`hosts.json`, requires passwordless SSH)**:
    ```json
    [
      {"ssh": "localhost", "ips": ["<primary-ip>"]},
      {"ssh": "<worker-ip>", "ips": ["<worker-ip>"]}
    ]
    ```
-   *(Ensure passwordless SSH `ssh <worker-ip>` works and the model directory exists at the same path—or via a shared mount/symlink—on both Macs.)*
-3. **Run the 2-Mac cluster smoke test**:
    ```bash
    uv run python scripts/distributed_probe.py mlx-cluster \
      --hostfile hosts.json \

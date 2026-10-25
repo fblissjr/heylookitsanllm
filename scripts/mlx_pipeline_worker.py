@@ -26,6 +26,7 @@ import logging
 import os
 import sys
 import tempfile
+import time
 
 import mlx.core as mx
 
@@ -122,7 +123,13 @@ def main(argv: list[str] | None = None) -> int:
         hostfile_tmp = _configure_manual_ring(args.peers, args.rank)
         backend = "ring" if args.backend == "any" else args.backend
         logging.info("Waiting for ring peers (%s) as rank=%d...", args.peers, args.rank)
-        group = mx.distributed.init(strict=True, backend=backend)
+        while True:
+            try:
+                group = mx.distributed.init(strict=True, backend=backend)
+                break
+            except RuntimeError as exc:
+                logging.info("Still waiting for ring peer (%s); retrying...", exc)
+                time.sleep(1.0)
     else:
         group = mx.distributed.init(strict=False, backend=args.backend)
     ratios = _parse_ratios(args.ratios)
