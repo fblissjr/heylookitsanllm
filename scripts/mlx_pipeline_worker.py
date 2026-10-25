@@ -21,8 +21,11 @@ Usage (worker-only on Rank >= 1):
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import os
 import sys
+import tempfile
 
 import mlx.core as mx
 
@@ -40,6 +43,29 @@ def _parse_ratios(raw: str) -> list[float]:
     if len(parts) < 2 or any(p <= 0 for p in parts):
         raise ValueError(f"--ratios must be >= 2 positive floats, got {raw!r}")
     return parts
+
+
+def _configure_manual_ring(peers_raw: str, rank: int, base_port: int = 32323) -> str:
+    """Populate `MLX_HOSTFILE` and `MLX_RANK` for SSH-free multi-Mac ring launch."""
+    items = [p.strip() for p in peers_raw.split(",") if p.strip()]
+    if len(items) < 2:
+        raise ValueError(f"--peers requires at least 2 comma-separated hosts, got {peers_raw!r}")
+    if not (0 <= rank < len(items)):
+        raise ValueError(f"--rank {rank} out of range for {len(items)} peers")
+
+    ring_hosts: list[list[str]] = []
+    for idx, item in enumerate(items):
+        if ":" in item:
+            ring_hosts.append([item])
+        else:
+            ring_hosts.append([f"{item}:{base_port + idx}"])
+
+    fd, path = tempfile.mkstemp(prefix=f"mlx_ring_rank{rank}_", suffix=".json")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(ring_hosts, f)
+    os.environ["MLX_HOSTFILE"] = path
+    os.environ["MLX_RANK"] = str(rank)
+    return path
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -61,6 +87,17 @@ def main(argv: list[str] | None = None) -> int:
         help="mlx.distributed backend (default: any).",
     )
     parser.add_argument(
+        "--peers",
+        default=None,
+        help="Optional comma-separated peer IPs (e.g. '<primary-ip>,<worker-ip>') for SSH-free ring launch without mlx.launch.",
+    )
+    parser.add_argument(
+        "--rank",
+        type=int,
+        default=None,
+        help="Rank index (0 on primary Mac, 1 on worker Mac) when using --peers.",
+    )
+    parser.add_argument(
         "--smoke-prompt",
         default=None,
         help="If set, Rank 0 runs a greedy generation for this prompt and then shuts down Rank 1.",
@@ -78,7 +115,16 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     )
     enable_fast_metal_synch()
-    group = mx.distributed.init(strict=False, backend=args.backend)
+    hostfile_tmp = None
+    if args.peers is not None:
+        if args.rank is None:
+            parser.error("--rank is required when --peers is set")
+        hostfile_tmp = _configure_manual_ring(args.peers, args.rank)
+        backend = "ring" if args.backend == "any" else args.backend
+        logging.info("Waiting for ring peers (%s) as rank=%d...", args.peers, args.rank)
+        group = mx.distributed.init(strict=True, backend=backend)
+    else:
+        group = mx.distributed.init(strict=False, backend=args.backend)
     ratios = _parse_ratios(args.ratios)
 
     logging.info(
