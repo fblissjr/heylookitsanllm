@@ -76,6 +76,11 @@ on, and both of these found checks that could not.
   back to a releasable state after a day of audit work and a parallel session:
   the tree, the smoke standard the repo already sets, the changelog, and the
   parallel-session protocol. Explicitly ends rather than becoming a programme.
+- [project/plan_distributed_inference.md](./project/plan_distributed_inference.md) --
+  PROPOSED: joining the M2 Ultra (192 GB) and M4 Pro (48 GB) over Thunderbolt
+  via `llama.cpp` `ggml-rpc` (`--rpc` + `--tensor-split`) and model-agnostic
+  asymmetric MLX pipeline parallelism (`inner.layers` boundary wrappers +
+  selective `.safetensors` loading).
 
 ## Research / design
 - [frontend_v3_user_guide.md](./frontend_v3_user_guide.md) -- how the UI behaves, for the person USING it
