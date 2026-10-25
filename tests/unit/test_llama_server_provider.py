@@ -125,20 +125,20 @@ class TestBuildArgs:
         monkeypatch.setattr(llama_mod.socket, "create_connection", fake_connect)
 
         # Invalid endpoint format raises ValueError before attempting TCP connect
-        bad = make_provider(model_path=str(_weights(tmp_path)), rpc="192.168.200.2")
+        bad = make_provider(model_path=str(_weights(tmp_path)), rpc="worker.local")
         with pytest.raises(ValueError, match="invalid rpc endpoint"):
             bad._preflight_rpc_servers()
 
         # Unreachable endpoint raises RuntimeError naming rpc_worker.sh
-        down = make_provider(model_path=str(_weights(tmp_path)), rpc="192.168.200.2:50053")
+        down = make_provider(model_path=str(_weights(tmp_path)), rpc="worker.local:50053")
         with pytest.raises(RuntimeError, match="rpc_worker.sh"):
             down._preflight_rpc_servers()
 
         # Reachable endpoint succeeds
         connected.clear()
-        ok = make_provider(model_path=str(_weights(tmp_path)), rpc="192.168.200.2:50052")
+        ok = make_provider(model_path=str(_weights(tmp_path)), rpc="worker.local:50052")
         ok._preflight_rpc_servers()
-        assert connected == [(("192.168.200.2", 50052), 2.0)]
+        assert connected == [(("worker.local", 50052), 2.0)]
 
     @staticmethod
     def _spawn_args(monkeypatch, headroom, **config):

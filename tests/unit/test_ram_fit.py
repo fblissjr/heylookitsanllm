@@ -216,7 +216,7 @@ class TestSizing:
         cfg = {
             "model_path": str(primary),
             "draft_model_path": str(drafter),
-            "rpc": "192.168.200.2:50052",
+            "rpc": "worker.local:50052",
             "tensor_split": "20,80",
         }
         frac, note = local_weight_fraction(cfg)

@@ -1032,7 +1032,7 @@ class GGUFModelConfig(BaseModel):
         default=None,
         description=(
             "Comma-separated `host:port` list of `ggml-rpc` worker servers "
-            "(e.g. `\"192.168.200.2:50052\"` over Thunderbolt Bridge, started "
+            "(e.g. `\"worker.local:50052\"` over Thunderbolt Bridge, started "
             "with `scripts/rpc_worker.sh`). File-only (`model.heylook.toml` or "
             "`heylook.toml`) because it directs `llama-server` to open outbound "
             "TCP connections. Note device order: `llama.cpp` registers RPC "

@@ -17,16 +17,16 @@ Assign static `/24` IPv4 addresses on the `Thunderbolt Bridge` interface (`bridg
 
 ```bash
 # On the primary Mac (e.g., Mac Studio):
-sudo networksetup -setmanual "Thunderbolt Bridge" 192.168.200.1 255.255.255.0
+sudo networksetup -setmanual "Thunderbolt Bridge" <primary-ip> 255.255.255.0
 
 # On the secondary Mac (e.g., MacBook Pro):
-sudo networksetup -setmanual "Thunderbolt Bridge" 192.168.200.2 255.255.255.0
+sudo networksetup -setmanual "Thunderbolt Bridge" <worker-ip> 255.255.255.0
 ```
 
 Verify connectivity and local binaries from the primary Mac using [`scripts/distributed_probe.py`](../../scripts/distributed_probe.py):
 
 ```bash
-uv run python scripts/distributed_probe.py preflight --peer 192.168.200.2:50052
+uv run python scripts/distributed_probe.py preflight --peer <worker-ip>:50052
 ```
 
 ### Multi-Cable Note (Why RSTP Blocks a Second Cable in `bridge0`)
@@ -35,7 +35,7 @@ By default, macOS places all Thunderbolt Ethernet ports (`en2`, `en3`, …) into
 
 To use two physical Thunderbolt cables simultaneously:
 1. Remove the two Thunderbolt ports from `Thunderbolt Bridge` in macOS Network Settings on both machines.
-2. Assign two separate point-to-point `/30` subnets (for example, `192.168.201.1/30` $\leftrightarrow$ `192.168.201.2/30` on cable 1, and `192.168.202.1/30` $\leftrightarrow$ `192.168.202.2/30` on cable 2).
+2. Assign two separate point-to-point `/30` subnets (one per cable).
 3. For `mlx.launch` (`ring` backend), list both IPs in the `"ips"` array of `hosts.json`: `mlx.core.distributed` opens parallel TCP sockets per IP and stripes ring sends across both cables.
 
 ---
@@ -56,19 +56,19 @@ To use two physical Thunderbolt cables simultaneously:
 1. **On the secondary Mac**, build (once) and start the RPC worker:
    ```bash
    uv run python scripts/build_llama.py
-   ./scripts/rpc_worker.sh --host 192.168.200.2 --port 50052
+   ./scripts/rpc_worker.sh --host <worker-ip> --port 50052
    ```
 2. **On the primary Mac**, probe reachability and local memory fit before editing config:
    ```bash
    uv run python scripts/distributed_probe.py gguf-rpc \
-     --peer 192.168.200.2:50052 \
+     --peer <worker-ip>:50052 \
      --model <model-id-or-gguf-path> \
      --tensor-split 20,80
    ```
 3. **Configure the model's `model.heylook.toml`** (in the model directory, or under `[[models]]` in `heylook.toml`):
    ```toml
    [config]
-   rpc = "192.168.200.2:50052"
+   rpc = "<worker-ip>:50052"
    tensor_split = "20,80"
    ```
    *(Note: `rpc` is `file_only=True` and `ui="hidden"` because it directs `llama-server` to open outbound TCP connections; `tensor_split` is `ui="advanced"` and can be adjusted live in the web UI's **Models $\to$ Configure** panel with real-time **Memory fit** feedback.)*
@@ -104,11 +104,11 @@ Instead, [`src/heylook_llm/providers/common/mlx_pipeline.py`](../../src/heylook_
 2. **Create a `hosts.json` file for `mlx.launch`** (pointing Rank 0 at the primary Mac and Rank 1 at the secondary Mac over Thunderbolt Bridge):
    ```json
    [
-     {"ssh": "localhost", "ips": ["192.168.200.1"]},
-     {"ssh": "192.168.200.2", "ips": ["192.168.200.2"]}
+     {"ssh": "localhost", "ips": ["<primary-ip>"]},
+     {"ssh": "<worker-ip>", "ips": ["<worker-ip>"]}
    ]
    ```
-   *(Ensure passwordless SSH `ssh 192.168.200.2` works and the model directory exists at the same path—or via a shared mount/symlink—on both Macs.)*
+   *(Ensure passwordless SSH `ssh <worker-ip>` works and the model directory exists at the same path—or via a shared mount/symlink—on both Macs.)*
 3. **Run the 2-Mac cluster smoke test**:
    ```bash
    uv run python scripts/distributed_probe.py mlx-cluster \

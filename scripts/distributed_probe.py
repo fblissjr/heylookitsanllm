@@ -13,10 +13,10 @@ Subcommands:
                `llama-fit-params` (or a live one-shot completion with `--smoke`).
 
 Examples:
-  uv run python scripts/distributed_probe.py preflight --peer 192.168.200.2:50052
+  uv run python scripts/distributed_probe.py preflight --peer <worker-ip>:50052
   uv run python scripts/distributed_probe.py mlx-local --model Qwen3.5-0.8B-MLX-8bit
   uv run python scripts/distributed_probe.py mlx-cluster --hostfile hosts.json --model Qwen3.5-0.8B-MLX-8bit
-  uv run python scripts/distributed_probe.py gguf-rpc --peer 192.168.200.2:50052 --model <gguf-id-or-path> --tensor-split 20,80
+  uv run python scripts/distributed_probe.py gguf-rpc --peer <worker-ip>:50052 --model <gguf-id-or-path> --tensor-split 20,80
 """
 
 from __future__ import annotations
@@ -334,7 +334,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_mlx_cluster.set_defaults(func=cmd_mlx_cluster)
 
     p_rpc = sub.add_parser("gguf-rpc", help="Verify ggml-rpc peer, compare ram_fit, and run llama-fit-params.")
-    p_rpc.add_argument("--peer", required=True, help="RPC worker host:port (e.g. 192.168.200.2:50052).")
+    p_rpc.add_argument("--peer", required=True, help="RPC worker host:port (e.g. <worker-ip>:50052).")
     p_rpc.add_argument("--model", required=True, help="Served GGUF model ID or path to .gguf file.")
     p_rpc.add_argument("--tensor-split", default="20,80", help="Comma-separated split (RPC worker first, local Metal last; default: 20,80).")
     p_rpc.set_defaults(func=cmd_gguf_rpc)

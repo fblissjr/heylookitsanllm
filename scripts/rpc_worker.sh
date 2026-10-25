@@ -3,13 +3,13 @@
 # (e.g. MacBook Pro M4 Pro over Thunderbolt Bridge).
 #
 # Usage:
-#   scripts/rpc_worker.sh [--host 192.168.200.2] [--port 50052] [--no-cache]
+#   scripts/rpc_worker.sh [--host <worker-ip>] [--port 50052] [--no-cache]
 #
 # By default `--cache` (`-c`) is enabled so weight tensors > 10 MB are cached
 # by 64-bit FNV-1a hash on the worker's local SSD across model reloads.
 set -euo pipefail
 
-HOST="${HEYLOOK_RPC_HOST:-192.168.200.2}"
+HOST="${HEYLOOK_RPC_HOST:-0.0.0.0}"
 PORT="${HEYLOOK_RPC_PORT:-50052}"
 CACHE_FLAG="-c"
 EXTRA_ARGS=()

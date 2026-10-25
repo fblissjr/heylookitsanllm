@@ -1349,7 +1349,7 @@ class LlamaServerProvider(BaseProvider):
             if not sep or not host or not port_str.isdigit():
                 raise ValueError(
                     f"[GGUF] {self.model_id}: invalid rpc endpoint {ep!r} "
-                    f"(expected 'host:port', e.g. '192.168.200.2:50052')"
+                    f"(expected 'host:port', e.g. 'worker.local:50052')"
                 )
             port = int(port_str)
             try:

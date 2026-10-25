@@ -44,6 +44,6 @@ max_tokens = 8192
 # mmproj_path = "mmproj-F16.gguf"        # relative to this folder
 # draft_model_path = "mtp-model.gguf"    # turns speculative decoding on
 # unset = ["draft_model_path"]           # or: turn off a drafter discovery found
-# rpc = "192.168.200.2:50052"            # ggml-rpc worker(s); file-only
+# rpc = "worker.local:50052"             # ggml-rpc worker(s); file-only
 # tensor_split = "20,80"                 # 20% on RPC worker, 80% on local Metal
 # extra_args = ["--no-mmap"]             # raw llama-server flags; file-only

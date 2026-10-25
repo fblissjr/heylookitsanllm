@@ -16,7 +16,7 @@ Status: IMPLEMENTED (Phases 1 and 2 + October 2026 ecosystem optimizations)
 1. **Thunderbolt 4 negotiation**: Both MLX's RDMA backend (`jaccl.cpp`) and `llama.cpp`'s `GGML_RPC_RDMA_APPLE` (`coderef/llama.cpp/ggml/src/ggml-rpc/transport.cpp`) require Thunderbolt 5 on **both** peers (`rdma_ctl enable`). Because the M2 Ultra is Thunderbolt 4, a cable between the two Macs negotiates at **Thunderbolt 4 (40 Gb/s TCP over Thunderbolt Bridge)** and uses MLX's TCP ring backend (`ring.cpp`) or `ggml-rpc` TCP sockets.
 2. **Multi-cable behavior over Thunderbolt Bridge**:
    - macOS's `Thunderbolt Bridge` (`bridge0`) runs Rapid Spanning Tree Protocol (RSTP) to prevent L2 broadcast loops and puts a second parallel cable between the same two hosts into `blocking` state.
-   - To stripe TCP across two physical Thunderbolt cables on MLX (`ring.cpp` opens `N` parallel TCP sockets per peer when a hostfile entry lists `N` IPs), remove the second port from `bridge0` and assign each cable its own `/30` subnet (e.g., `192.168.200.1/30` and `192.168.201.1/30`). Single-token decode (8–14 KB per hop) is latency-bound, whereas weight staging (SMB3 Multichannel) and long-prompt prefill benefit from dual-cable striping.
+   - To stripe TCP across two physical Thunderbolt cables on MLX (`ring.cpp` opens `N` parallel TCP sockets per peer when a hostfile entry lists `N` IPs), remove the second port from `bridge0` and assign each cable its own `/30` subnet. Single-token decode (8–14 KB per hop) is latency-bound, whereas weight staging (SMB3 Multichannel) and long-prompt prefill benefit from dual-cable striping.
 3. **Tensor Parallelism (`model.shard()`) loses on both memory and latency**:
    - **Even-split memory cap**: `shard()` in `mlx-lm` and `mlx-vlm` (`muse_spark`, `qwen3_5`, `deepseek_v3`) splits weights `1 / N` evenly, capping each node at the M4 Pro's ~38 GB usable budget (~76 GB total across 2 nodes—less than half of what the M2 Ultra holds alone).
    - **Per-layer network lockstep**: 2 collective `all_sum`s per transformer layer (96–128 network round-trips per generated token) stall the higher-bandwidth M2 Ultra behind TCP round-trip latency and the lower-bandwidth M4 Pro on every layer.
@@ -55,10 +55,10 @@ Connect a Thunderbolt 4 or 5 cable directly between the Mac Studio (M2 Ultra) an
 
 ```sh
 # On Mac Studio (M2 Ultra - Rank 0 / Primary):
-sudo networksetup -setmanual "Thunderbolt Bridge" 192.168.200.1 255.255.255.0
+sudo networksetup -setmanual "Thunderbolt Bridge" <primary-ip> 255.255.255.0
 
 # On MacBook Pro (M4 Pro - Rank 1 / Worker):
-sudo networksetup -setmanual "Thunderbolt Bridge" 192.168.200.2 255.255.255.0
+sudo networksetup -setmanual "Thunderbolt Bridge" <worker-ip> 255.255.255.0
 ```
 
 ---
@@ -80,7 +80,7 @@ sudo networksetup -setmanual "Thunderbolt Bridge" 192.168.200.2 255.255.255.0
 4. **`src/heylook_llm/ram_fit.py`**:
    - Add `local_weight_fraction(config: dict)` scaling primary target weight sizing for both GGUF (`rpc` + `tensor_split`) and MLX (`pipeline_ratios`) so `heylook` does not drop speculative drafters when 20% of the target model lives on the worker Mac.
 5. **`scripts/rpc_worker.sh`**:
-   - Starts `coderef/llama.cpp/build/bin/ggml-rpc-server -H 192.168.200.2 -p 50052 -c` so the M4 Pro caches its assigned GGUF tensors on local SSD across reloads.
+   - Starts `coderef/llama.cpp/build/bin/ggml-rpc-server -H <worker-ip> -p 50052 -c` so the M4 Pro caches its assigned GGUF tensors on local SSD across reloads.
 
 ---
 
