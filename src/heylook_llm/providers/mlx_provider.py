@@ -1241,7 +1241,7 @@ class MLXProvider(BaseProvider):
                     getattr(self.model.config, "canvas_length", "?"),
                 )
 
-            if not self.is_diffusion:
+            if not self.is_diffusion and not self.config.get("pipeline_ratios"):
                 from mlx_vlm import apc as _apc
                 self._apc = vlm_engine.make_apc_manager()
                 self._apc_mode = _apc.APCCoordinator(
@@ -1342,10 +1342,16 @@ class MLXProvider(BaseProvider):
                 selective_pipeline_load,
             )
             enable_fast_metal_synch()
+            pipeline_peers = self.config.get("pipeline_peers")
             model, processor = selective_pipeline_load(
-                model_path, ratios=pipeline_ratios, skip_audio=True
+                model_path,
+                ratios=pipeline_ratios,
+                peers=pipeline_peers,
+                rank=0,
+                skip_audio=True,
             )
-            install_rank0_step_coordinator(model)
+            self._pipeline_group = getattr(model, "_pipeline_group", None)
+            install_rank0_step_coordinator(model, group=self._pipeline_group)
             return model, processor
 
         # Strategy 1: Try with skip_audio=True (most common fix)
@@ -1910,6 +1916,15 @@ class MLXProvider(BaseProvider):
         self._strategies.clear()
         self._apc = None
         self._draft = None
+
+        if drain and getattr(self, "_pipeline_group", None) is not None:
+            try:
+                from .common.mlx_pipeline import send_pipeline_shutdown
+
+                send_pipeline_shutdown(group=self._pipeline_group)
+            except Exception as exc:
+                logging.debug(f"Pipeline shutdown notification skipped: {exc}")
+            self._pipeline_group = None
 
         # Clean up models
         if hasattr(self, 'model'):

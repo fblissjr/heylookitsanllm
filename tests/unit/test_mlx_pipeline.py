@@ -475,4 +475,43 @@ def test_rank0_step_coordinator_and_worker_loop_lockstep(
     assert calls_r1 == [(1, 6), (1, 1)]
 
 
+def test_configure_manual_ring_and_init_pipeline_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from heylook_llm.config import MLXModelConfig
+
+    cfg = MLXModelConfig(
+        model_path="/tmp/fake-mlx",
+        pipeline_ratios=[0.8, 0.2],
+        pipeline_peers=["peer0.local", "peer1.local"],
+    )
+    assert cfg.pipeline_peers == ["peer0.local", "peer1.local"]
+
+    hostfile = mp.configure_manual_ring(["peer0.local", "peer1.local:40000"], rank=1)
+    try:
+        assert os.environ["MLX_HOSTFILE"] == hostfile
+        assert os.environ["MLX_RANK"] == "1"
+        data = json.loads(Path(hostfile).read_text(encoding="utf-8"))
+        assert data == [["peer0.local:32323"], ["peer1.local:40000"]]
+    finally:
+        Path(hostfile).unlink(missing_ok=True)
+        monkeypatch.delenv("MLX_HOSTFILE", raising=False)
+        monkeypatch.delenv("MLX_RANK", raising=False)
+
+    attempts = {"count": 0}
+
+    def _fake_init(*, strict: bool = False, backend: str = "any"):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("couldn't connect")
+        return _FakeGroup(0, 2)
+
+    monkeypatch.setattr(mp.mx.distributed, "init", _fake_init)
+    monkeypatch.setattr(mp.time, "sleep", lambda _s: None)
+    grp = mp.init_pipeline_group(peers=["peer0.local", "peer1.local"], rank=0, max_wait_s=5.0)
+    assert grp.size() == 2
+    assert attempts["count"] == 2
+
+
+
 

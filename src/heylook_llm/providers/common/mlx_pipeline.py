@@ -38,6 +38,8 @@ import json
 import logging
 import os
 import re
+import tempfile
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -101,6 +103,81 @@ def enable_fast_metal_synch(residency_refresh_ms: Optional[int] = None) -> dict[
             "MLX_METAL_RESIDENCY_REFRESH_INTERVAL_MS"
         ]
     return applied
+
+
+def configure_manual_ring(
+    peers: Sequence[str] | str,
+    rank: int = 0,
+    base_port: int = 32323,
+) -> str:
+    """Populate `MLX_HOSTFILE` and `MLX_RANK` for SSH-free multi-Mac ring launch.
+
+    `peers` may be a comma-separated string (`"<ip0>,<ip1>"`) or a sequence of
+    host strings (`["<ip0>", "<ip1>"]` or `["<ip0>:32323", "<ip1>:32324"]`).
+    Returns the path to the generated JSON hostfile.
+    """
+    if isinstance(peers, str):
+        items = [p.strip() for p in peers.split(",") if p.strip()]
+    else:
+        items = [str(p).strip() for p in peers if str(p).strip()]
+    if len(items) < 2:
+        raise ValueError(
+            f"pipeline_peers requires at least 2 hosts, got {peers!r}"
+        )
+    if not (0 <= rank < len(items)):
+        raise ValueError(
+            f"rank {rank} out of range for {len(items)} peers"
+        )
+
+    ring_hosts: list[list[str]] = []
+    for idx, item in enumerate(items):
+        if ":" in item:
+            ring_hosts.append([item])
+        else:
+            ring_hosts.append([f"{item}:{base_port + idx}"])
+
+    fd, path = tempfile.mkstemp(prefix=f"mlx_ring_rank{rank}_", suffix=".json")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(ring_hosts, f)
+    os.environ["MLX_HOSTFILE"] = path
+    os.environ["MLX_RANK"] = str(rank)
+    return path
+
+
+def init_pipeline_group(
+    peers: Optional[Sequence[str] | str] = None,
+    rank: int = 0,
+    backend: str = "any",
+    max_wait_s: Optional[float] = None,
+) -> Any:
+    """Initialize and return the `mlx.distributed` group for pipeline execution.
+
+    When `peers` (or `HEYLOOK_MLX_PEERS`) is provided, configures `MLX_HOSTFILE`
+    and `MLX_RANK` for SSH-free multi-Mac TCP ring connection and retries
+    `mx.distributed.init(strict=True, backend="ring")` until the peer connects
+    (or `max_wait_s` expires).
+    """
+    effective_peers = peers if peers is not None else os.environ.get("HEYLOOK_MLX_PEERS")
+    if effective_peers:
+        env_rank = os.environ.get("HEYLOOK_MLX_RANK")
+        effective_rank = int(env_rank) if env_rank is not None and rank == 0 else int(rank)
+        configure_manual_ring(effective_peers, rank=effective_rank)
+        ring_backend = "ring" if backend == "any" else backend
+        _log.info(
+            "Waiting for MLX ring peers (%s) as rank=%d...",
+            effective_peers,
+            effective_rank,
+        )
+        t0 = time.monotonic()
+        while True:
+            try:
+                return mx.distributed.init(strict=True, backend=ring_backend)
+            except RuntimeError as exc:
+                if max_wait_s is not None and (time.monotonic() - t0) >= max_wait_s:
+                    raise
+                _log.info("Still waiting for MLX ring peer (%s); retrying...", exc)
+                time.sleep(1.0)
+    return mx.distributed.init(strict=False, backend=backend)
 
 
 def compute_asymmetric_layer_split(
@@ -841,6 +918,8 @@ def selective_pipeline_load(
     *,
     ratios: Sequence[float] = (0.8, 0.2),
     group: Any = None,
+    peers: Optional[Sequence[str] | str] = None,
+    rank: int = 0,
     skip_audio: bool = True,
 ) -> tuple[Any, Any]:
     """Load an `mlx-vlm` model with selective per-rank `.safetensors` loading
@@ -856,7 +935,8 @@ def selective_pipeline_load(
     from mlx_vlm.utils import get_model_path, load as vlm_load
 
     enable_fast_metal_synch()
-    group = group or mx.distributed.init()
+    if group is None:
+        group = init_pipeline_group(peers=peers, rank=rank)
     rank = int(group.rank())
     world_size = int(group.size())
 
@@ -872,6 +952,7 @@ def selective_pipeline_load(
             total_layers=total_layers,
         )
         setattr(model, "_pipeline_assignment", assignment)
+        setattr(model, "_pipeline_group", group)
         return model, processor
 
     spans = compute_asymmetric_layer_split(total_layers, ratios)
@@ -902,6 +983,7 @@ def selective_pipeline_load(
         )
 
     apply_asymmetric_pipeline(model, group=group, ratios=ratios)
+    setattr(model, "_pipeline_group", group)
     mx.eval(model.parameters())
     model.eval()
     # Barrier across ranks after materialization

@@ -130,11 +130,13 @@ Instead, [`src/heylook_llm/providers/common/mlx_pipeline.py`](../../src/heylook_
      --model <mlx-model-id-or-path> \
      --ratios 0.8,0.2
    ```
-4. **Configure `pipeline_ratios` in `model.heylook.toml`**:
+4. **Configure `pipeline_ratios` and `pipeline_peers` in `model.heylook.toml` (or `heylook.toml`)**:
    ```toml
    [config]
    pipeline_ratios = [0.8, 0.2]
+   pipeline_peers = ["<primary-ip>", "<worker-ip>"]
    ```
+   With `pipeline_peers` set, `heylookllm` on the primary Mac initializes its TCP ring directly on model load (no `mlx.launch` or SSH required) and connects to the running `scripts/mlx_pipeline_worker.py --rank 1 --peers <primary-ip>,<worker-ip>` process on the worker Mac. When `heylookllm` unloads the model, it automatically sends `CMD_SHUTDOWN` to the worker rank.
 
 ---
 
