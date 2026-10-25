@@ -1166,8 +1166,23 @@ def run_pipeline_worker_loop(
     worker_cache = lm.make_cache()
     header_template = mx.zeros((8,), dtype=mx.int32)
     steps = 0
+    req_decode_steps = 0
+    req_t0 = time.perf_counter()
+    assignment: Optional[PipelineAssignment] = getattr(
+        model, "_pipeline_assignment", None
+    ) or getattr(inner, "_pipeline_assignment", None)
+    layer_span = (
+        f"layers {assignment.start_layer}..{assignment.end_layer - 1}"
+        if assignment is not None
+        else "worker slice"
+    )
 
-    _log.info("Pipeline worker rank %d entering lockstep loop (hidden_size=%d)", group.rank(), hidden_size)
+    _log.info(
+        "Pipeline worker rank %d entering lockstep loop (%s, hidden_size=%d)",
+        group.rank(),
+        layer_span,
+        hidden_size,
+    )
     while True:
         header = mx.distributed.recv_like(header_template, 0, group=group)
         mx.eval(header)
@@ -1175,11 +1190,50 @@ def run_pipeline_worker_loop(
             int(x) for x in header.tolist()
         )
         if cmd == CMD_SHUTDOWN:
+            if req_decode_steps > 0:
+                elapsed = max(1e-6, time.perf_counter() - req_t0)
+                _log.info(
+                    "Pipeline worker rank %d finished request (%d decode steps, %.1f tok/s)",
+                    group.rank(),
+                    req_decode_steps,
+                    req_decode_steps / elapsed,
+                )
             _log.info("Pipeline worker rank %d received CMD_SHUTDOWN", group.rank())
             break
         if cmd == CMD_RESET_CACHE:
             worker_cache = lm.make_cache()
+            req_decode_steps = 0
             continue
+
+        if L > 1 or cache_offset == 0:
+            if req_decode_steps > 0:
+                elapsed = max(1e-6, time.perf_counter() - req_t0)
+                _log.info(
+                    "Pipeline worker rank %d finished request (%d decode steps, %.1f tok/s)",
+                    group.rank(),
+                    req_decode_steps,
+                    req_decode_steps / elapsed,
+                )
+            _log.info(
+                "Pipeline worker rank %d executing prefill (%s, tokens=%d, cache_offset=%d)",
+                group.rank(),
+                layer_span,
+                L,
+                cache_offset,
+            )
+            req_decode_steps = 0
+            req_t0 = time.perf_counter()
+        else:
+            req_decode_steps += 1
+            if req_decode_steps % 50 == 0:
+                elapsed = max(1e-6, time.perf_counter() - req_t0)
+                _log.info(
+                    "Pipeline worker rank %d decoding (%s, %d tokens, %.1f tok/s)",
+                    group.rank(),
+                    layer_span,
+                    req_decode_steps,
+                    req_decode_steps / elapsed,
+                )
 
         _sync_worker_cache_offset(worker_cache, cache_offset)
         dtype = _CODE_TO_DTYPE.get(dtype_code, mx.bfloat16)
