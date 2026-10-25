@@ -7,8 +7,8 @@
 // `ctx_size` keeps its own control (context-select.js: a power-of-two ladder
 // plus Custom…). Every other field gets a native <select> whose first option
 // is the default, labelled with what it is when the server says ("flash attn:
-// default (off)"), then the field's own enum values. "Default", not "auto":
-// flash attention's default is off (2026-09-26) and llama-server's own auto
+// default (on)"), then the field's own enum values. "Default", not "auto":
+// flash attention's default is on (2026-10-24) and llama-server's own auto
 // is one of its values. Choosing the default is the reset: it sends null and
 // the server drops the stored key, so a default is never written (plan
 // principle 1). The title carries the
@@ -62,15 +62,14 @@ export function createLoadPanel({ currentModelId, adminRow, loadFields, onChange
     // Rebuild only when the model or its facts moved: an untouched rebuild
     // would throw away a pick the user just made.
     const sig = JSON.stringify([currentModelId(), fields.map((f) => [
-      f.name, row?.config?.[f.name] ?? null, settings[f.name]?.value ?? null])]);
+      f.name, row?.config?.[f.name] ?? null, settings[f.name]?.value ?? null, settings[f.name]?.auto ?? null])]);
     if (extras.dataset.sig === sig) return;
     extras.dataset.sig = sig;
     selects = new Map();
     extras.replaceChildren(...fields.map((f) => {
       const setting = settings[f.name];
       const label = labelFor(f.name);
-      // `auto` on a Setting is what the model gets with nothing stored; it is
-      // absent while a value is stored, and then the label says only default.
+      // `auto` on a Setting is what the model gets with nothing stored.
       const byDefault = setting?.auto;
       const unset = byDefault ? `${label}: default (${byDefault})` : `${label}: default`;
       const select = createEl('select', {

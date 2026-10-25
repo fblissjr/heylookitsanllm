@@ -1415,24 +1415,26 @@ def test_a_drafter_load_failure_costs_one_retry_not_the_model(monkeypatch, draft
     assert spawns == [None]
 
 
-def test_flash_attn_is_off_unless_set_and_the_report_says_what_the_spawn_did():
-    """Unset flash_attn is OFF (owner, 2026-09-26), except a quantized V
-    cache, which llama.cpp refuses without it. The spawn's argv and the row
-    come from one decision, so they cannot disagree. An explicit `auto` is
-    llama-server's to resolve; the row shows what it resolved to, read from
-    its log. The lines are libllama's own (llama-context.cpp resolve_fused_ops
-    and the forced cases); the first one is the target model's context, so a
-    drafter's later line cannot flip it."""
+def test_flash_attn_is_on_unless_set_and_the_report_says_what_the_spawn_did():
+    """Unset flash_attn is ON (owner, 2026-10-24; perf_ab verified on M2 Ultra).
+    The spawn's argv and the row come from one decision, so they cannot
+    disagree. An explicit `auto` is llama-server's to resolve; the row shows
+    what it resolved to, read from its log. `setting.auto` always carries the
+    unconfigured default ("on") so the load panel can render `default (on)` even
+    when a model stores `off` or `auto`."""
     from heylook_llm.providers.gguf_describe import flash_attn_setting
     from heylook_llm.providers.llama_server_provider import SpawnLog
 
-    for cfg, want in (({}, "off"), ({"cache_type_v": "f16"}, "off"),
+    for cfg, want in (({}, "on"), ({"cache_type_v": "f16"}, "on"),
                       ({"cache_type_v": "q8_0"}, "on"),
                       ({"cache_type_v": "q8_0", "flash_attn": "off"}, "off"),
+                      ({"flash_attn": "off"}, "off"),
                       ({"flash_attn": "on"}, "on"), ({"flash_attn": "auto"}, "auto")):
         args = make_provider(**cfg)._build_args(Path("/bin/llama-server"), 1234)
         assert args[args.index("-fa") + 1] == want, cfg
-        assert flash_attn_setting(cfg, None, loaded=False).value == want, cfg
+        setting = flash_attn_setting(cfg, None, loaded=False)
+        assert setting.value == want, cfg
+        assert setting.auto == "on", cfg
 
     log = SpawnLog()
     for line in ("llama_context: flash_attn            = auto\n",
@@ -1445,12 +1447,84 @@ def test_flash_attn_is_off_unless_set_and_the_report_says_what_the_spawn_did():
     assert forced.flash_attn == "on"
 
     seen = flash_attn_setting({"flash_attn": "auto"}, "on", loaded=True)
-    assert (seen.value, seen.provenance) == ("on", "observed")
+    assert (seen.value, seen.auto, seen.provenance) == ("on", "on", "observed")
     assert flash_attn_setting({"flash_attn": "auto"}, None, loaded=True).provenance == "unknown"
     default = flash_attn_setting({}, "on", loaded=True)
-    assert (default.value, default.provenance) == ("off", "derived")
+    assert (default.value, default.auto, default.provenance) == ("on", "on", "derived")
     chosen = flash_attn_setting({"flash_attn": "off"}, "on", loaded=True)
-    assert (chosen.value, chosen.configured, chosen.provenance) == ("off", "off", "configured")
+    assert (chosen.value, chosen.configured, chosen.auto, chosen.provenance) == (
+        "off", "off", "on", "configured")
+
+
+@pytest.mark.unit
+def test_cache_and_checkpoint_decisions_match_between_argv_and_describe(monkeypatch):
+    """WS3: prompt cache RAM ceiling (-cram), recurrent checkpoint spacing
+    (--checkpoint-min-step), checkpoint count (--ctx-checkpoints), and KV
+    cache shift (--cache-reuse) share one decision between _build_args,
+    describe_static, and describe_observed."""
+    from heylook_llm import gguf_metadata
+    from heylook_llm.config import GGUFModelConfig
+    from heylook_llm.providers.gguf_describe import describe_static
+
+    # 1. Auto cache_ram_mb from working-set headroom:
+    # - 80 GiB headroom -> clamped to AUTO_MAX_CACHE_RAM_MIB (32768)
+    # - 40 GiB headroom -> 20 GiB = 20480 MiB
+    # - 16 GiB headroom (< THIN_HEADROOM_GB) -> None (inherits llama-server's 8192)
+    # - stored cache_ram_mb wins over auto
+    for headroom, cfg, expected_cram in (
+        (80.0, {}, "32768"),
+        (40.0, {}, "20480"),
+        (16.0, {}, None),
+        (None, {}, None),
+        (80.0, {"cache_ram_mb": 4096}, "4096"),
+        (16.0, {"cache_ram_mb": 0}, "0"),
+    ):
+        monkeypatch.setattr(LlamaServerProvider, "_working_set_headroom_gb",
+                            lambda self, h=headroom: h)
+        p = make_provider(**cfg)
+        auto_cram = p._auto_cache_ram_mb()
+        args = p._build_args(Path("/bin/llama-server"), 1234,
+                             auto_cache_ram_mb=auto_cram)
+        if expected_cram is None:
+            assert "-cram" not in args
+        else:
+            assert ("-cram", expected_cram) in list(zip(args, args[1:]))
+        p._last_image_cap = None
+        p._record_load_report(None, auto_cram, "1800", "default")
+        obs = p.describe_observed()
+        want_eff = int(expected_cram) if expected_cram is not None else LlamaServerProvider.LLAMA_DEFAULT_CACHE_RAM_MIB
+        assert obs.settings["cache_ram_mb"].value == want_eff
+        assert obs.cache["ram_budget_mib"].value == want_eff
+
+    # 2. Memory-class decisions for checkpoint_min_step and cache_reuse:
+    for kind, extra_cfg, want_cms, emit_cms, want_reuse, emit_reuse, reuse_prov in (
+        ("hybrid_recurrent", {}, 256, True, 0, False, "not_applicable"),
+        ("sliding_window", {}, 256, True, 0, False, "not_applicable"),
+        ("full_attention", {}, 8192, False, 256, True, "derived"),
+        ("full_attention", {"mmproj_path": "/fake/mmproj.gguf"}, 8192, False, 0, False, "not_applicable"),
+        ("hybrid_recurrent", {"checkpoint_min_step": 1024}, 1024, True, 0, False, "not_applicable"),
+        ("full_attention", {"cache_reuse": 0}, 8192, False, 0, True, "configured"),
+    ):
+        monkeypatch.setattr(gguf_metadata, "memory_kind", lambda _p, k=kind: k)
+        cfg = {"model_path": "/fake/model.gguf", **extra_cfg}
+        args = make_provider(**cfg)._build_args(Path("/bin/llama-server"), 1234)
+        pairs = list(zip(args, args[1:]))
+        if emit_cms:
+            assert ("--checkpoint-min-step", str(want_cms)) in pairs
+        else:
+            assert "--checkpoint-min-step" not in args
+        if emit_reuse:
+            assert ("--cache-reuse", str(want_reuse)) in pairs
+        else:
+            assert "--cache-reuse" not in args
+
+        cfg_obj = GGUFModelConfig(**cfg)
+        desc = describe_static("m", cfg, cfg_obj, written=bool(extra_cfg), derived={})
+        assert desc.settings["checkpoint_min_step"].value == want_cms
+        assert desc.cache["checkpoint_min_spacing"].value == want_cms
+        assert desc.settings["cache_reuse"].value == want_reuse
+        assert desc.settings["cache_reuse"].provenance == reuse_prov
+        assert desc.cache["kv_shift"].value is bool(want_reuse > 0)
 
 
 def test_gguf_metrics_report_what_is_known_and_null_the_rest(tmp_path, monkeypatch):

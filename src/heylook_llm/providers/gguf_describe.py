@@ -94,27 +94,27 @@ def _template(model_id: str, cfg: dict) -> TemplateFacts:
 
 def flash_attn_setting(cfg: dict, resolved, *, loaded: bool) -> Setting:
     """flash_attn's Setting (plan W1), from the same decision the spawn
-    makes (``effective_flash_attn``): off unless configured, on for a
-    quantized V cache. Only an explicit ``auto`` is llama-server's to resolve;
-    once loaded, ``resolved`` is what its log said (``SpawnLog``), or None
-    when the log never said."""
+    makes (``effective_flash_attn``): on unless configured. Only an explicit
+    ``auto`` is llama-server's to resolve; once loaded, ``resolved`` is what
+    its log said (``SpawnLog``), or None when the log never said."""
     from heylook_llm.config import GGUFModelConfig, field_effect
 
     effect = field_effect(GGUFModelConfig.model_fields["flash_attn"])
     from heylook_llm.providers.llama_server_provider import effective_flash_attn
     value, reason = effective_flash_attn(cfg)
+    default_val, _ = effective_flash_attn({k: v for k, v in cfg.items() if k != "flash_attn"})
     configured = cfg.get("flash_attn")
     if value != "auto":
-        return Setting(value=value, configured=configured, auto=None if configured else value,
+        return Setting(value=value, configured=configured, auto=default_val,
                        reason=reason, provenance="configured" if configured else "derived",
                        effect=effect)
     if not loaded:
-        return Setting(value="auto", configured="auto", auto=None, provenance="configured", effect=effect,
+        return Setting(value="auto", configured="auto", auto=default_val, provenance="configured", effect=effect,
                        reason="auto: llama-server turns it on at load where the device supports it")
     if resolved is None:
-        return Setting(value="auto", configured="auto", auto=None, provenance="unknown", effect=effect,
+        return Setting(value="auto", configured="auto", auto=default_val, provenance="unknown", effect=effect,
                        reason="auto; llama-server's log did not say what it resolved to")
-    return Setting(value=resolved, configured="auto", auto=None, provenance="observed", effect=effect,
+    return Setting(value=resolved, configured="auto", auto=default_val, provenance="observed", effect=effect,
                    reason=f"auto: llama-server's device probe turned it {resolved} (its log)")
 
 
@@ -142,6 +142,71 @@ def describe_static(model_id: str, cfg: dict, config_obj: Any, *,
             "reason": (f"decided at load: {P.AUTO_UBATCH} when working-set "
                        f"headroom clears the thin threshold, else llama-server's "
                        f"{P.LLAMA_DEFAULT_N_UBATCH}")})
+
+    # Host-RAM prompt cache budget: when not stored, auto-sized at spawn from
+    # live working-set headroom up to AUTO_MAX_CACHE_RAM_MIB.
+    if settings["cache_ram_mb"].provenance != "configured":
+        cram_extra = P.extra_arg_value(cfg.get("extra_args"), {"-cram", "--cache-ram"})
+        if cram_extra is not None:
+            settings["cache_ram_mb"] = settings["cache_ram_mb"].model_copy(update={
+                "value": int(cram_extra), "configured": int(cram_extra),
+                "auto": None, "provenance": "configured",
+                "reason": "-cram in extra_args (-1 unlimited, 0 off)"})
+        else:
+            settings["cache_ram_mb"] = settings["cache_ram_mb"].model_copy(update={
+                "value": None, "auto": None, "provenance": "unknown",
+                "reason": (f"decided at load: up to {P.AUTO_MAX_CACHE_RAM_MIB} MiB when "
+                           f"working-set headroom clears the thin threshold, else llama-server's "
+                           f"{P.LLAMA_DEFAULT_CACHE_RAM_MIB} MiB")})
+
+    # Checkpoint count, checkpoint spacing, and KV cache reuse: derived from
+    # the GGUF header's memory class when unset, with extra_args honored.
+    cp_val, cp_reason, _ = P.ctx_checkpoints_decision(cfg)
+    cp_auto = P.LLAMA_DEFAULT_CTX_CHECKPOINTS
+    if settings["ctx_checkpoints"].provenance == "configured":
+        settings["ctx_checkpoints"] = settings["ctx_checkpoints"].model_copy(
+            update={"auto": cp_auto})
+    elif P.extra_arg_value(cfg.get("extra_args"), {"-ctxcp", "--ctx-checkpoints", "--swa-checkpoints"}) is not None:
+        settings["ctx_checkpoints"] = settings["ctx_checkpoints"].model_copy(
+            update={"value": cp_val, "configured": cp_val, "auto": cp_auto,
+                    "provenance": "configured", "reason": cp_reason})
+    else:
+        settings["ctx_checkpoints"] = settings["ctx_checkpoints"].model_copy(
+            update={"value": cp_val, "auto": cp_auto, "reason": cp_reason})
+
+    cms_val, cms_reason, _ = P.checkpoint_min_step_decision(cfg)
+    cms_auto, _, _ = P.checkpoint_min_step_decision(
+        {k: v for k, v in cfg.items() if k not in ("checkpoint_min_step", "extra_args")})
+    if settings["checkpoint_min_step"].provenance == "configured":
+        settings["checkpoint_min_step"] = settings["checkpoint_min_step"].model_copy(
+            update={"auto": cms_auto})
+    elif P.extra_arg_value(cfg.get("extra_args"), {"-cms", "--checkpoint-min-step"}) is not None:
+        settings["checkpoint_min_step"] = settings["checkpoint_min_step"].model_copy(
+            update={"value": cms_val, "configured": cms_val, "auto": cms_auto,
+                    "provenance": "configured", "reason": cms_reason})
+    else:
+        settings["checkpoint_min_step"] = settings["checkpoint_min_step"].model_copy(
+            update={"value": cms_val, "auto": cms_auto, "reason": cms_reason})
+
+    from heylook_llm import gguf_metadata
+    mem_kind = gguf_metadata.memory_kind(Path(str(cfg.get("model_path") or "")).expanduser())
+    reuse_val, reuse_reason, _ = P.cache_reuse_decision(cfg)
+    reuse_auto, _, _ = P.cache_reuse_decision(
+        {k: v for k, v in cfg.items() if k not in ("cache_reuse", "extra_args")})
+    if settings["cache_reuse"].provenance == "configured":
+        settings["cache_reuse"] = settings["cache_reuse"].model_copy(
+            update={"auto": reuse_auto})
+    elif P.extra_arg_value(cfg.get("extra_args"), {"--cache-reuse"}) is not None:
+        settings["cache_reuse"] = settings["cache_reuse"].model_copy(
+            update={"value": reuse_val, "configured": reuse_val, "auto": reuse_auto,
+                    "provenance": "configured", "reason": reuse_reason})
+    elif cfg.get("mmproj_path") or mem_kind in ("hybrid_recurrent", "sliding_window"):
+        settings["cache_reuse"] = settings["cache_reuse"].model_copy(
+            update={"value": 0, "auto": 0, "provenance": "not_applicable",
+                    "reason": reuse_reason})
+    else:
+        settings["cache_reuse"] = settings["cache_reuse"].model_copy(
+            update={"value": reuse_val, "auto": reuse_auto, "reason": reuse_reason})
 
     if not cfg.get("mmproj_path"):
         image_cap = Setting(provenance="not_applicable",
@@ -299,16 +364,12 @@ def _cache_profile(cfg: dict, settings: dict) -> dict:
     else:
         out["reuse_class"] = Fact(provenance="unknown", source="the GGUF header is unreadable")
 
-    if cfg.get("mmproj_path"):
-        out["kv_shift"] = Fact(value=False, provenance="derived", source=(
-            "llama-server forces KV shifting (cache_reuse) and context shift off "
-            "whenever a projector loads"))
-    else:
-        shift = P.extra_arg_value(cfg.get("extra_args"), {"--cache-reuse"})
-        out["kv_shift"] = Fact(
-            value=bool(shift and shift != "0"), provenance="derived",
-            source="--cache-reuse in extra_args" if shift
-            else "llama-server's default: cache_reuse 0, off")
+    reuse_val, reuse_reason, _ = P.cache_reuse_decision(cfg)
+    out["kv_shift"] = Fact(
+        value=bool(reuse_val and reuse_val > 0),
+        provenance="configured" if settings["cache_reuse"].provenance == "configured" else "derived",
+        source=reuse_reason,
+    )
 
     # extra_args follows -cram in the argv, so it is what llama-server keeps.
     ram = cfg.get("cache_ram_mb")
@@ -321,20 +382,21 @@ def _cache_profile(cfg: dict, settings: dict) -> dict:
                                      source="cache_ram_mb for this model (-1 unlimited, 0 off)")
     else:
         out["ram_budget_mib"] = Fact(
-            value=P.LLAMA_DEFAULT_CACHE_RAM_MIB, provenance="derived",
-            source=("llama-server's default host-RAM prompt cache; an entry "
-                    "larger than it is skipped, not stored"))
+            value=None, provenance="unknown",
+            source=(f"decided at load: up to {P.AUTO_MAX_CACHE_RAM_MIB} MiB when "
+                    f"working-set headroom clears the thin threshold, else llama-server's "
+                    f"{P.LLAMA_DEFAULT_CACHE_RAM_MIB} MiB; an entry larger than the budget is skipped"))
 
-    for key, names, default, what in (
-        ("checkpoints", {"-ctxcp", "--ctx-checkpoints", "--swa-checkpoints"},
-         P.LLAMA_DEFAULT_CTX_CHECKPOINTS, "context checkpoints kept per slot"),
-        ("checkpoint_min_spacing", {"-cms", "--checkpoint-min-step"},
-         P.LLAMA_DEFAULT_CHECKPOINT_MIN_STEP, "minimum tokens between checkpoints"),
-    ):
-        given = P.extra_arg_value(cfg.get("extra_args"), names)
-        out[key] = Fact(value=int(given) if given is not None else default,
-                        provenance="configured" if given is not None else "derived",
-                        source=f"{what} (" + ("extra_args" if given is not None
-                                              else "llama-server's default") + ")")
+    cp_val, cp_reason, _ = P.ctx_checkpoints_decision(cfg)
+    out["checkpoints"] = Fact(
+        value=cp_val,
+        provenance="configured" if settings["ctx_checkpoints"].provenance == "configured" else "derived",
+        source=f"context checkpoints kept per slot ({cp_reason})")
+
+    cms_val, cms_reason, _ = P.checkpoint_min_step_decision(cfg)
+    out["checkpoint_min_spacing"] = Fact(
+        value=cms_val,
+        provenance="configured" if settings["checkpoint_min_step"].provenance == "configured" else "derived",
+        source=f"minimum tokens between checkpoints ({cms_reason})")
     return out
 

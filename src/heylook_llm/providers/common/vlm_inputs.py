@@ -59,35 +59,39 @@ def _reconstruct_thinking(msg_dict: dict) -> dict:
     return msg_dict
 
 
-def content_for_template(text: str, num_images: int):
+def content_for_template(parts: list):
     """Content for ONE message, in the shape mlx-vlm allocates media from.
 
     A message carrying images travels as BLOCK-form content with one bare
-    ``{"type": "image"}`` marker per image, because mlx-vlm's
-    ``apply_chat_template`` attributes media PER MESSAGE by counting explicit
-    markers (``_content_media_count``) and dumps only what it CANNOT attribute
-    onto the last user turn. Handing it a flattened string plus a bare
-    ``num_images=`` total -- what this function did until v2.0.15 -- attributed
-    nothing, so EVERY image in a conversation rendered its marker on the final
-    user message: an image attached in turn 1 was presented to the model as if
-    it had arrived in the latest turn, and two images from different turns
-    arrived adjacent, in load order. The bytes were always in context; what was
-    wrong was which turn they were announced in.
+    ``{"type": "image"}`` marker per image in the order the message's parts
+    were sent, because mlx-vlm's ``apply_chat_template`` attributes media PER
+    MESSAGE by counting explicit markers (``_content_media_count``), keeps
+    explicit markers where they sit in the content list (since mlx-vlm
+    990a0287 / #2362), and dumps only what it CANNOT attribute onto the last
+    user turn. Handing it a flattened string plus a bare ``num_images=`` total
+    -- what this function did until v2.0.15 -- attributed nothing, so EVERY
+    image in a conversation rendered its marker on the final user message: an
+    image attached in turn 1 was presented to the model as if it had arrived
+    in the latest turn, and two images from different turns arrived adjacent,
+    in load order.
 
     The marker is BARE on purpose: a multi-MB data URI never enters the
-    template call, and mlx-vlm builds the per-model marker shape itself. Since
-    mlx-vlm 990a0287 (#2362) it keeps explicit markers WHERE THEY ARE in the
-    content list, so images render before the text on every model; before it,
-    mlx-vlm re-derived the order per model (llava appended, qwen3_5
-    prepended). No served family changed (qwen3_5, qwen3_vl and gemma4 already
-    prepended).
+    template call, and mlx-vlm builds the per-model marker shape itself.
 
     Text-only messages keep travelling as a plain string, so a conversation
     with no images renders byte-identically to before this change.
     """
-    if num_images <= 0:
-        return text
-    return [{"type": "image"}] * num_images + [{"type": "text", "text": text}]
+    blocks = []
+    has_image = False
+    for part in parts:
+        if part.type == "image_url":
+            blocks.append({"type": "image"})
+            has_image = True
+        elif part.type == "text" and part.text:
+            blocks.append({"type": "text", "text": part.text})
+    if has_image:
+        return blocks
+    return " ".join(b["text"] for b in blocks)
 
 
 def system_prefix_tokens(system_text: str, render, tokenize) -> list[int] | None:
@@ -205,28 +209,19 @@ def prepare_vlm_inputs_parallel(
     for msg in messages:
         content = msg.content
         if isinstance(content, list):
-            text_parts = []
-            # Per-message count, not just the running total: this is what lets
-            # each image render its marker on the turn it was attached to.
-            msg_images = 0
-
             # Parts are ContentPart OBJECTS: ChatMessage validates dicts into
             # them at construction, on every path that builds a request.
+            # `image_urls` is appended in message and part order, and
+            # content_for_template places the markers in that same order, so
+            # the flat image list the caller loads lines up with the markers
+            # the template renders.
             for part in content:
-                if part.type == 'text':
-                    text_parts.append(part.text)
-                elif part.type == 'image_url':
+                if part.type == 'image_url':
                     image_urls.append(part.image_url.url)
-                    msg_images += 1
                     has_images = True
 
-            # Combine text parts. `image_urls` is appended in message order and
-            # the markers are placed in that same order, so the flat image list
-            # the caller loads still lines up with the markers the template
-            # renders.
-            combined_content = " ".join(text_parts) if text_parts else ""
             msg_dict = {"role": msg.role,
-                        "content": content_for_template(combined_content, msg_images)}
+                        "content": content_for_template(content)}
             # Prior thinking, the way this template takes it (see helper)
             if hasattr(msg, 'thinking') and msg.thinking:
                 msg_dict = thinking_for_template({**msg_dict, 'thinking': msg.thinking}, template_info)

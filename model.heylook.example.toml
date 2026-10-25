@@ -35,7 +35,9 @@ max_tokens = 8192
 # --- gguf model (llama-server subprocess) -----------------------------------
 
 # ctx_size = 32768                       # unset = the model's training context
-# flash_attn = "on"                      # "on"/"off"; unset = llama-server's auto
+# flash_attn = "off"                     # "on"/"off"/"auto"; unset = on (heylook's default)
+# cache_ram_mb = 32768                   # prompt cache RAM (MiB); unset = auto-sized up to 32768
+# checkpoint_min_step = 256              # tokens between checkpoints; unset = 256 on recurrent/SWA
 # mmproj_path = "mmproj-F16.gguf"        # relative to this folder
 # draft_model_path = "mtp-model.gguf"    # turns speculative decoding on
 # unset = ["draft_model_path"]           # or: turn off a drafter discovery found

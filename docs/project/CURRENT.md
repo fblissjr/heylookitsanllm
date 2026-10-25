@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-10-06, v2.0.204, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
+Last updated: 2026-10-24, v2.0.207, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md) (triaged 2026-09-25;
@@ -16,6 +16,7 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
+| v2.0.207 MLX text/image interleaving + GGUF flash_attn default (`on`) + GGUF prompt-cache & checkpoint defaults (`cache_ram_mb`, `checkpoint_min_step`, `ctx_checkpoints`, `cache_reuse`) + `sensenova_u1` non-causal projector entry | unit + contract 1576 passed; `e2e:render` 105/105; `vlm_parity_probe.py` ok on `Qwen3.5-0.8B-MLX-8bit` (`prompt_matches_mlx_vlm=true`, `equals_cold_run=true`, `feature_cache_hit=true`); `perf_ab.py` on `unsloth_Qwen3.8-27B-UD-Q8_K_XL` (`on` vs `off`, 3 rounds x 3 reps, `short,vision`, record in `internal/claude/perf/ab_unsloth_Qwen3.8-27B-UD-Q8_K_XL_20261024-184514.json`); all 25 discovered models in scan folders validated with aligned sidecars. NOT run: live browser `e2e:chat` / `e2e:pages`, `tests/smoke/`, `tests/eval/` | v2.0.207 |
 | v2.0.204 dark mode phase 4 step 2, second attempt (iOS text size on touch; the load settings and Load are one group that stays inside the bar's second line) | unit + contract 1542; `e2e:render` 105/105 light and dark, with the bar check now run on a cold model at three root sizes (it failed on the previous frontend at all three, alone); screenshots main vs branch identical in dark for 15 loaded-model views after an identical control pair. The owner's iPhone check PASSED the same day: unloaded model, default and largest Text Size, the bar and composer fit and Load stays on screen. NOT run: the live page suites | v2.0.204 |
 | v2.0.203 REVERT of v2.0.202 (iOS text size on touch): the owner's iPhone check found the Load button cut off at the right of the chat bar's second line with a cold model | unit + contract 1542 on the reverted tree; `frontend/` and `tests/e2e/` are byte-identical to v2.0.201, whose `e2e:render` result stands (104/104 light). The miss reproduced in phone emulation at 402pt: Load sits inside the strip at the old root size and past its right edge at the new one | v2.0.203 |
 | v2.0.202 dark mode phase 4 step 2 (on touch the root takes iOS's body text style; touch fields `max(16px, 1rem)`) | unit + contract 1542; `e2e:render` 105/105 light and dark, including the new layout check at the two iOS root sizes; against the previous frontend that check fails and nothing else does. NOT run: anything on a device. Chrome drops the keyword, so whether WebKit applies it and the Text Size setting moves the page is OPEN until the owner's iPhone check | v2.0.202 |

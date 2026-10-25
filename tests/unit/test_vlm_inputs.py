@@ -165,6 +165,26 @@ class TestMediaAttribution:
         seen = self._capture(messages)
         assert [m["content"] for m in seen["messages"]] == ["hello", "hi"]
 
+    def test_interleaved_text_and_images_keep_their_order(self, mock_mlx):
+        messages = [
+            FakeMessage("user", [
+                self._txt("Compare"),
+                self._img("a.png"),
+                self._txt("with"),
+                self._img("b.png"),
+                self._txt("carefully."),
+            ]),
+        ]
+        seen = self._capture(messages)
+        assert seen["messages"][0]["content"] == [
+            {"type": "text", "text": "Compare"},
+            {"type": "image"},
+            {"type": "text", "text": "with"},
+            {"type": "image"},
+            {"type": "text", "text": "carefully."},
+        ]
+        assert seen["num_images"] == 2
+
 
 class TestUpstreamAttributionAssumption:
     """The fix above works by handing mlx-vlm block-form content and trusting
@@ -311,6 +331,18 @@ def test_the_models_own_template_draws_the_image_markup():
     out = vlm_apply_chat_template(Proc(qwen), Cfg(), [{"role": "user", "content": "x"}],
                                   num_images=1, enable_thinking=False)
     assert "<|vision_start|><|image_pad|><|vision_end|>x" in out
+    interleaved = [{"role": "user", "content": [
+        {"type": "text", "text": "Compare "},
+        {"type": "image"},
+        {"type": "text", "text": " with "},
+        {"type": "image"},
+    ]}]
+    out_interleaved = vlm_apply_chat_template(
+        Proc(qwen), Cfg(), interleaved, num_images=2, enable_thinking=False)
+    assert (
+        "Compare <|vision_start|><|image_pad|><|vision_end|> "
+        "with <|vision_start|><|image_pad|><|vision_end|>"
+    ) in out_interleaved
     # ...and a message with no image renders as its plain text: mlx-vlm's list
     # form of it picked up template artifacts (a trailing space on gemma-4's
     # system turn, which changed its replies).

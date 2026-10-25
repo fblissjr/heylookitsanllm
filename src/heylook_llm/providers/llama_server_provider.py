@@ -169,18 +169,19 @@ def effective_flash_attn(cfg: dict) -> tuple[str, str]:
     """The -fa value a spawn passes, and why. The ONE decision: the spawn
     and the engine report both call it.
 
-    Off unless the model's config says otherwise (owner, 2026-09-26: never on
-    by default for gguf). The one exception is a quantized V cache, which
-    llama.cpp cannot run without it, so the default there is on rather than a
-    model that fails to load. `auto` is an explicit choice (llama-server's own
-    device probe)."""
+    On unless the model's config says otherwise (owner, 2026-10-24: load and
+    vision prefill measured faster with flash attention on; see
+    internal/claude/perf/ab_unsloth_Qwen3.8-27B-UD-Q8_K_XL_20261024-184514.json).
+    A quantized V cache also requires it (llama.cpp refuses the context
+    without it). `auto` is an explicit choice (llama-server's own device
+    probe)."""
     configured = cfg.get("flash_attn")
     if configured:
         return configured, f"set to {configured} for this model"
     ctv = cfg.get("cache_type_v")
     if ctv and ctv not in _FLOAT_CACHE_TYPES:
         return "on", f"on: the {ctv} V cache requires it (llama.cpp refuses it off)"
-    return "off", "off: heylook's default for gguf models; set it per model to change"
+    return "on", "on: heylook's default for gguf models; set it per model to change"
 
 
 def flash_attn_from_log(line: str) -> Optional[str]:
@@ -685,11 +686,23 @@ class LlamaServerProvider(BaseProvider):
     LLAMA_DEFAULT_N_UBATCH = 512
     # llama-server's prompt-cache defaults (common/common.h: cache_ram_mib,
     # n_ctx_checkpoints, checkpoint_min_step), what a spawn gets unless
-    # cache_ram_mb or extra_args say otherwise. Pinned against the build tree
-    # by test_non_causal_table_matches_the_build.
+    # cache_ram_mb, checkpoint_min_step, ctx_checkpoints or extra_args say
+    # otherwise. Pinned against the build tree by
+    # test_non_causal_table_matches_the_build.
     LLAMA_DEFAULT_CACHE_RAM_MIB = 8192
     LLAMA_DEFAULT_CTX_CHECKPOINTS = 32
     LLAMA_DEFAULT_CHECKPOINT_MIN_STEP = 8192
+    # heylook's auto prompt-cache defaults for 192 GB unified memory:
+    # - 256-token checkpoint spacing on hybrid/recurrent and sliding-window
+    #   models so turn edits/regenerations do not lose checkpoints within
+    #   8192 tokens of an earlier turn;
+    # - 256-token minimum KV-shift chunk on full-attention text models;
+    # - up to 32 GiB (32768 MiB) host-RAM prompt cache when working-set
+    #   headroom clears THIN_HEADROOM_GB, so multi-turn states + checkpoints
+    #   are not skipped for exceeding 8 GiB.
+    AUTO_CHECKPOINT_MIN_STEP = 256
+    AUTO_CACHE_REUSE = 256
+    AUTO_MAX_CACHE_RAM_MIB = 32768
 
     @staticmethod
     def extra_arg_value(extra_args, names) -> Optional[str]:
@@ -702,6 +715,121 @@ class LlamaServerProvider(BaseProvider):
             if flag in names:
                 found = val if eq else (args[i + 1] if i + 1 < len(args) else None)
         return found
+
+    @classmethod
+    def ctx_checkpoints_decision(
+            cls, cfg: Dict
+    ) -> tuple[int, str, bool]:
+        """``(value, reason, emit_flag)`` for ``--ctx-checkpoints``."""
+        given = cls.extra_arg_value(
+            cfg.get("extra_args"),
+            {"-ctxcp", "--ctx-checkpoints", "--swa-checkpoints"},
+        )
+        cfg_val = cfg.get("ctx_checkpoints")
+        if given is not None:
+            return (int(given), "extra_args", False)
+        if cfg_val is not None:
+            return (int(cfg_val), "ctx_checkpoints for this model", True)
+        return (cls.LLAMA_DEFAULT_CTX_CHECKPOINTS, "llama-server's default", False)
+
+    @classmethod
+    def checkpoint_min_step_decision(
+            cls, cfg: Dict
+    ) -> tuple[int, str, bool]:
+        """``(value, reason, emit_flag)`` for ``--checkpoint-min-step``.
+
+        Checkpointed models (hybrid_recurrent, sliding_window) get
+        ``AUTO_CHECKPOINT_MIN_STEP`` (256) when unset so multi-turn edits and
+        regenerations do not lose turn checkpoints within 8192 tokens of an
+        earlier turn."""
+        given = cls.extra_arg_value(
+            cfg.get("extra_args"), {"-cms", "--checkpoint-min-step"}
+        )
+        cfg_val = cfg.get("checkpoint_min_step")
+        if given is not None:
+            return (int(given), "extra_args", False)
+        if cfg_val is not None:
+            return (int(cfg_val), "checkpoint_min_step for this model", True)
+        from .. import gguf_metadata
+        kind = gguf_metadata.memory_kind(
+            Path(str(cfg.get("model_path") or "")).expanduser()
+        )
+        if kind in ("hybrid_recurrent", "sliding_window"):
+            return (cls.AUTO_CHECKPOINT_MIN_STEP,
+                    f"auto {cls.AUTO_CHECKPOINT_MIN_STEP} for {kind.replace('_', ' ')} "
+                    f"(llama-server default {cls.LLAMA_DEFAULT_CHECKPOINT_MIN_STEP})",
+                    True)
+        return (cls.LLAMA_DEFAULT_CHECKPOINT_MIN_STEP,
+                "llama-server's default", False)
+
+    @classmethod
+    def cache_reuse_decision(
+            cls, cfg: Dict
+    ) -> tuple[int, str, bool]:
+        """``(value, reason, emit_flag)`` for ``--cache-reuse``.
+
+        llama-server forces KV shifting off whenever a projector loads, and
+        only full-attention memory supports KV shifting (hybrid_recurrent and
+        sliding_window log a warning per request if cache_reuse > 0)."""
+        given = cls.extra_arg_value(cfg.get("extra_args"), {"--cache-reuse"})
+        cfg_val = cfg.get("cache_reuse")
+        if given is not None:
+            return (int(given), "--cache-reuse in extra_args", False)
+        if cfg_val is not None:
+            return (int(cfg_val), "cache_reuse for this model (0 disables KV shifting)", True)
+        if cfg.get("mmproj_path"):
+            return (0,
+                    "llama-server forces KV shifting (cache_reuse) and context "
+                    "shift off whenever a projector loads",
+                    False)
+        from .. import gguf_metadata
+        kind = gguf_metadata.memory_kind(
+            Path(str(cfg.get("model_path") or "")).expanduser()
+        )
+        if kind == "full_attention":
+            return (cls.AUTO_CACHE_REUSE,
+                    f"auto {cls.AUTO_CACHE_REUSE}-token minimum KV-shift chunk "
+                    f"for full-attention text models",
+                    True)
+        if kind in ("hybrid_recurrent", "sliding_window"):
+            return (0,
+                    f"{kind.replace('_', ' ')} memory does not support KV shifting",
+                    False)
+        return (0, "llama-server's default: cache_reuse 0, off", False)
+
+    @classmethod
+    def auto_cache_ram_for_headroom(
+            cls, headroom_gb: Optional[float]
+    ) -> tuple[Optional[int], str]:
+        """Host-RAM prompt-cache budget ``(mib, reason)`` auto-sized from
+        working-set headroom when ``cache_ram_mb`` is unset, or ``(None, reason)``
+        to inherit llama-server's 8192 MiB default."""
+        if headroom_gb is None:
+            return (None,
+                    "auto: llama-server default (no Metal ceiling to size against)")
+        if headroom_gb < ram_fit.THIN_HEADROOM_GB:
+            return (None,
+                    f"auto: llama-server default (working-set headroom "
+                    f"{headroom_gb:.1f} GiB < {ram_fit.THIN_HEADROOM_GB:.0f}; "
+                    f"raise iogpu.wired_limit_mb to lift it)")
+        mib = max(cls.LLAMA_DEFAULT_CACHE_RAM_MIB,
+                  min(cls.AUTO_MAX_CACHE_RAM_MIB, int(headroom_gb // 2) * 1024))
+        return (mib, f"auto: {mib} MiB (working-set headroom {headroom_gb:.1f} GiB)")
+
+    @classmethod
+    def effective_cache_ram_mb(
+            cls, cfg: Dict, auto_cache_ram_mb: Optional[int]
+    ) -> int:
+        """Effective host-RAM prompt-cache budget (MiB)."""
+        ram_extra = cls.extra_arg_value(cfg.get("extra_args"), {"-cram", "--cache-ram"})
+        if ram_extra is not None:
+            return int(ram_extra)
+        ram = cfg.get("cache_ram_mb")
+        if ram is not None:
+            return int(ram)
+        if auto_cache_ram_mb is not None:
+            return int(auto_cache_ram_mb)
+        return cls.LLAMA_DEFAULT_CACHE_RAM_MIB
 
     # "The life of the process" as a number, because ggml-metal has no
     # "forever": it counts the keep-alive down in 5 ms ticks in an atomic_int,
@@ -731,6 +859,7 @@ class LlamaServerProvider(BaseProvider):
         "gemma4uv": (1120, True),
         "deepseek4v": (384, True),
         "gemma3": (256, False),
+        "sensenova_u1": (4096, True),
     }
 
     @classmethod
@@ -892,17 +1021,33 @@ class LlamaServerProvider(BaseProvider):
         logging.info(f"[GGUF] {self.model_id}: n_ubatch {reason}")
         return value
 
+    def _auto_cache_ram_mb(self) -> Optional[int]:
+        """Auto-sized prompt-cache RAM ceiling (MiB) when headroom clears
+        ram_fit.THIN_HEADROOM_GB, else None (inherit llama-server's default).
+        Logged at spawn either way so the chosen budget is visible."""
+        if self.config.get("cache_ram_mb") is not None:
+            self._cache_ram_reason = "set in heylook.toml for this model"
+            return None  # explicit wins; _build_args reads it directly
+        headroom = self._working_set_headroom_gb()
+        value, reason = self.auto_cache_ram_for_headroom(headroom)
+        self._cache_ram_reason = reason
+        logging.info(f"[GGUF] {self.model_id}: cache_ram_mb {reason}")
+        return value
+
     def _build_args(self, binary: Path, port: int,
                     chat_template: Optional[str] = None,
                     template_resolved: bool = False,
                     auto_ubatch: Optional[int] = None,
+                    auto_cache_ram_mb: Optional[int] = None,
                     image_max_tokens: Optional[int] = None) -> list:
         """Build the spawn argv.
 
         ``auto_ubatch`` is what ``_auto_ubatch`` resolved for a config that
-        leaves n_ubatch unset; a stored n_ubatch always wins over it. It is a
-        parameter so this builder stays PURE (the argv/metadata drift test
-        calls it with paths that do not exist and must not size anything).
+        leaves n_ubatch unset; a stored n_ubatch always wins over it.
+        ``auto_cache_ram_mb`` is what ``_auto_cache_ram_mb`` resolved for a
+        config that leaves cache_ram_mb unset; a stored cache_ram_mb wins.
+        Both are parameters so this builder stays PURE (the argv/metadata drift
+        test calls it with paths that do not exist and must not size anything).
         ``image_max_tokens`` is ``_image_token_cap``'s answer, passed down for
         the same reason (it reads the mmproj header).
 
@@ -938,7 +1083,7 @@ class LlamaServerProvider(BaseProvider):
         if cfg.get("ctx_size"):
             args += ["--ctx-size", str(cfg["ctx_size"])]
         # Always explicit: llama-server's own default is auto (on where the
-        # device supports it), and heylook's is off (effective_flash_attn).
+        # device supports it), and heylook's is on (effective_flash_attn).
         args += ["-fa", effective_flash_attn(cfg)[0]]
         # Batch sizing. `is not None` throughout: an unset field inherits
         # llama-server's own default, and for n_ubatch "unset" means the
@@ -1012,8 +1157,19 @@ class LlamaServerProvider(BaseProvider):
         # "unlimited" for -cram.
         if cfg.get("n_gpu_layers_draft") is not None:
             args += ["-ngld", str(cfg["n_gpu_layers_draft"])]
-        if cfg.get("cache_ram_mb") is not None:
-            args += ["-cram", str(cfg["cache_ram_mb"])]
+        cram = (cfg["cache_ram_mb"] if cfg.get("cache_ram_mb") is not None
+                else auto_cache_ram_mb)
+        if cram is not None:
+            args += ["-cram", str(cram)]
+        ctx_cp, _, emit_ctx_cp = self.ctx_checkpoints_decision(cfg)
+        if emit_ctx_cp:
+            args += ["--ctx-checkpoints", str(ctx_cp)]
+        cms, _, emit_cms = self.checkpoint_min_step_decision(cfg)
+        if emit_cms:
+            args += ["--checkpoint-min-step", str(cms)]
+        reuse, _, emit_reuse = self.cache_reuse_decision(cfg)
+        if emit_reuse:
+            args += ["--cache-reuse", str(reuse)]
         if cfg.get("sleep_idle_seconds"):
             args += ["--sleep-idle-seconds", str(cfg["sleep_idle_seconds"])]
         if cfg.get("load_mode"):
@@ -1030,18 +1186,25 @@ class LlamaServerProvider(BaseProvider):
         args += list(cfg.get("extra_args") or [])
         return args
 
-    def _record_load_report(self, auto_ubatch: Optional[int], keep_alive: str,
+    def _record_load_report(self, auto_ubatch: Optional[int],
+                            auto_cache_ram_mb: Optional[int], keep_alive: str,
                             keep_alive_reason: str) -> None:
         """What this spawn decided, recorded for describe_observed(). Built
         from the same values the argv and child env were built from."""
         from heylook_llm.config import field_effect
-        from .contract import Setting
+        from .contract import Fact, Setting
 
         cfg = self.config
         stored = cfg.get("n_ubatch")
         auto = auto_ubatch or self.LLAMA_DEFAULT_N_UBATCH
         effective, clamp = self.effective_ubatch(cfg, auto_ubatch)
         effect = field_effect(GGUFModelConfig.model_fields["n_ubatch"])
+        stored_cram = cfg.get("cache_ram_mb")
+        auto_cram = (auto_cache_ram_mb if auto_cache_ram_mb is not None
+                     else self.LLAMA_DEFAULT_CACHE_RAM_MIB)
+        eff_cram = self.effective_cache_ram_mb(cfg, auto_cache_ram_mb)
+        cram_reason = getattr(self, "_cache_ram_reason", None) or "decided at spawn"
+        cram_effect = field_effect(GGUFModelConfig.model_fields["cache_ram_mb"])
         binary, binary_reason = self.binary_report(cfg)
         cap = self._last_image_cap
         self._load_report = {
@@ -1050,6 +1213,9 @@ class LlamaServerProvider(BaseProvider):
                 reason=((getattr(self, "_ubatch_reason", None) or "decided at spawn")
                         + (f"; in force: {clamp}" if clamp else "")),
                 provenance="observed", effect=effect),
+            "cache_ram_mb": Setting(
+                value=eff_cram, configured=stored_cram, auto=auto_cram,
+                reason=cram_reason, provenance="observed", effect=cram_effect),
             "image_max_tokens": Setting(
                 value=cap, auto=cap,
                 reason=getattr(self, "_image_cap_reason", None)
@@ -1060,6 +1226,11 @@ class LlamaServerProvider(BaseProvider):
                 reason=keep_alive_reason, provenance="observed"),
             "binary": Setting(value=binary, auto=binary, reason=binary_reason,
                               provenance="observed"),
+        }
+        self._load_cache_report = {
+            "ram_budget_mib": Fact(
+                value=eff_cram, provenance="observed",
+                source=f"-cram {eff_cram} ({cram_reason})"),
         }
 
     def get_metrics(self):
@@ -1102,6 +1273,7 @@ class LlamaServerProvider(BaseProvider):
                           getattr(getattr(self, "_spawn_log", None), "flash_attn", None),
                           loaded=True)},
             speculative={"in_force": self._spec_in_force()},
+            cache=getattr(self, "_load_cache_report", None) or {},
         )
 
     def _spec_in_force(self):
@@ -1213,13 +1385,16 @@ class LlamaServerProvider(BaseProvider):
         if self.embedding:
             from heylook_llm.embedding_models import gguf_embedding_profile
             auto_ubatch = gguf_embedding_profile(self.config)["n_ubatch"]
+            auto_cache_ram = None
             self._last_image_cap = None
         else:
             self._drop_drafter_if_short()
             auto_ubatch = self._auto_ubatch()
+            auto_cache_ram = self._auto_cache_ram_mb()
             self._last_image_cap = self._image_token_cap(auto_ubatch)
         args = self._build_args(binary, port, resolved_template, True,
                                 auto_ubatch=auto_ubatch,
+                                auto_cache_ram_mb=auto_cache_ram,
                                 image_max_tokens=self._last_image_cap)
 
         # Snapshot the BODY this process spawned with, so the admin template
@@ -1312,7 +1487,7 @@ class LlamaServerProvider(BaseProvider):
                 f"({self.METAL_RESIDENCY_KEEP_ALIVE_S} s) is not applied.")
         else:
             child_env[METAL_KEEP_ALIVE_ENV] = keep_alive
-        self._record_load_report(auto_ubatch, keep_alive, keep_alive_reason)
+        self._record_load_report(auto_ubatch, auto_cache_ram, keep_alive, keep_alive_reason)
 
         llama_env = sorted(
             k for k in child_env

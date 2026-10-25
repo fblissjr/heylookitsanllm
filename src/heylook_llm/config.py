@@ -824,20 +824,18 @@ class GGUFModelConfig(BaseModel):
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "--ctx-size",
                            "load_setting": True},
     )
-    # -fa. Unset = OFF (owner, 2026-09-26: never on by default for gguf),
-    # except under a quantized V cache, which llama.cpp cannot run without it
-    # (providers.llama_server_provider.effective_flash_attn is the one
-    # decision). Until then unset was llama-server's auto; the 2026-09-23
-    # audit measured off slower on the vision encode, and the owner chose off
-    # with a re-measure. "auto" is now an explicit value.
+    # -fa. Unset = ON (owner, 2026-10-24: load and vision prefill measured
+    # faster with flash attention on; providers.llama_server_provider.effective_flash_attn
+    # is the one decision). A quantized V cache also requires it. "auto" is an
+    # explicit value (llama-server's own device probe).
     flash_attn: Optional[Literal["on", "off", "auto"]] = Field(
         default=None,
         description=(
-            "Flash attention. Unset = off (heylook's gguf default), except a "
-            "quantized V cache, which requires it and gets on. `auto` hands "
-            "the choice to llama-server's device probe, which turns it on "
-            "where supported; the admin row then shows what it resolved to, "
-            "read from llama-server's own log."),
+            "Flash attention. Unset = on (heylook's gguf default). `off` turns "
+            "it off (refused by llama.cpp when `cache_type_v` is quantized). "
+            "`auto` hands the choice to llama-server's device probe, which "
+            "turns it on where supported; the admin row then shows what it "
+            "resolved to, read from llama-server's own log."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-fa",
                            "load_setting": True},
     )
@@ -1095,16 +1093,61 @@ class GGUFModelConfig(BaseModel):
                            "arg": "--sleep-idle-seconds"},
     )
     # -cram: prompt-cache budget in MiB. llama-server defaults to only 8192;
+    # unset = AUTO at spawn (sized from working-set headroom up to 32768 MiB
+    # when headroom clears THIN_HEADROOM_GB, else llama-server's 8192);
     # -1 = unlimited, 0 = disable the cache entirely.
     cache_ram_mb: Optional[int] = Field(
         default=None, ge=-1,
         description=(
-            "llama-server's prompt-cache budget in MiB. Its default is only "
-            "8192, so raise this when you re-send a long shared prefix and "
-            "want it kept; -1 = unlimited, 0 = disable the cache. This is the "
-            "gguf lever with no MLX counterpart you can set -- MLX's prompt "
-            "cache is a single slot sized by the model, not a budget."),
+            "llama-server's host-RAM prompt-cache budget in MiB. Unset = AUTO: "
+            "at spawn the provider sizes this from working-set headroom (up to "
+            "32768 MiB when headroom clears the thin threshold, else inherits "
+            "llama-server's 8192 MiB) so long multi-turn states and recurrent "
+            "checkpoints are not skipped for exceeding 8 GiB. -1 = unlimited, "
+            "0 = disable the cache."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-cram"},
+    )
+    # --ctx-checkpoints (-ctxcp): max context checkpoints kept per slot for
+    # hybrid/recurrent and sliding-window models.
+    ctx_checkpoints: Optional[int] = Field(
+        default=None, ge=0,
+        description=(
+            "Maximum context checkpoints llama-server keeps per slot for "
+            "hybrid/recurrent and sliding-window models (whose state cannot be "
+            "truncated arbitrarily). Unset inherits llama-server's 32; 0 "
+            "disables checkpoints."),
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
+                           "arg": "--ctx-checkpoints", "ui": "advanced"},
+    )
+    # --checkpoint-min-step (-cms): minimum token spacing between checkpoints.
+    # llama-server defaults to 8192, which drops or skips checkpoints within
+    # 8192 tokens of an earlier one; unset = AUTO (256 on hybrid/recurrent and
+    # sliding-window models).
+    checkpoint_min_step: Optional[int] = Field(
+        default=None, ge=0,
+        description=(
+            "Minimum tokens between context checkpoints on hybrid/recurrent "
+            "and sliding-window models. llama-server's own default is 8192, "
+            "which skips or evicts turn checkpoints closer than 8192 tokens "
+            "apart. Unset = AUTO (256 tokens on checkpointed models, so an "
+            "edit or regenerate mid-conversation reuses from the turn boundary "
+            "instead of re-prefilling up to 8192 tokens); 0 = no minimum."),
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
+                           "arg": "--checkpoint-min-step", "ui": "advanced"},
+    )
+    # --cache-reuse: minimum token chunk to reuse via KV shifting on
+    # full-attention text models.
+    cache_reuse: Optional[int] = Field(
+        default=None, ge=0,
+        description=(
+            "Minimum chunk size in tokens to reuse from the cached prompt via "
+            "KV shifting when an earlier turn changes. Supported only on "
+            "full-attention text models (llama-server forces it off when a "
+            "projector loads, and hybrid/sliding-window memory cannot shift). "
+            "Unset = AUTO (256 on full-attention text models, off otherwise); "
+            "0 disables KV shifting."),
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
+                           "arg": "--cache-reuse", "ui": "advanced"},
     )
     # -lm: how weights are brought in. `mlock` pins them against paging, which
     # is the lever for a model near the memory ceiling; llama.cpp's Metal

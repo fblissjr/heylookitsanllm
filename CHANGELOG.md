@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.207]
+
+### Added
+
+- **First-class GGUF prompt-cache and checkpoint fields (`checkpoint_min_step`, `ctx_checkpoints`, `cache_reuse`) and automatic 192 GB RAM sizing (`cache_ram_mb`).**
+  - `checkpoint_min_step` (`--checkpoint-min-step`): auto-defaults to `256` on `hybrid_recurrent` and `sliding_window` models so user-turn checkpoints are not skipped or evicted within `llama-server`'s 8,192-token default spacing during multi-turn edits and regenerations.
+  - `ctx_checkpoints` (`--ctx-checkpoints`): configurable per model in `GGUFModelConfig` and the Models page Configure panel (`ui="advanced"`), defaulting to `llama-server`'s 32 per slot.
+  - `cache_reuse` (`--cache-reuse`): auto-defaults to `256` on text-only `full_attention` models for KV-shift chunk reuse after mid-prompt edits, and reports `not_applicable` when `mmproj_path` is set or on `hybrid_recurrent` / `sliding_window` models.
+  - `cache_ram_mb` (`-cram`): when unset, `_auto_cache_ram_mb` sizes the host-RAM prompt-cache ceiling at spawn from live working-set headroom (`int(headroom_gb // 2) * 1024` clamped to `[8192, 32768]` MiB when headroom clears `ram_fit.THIN_HEADROOM_GB`, else `llama-server`'s 8192 MiB) and reports the active budget in `describe_observed()`.
+- `NON_CAUSAL_IMAGE_PROJECTORS`: added `"sensenova_u1": (4096, True)` to match `llama.cpp` build `b11869` (`d327bf1f0`).
+
+### Changed
+
+- **MLX vision messages preserve true text/image interleaving order.** `vlm_inputs.content_for_template` and `prepare_vlm_inputs_parallel` now keep the caller's exact block sequence of `{"type": "text", ...}` and bare `{"type": "image"}` markers instead of hoisting all image markers ahead of concatenated text. Verified with `scripts/vlm_parity_probe.py` on `Qwen3.5-0.8B-MLX-8bit`.
+- **GGUF `flash_attn` defaults to `"on"`.** Following a clean `scripts/perf_ab.py` comparison on `unsloth_Qwen3.8-27B-UD-Q8_K_XL` (`internal/claude/perf/ab_unsloth_Qwen3.8-27B-UD-Q8_K_XL_20261024-184514.json`) showing faster model load and vision TTFT with `-fa on`, `effective_flash_attn` now defaults to `"on"`, and `flash_attn_setting` always populates `setting.auto = "on"` so the frontend load panel displays `flash attn: default (on)` even when a model stores `"off"` or `"auto"`.
+- Verified: `tests/unit/` + `tests/contract/` (1576 passed), `bun run e2e:render` (105/105), `scripts/vlm_parity_probe.py` (`Qwen3.5-0.8B-MLX-8bit`), `scripts/perf_ab.py` (`unsloth_Qwen3.8-27B-UD-Q8_K_XL`). NOT run: live browser `e2e:chat` / `e2e:pages`, `tests/smoke/`, `tests/eval/`.
+
 ## [2.0.206]
 
 ### Added

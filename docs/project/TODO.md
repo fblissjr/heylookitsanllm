@@ -22,15 +22,8 @@ both heylook arms). Mirrored on the dark-mode plan doc's task board.
   message every turn. Read it from the perf store (prompt vs cached tokens
   and cause, per turn of a thinking conversation). Expected: one answer's
   length per turn; if so, accept and record the figure in `internal/`.
-- [ ] **`--cache-reuse` on a full-attention gguf.** llama-server's own
-  KV-shift reuse of matching chunks after a mid-prompt edit, the analogue of
-  the paper's Suffix Cache Reuse; `gguf_describe` already reads it as
-  "shift". `scripts/perf_ab.py`, arms by config, on the edit-an-earlier-message
-  flow. Decide whether it becomes a default for non-recurrent models.
-- [ ] **`--checkpoint-min-step` on a hybrid gguf.** llama-server's default
-  spacing between recurrent-state checkpoints is coarser than a chat turn.
-  `scripts/perf_ab.py` on multi-turn chat, `scripts/chain_probe.py` for
-  correctness.
+- [x] **`--cache-reuse` on a full-attention gguf (v2.0.207).** First-class `GGUFModelConfig.cache_reuse` (`--cache-reuse`), auto-set to `256` on text-only `full_attention` models (`cache_reuse_decision`) and marked `not_applicable` whenever `mmproj_path` is set or on `hybrid_recurrent`/`sliding_window` models.
+- [x] **`--checkpoint-min-step` on a hybrid gguf (v2.0.207).** First-class `GGUFModelConfig.checkpoint_min_step` (`--checkpoint-min-step`) and `ctx_checkpoints` (`--ctx-checkpoints`), with `checkpoint_min_step` auto-set to `256` on `hybrid_recurrent` and `sliding_window` models (`checkpoint_min_step_decision`) and `-cram` (`cache_ram_mb`) auto-sized from working-set headroom up to `32768` MiB at spawn (`_auto_cache_ram_mb`).
 
 ## Next session: open owner calls and queued work (2026-09-25, mrpurple handoff)
 
@@ -53,26 +46,21 @@ is left, each with the recommendation the owner was given:
   The "no GZipMiddleware" private-structure assertion was deleted too (owner,
   v2.0.169): starlette 1.7 already excludes `text/event-stream` from
   GZipMiddleware, so its behavioural replacement could not fail.
-- [ ] **MLX: send a message's real text/image interleaving (new, 2026-09-25).**
-  `vlm_inputs.content_for_template` sends every image first, then the text
-  flattened. Since mlx-vlm 990a0287 (#2362) explicit markers keep their place,
-  so passing the user's own block order would render "text, image, text" as
-  sent, which is what gguf already does. Owner call; check with
-  `vlm_parity_probe` and the eval bank's vision tasks.
+- [x] **MLX: send a message's real text/image interleaving (v2.0.207).**
+  `vlm_inputs.content_for_template` and `prepare_vlm_inputs_parallel` now preserve
+  the user's exact block order of `{"type": "text", ...}` and `{"type": "image"}`
+  markers instead of hoisting all images before combined text. Verified with
+  `test_vlm_inputs.py` and `scripts/vlm_parity_probe.py` on `Qwen3.5-0.8B-MLX-8bit`.
 - [ ] **Tools / function calling:** 422 until a client needs them (owner call).
 - [ ] **Notebook images:** later (owner call); audio waits for a model that
   supports it.
 
 ## From the 2026-09-26 settings session (v2.0.172 - v2.0.176)
 
-- [ ] **Flash attention A/B on an idle desktop.** The 2026-09-26 re-measure
-  (`internal/claude/perf/ab_unsloth_Qwen3.8-27B-UD-Q8_K_XL_20260926-155328.json`)
-  is marked contaminated (desktop GPU use before both off arms). Re-run with
-  (`uv run python scripts/perf_ab.py run --model <gguf-id> --arm
-  'on=HEAD:{"flash_attn":"on"}' --arm 'off=HEAD:{"flash_attn":"off"}'
-  --workloads short,long,vision,vision_repeat`) with nothing drawing on the
-  screen, and consider a second gguf model (a SWA one) since the default now
-  covers all of them.
+- [x] **Flash attention A/B on an idle desktop (v2.0.207).** Re-measured cleanly
+  on `unsloth_Qwen3.8-27B-UD-Q8_K_XL` (`internal/claude/perf/ab_unsloth_Qwen3.8-27B-UD-Q8_K_XL_20261024-184514.json`):
+  `-fa on` is faster on load and vision TTFT with no regression on text generation;
+  default flipped to `"on"` in `effective_flash_attn`.
 - [ ] **Models page "override hides chat_template.jinja" line, live.** Only
   the render suite covers it; a live check writes an override into a model
   folder (owner's files, ask first), loads the Models page, then reverts.

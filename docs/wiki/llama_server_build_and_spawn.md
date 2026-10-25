@@ -241,11 +241,11 @@ When assembling spawn arguments in [`_build_args()`](../../src/heylook_llm/provi
 
 Note that `--jinja` is **not** passed by heylook. It is on by default in the `llama-server` builds this project targets, and the provider relies on that default for the pre-split `reasoning_content` deltas -- it is not a flag in the spawn argv.
 
-The same holds for several flags that matter and are deliberately inherited rather than passed:
-- **`-fa` (flash attention)**: always passed, and OFF unless the model's `flash_attn` says otherwise (owner call, 2026-09-26). The one exception is a quantized V cache (`cache_type_v`), which llama.cpp refuses to run without it, so such a model defaults to on. [`effective_flash_attn`](../../src/heylook_llm/providers/llama_server_provider.py) is the one decision; the spawn and the admin row both call it. `flash_attn = "auto"` hands it to llama-server's device probe, and the admin row then shows what that resolved to (§5.3). The vision tower inherits the flag, which is where off costs most; the comparisons are the [audit](../testing/gguf_runtime_audit_2026-09-23.md) §9 and a re-measure the day the default changed (local record named in CHANGELOG 2.0.176).
-- **`--cache-reuse`**: left off. It does not matter for vision models either way, because llama-server disables it whenever an mmproj is loaded (and context shift with it).
+The same holds for several flags whose defaults heylook either sets by model class or inherits:
+- **`-fa` (flash attention)**: always passed, and ON unless the model's `flash_attn` says otherwise (owner call, 2026-10-24). [`effective_flash_attn`](../../src/heylook_llm/providers/llama_server_provider.py) is the one decision; the spawn and the admin row both call it. `flash_attn = "auto"` hands it to llama-server's device probe, and the admin row then shows what that resolved to (§5.3). The vision tower inherits the flag, which is where off costs most; the comparisons are the [audit](../testing/gguf_runtime_audit_2026-09-23.md) §9 and the clean `perf_ab` re-measure (local record named in CHANGELOG 2.0.207).
+- **`--cache-reuse`** (`cache_reuse`): auto-set to `AUTO_CACHE_REUSE` on text-only `full_attention` models (`cache_reuse_decision`) so mid-prompt edits shift and reuse matching KV suffix chunks. Left off (`not_applicable`) whenever an `mmproj_path` is loaded or on `hybrid_recurrent` / `sliding_window` models, where llama-server cannot shift KV memory.
 - **`--reasoning-preserve`**: left at its default, on. Past reasoning stays in the rendered history, which keeps the prompt prefix stable from turn to turn (§4.6).
-- **Checkpoint and SWA flags** (`-ctxcp`, `-cms`, `--swa-full`): left at llama-server's defaults.
+- **Checkpoint flags** (`--ctx-checkpoints` / `ctx_checkpoints`, `--checkpoint-min-step` / `checkpoint_min_step`): `ctx_checkpoints` inherits llama-server's default unless configured; `checkpoint_min_step` auto-resolves to `AUTO_CHECKPOINT_MIN_STEP` on `hybrid_recurrent` and `sliding_window` models (`checkpoint_min_step_decision`) so turn-boundary checkpoints closer than llama-server's default spacing are preserved across edits and regenerations.
 
 Each of these, with llama-server's current default and a verdict, is in the [gguf runtime audit](../testing/gguf_runtime_audit_2026-09-23.md) §3; its §9 is the flash-attention comparison.
 
@@ -370,9 +370,9 @@ Memory & Engine Controls:
    - Tells `llama-server` to unload model weights and KV memory from RAM after an idle period while keeping the process running.
    - Waking from hibernation is significantly faster than a full process restart.
    - Not to be confused with Metal's **residency keep-alive**, a heartbeat inside llama.cpp that keeps the model's buffers resident and stops after a period without GPU work. Neither heylook setting controls it; the [audit](../testing/gguf_runtime_audit_2026-09-23.md) §8 has what lapsing costs, and the plan's W9 exposes it only if that cost proves real.
-4. **Prompt Cache Budget (`-cram`)**:
-   - Caps host RAM for the prompt cache described in §4.6. `-1` is unlimited and `0` disables it; unset inherits llama-server's own default.
-   - An entry is the slot's whole state, context checkpoints included, and an entry larger than the budget is **skipped, not stored** -- logged only as a warning at a level heylook discards by default. The budget is host RAM, not Metal working set. A derived default is the plan's W6.
+4. **Prompt Cache Budget (`-cram`, `cache_ram_mb`)**:
+   - Caps host RAM for the prompt cache described in §4.6. `-1` is unlimited and `0` disables it; when unset, `_auto_cache_ram_mb()` sizes it at spawn from live working-set headroom up to `AUTO_MAX_CACHE_RAM_MIB` when headroom clears `ram_fit.THIN_HEADROOM_GB`, else inherits llama-server's own default.
+   - An entry is the slot's whole state, context checkpoints included, and an entry larger than the budget is **skipped, not stored** -- logged only as a warning at a level heylook discards by default. The budget is host RAM, not Metal working set.
 
 ---
 

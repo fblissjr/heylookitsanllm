@@ -442,17 +442,52 @@ in `scripts/README.md`.
 
 ### gguf flash attention default
 
-Flash attention is OFF by default for gguf (owner call, 2026-09-26), against
-a measurement: the 2026-09-23 audit (§9) found off slower for the vision
-encode, since the tower inherits the flag, and faster for nothing. The owner
-chose off and asked for a re-measure the same day. `-fa` is now always
-passed; `effective_flash_attn` is the one decision, called by the spawn and
-the engine report. A quantized `cache_type_v` is the one exception, and it is
-not a preference: llama.cpp refuses that context with flash attention off
-("quantized V cache requires flash_attn", llama-context.cpp), so forcing off
-there would turn a config choice into a model that cannot load. `auto` became
-an explicit value; `null` on `/reload` means the default, and the load panel
-says "default (off)" rather than "auto".
+Flash attention is ON by default for gguf (owner call, 2026-10-24), reversing
+the temporary 2026-09-26 `off` default after a clean `scripts/perf_ab.py` A/B
+on `unsloth_Qwen3.8-27B-UD-Q8_K_XL` (`internal/claude/perf/ab_unsloth_Qwen3.8-27B-UD-Q8_K_XL_20261024-184514.json`)
+confirmed faster model load and faster vision TTFT with `-fa on` and no
+regression on text generation. `-fa` is always passed; `effective_flash_attn`
+is the one decision, called by the spawn and the engine report, and
+`flash_attn_setting` always populates `setting.auto = "on"` so the frontend
+load panel renders `"flash attn: default (on)"` even when a model stores
+`"off"` or `"auto"`. `auto` remains an explicit value (llama-server's device
+probe), and `null` on `/reload` resets to the default.
+
+### gguf prompt cache and checkpoint defaults
+
+llama-server's built-in prompt-cache defaults (`cache_ram_mib = 8192`,
+`checkpoint_min_step = 8192`, `n_cache_reuse = 0` in `common/common.h`) are
+tuned for smaller machines and cause three silent misses on 192 GB unified
+memory:
+
+1. **Host-RAM prompt cache (`-cram`, `cache_ram_mb`).** `server_prompt_cache::alloc`
+   sums `state_size_tgt + state_size_dft + checkpoints_size` and skips saving
+   the entire slot state if it exceeds `limit_size` (8 GiB default). On large
+   hybrid/recurrent or vision models with 32 checkpoints, a single conversation
+   state can exceed 8 GiB and be silently discarded. When `cache_ram_mb` is
+   unset, `_auto_cache_ram_mb` sizes `-cram` at spawn from live working-set
+   headroom (`int(headroom_gb // 2) * 1024` clamped to `[8192, 32768]` MiB when
+   headroom clears `ram_fit.THIN_HEADROOM_GB`, else llama-server's 8192 MiB),
+   keeping `_build_args` pure when `auto_cache_ram_mb=None` and reporting the
+   chosen budget in `describe_observed()`.
+2. **Recurrent/SWA checkpoint spacing (`--checkpoint-min-step`, `checkpoint_min_step`).**
+   In `server-context.cpp`, `checkpoint_min_step = 8192` both blocks creating a
+   checkpoint at a user-turn boundary within 8,192 tokens of the previous
+   checkpoint and erases earlier checkpoints within 8,192 tokens when the
+   32-checkpoint ring fills. Editing or regenerating an earlier turn in a
+   normal chat conversation (< 8K tokens per turn) therefore fell back to the
+   beginning of the conversation. `checkpoint_min_step_decision` auto-sets
+   `--checkpoint-min-step 256` on `hybrid_recurrent` and `sliding_window`
+   models when `checkpoint_min_step` is unset.
+3. **KV cache shifting (`--cache-reuse`, `cache_reuse`).** In `server-context.cpp`,
+   KV shifting reuses matching suffix chunks after a mid-prompt edit, but is
+   only supported when `llama_memory_can_shift` is true (`full_attention`) and
+   no projector (`mmproj_path`) is loaded; passing `--cache-reuse > 0` on
+   `hybrid_recurrent` or `sliding_window` models logs a warning on every slot
+   launch. `cache_reuse_decision` therefore auto-enables `--cache-reuse 256`
+   only on text-only `full_attention` models and marks `cache_reuse` as
+   `not_applicable` whenever `mmproj_path` is set or the header's `memory_kind`
+   is `hybrid_recurrent` or `sliding_window`.
 
 Two things found on the way, both easy to get wrong again:
 

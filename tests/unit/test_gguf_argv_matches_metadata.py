@@ -50,6 +50,9 @@ SAMPLE_VALUES = {
     "cache_type_v": "q8_0",
     "n_ubatch": 1024,
     "n_batch": 4096,
+    "ctx_checkpoints": 32,
+    "checkpoint_min_step": 256,
+    "cache_reuse": 256,
 }
 
 
@@ -148,7 +151,11 @@ def test_declared_flag_is_emitted_with_its_value(config, expected):
     ("cache_ram_mb", "-cram", -1),
     ("spec_draft_p_min", "--spec-draft-p-min", 0.0),
     ("n_cpu_moe", "-ncmoe", 0),
-], ids=["ngld_zero", "cram_zero", "cram_minus_one", "p_min_zero", "ncmoe_zero"])
+    ("ctx_checkpoints", "--ctx-checkpoints", 0),
+    ("checkpoint_min_step", "--checkpoint-min-step", 0),
+    ("cache_reuse", "--cache-reuse", 0),
+], ids=["ngld_zero", "cram_zero", "cram_minus_one", "p_min_zero", "ncmoe_zero",
+        "ctx_checkpoints_zero", "checkpoint_min_step_zero", "cache_reuse_zero"])
 def test_explicit_falsy_value_is_emitted_not_swallowed(field, flag, value):
     argv = _build_argv({"model_path": MODEL, field: value})
     assert argv[argv.index(flag) + 1] == str(value)
