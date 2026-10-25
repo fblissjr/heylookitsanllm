@@ -32,8 +32,9 @@ max_tokens = 8192
 # Unload this model after this many idle seconds (0 = never).
 # unload_after_idle_seconds = 600
 # Asymmetric distributed MLX pipeline split across ranks (e.g. 80% on 192 GB
-# Mac Studio rank 0, 20% on 48 GB MacBook Pro rank 1 under `mlx.launch`); file-only.
+# Mac Studio rank 0, 20% on 48 GB MacBook Pro rank 1); file-only.
 # pipeline_ratios = [0.8, 0.2]
+# pipeline_peers = ["<primary-ip>", "<worker-ip>"]
 
 # --- gguf model (llama-server subprocess) -----------------------------------
 

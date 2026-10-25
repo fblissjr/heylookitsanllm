@@ -65,9 +65,8 @@ To use two physical Thunderbolt cables simultaneously:
      --model <model-id-or-gguf-path> \
      --tensor-split 20,80
    ```
-3. **Configure the model's `model.heylook.toml`** (in the model directory, or under `[[models]]` in `heylook.toml`):
+3. **Configure the model's `model.heylook.toml`** (inside the model's folder; plain top-level keys, no `[table]`):
    ```toml
-   [config]
    rpc = "<worker-ip>:50052"
    tensor_split = "20,80"
    ```
@@ -130,9 +129,8 @@ Instead, [`src/heylook_llm/providers/common/mlx_pipeline.py`](../../src/heylook_
      --model <mlx-model-id-or-path> \
      --ratios 0.8,0.2
    ```
-4. **Configure `pipeline_ratios` and `pipeline_peers` in `model.heylook.toml` (or `heylook.toml`)**:
+4. **Configure `pipeline_ratios` and `pipeline_peers` in the model's `model.heylook.toml`** (inside the model's folder; plain top-level keys, no `[table]`):
    ```toml
-   [config]
    pipeline_ratios = [0.8, 0.2]
    pipeline_peers = ["<primary-ip>", "<worker-ip>"]
    ```
