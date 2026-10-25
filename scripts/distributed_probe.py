@@ -260,14 +260,13 @@ def cmd_gguf_rpc(args: argparse.Namespace) -> int:
     print(f"Tensor split: {args.tensor_split} (RPC worker first, local Metal last)\n")
 
     # 1. Compare ram_fit with and without RPC
-    from heylook_llm.ram_fit import check_model_fit, read_ceilings
-    ceilings = read_ceilings()
+    from heylook_llm.ram_fit import fit_for_config
 
-    single_cfg = cfg.model_copy(update={"rpc": None, "tensor_split": None})
-    dist_cfg = cfg.model_copy(update={"rpc": peer_endpoint, "tensor_split": args.tensor_split})
+    single_cfg = cfg.model_copy(update={"rpc": None, "tensor_split": None}).model_dump()
+    dist_cfg = cfg.model_copy(update={"rpc": peer_endpoint, "tensor_split": args.tensor_split}).model_dump()
 
-    fit_single = check_model_fit(single_cfg, "gguf", ceilings=ceilings)
-    fit_dist = check_model_fit(dist_cfg, "gguf", ceilings=ceilings)
+    fit_single = fit_for_config(single_cfg, hard_working_set=False)
+    fit_dist = fit_for_config(dist_cfg, hard_working_set=False)
 
     print("[1/3] Local Memory Fit Comparison (Mac Studio primary):")
     print(
@@ -305,6 +304,38 @@ def cmd_gguf_rpc(args: argparse.Namespace) -> int:
         for line in (res.stdout + "\n" + res.stderr).splitlines():
             if any(k in line.lower() for k in ("rpc", "metal", "buffer", "split", "layer", "device", "fit")):
                 print(" ", line)
+
+    if args.smoke_prompt:
+        print(f"\n[4/4] Running live distributed generation with prompt: {args.smoke_prompt!r}")
+        from heylook_llm.config import ChatMessage, ChatRequest
+        from heylook_llm.providers.llama_server_provider import LlamaServerProvider
+
+        provider = LlamaServerProvider(model_id, dist_cfg, verbose=False)
+        t_load = time.perf_counter()
+        try:
+            provider.load_model()
+            load_s = time.perf_counter() - t_load
+            print(f"  Loaded across RPC + local Metal in {load_s:.2f}s ({provider._base_url})")
+
+            req = ChatRequest(
+                model=model_id,
+                messages=[ChatMessage(role="user", content=args.smoke_prompt)],
+                max_tokens=args.max_tokens,
+                temperature=0.0,
+                enable_thinking=False,
+            )
+            t_gen = time.perf_counter()
+            pieces: list[str] = []
+            tok_count = 0
+            for chunk in provider.create_chat_completion(req):
+                if getattr(chunk, "text", None):
+                    pieces.append(chunk.text)
+                    tok_count += 1
+            elapsed = max(time.perf_counter() - t_gen, 1e-6)
+            reply = "".join(pieces).strip()
+            print(f"  Reply ({tok_count} chunks in {elapsed:.2f}s, ~{tok_count / elapsed:.1f} tok/s): {reply!r}")
+        finally:
+            provider.unload()
     return 0
 
 
@@ -337,6 +368,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_rpc.add_argument("--peer", required=True, help="RPC worker host:port (e.g. <worker-ip>:50052).")
     p_rpc.add_argument("--model", required=True, help="Served GGUF model ID or path to .gguf file.")
     p_rpc.add_argument("--tensor-split", default="20,80", help="Comma-separated split (RPC worker first, local Metal last; default: 20,80).")
+    p_rpc.add_argument("--smoke-prompt", default=None, help="Optional prompt to run a live distributed generation via LlamaServerProvider.")
+    p_rpc.add_argument("--max-tokens", type=int, default=32, help="Max tokens for --smoke-prompt (default: 32).")
     p_rpc.set_defaults(func=cmd_gguf_rpc)
 
     return parser
