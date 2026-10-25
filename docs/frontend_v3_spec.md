@@ -432,7 +432,10 @@ Phase 3b; chat uses its conversation-scoped sibling below; the OpenAI-compatible
   Every message response carries BOTH `content` (flattened text of the text
   blocks — back-compatible; render targets that only know strings keep
   working) and `content_blocks` (the full stored list — the image-rendering
-  source of truth). Strings normalize to one text block.
+  source of truth). Strings normalize to one text block. Interleaved text and
+  image blocks in a user message preserve their exact sequence on both `mlx`
+  and `gguf` (MLX since v2.0.207; earlier MLX builds hoisted images ahead of
+  the turn's concatenated text).
 - **Media by reference (v1.73.0, schema v7):** base64 media never persists
   inline. Every message WRITE relocates it into a per-conversation blob
   store (content-addressed, deduplicated) and the stored block becomes
@@ -722,9 +725,15 @@ cache, thinking, speculative, decoding, image, steering}`.
   keys are fixed per engine, loaded or not. gguf: `reuse_class` (`checkpointed` for a
   recurrent or sliding-window header, `truncates anywhere` for full attention; the
   header's answer, since llama.cpp decides from the memory it builds), `kv_shift`
-  (false whenever a projector loads), `ram_budget_mib`, `checkpoints`,
-  `checkpoint_min_spacing` -- each as the spawn will get it: `extra_args`, then
-  `cache_ram_mb`, then llama-server's default. MLX (v2.0.86, mlx-vlm's prefix cache):
+  (v2.0.207: true when `--cache-reuse` is active — auto 256 tokens on text-only
+  `full_attention` models via `cache_reuse`, or configured; false whenever a projector
+  loads or on recurrent/sliding-window models), `ram_budget_mib`, `checkpoints`,
+  `checkpoint_min_spacing` -- each as the spawn will get it: `extra_args`, then the
+  config field (`cache_ram_mb`, `ctx_checkpoints`, `checkpoint_min_step`), then
+  heylook's auto rule or llama-server's default (v2.0.207: when `cache_ram_mb` is unset,
+  `ram_budget_mib` is `unknown` until load and then `observed` from `_auto_cache_ram_mb()`,
+  which sizes `-cram` up to 32768 MiB from live working-set headroom; `checkpoint_min_spacing`
+  auto-resolves to 256 on recurrent and sliding-window models). MLX (v2.0.86, mlx-vlm's prefix cache):
   `reuse`, `reuse_mode` (`checkpoints` for hybrid and sliding-window models, else the
   block mode), `image_reuse` (true on checkpoint models), `checkpoint_interval`,
   `checkpoint_captures` (snapshots one request takes near its end, plus one at the end
@@ -799,9 +808,10 @@ object of the provider's `load_setting` fields from `/v1/admin/model-options`
 "flash_attn": null}`. Each value is the one to load with, PERSISTED as the model's
 config through the one writer a PATCH uses, so the load panel and the models-page
 editor read the same value; `null` = the default = drop the stored key (context
-from the model fitted to memory; flash attention OFF since v2.0.176, or on for a
-quantized V cache). `flash_attn` takes `on`, `off` or `auto` (llama-server's device
-probe). A key that is not a load setting of the model's provider is a 400 naming the
+from the model fitted to memory; flash attention ON since v2.0.207 — it was off in
+v2.0.176–v2.0.206). `flash_attn` takes `on`, `off` or `auto` (llama-server's device
+probe); `engine.settings.flash_attn.auto` always carries `"on"` even when a non-default
+is stored so `load-panel.js` always renders `flash attn: default (on)`. A key that is not a load setting of the model's provider is a 400 naming the
 ones it has; a value the field refuses (`ctx_size` under 512, `flash_attn:"sometimes"`)
 is a 400 naming the field. Same values + resident + nothing stale = a plain load, no
 restart. This is what chat's Load/Reload button sends for a gguf model; `/load`

@@ -243,9 +243,9 @@ Note that `--jinja` is **not** passed by heylook. It is on by default in the `ll
 
 The same holds for several flags whose defaults heylook either sets by model class or inherits:
 - **`-fa` (flash attention)**: always passed, and ON unless the model's `flash_attn` says otherwise (owner call, 2026-10-24). [`effective_flash_attn`](../../src/heylook_llm/providers/llama_server_provider.py) is the one decision; the spawn and the admin row both call it. `flash_attn = "auto"` hands it to llama-server's device probe, and the admin row then shows what that resolved to (§5.3). The vision tower inherits the flag, which is where off costs most; the comparisons are the [audit](../testing/gguf_runtime_audit_2026-09-23.md) §9 and the clean `perf_ab` re-measure (local record named in CHANGELOG 2.0.207).
-- **`--cache-reuse`** (`cache_reuse`): auto-set to `AUTO_CACHE_REUSE` on text-only `full_attention` models (`cache_reuse_decision`) so mid-prompt edits shift and reuse matching KV suffix chunks. Left off (`not_applicable`) whenever an `mmproj_path` is loaded or on `hybrid_recurrent` / `sliding_window` models, where llama-server cannot shift KV memory.
+- **`--cache-reuse`** (`cache_reuse`): auto-enabled on text-only `full_attention` models ([`cache_reuse_decision`](../../src/heylook_llm/providers/llama_server_provider.py)) so mid-prompt edits shift and reuse matching KV suffix chunks. Left off (`not_applicable`) whenever an `mmproj_path` is loaded or on `hybrid_recurrent` / `sliding_window` models, where llama-server cannot shift KV memory.
 - **`--reasoning-preserve`**: left at its default, on. Past reasoning stays in the rendered history, which keeps the prompt prefix stable from turn to turn (§4.6).
-- **Checkpoint flags** (`--ctx-checkpoints` / `ctx_checkpoints`, `--checkpoint-min-step` / `checkpoint_min_step`): `ctx_checkpoints` inherits llama-server's default unless configured; `checkpoint_min_step` auto-resolves to `AUTO_CHECKPOINT_MIN_STEP` on `hybrid_recurrent` and `sliding_window` models (`checkpoint_min_step_decision`) so turn-boundary checkpoints closer than llama-server's default spacing are preserved across edits and regenerations.
+- **Checkpoint flags** (`--ctx-checkpoints` / `ctx_checkpoints`, `--checkpoint-min-step` / `checkpoint_min_step`): `ctx_checkpoints` inherits llama-server's default unless configured ([`ctx_checkpoints_decision`](../../src/heylook_llm/providers/llama_server_provider.py)); `checkpoint_min_step` auto-resolves to a tighter spacing on `hybrid_recurrent` and `sliding_window` models ([`checkpoint_min_step_decision`](../../src/heylook_llm/providers/llama_server_provider.py)) so turn-boundary checkpoints closer than llama-server's default spacing are preserved across edits and regenerations.
 
 Each of these, with llama-server's current default and a verdict, is in the [gguf runtime audit](../testing/gguf_runtime_audit_2026-09-23.md) §3; its §9 is the flash-attention comparison.
 
@@ -348,6 +348,7 @@ Read the GGUF rather than trusting vendor documentation -- publishers currently 
 
 ```
 Memory & Engine Controls:
+├── -fa <on|off|auto>           # Flash attention (always passed; defaults to on)
 ├── -ncmoe <n_cpu_moe>          # Number of MoE expert layers routed to CPU
 ├── -cmoe                       # Flag: offload ALL MoE expert layers to CPU
 ├── -ncmoed <n_cpu_moe_draft>   # Draft model MoE CPU layer count
@@ -355,7 +356,10 @@ Memory & Engine Controls:
 ├── -ot <spec>                  # Per-tensor buffer placement override (regex)
 ├── -ctk <type>, -ctv <type>    # KV Cache quantization (f16, bf16, q8_0, q4_0, iq4_nl, etc.)
 ├── -cram <cache_ram_mb>        # Prompt cache RAM limit in MiB (-1 = unlimited, 0 = disabled)
-│                               # llama-server's own default is in its common defaults header
+│                               # Auto-sized at spawn from live headroom when unset
+├── --ctx-checkpoints <count>   # Max recurrent/SWA context checkpoints per slot
+├── --checkpoint-min-step <n>   # Min token spacing between checkpoints (auto-tightened on recurrent/SWA)
+├── --cache-reuse <tokens>      # Min chunk size for KV shifting reuse (auto on text-only full_attention)
 ├── --sleep-idle-seconds <sec>  # Process-level model hibernation
 └── -lm <mode>                  # Weight-loading strategy; accepted set is the field's Literal
 ```
@@ -371,8 +375,11 @@ Memory & Engine Controls:
    - Waking from hibernation is significantly faster than a full process restart.
    - Not to be confused with Metal's **residency keep-alive**, a heartbeat inside llama.cpp that keeps the model's buffers resident and stops after a period without GPU work. Neither heylook setting controls it; the [audit](../testing/gguf_runtime_audit_2026-09-23.md) §8 has what lapsing costs, and the plan's W9 exposes it only if that cost proves real.
 4. **Prompt Cache Budget (`-cram`, `cache_ram_mb`)**:
-   - Caps host RAM for the prompt cache described in §4.6. `-1` is unlimited and `0` disables it; when unset, `_auto_cache_ram_mb()` sizes it at spawn from live working-set headroom up to `AUTO_MAX_CACHE_RAM_MIB` when headroom clears `ram_fit.THIN_HEADROOM_GB`, else inherits llama-server's own default.
+   - Caps host RAM for the prompt cache described in §4.6. `-1` is unlimited and `0` disables it; when unset, [the auto prompt-cache sizer](../../src/heylook_llm/providers/llama_server_provider.py) scales it at spawn from live working-set headroom up to the provider's cap when headroom clears [the thin-headroom threshold](../../src/heylook_llm/ram_fit.py), else inherits llama-server's own default.
    - An entry is the slot's whole state, context checkpoints included, and an entry larger than the budget is **skipped, not stored** -- logged only as a warning at a level heylook discards by default. The budget is host RAM, not Metal working set.
+5. **Context Checkpoints & KV Shifting (`--ctx-checkpoints`, `--checkpoint-min-step`, `--cache-reuse`)**:
+   - On `hybrid_recurrent` and `sliding_window` models, llama-server cannot truncate state at an arbitrary token boundary and instead restores the latest context checkpoint at or before the divergence (§4.6). [`checkpoint_min_step_decision`](../../src/heylook_llm/providers/llama_server_provider.py) tightens `--checkpoint-min-step` on those architectures so turn-boundary checkpoints closer than llama-server's default spacing are retained across edits and regenerations.
+   - On text-only `full_attention` models, [`cache_reuse_decision`](../../src/heylook_llm/providers/llama_server_provider.py) enables `--cache-reuse` by default so mid-prompt edits shift and reuse matching KV suffix chunks. Whenever an `mmproj_path` is present or the model uses recurrent/sliding-window state, llama-server disables KV shifting, and the engine contract reports `cache_reuse` as `not_applicable`.
 
 ---
 
@@ -445,7 +452,7 @@ When scanning directories (`model_importer.py`):
 ### 5.3. Admin Reload & Load Settings
 The load settings (plan W1) are the config fields tagged `load_setting` (`config.load_setting_fields`; for gguf `ctx_size` and `flash_attn`). They can be changed from the Chat page's load panel and from the Models page's editor:
 1. **Endpoint**: `POST /v1/admin/models/{id}/reload` with a JSON body of load settings ([`admin_api.py`](../../src/heylook_llm/admin_api.py)). A key that is not a load setting of the model's provider is a 400 naming the ones it has.
-2. **Persistence First**: each value is persisted to the model's `model.heylook.toml` via `ModelService.update_config` before reloading. `null` resets a setting to its **default**: the key is dropped, never written (`ctx_size` then means `-c 0`, `flash_attn` off, or on under a quantized V cache).
+2. **Persistence First**: each value is persisted to the model's `model.heylook.toml` via `ModelService.update_config` before reloading. `null` resets a setting to its **default**: the key is dropped, never written (`ctx_size` then means `-c 0`, `flash_attn` on).
 3. **No-Op Avoidance**: the comparison is against the **stored** values, not against what the process is actually running. If every requested value matches what is stored and nothing else is stale, the warm model stays resident. The consequence is worth holding: a model running at Auto has *no* stored value, so asking for the exact size it happens to be running still counts as a change and restarts it.
-4. **UI Integration**: the Chat page's [`load-panel.js`](../../frontend/js/load-panel.js) renders one control per load setting beside the model select: [`context-select.js`](../../frontend/js/context-select.js) for context sizes up to the model's native ceiling, and a select per other field whose first option is the default, labelled with what it is ("flash attn: default (off)"). **Choosing a value does not reload anything** -- it reveals the Load/Reload button, and the choices are sent *with* that load when you press it.
+4. **UI Integration**: the Chat page's [`load-panel.js`](../../frontend/js/load-panel.js) renders one control per load setting beside the model select: [`context-select.js`](../../frontend/js/context-select.js) for context sizes up to the model's native ceiling, and a select per other field whose first option is the default, labelled from `engine.settings.<field>.auto` ("flash attn: default (on)"; `auto` is always populated by the engine contract even when a non-default is stored so the label never degrades to a bare "default"). **Choosing a value does not reload anything** -- it reveals the Load/Reload button, and the choices are sent *with* that load when you press it.
 5. **Flash attention's auto** (an explicit `flash_attn = "auto"` only): llama-server decides it at load (libllama's device probe, or forced on by a quantized V cache). The provider reads that decision off llama-server's output (`SpawnLog`, fed by the same pump as the cache witness) and reports it as the `flash_attn` setting's value, with provenance `observed`. That line is libllama INFO, which llama-server prints only at trace verbosity, so every spawn passes `-lv 4`.

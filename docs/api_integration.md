@@ -389,6 +389,16 @@ the text parts intact — so the model answered about an image it never
 received. If you support older servers, check that every image you send comes
 back described rather than trusting the status code.
 
+**Interleaved text and image blocks preserve their exact order on both
+engines** (v2.0.207). You can mix `{"type":"text", ...}` and
+`{"type":"image", ...}` blocks arbitrarily inside a user message (e.g.
+`["Image 1:", <img1>, "Image 2:", <img2>, "Compare the two."]`), and both
+`mlx` and `gguf` place each image marker at that exact position in the
+rendered prompt. Before v2.0.207, the MLX adapter hoisted every image block
+in a user turn ahead of the concatenated text (`[img1, img2, "Image 1:\nImage 2:..."]`).
+Note that on MLX, image blocks are accepted on **user turns only** — an image
+block on an assistant message answers **400** naming `gguf`.
+
 ### Paying the model load up front
 
 **The load runs before the response begins.** The server resolves the
@@ -857,7 +867,7 @@ fields itself (the server never applies a preset to a request).
 
 | Route | Purpose |
 |---|---|
-| `GET/POST /v1/admin/models`, `GET/PATCH/DELETE /v1/admin/models/{id}` | Per-model config in `heylook.toml`; PATCH reports which fields need a reload |
+| `GET/POST /v1/admin/models`, `GET/PATCH/DELETE /v1/admin/models/{id}` | Per-model config in the model's `model.heylook.toml` sidecar (or `heylook.toml` entry); PATCH reports which fields need a reload |
 | `POST /v1/admin/models/validate` | Validate a config without saving |
 | `GET /v1/admin/model-options` | Every settable field per provider and when a change takes effect |
 | `GET/PUT /v1/admin/models/scan-config` | The folders models are discovered from |

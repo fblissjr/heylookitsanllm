@@ -268,12 +268,11 @@ than blocked:
   the model's `ctx_size` so the Models page shows the same number. MLX models
   have no fixed context allocation, so the control does not appear for them.
 - **Flash attention** (gguf models only): a second select beside it, reading
-  "flash attn: default (off)". Off is heylook's default for every gguf model
-  (a model with a quantized V cache gets on, which llama.cpp requires). *on*
-  turns it on, and *auto* lets llama-server's device probe decide. Like the
-  context size, a change shows Reload and is saved with the model. On a desktop, hover it for where
-  the value came from; the Models page's engine panel shows the same on any
-  device.
+  "flash attn: default (on)". On is heylook's default for every gguf model
+  (since v2.0.207). *off* turns it off, and *auto* lets llama-server's device
+  probe decide. Like the context size, a change shows Reload and is saved with
+  the model. On a desktop, hover it for where the value came from; the Models
+  page's engine panel shows the same on any device.
 
 **Rename** is inline on the sidebar row. **Clone** copies a conversation and its
 messages. **Delete** removes it; deleting one that is generating stops the run
