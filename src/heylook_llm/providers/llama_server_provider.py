@@ -1174,6 +1174,10 @@ class LlamaServerProvider(BaseProvider):
             args += ["--sleep-idle-seconds", str(cfg["sleep_idle_seconds"])]
         if cfg.get("load_mode"):
             args += ["-lm", cfg["load_mode"]]
+        if cfg.get("rpc"):
+            args += ["--rpc", str(cfg["rpc"])]
+        if cfg.get("tensor_split"):
+            args += ["--tensor-split", str(cfg["tensor_split"])]
         # Trace verbosity: libllama's own INFO lines (common/log.cpp maps them
         # to trace) are the only place llama-server states what an auto
         # setting resolved to -- flash attention's device probe among them
@@ -1331,6 +1335,34 @@ class LlamaServerProvider(BaseProvider):
         self.config = {k: v for k, v in self.config.items()
                        if k not in ("draft_model_path", "spec_type")}
 
+    def _preflight_rpc_servers(self, timeout_s: float = 2.0) -> None:
+        """Verify every configured `rpc` endpoint (`host:port`) is reachable
+        over TCP before spawning llama-server."""
+        raw_rpc = self.config.get("rpc")
+        if not raw_rpc:
+            return
+        for item in str(raw_rpc).split(","):
+            ep = item.strip()
+            if not ep:
+                continue
+            host, sep, port_str = ep.rpartition(":")
+            if not sep or not host or not port_str.isdigit():
+                raise ValueError(
+                    f"[GGUF] {self.model_id}: invalid rpc endpoint {ep!r} "
+                    f"(expected 'host:port', e.g. '192.168.200.2:50052')"
+                )
+            port = int(port_str)
+            try:
+                with socket.create_connection((host, port), timeout=timeout_s):
+                    pass
+            except OSError as exc:
+                raise RuntimeError(
+                    f"[GGUF] {self.model_id}: rpc-server at {ep} is unreachable "
+                    f"({exc}). Start it on the peer Mac with "
+                    f"`scripts/rpc_worker.sh --host {host} --port {port}` "
+                    f"or remove `rpc` from this model's config."
+                ) from exc
+
     def _load_once(self):
         binary = self._resolve_binary()
         host = self.config.get("host", "127.0.0.1")
@@ -1381,6 +1413,8 @@ class LlamaServerProvider(BaseProvider):
                 f"else the template embedded in the GGUF) -- removing it no "
                 f"longer means the embedded template unconditionally."
             )
+
+        self._preflight_rpc_servers()
 
         if self.embedding:
             from heylook_llm.embedding_models import gguf_embedding_profile

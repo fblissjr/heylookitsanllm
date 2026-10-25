@@ -354,6 +354,7 @@ class MLXModelConfig(BaseModel):
             "this is not merely descriptive as it is on gguf: it decides, at "
             "load, the vision or text template path and whether the model is served with vision."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
+
     # The model's context window, when config.json does not tell the truth.
     # None = read the file (capabilities.model_context_length: top-level
     # max_position_embeddings, then the nested text block). A YaRN-scaled
@@ -376,6 +377,7 @@ class MLXModelConfig(BaseModel):
             "consumers are the over-length refusal and the admin row. The "
             "gguf counterpart, `ctx_size`, is genuinely an allocation."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
+
     # Sampler defaults: the loaded model serves any of these per request.
     # Each sits ABOVE the vendor layer (this model's own
     # generation_config.json) and BELOW a request field, so leaving one unset
@@ -583,6 +585,19 @@ class MLXModelConfig(BaseModel):
             "`/v1/admin/models/{id}/chat-template` route, which writes one "
             "file and no config at all."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
+    # Asymmetric distributed pipeline split ratios across MLX ranks (e.g.
+    # [0.8, 0.2] for a 192 GB M2 Ultra + 48 GB M4 Pro). File-only because it
+    # requires launching the server and worker under mlx.launch.
+    pipeline_ratios: Optional[List[float]] = Field(
+        default=None,
+        description=(
+            "Per-rank decoder layer split ratios for distributed MLX pipeline "
+            "parallelism (e.g. `[0.8, 0.2]` across a 192 GB primary and 48 GB "
+            "worker launched with `mlx.launch`). Unset = single-node unless "
+            "`mx.distributed.init().size() > 1`, in which case `[0.8, 0.2]` is "
+            "used for a 2-rank group."),
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "hidden", "file_only": True})
+
 
     @model_validator(mode="after")
     def _resolve_modalities(self):
@@ -761,6 +776,7 @@ class GGUFModelConfig(BaseModel):
             "(chat_template.heylook.jinja), which is a separate file and a "
             "separate decision."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
+
     # sidecar drafter (e.g. gemma mtp-*.gguf). `-md`, not the `--model-draft`
     # alias: `arg` must be the spelling the provider ACTUALLY emits, so a UI or
     # a derived emitter reproduces the real command line rather than an
@@ -1008,6 +1024,37 @@ class GGUFModelConfig(BaseModel):
             "which is what you want on Apple Silicon. Lower it only to keep "
             "weight bytes out of the Metal working set deliberately."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "-ngl"},
+    )
+    # --rpc: comma-separated host:port list of ggml-rpc worker daemons
+    # (scripts/rpc_worker.sh). File-only because it directs the subprocess to
+    # connect out over TCP to a remote worker.
+    rpc: Optional[str] = Field(
+        default=None,
+        description=(
+            "Comma-separated `host:port` list of `ggml-rpc` worker servers "
+            "(e.g. `\"192.168.200.2:50052\"` over Thunderbolt Bridge, started "
+            "with `scripts/rpc_worker.sh`). File-only (`model.heylook.toml` or "
+            "`heylook.toml`) because it directs `llama-server` to open outbound "
+            "TCP connections. Note device order: `llama.cpp` registers RPC "
+            "devices BEFORE the local Metal GPU (`src/llama.cpp`), so pair "
+            "with `tensor_split = \"20,80\"` to put 20% on the RPC worker and "
+            "80% on local Metal."),
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "arg": "--rpc",
+                           "ui": "hidden", "file_only": True},
+    )
+    # --tensor-split: comma-separated device weight proportions (e.g. "20,80").
+    tensor_split: Optional[str] = Field(
+        default=None,
+        description=(
+            "Comma-separated layer-split proportions across devices (e.g. "
+            "`\"20,80\"`). When `rpc` is set, `llama.cpp` orders RPC workers "
+            "first and the local Metal GPU last (`src/llama.cpp`), so "
+            "`\"20,80\"` assigns 20% of offloaded layers to the RPC peer and "
+            "80% to the local Metal GPU. `ram_fit` scales local target weight "
+            "sizing by the local Metal share so speculative drafters are not "
+            "dropped when target layers are offloaded."),
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD,
+                           "arg": "--tensor-split", "ui": "advanced"},
     )
     # -ub: the PHYSICAL prompt-processing batch -- how many prompt tokens one
     # Metal dispatch chews through. llama-server's own default is 512, sized

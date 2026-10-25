@@ -1334,6 +1334,19 @@ class MLXProvider(BaseProvider):
 
     def _load_vlm_with_fallback(self, model_path):
         """Load VLM model with fallback strategies for common issues."""
+        pipeline_ratios = self.config.get("pipeline_ratios")
+        if pipeline_ratios:
+            from .common.mlx_pipeline import (
+                enable_fast_metal_synch,
+                install_rank0_step_coordinator,
+                selective_pipeline_load,
+            )
+            enable_fast_metal_synch()
+            model, processor = selective_pipeline_load(
+                model_path, ratios=pipeline_ratios, skip_audio=True
+            )
+            install_rank0_step_coordinator(model)
+            return model, processor
 
         # Strategy 1: Try with skip_audio=True (most common fix)
         try:

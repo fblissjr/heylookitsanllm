@@ -208,6 +208,42 @@ class TestSizing:
         assert size_gb == pytest.approx(700 / ram_fit.GB)
         assert any("mmproj" in n for n in notes)
 
+    def test_rpc_tensor_split_scales_primary_gguf_weights_only(self, tmp_path):
+        from heylook_llm.ram_fit import local_weight_fraction
+
+        primary = self._gguf(tmp_path / "target.gguf", 1000)
+        drafter = self._gguf(tmp_path / "draft.gguf", 100)
+        cfg = {
+            "model_path": str(primary),
+            "draft_model_path": str(drafter),
+            "rpc": "192.168.200.2:50052",
+            "tensor_split": "20,80",
+        }
+        frac, note = local_weight_fraction(cfg)
+        assert frac == pytest.approx(0.8)
+        assert note and "80% local" in note
+
+        size_gb, notes = size_config_gb(cfg)
+        # 80% of 1000-byte target + 100% of 100-byte drafter = 900 bytes local
+        assert size_gb == pytest.approx(900 / ram_fit.GB)
+        assert any("80% local" in n for n in notes)
+
+        # Mismatched count or MLX dir falls back to 1.0
+        assert local_weight_fraction({**cfg, "tensor_split": "80"})[0] == 1.0
+        assert local_weight_fraction({"model_path": str(tmp_path), "rpc": "1.2.3.4:50052", "tensor_split": "20,80"})[0] == 1.0
+
+        # MLX pipeline_ratios scales rank-0 primary weights
+        mlx_dir = tmp_path / "mlx_model"
+        mlx_dir.mkdir()
+        (mlx_dir / "model.safetensors").write_bytes(b"\0" * 1000)
+        mlx_cfg = {"model_path": str(mlx_dir), "pipeline_ratios": [0.8, 0.2]}
+        mlx_frac, mlx_note = local_weight_fraction(mlx_cfg)
+        assert mlx_frac == pytest.approx(0.8)
+        assert mlx_note and "80% rank-0 local" in mlx_note
+        mlx_size, mlx_notes = size_config_gb(mlx_cfg)
+        assert mlx_size == pytest.approx(800 / ram_fit.GB)
+        assert any("80% rank-0 local" in n for n in mlx_notes)
+
     def test_missing_path_notes_it(self, tmp_path):
         size_gb, notes = size_config_gb({"model_path": str(tmp_path / "nope")})
         assert size_gb == 0.0

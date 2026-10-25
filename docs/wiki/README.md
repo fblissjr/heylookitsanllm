@@ -16,6 +16,7 @@ This wiki provides comprehensive, deep-dive technical documentation covering the
 | [**Providers & Generation**](./providers_architecture.md) | Multi-Engine Providers | Unified provider abstraction (`BaseProvider`), `GenerationChunk` contract, MLXProvider (one mlx-vlm engine, text and vision paths), reasoning parsers, and FIFO generation gate. |
 | [**Llama-Server & GGUF Deep Dive**](./llama_server_build_and_spawn.md) | GGUF Subprocess & Build | **Core Deep Dive**: How `llama-server` is built from C++ source, how the backend spawns and manages it, exact CLI parameters sent and why, the chat template ladder, and how settings are configured by model. |
 | [**Performance & Optimizations**](./performance_optimizations.md) | Cross-Stack Optimization | Complete guide to performance: Metal GPU shaders vs CPU glue, MLX prompt caching & KV snapshots, vision feature cache, speculative decoding, and incremental streaming UI rendering. |
+| [**Distributed Multi-Mac Inference**](./distributed_inference.md) | Multi-Mac GGUF & MLX | How distributed GGUF (`ggml-rpc` + `tensor_split`) and asymmetric MLX pipeline parallelism (`pipeline_ratios`, `selective_pipeline_load`, `mlx.launch`) work over Thunderbolt Bridge, plus step-by-step operator guides. |
 
 ### Where the evidence lives
 

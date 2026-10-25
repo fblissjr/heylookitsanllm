@@ -69,7 +69,8 @@ GIT_URL = "https://github.com/ggml-org/llama.cpp"
 #                     tool's example), which is why it looks absent from the
 #                     server's --help. Read heylook's docs before trusting a
 #                     file-size estimate over it; see .claude/rules/gguf.md.
-TARGETS = ["llama-server", "llama-bench", "llama-fit-params"]
+#   ggml-rpc-server   ggml-rpc worker daemon (`--rpc` distributed inference).
+TARGETS = ["llama-server", "llama-bench", "llama-fit-params", "ggml-rpc-server"]
 HOME_SUBDIR = (".heylook", "llama.cpp")
 
 # ANSI helpers (skip when not a tty).
@@ -279,6 +280,7 @@ def cmake_args(*, lto: bool, openmp: bool, ui: bool,
         "-DBUILD_SHARED_LIBS=OFF",
         "-DGGML_METAL=ON",
         "-DGGML_METAL_EMBED_LIBRARY=ON",
+        "-DGGML_RPC=ON",
         "-DGGML_NATIVE=ON",
         "-DGGML_ACCELERATE=ON",
         "-DGGML_BLAS=ON",
@@ -303,8 +305,9 @@ _CACHE_LINE = re.compile(r"^([A-Za-z0-9_]+):[A-Z]+=(.*)$")
 # describe the binary, not the wish.
 _EFFECTIVE_KEYS = (
     "CMAKE_GENERATOR", "CMAKE_BUILD_TYPE", "GGML_OPENMP_ENABLED", "GGML_LTO",
-    "GGML_METAL", "GGML_METAL_NDEBUG", "GGML_METAL_EMBED_LIBRARY", "GGML_NATIVE",
-    "GGML_BLAS", "GGML_ACCELERATE", "LLAMA_BUILD_UI", "BUILD_SHARED_LIBS",
+    "GGML_METAL", "GGML_METAL_NDEBUG", "GGML_METAL_EMBED_LIBRARY", "GGML_RPC",
+    "GGML_NATIVE", "GGML_BLAS", "GGML_ACCELERATE", "LLAMA_BUILD_UI",
+    "BUILD_SHARED_LIBS",
 )
 
 
@@ -505,7 +508,7 @@ def print_status(path: Path) -> None:
     if manifest:
         print(f"  rev      {manifest.get('rev')}  {dim(manifest.get('version', ''))}")
         eff = manifest.get("effective", {})
-        interesting = {k: eff[k] for k in ("GGML_OPENMP_ENABLED", "GGML_LTO")
+        interesting = {k: eff[k] for k in ("GGML_RPC", "GGML_OPENMP_ENABLED", "GGML_LTO")
                        if k in eff}
         if interesting:
             print(f"  built    {dim('  '.join(f'{k}={v}' for k, v in interesting.items()))}")

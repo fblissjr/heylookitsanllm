@@ -505,3 +505,32 @@ class TestCarriedPatches:
             "(or its equivalent) is in the pin. Delete providers/common/"
             "mlx_vlm_patches.py's #2356 carry, its apply_to call in "
             "vlm_engine.generate, and these two tests.")
+
+    def test_gdn_packed_kernel_carry_and_retirement(self):
+        """Retirement & binding test for PATCH_GDN_PACKED:
+        1. If the pinned upstream mlx-vlm already defines _gated_delta_kernel_packed,
+           fail with a retirement message naming PATCH_GDN_PACKED to delete.
+        2. Otherwise, verify install_gated_delta_packed_kernel() binds cleanly to
+           mlx_vlm.models.gated_delta.gated_delta_kernel."""
+        import mlx.core as mx
+        from mlx_vlm.models import gated_delta as gd
+        from heylook_llm.providers.common import mlx_vlm_patches
+
+        assert not hasattr(gd, "_gated_delta_kernel_packed"), (
+            "upstream mlx-vlm now includes _gated_delta_kernel_packed natively: "
+            "delete PATCH_GDN_PACKED and install_gated_delta_packed_kernel() from "
+            "providers/common/mlx_vlm_patches.py and this test.")
+
+        if not mx.metal.is_available():
+            pytest.skip("Metal required to compile packed Gated DeltaNet kernel")
+
+        orig = getattr(gd.gated_delta_kernel, "_heylook_upstream", gd.gated_delta_kernel)
+        try:
+            gd.gated_delta_kernel = orig
+            assert mlx_vlm_patches.install_gated_delta_packed_kernel()
+            assert getattr(gd.gated_delta_kernel, "_heylook_patch", None) == mlx_vlm_patches.PATCH_GDN_PACKED
+            # Idempotent second call
+            assert mlx_vlm_patches.install_gated_delta_packed_kernel()
+        finally:
+            gd.gated_delta_kernel = orig
+

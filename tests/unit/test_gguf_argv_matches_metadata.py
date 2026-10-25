@@ -53,6 +53,8 @@ SAMPLE_VALUES = {
     "ctx_checkpoints": 32,
     "checkpoint_min_step": 256,
     "cache_reuse": 256,
+    "rpc": "192.168.200.2:50052",
+    "tensor_split": "20,80",
 }
 
 

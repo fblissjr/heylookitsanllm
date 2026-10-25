@@ -257,3 +257,22 @@ def test_model_options_publishes_descriptions(provider):
 
     for entry in _field_options(_PCC[provider]):
         assert entry.get("description"), f"{provider}.{entry['name']} lost its description"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("provider", PROVIDERS)
+def test_file_only_fields_are_ui_hidden(provider):
+    """Every `file_only=True` field is refused by `ModelUpdateRequest` over HTTP
+    PATCH (422), so offering an editable control for it in the web Configure
+    panel (`ui != 'hidden'`) creates a form field that always fails on Save.
+    Wait-free visibility when configured is handled by `engine.js`, which
+    renders `ui: 'hidden'` fields whenever `provenance === 'configured'`."""
+    cls = _PCC[provider]
+    for name, field in cls.model_fields.items():
+        extra = getattr(field, "json_schema_extra", None) or {}
+        if extra.get("file_only"):
+            assert extra.get("ui") == "hidden", (
+                f"{provider}.{name} is file_only=True (refused over HTTP PATCH) "
+                f"but has ui={extra.get('ui')!r} instead of 'hidden'"
+            )
+

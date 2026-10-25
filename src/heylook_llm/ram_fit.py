@@ -272,31 +272,87 @@ def largest_alloc_gb(config: dict) -> float:
     return biggest / GB
 
 
+def local_weight_fraction(config: dict) -> tuple[float, Optional[str]]:
+    """Return ``(fraction, note)`` of primary weights resident on the local
+    Metal device when distributed offload is configured.
+
+    - GGUF (``rpc`` + ``tensor_split``): in llama.cpp (``src/llama.cpp``),
+      ``rpc_servers`` are inserted at the front of ``model->devices`` (indices
+      ``0 .. R-1``) and the local Metal GPU is appended last (index ``R``).
+      So with ``R`` RPC endpoints and ``R + 1`` comma-separated ``tensor_split``
+      weights, the local Metal device holds ``weights[-1] / sum(weights)``.
+    - MLX (``pipeline_ratios``): Rank 0 (the HTTP server) holds
+      ``ratios[0] / sum(ratios)`` of the decoder layers via selective
+      safetensors loading (``mlx_pipeline.selective_pipeline_load``).
+    """
+    if is_mlx_config(config):
+        ratios = config.get("pipeline_ratios")
+        if isinstance(ratios, (list, tuple)) and len(ratios) >= 2:
+            try:
+                vals = [float(r) for r in ratios]
+            except (TypeError, ValueError):
+                return 1.0, None
+            total_r = sum(vals)
+            if total_r > 0 and all(v > 0 for v in vals):
+                frac = vals[0] / total_r
+                return frac, f"pipeline_ratios={list(vals)} -> {frac * 100:.0f}% rank-0 local"
+        return 1.0, None
+    raw_rpc = config.get("rpc")
+    raw_split = config.get("tensor_split")
+    if not raw_rpc or not raw_split:
+        return 1.0, None
+    endpoints = [ep.strip() for ep in str(raw_rpc).split(",") if ep.strip()]
+    if not endpoints:
+        return 1.0, None
+    try:
+        weights = [float(x.strip()) for x in str(raw_split).split(",") if x.strip()]
+    except ValueError:
+        return 1.0, None
+    if len(weights) != len(endpoints) + 1 or any(w < 0 for w in weights):
+        return 1.0, None
+    total_w = sum(weights)
+    if total_w <= 0:
+        return 1.0, None
+    frac = weights[-1] / total_w
+    return frac, f"rpc tensor_split={raw_split} -> {frac * 100:.0f}% local"
+
+
 def size_config_gb(config: dict) -> tuple[float, list[str]]:
     """Resident weight GiB for a heylook.toml ``config`` block, plus notes.
 
-    Counts the primary (whole shard set, not the named shard) and every
-    sidecar that loads into the same process.
+    Counts the primary (whole shard set, not the named shard, scaled by
+    ``local_weight_fraction`` when ``rpc`` + ``tensor_split`` offload part of
+    the target model to a remote ``rpc-server``) and every sidecar that loads
+    into the same process.
     """
     notes: list[str] = []
     total = 0
     primary = Path(config.get("model_path") or "")
     if primary.is_dir():
-        total += sum(
+        primary_bytes = sum(
             f.stat().st_size
             for pattern in ("*.safetensors", "*.gguf")
             for f in primary.rglob(pattern)
         )
     elif primary.is_file():
-        shard_bytes = _shard_set_bytes(primary)
+        primary_bytes = _shard_set_bytes(primary)
         if _SHARD_RE.search(primary.name):
             n = len(list(primary.parent.glob("*-of-*.gguf")))
             notes.append(
-                f"primary is a {n}-shard set ({shard_bytes / GB:.1f} GiB), not the named shard"
+                f"primary is a {n}-shard set ({primary_bytes / GB:.1f} GiB), not the named shard"
             )
-        total += shard_bytes
     else:
         return 0.0, ["model_path does not exist"]
+
+    frac, rpc_note = local_weight_fraction(config)
+    if rpc_note is not None:
+        local_primary = int(primary_bytes * frac)
+        notes.append(
+            f"{rpc_note} ({local_primary / GB:.1f} of {primary_bytes / GB:.1f} GiB)"
+        )
+        total += local_primary
+    else:
+        total += primary_bytes
 
     for key, label in (("mmproj_path", "mmproj"), ("draft_model_path", "drafter")):
         sidecar = Path(config.get(key) or "")

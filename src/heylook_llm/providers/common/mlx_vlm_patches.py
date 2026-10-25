@@ -20,6 +20,7 @@ moment that test goes red.
 
 import inspect
 import logging
+import os
 
 # Blaizzy/mlx-vlm#2356: a restored single row gets the cache a cold row would.
 # mlx-vlm gives a cold single row the model's own caches (PromptProcessingBatch)
@@ -33,6 +34,187 @@ import logging
 # call the restore site makes, gated per generator by the same rule.
 PATCH_2356 = "mlx-vlm#2356"
 MERGE_ROWS_PARAMS = ("picks", "prefix_lens", "kv_quant_config")  # bound method
+
+# Carry of mlx-lm's 8-row packed Gated DeltaNet Metal kernel
+# (_make_gated_delta_packed_kernel) for scalar-gated Dk=128, Dv % 8 == 0
+# recurrence (Qwen3.5 / Qwen3.8). Staged in forks/mlx-vlm/mlx_vlm/models/gated_delta.py;
+# carried here so the pinned upstream mlx-vlm in .venv runs the packed kernel
+# immediately. Retires once the upstream pin defines _gated_delta_kernel_packed.
+PATCH_GDN_PACKED = "mlx-vlm#gdn-packed"
+GDN_KERNEL_PARAMS = ("q", "k", "v", "g", "beta", "state", "mask", "state_steps")
+
+_PACKED_KERNEL_SOURCE = r"""
+    constexpr int lanes_per_row = 4;
+    constexpr int rows_per_simdgroup = 32 / lanes_per_row;
+    constexpr int values_per_lane = Dk / lanes_per_row;
+    constexpr int partials_per_lane = values_per_lane / 4;
+
+    auto n = thread_position_in_grid.z;
+    auto b_idx = n / Hv;
+    auto hv_idx = n % Hv;
+    auto hk_idx = hv_idx / (Hv / Hk);
+
+    auto lane = thread_index_in_simdgroup;
+    auto row_in_simdgroup = lane / lanes_per_row;
+    auto lane_in_row = lane & (lanes_per_row - 1);
+    auto row_group = thread_position_in_grid.y;
+    auto dv_idx = row_group * rows_per_simdgroup + row_in_simdgroup;
+
+    // q, k: [B, T, Hk, Dk]
+    auto q_ = q + (b_idx * T * Hk + hk_idx) * Dk + lane_in_row * values_per_lane;
+    auto k_ = k + (b_idx * T * Hk + hk_idx) * Dk + lane_in_row * values_per_lane;
+
+    // v, y: [B, T, Hv, Dv]
+    auto v_ = v + (b_idx * T * Hv + hv_idx) * Dv;
+    y += (b_idx * T * Hv + hv_idx) * Dv;
+
+    // state_in, state_out: [B, Hv, Dv, Dk]
+    auto i_state = state_in + (n * Dv + dv_idx) * Dk + lane_in_row * values_per_lane;
+    auto o_state = state_out + (n * Dv + dv_idx) * Dk + lane_in_row * values_per_lane;
+
+    float state[values_per_lane];
+    for (int i = 0; i < values_per_lane; ++i) {
+      state[i] = static_cast<float>(i_state[i]);
+    }
+
+    // g, beta: [B, T, Hv]
+    auto g_ = g + b_idx * T * Hv;
+    auto beta_ = beta + b_idx * T * Hv;
+
+    for (int t = 0; t < T; ++t) {
+      float gt = static_cast<float>(g_[hv_idx]);
+
+      float part[partials_per_lane];
+      for (int pb = 0; pb < partials_per_lane; ++pb) {
+        float acc = 0.0f;
+        for (int i = 0; i < 4; ++i) {
+          int e = pb * 4 + i;
+          state[e] = state[e] * gt;
+          acc += state[e] * static_cast<float>(k_[e]);
+        }
+        part[pb] = acc;
+      }
+      float kv_mem =
+          ((part[0] + part[1]) + (part[2] + part[3])) +
+          ((part[4] + part[5]) + (part[6] + part[7]));
+      kv_mem += simd_shuffle_xor(kv_mem, 1);
+      kv_mem += simd_shuffle_xor(kv_mem, 2);
+
+      auto delta =
+          (static_cast<float>(v_[dv_idx]) - kv_mem) *
+          static_cast<float>(beta_[hv_idx]);
+
+      for (int pb = 0; pb < partials_per_lane; ++pb) {
+        float acc = 0.0f;
+        for (int i = 0; i < 4; ++i) {
+          int e = pb * 4 + i;
+          state[e] = state[e] + static_cast<float>(k_[e]) * delta;
+          acc += state[e] * static_cast<float>(q_[e]);
+        }
+        part[pb] = acc;
+      }
+      float out =
+          ((part[0] + part[1]) + (part[2] + part[3])) +
+          ((part[4] + part[5]) + (part[6] + part[7]));
+      out += simd_shuffle_xor(out, 1);
+      out += simd_shuffle_xor(out, 2);
+      if (lane_in_row == 0) {
+        y[dv_idx] = static_cast<InT>(out);
+      }
+
+      q_ += Hk * Dk;
+      k_ += Hk * Dk;
+      v_ += Hv * Dv;
+      y += Hv * Dv;
+      g_ += Hv;
+      beta_ += Hv;
+    }
+
+    for (int i = 0; i < values_per_lane; ++i) {
+      o_state[i] = static_cast<StT>(state[i]);
+    }
+"""
+
+
+def install_gated_delta_packed_kernel() -> bool:
+    """Install the 8-row packed Gated DeltaNet Metal kernel on ``mlx_vlm.models.gated_delta``
+    when the pinned upstream SHA does not yet carry ``_gated_delta_kernel_packed``."""
+    try:
+        import mlx.core as mx
+        from mlx_vlm.models import gated_delta as gd
+    except ImportError:
+        return False
+
+    current = getattr(gd, "gated_delta_kernel", None)
+    if current is None:
+        return False
+    if getattr(current, "_heylook_patch", None) == PATCH_GDN_PACKED:
+        return True
+    # If upstream already defines _gated_delta_kernel_packed natively, stand down.
+    if hasattr(gd, "_gated_delta_kernel_packed"):
+        return False
+    if tuple(inspect.signature(current).parameters) != GDN_KERNEL_PARAMS:
+        logging.warning(
+            "%s carry not applied: gated_delta_kernel signature changed",
+            PATCH_GDN_PACKED,
+        )
+        return False
+    if not mx.metal.is_available():
+        return False
+
+    packed_kernel = mx.fast.metal_kernel(
+        name="gated_delta_step_packed_btree",
+        input_names=["q", "k", "v", "g", "beta", "state_in", "T"],
+        output_names=["y", "state_out"],
+        source=_PACKED_KERNEL_SOURCE,
+    )
+    upstream = current
+
+    def gated_delta_kernel(
+        q,
+        k,
+        v,
+        g,
+        beta,
+        state,
+        mask=None,
+        state_steps=None,
+    ):
+        B, T, Hk, Dk = k.shape
+        Hv, Dv = v.shape[2:]
+        if (
+            os.environ.get("MLX_GDN_PACKED", "1") != "0"
+            and mask is None
+            and state_steps is None
+            and g.ndim == 3
+            and Dk == 128
+            and Dv % 8 == 0
+            and g.dtype == mx.float32
+            and state.dtype == mx.float32
+        ):
+            return packed_kernel(
+                inputs=[q, k, v, g, beta, state, T],
+                template=[
+                    ("InT", q.dtype),
+                    ("StT", state.dtype),
+                    ("Dk", Dk),
+                    ("Dv", Dv),
+                    ("Hk", Hk),
+                    ("Hv", Hv),
+                ],
+                grid=(32, Dv // 8, B * Hv),
+                threadgroup=(32, 2, 1),
+                output_shapes=[(B, T, Hv, Dv), state.shape],
+                output_dtypes=[q.dtype, state.dtype],
+            )
+        return upstream(q, k, v, g, beta, state, mask=mask, state_steps=state_steps)
+
+    gated_delta_kernel.__doc__ = upstream.__doc__
+    setattr(gated_delta_kernel, "_heylook_patch", PATCH_GDN_PACKED)
+    setattr(gated_delta_kernel, "_heylook_upstream", upstream)
+    gd.gated_delta_kernel = gated_delta_kernel
+    return True
+
 
 
 def plain_single_row_generator(bg) -> bool:
@@ -88,6 +270,7 @@ def apply_to(bg) -> bool:
     """Install every carried patch on this generator. True when #2356's
     carry is in force for it; False for a generator the rule leaves on
     batch caches, one without a prefix cache, or a stood-down carry."""
+    install_gated_delta_packed_kernel()
     coord = getattr(bg, "apc", None)
     if coord is None or not plain_single_row_generator(bg):
         return False

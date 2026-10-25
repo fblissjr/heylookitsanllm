@@ -103,8 +103,42 @@ class TestBuildArgs:
         # Every one of these has a llama-server default worth inheriting; a
         # provider that always passes a value silently overrides upstream.
         args = self._args()
-        for flag in ("-ngld", "-cram", "--sleep-idle-seconds", "-lm", "-b", "-ub"):
+        for flag in ("-ngld", "-cram", "--sleep-idle-seconds", "-lm", "-b", "-ub",
+                     "--rpc", "--tensor-split"):
             assert flag not in args
+
+    def test_rpc_preflight_validates_and_checks_reachability(self, tmp_path, monkeypatch):
+        connected = []
+
+        class _DummyConn:
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+
+        def fake_connect(addr, timeout=None):
+            connected.append((addr, timeout))
+            if addr[1] == 50053:
+                raise OSError("connection refused")
+            return _DummyConn()
+
+        monkeypatch.setattr(llama_mod.socket, "create_connection", fake_connect)
+
+        # Invalid endpoint format raises ValueError before attempting TCP connect
+        bad = make_provider(model_path=str(_weights(tmp_path)), rpc="192.168.200.2")
+        with pytest.raises(ValueError, match="invalid rpc endpoint"):
+            bad._preflight_rpc_servers()
+
+        # Unreachable endpoint raises RuntimeError naming rpc_worker.sh
+        down = make_provider(model_path=str(_weights(tmp_path)), rpc="192.168.200.2:50053")
+        with pytest.raises(RuntimeError, match="rpc_worker.sh"):
+            down._preflight_rpc_servers()
+
+        # Reachable endpoint succeeds
+        connected.clear()
+        ok = make_provider(model_path=str(_weights(tmp_path)), rpc="192.168.200.2:50052")
+        ok._preflight_rpc_servers()
+        assert connected == [(("192.168.200.2", 50052), 2.0)]
 
     @staticmethod
     def _spawn_args(monkeypatch, headroom, **config):
