@@ -252,16 +252,23 @@ class ModelImporter:
         """
         return self._pick_primary_gguf(path) is not None
 
-    def _iter_root_gguf_files(self, path: Path):
+    def _iter_root_gguf_files(self, path: Path) -> list[Path]:
         """Root-level (non-recursive) ``*.gguf`` files -- never ``.gguf_file``
         (imatrix calibration data) and never anything in a nested subdir
-        (e.g. an MTP/ precision-variants folder)."""
+        (e.g. an MTP/ precision-variants folder). Cached per directory on the
+        importer instance so `_is_gguf_model`, `_pick_primary_gguf`,
+        `_pick_mmproj`, and `_pick_spec` share one `iterdir()` pass."""
+        cache = getattr(self, "_gguf_dir_cache", None)
+        if cache is None:
+            cache = self._gguf_dir_cache = {}
+        if path in cache:
+            return cache[path]
         try:
-            for f in path.iterdir():
-                if f.is_file() and f.name.endswith(".gguf"):
-                    yield f
+            files = [f for f in path.iterdir() if f.is_file() and f.name.endswith(".gguf")]
         except OSError:
-            return
+            files = []
+        cache[path] = files
+        return files
 
     # Drafter-sidecar prefixes, mirroring llama.cpp's own sibling resolution
     # (common/download.cpp find_best_sibling): one prefix per speculative

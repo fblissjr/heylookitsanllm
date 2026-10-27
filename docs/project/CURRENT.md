@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-10-27, v2.0.210, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
+Last updated: 2026-10-27, v2.0.211, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md) (triaged 2026-09-25 and refreshed 2026-10-27;
@@ -16,6 +16,7 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
+| v2.0.211 Tier 1 backend/probe quick wins (`block_system_content_warning` in `chat_template_files.py` and `template_info.py`, bilateral near-tie detection in `scripts/vlm_parity_probe.py`, single-pass `_iter_root_gguf_files` cache in `model_importer.py`, and `perf_ab._timed` GGUF stream test in `test_perf_ab_verdict.py`) | unit + contract 1607 passed. NOT run: `tests/smoke/`, `tests/eval/` | v2.0.211 |
 | v2.0.210 Distributed Track 1.1/1.2/1.3 (Rank-0 speculative decoding across pipelined MLX ranks via `CMD_START_SPEC`/`CMD_COMMIT_SPEC`/`CMD_ABORT_SPEC`, live worker Metal working-set ceilings in `ping`/`prepare_model` and `ram_fit.fit_for_config`, GGUF `describe_observed()` `rpc` fallback status, `MLXModelConfig.pipeline_ratios` `ui="advanced"` with numeric array support in `model-config.js`) + project roadmap refresh | unit + contract 1605 passed; `e2e:render` 105/105. NOT run: `tests/smoke/`, `tests/eval/` | v2.0.210 |
 | v2.0.209 Daemonized multi-Mac distributed inference (`scripts/mlx_pipeline_worker.py --daemon`, `scripts/worker_node.py`, bidirectional shard/metadata heal and `[scan].folders` sync, APC prefix snapshot/restore sync across ranks, `ram_fit`-gated single-node auto-fallback, frontend `pipeline`/`rpc` engine summary) | unit + contract 1601 passed; `e2e:render` 105/105; live browser `e2e:chat` 56/56 (1 skipped) and `e2e:pages` 33/33 on `Qwen3.5-0.8B-MLX-8bit`. NOT run: `tests/smoke/`, `tests/eval/` | v2.0.209 |
 | v2.0.208 Distributed GGUF (`ggml-rpc`, `rpc`, `tensor_split`) + asymmetric MLX pipeline sharding (`mlx_pipeline.py`, `pipeline_ratios`, `pipeline_peers`, `MLX_METAL_FAST_SYNCH=1`) + 8-row packed Gated DeltaNet Metal kernel (`PATCH_GDN_PACKED`) | unit + contract 1595 passed; `e2e:render` 105/105; `scripts/build_llama.py` (`llama-server` + `ggml-rpc-server` at `2280f0fd1`); 2-rank `mlx.launch -n 2` greedy parity on `Qwen3.5-0.8B-MLX-8bit`; live 2-Mac Thunderbolt Bridge smoke on both GGUF `ggml-rpc` (`unsloth_Qwen3.8-27B-UD-Q8_K_XL`, `--tensor-split 20,80`) and MLX asymmetric ring pipeline (`Qwen3.5-0.8B-MLX-8bit`, `ratios=[0.8, 0.2]`). NOT run: `tests/smoke/`, `tests/eval/` | v2.0.208 |

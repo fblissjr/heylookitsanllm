@@ -59,3 +59,31 @@ def test_template_sources_mark_download_state_and_in_force(tmp_path):
     (record / "chat_template.jinja.metadata").unlink()
     assert {r["source"]: r for r in template_sources("m", "mlx", cfg, None)}["chat_template.jinja"]["provenance"] \
         == "no download record"
+
+
+def test_block_system_content_warning_flags_string_only_system_branch(tmp_path):
+    """A template whose system branch renders `messages[0]['content']` directly
+    without iterating block-form list content emits `{'type': 'text', ...}` into
+    the prompt on MLX VLM paths; `block_system_content_warning` and `view()`
+    surface that warning while passing templates that branch on `is string` / `is sequence`."""
+    from heylook_llm.chat_template_files import block_system_content_warning, view
+
+    broken = (
+        "{% if messages[0]['role'] == 'system' %}{{ messages[0]['content'] | trim }}\n{% endif %}"
+        "{% for m in messages %}{% if m['role'] != 'system' %}{{ m['content'] }}{% endif %}{% endfor %}"
+    )
+    warn = block_system_content_warning(broken)
+    assert warn is not None and "{'type':" in warn
+
+    good = (
+        "{% for m in messages %}"
+        "{% if m['content'] is string %}{{ m['content'] }}"
+        "{% else %}{% for c in m['content'] %}{{ c['text'] }}{% endfor %}{% endif %}"
+        "{% endfor %}"
+    )
+    assert block_system_content_warning(good) is None
+
+    (tmp_path / "chat_template.jinja").write_text(broken)
+    v = view("test-vlm", "mlx", {"model_path": str(tmp_path)})
+    assert any("{'type':" in n for n in v.notes)
+

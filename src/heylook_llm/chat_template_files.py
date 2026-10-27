@@ -137,6 +137,9 @@ def view(model_id: str, provider: str, config: dict,
         )
     elif not writable:
         notes.append(f"{directory} is not writable, so an override cannot be saved.")
+    block_warn = block_system_content_warning(template)
+    if block_warn:
+        notes.append(block_warn)
 
     return TemplateView(
         model_id=model_id, provider=provider,
@@ -485,6 +488,42 @@ _STABILITY_NEXT = ({"role": "assistant", "content": "pong"}, {"role": "user", "c
 def _common_prefix(a: str, b: str) -> int:
     n = min(len(a), len(b))
     return next((i for i in range(n) if a[i] != b[i]), n)
+
+
+@lru_cache(maxsize=64)
+def block_system_content_warning(body: Optional[str]) -> Optional[str]:
+    """Return a warning if rendering a block-form system message (`[{"type": "text", ...}]`)
+    emits a Python dict repr (`{'type':`) into the prompt, else None.
+
+    mlx-vlm wraps system prompts in block list form for VLM families (`LIST_WITH_*`);
+    a template whose system branch expects a plain string (`{{ messages[0]['content'] | trim }}`)
+    silently renders `[{'type': 'text', 'text': '...'}]` into the model's context.
+    """
+    env = _engine_environment()
+    if env is None or not body:
+        return None
+    try:
+        template = env.from_string(body)
+        rendered = template.render(
+            messages=[
+                {"role": "system", "content": [{"type": "text", "text": "probe_sys_text"}]},
+                {"role": "user", "content": [{"type": "text", "text": "ping"}]},
+            ],
+            add_generation_prompt=True,
+            bos_token="",
+            eos_token="",
+            enable_thinking=False,
+        )
+    except Exception:
+        return None
+    if "{'type':" in rendered or '{"type":' in rendered:
+        return (
+            "Template renders block-form system content as a raw Python dict "
+            "({'type': 'text', ...}) instead of extracting item['text']; on MLX "
+            "vision models, system prompts will be fed to the model as dict literals."
+        )
+    return None
+
 
 
 @lru_cache(maxsize=64)

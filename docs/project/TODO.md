@@ -2,7 +2,7 @@
 
 Cross-session task backlog organized by priority.
 
-*Last reviewed: 2026-10-27 (through v2.0.210; previous triage 2026-09-25 through v2.0.154). Every section was classed done, obsolete, open or mixed with evidence (`internal/claude/todo_triage.md`); the done and obsolete ones moved verbatim to `internal/archive/todo_closed_2026-09-25.md`. Mixed sections stay whole: their checked-off items are history kept beside the open ones.*
+*Last reviewed: 2026-10-27 (through v2.0.211; previous triage 2026-09-25 through v2.0.154). Every section was classed done, obsolete, open or mixed with evidence (`internal/claude/todo_triage.md`); the done and obsolete ones moved verbatim to `internal/archive/todo_closed_2026-09-25.md`. Mixed sections stay whole: their checked-off items are history kept beside the open ones.*
 
 ## 2026-10-27 Roadmap (Beyond Distributed Inference)
 
@@ -34,8 +34,8 @@ Five active tracks across the backend and frontend, ordered by impact:
   - `PATCH_2356` (restored `qwen3_5` decode, `Blaizzy/mlx-vlm#2356`).
   - `PATCH_GDN_PACKED` (8-row packed Gated DeltaNet kernel, once upstreamed from `forks/mlx-vlm`).
   - Drafted APC capture-boundary PR (`vlm_engine.install_capture_policy`), once approved by owner to file.
-- [ ] **`vlm_parity_probe.py` bilateral near-tie detection:** record heylook's top-2 margin alongside the reference top-2 so an exact bf16 tie on heylook's side reports `NEAR-TIE` instead of `DIVERGED`.
-- [ ] **Load-time template block-content probe:** render a probe message with block-form system content at load or in `render_prompt` preview and warn if `{'type':` appears literally in the rendered prompt.
+- [x] **`vlm_parity_probe.py` bilateral near-tie detection (`v2.0.211`):** records `heylook_top1_top2_margin` alongside `upstream_top1_top2_margin` and reports `NEAR-TIE` when either side's top-2 margin is `<= 0.125`.
+- [x] **Load-time template block-content probe (`v2.0.211`):** `block_system_content_warning` in `chat_template_files.py` probes block-form system content and warns in both `TemplateView.notes` and `template_info.read_template_info()` if `{'type':` appears literally in the rendered prompt.
 
 ### Track 4: Frontend Coverage, Observability UI, & Registry Ergonomics
 - [ ] **Observability Config + View UI (`v3`):** surface `observability_level` / retention controls (`GET/PUT /v1/admin/config`) and a reader view over `logs/*.jsonl` (`request_events`, `model_events`, `never-stops` health signal), then consolidate `memory.py`'s legacy JSONL streams into `observability.py`.
@@ -45,7 +45,7 @@ Five active tracks across the backend and frontend, ordered by impact:
 - [ ] **Frontend E2E & Notebook Polish:**
   - Add audio attachment staging/send check to `e2e:render` / `chat.mjs`.
   - Port `refreshAfterResume` (`visibilitychange`/`pageshow` store re-adoption) to `notebook.js`.
-  - Add unit test for `scripts/perf_ab.py` `_timed` on a GGUF-shaped stream (tokens reported on the final chunk).
+  - [x] Added unit test for `scripts/perf_ab.py` `_timed` on a GGUF-shaped stream (`v2.0.211`, `test_perf_ab_verdict.py`) and single-pass GGUF directory listing cache (`_iter_root_gguf_files` in `model_importer.py`).
 
 ### Track 5: Embedding Apps & Workbench Extensions (`apps/embedding-apps/`)
 - [x] **Allowlist proxy (`serve.py`), `kit/embed-kit.js`, Media Finder (`v2.0.205`), and Embedding Lab (`v2.0.206`).**
@@ -107,13 +107,10 @@ is left, each with the recommendation the owner was given:
 - [ ] **Models page "override hides chat_template.jinja" line, live.** Only
   the render suite covers it; a live check writes an override into a model
   folder (owner's files, ask first), loads the Models page, then reverts.
-- [ ] **A unit test for `perf_ab._timed` on a gguf-shaped stream.** Output
+- [x] **A unit test for `perf_ab._timed` on a gguf-shaped stream (v2.0.211).** Output
   chunks first, the token count only on the final chunk (how the gguf
-  provider reports usage). It must fail if the first-token clock is keyed on
-  `generation_tokens` again: that bug made every gguf TTFT the whole wall time
-  and the decode rate null until v2.0.176 (sharp_edges.md, "gguf flash
-  attention default"). `tests/unit/test_perf_ab_verdict.py` covers only the
-  verdict.
+  provider reports usage). Tested in `tests/unit/test_perf_ab_verdict.py`
+  (`test_timed_on_gguf_shaped_stream_keys_ttft_on_first_output_not_token_count`).
 - [ ] **Preset section layout.** v2.0.172 clarified it (heading names what
   the document runs, drift line, Delete) but did not redesign it. If the
   owner still finds it confusing, next is folding Save as new behind a
@@ -156,11 +153,9 @@ Record: `internal/claude/improve/archive/runs-2026-09-24/` (report.html has the 
   call, not an input difference. Ruled out on the way: MTP, the #2356 carry,
   APC, the feature cache, MRoPE state, prefill chunking. Reports:
   `internal/claude/vlm_parity_swift_*.json`.
-- [ ] **vlm_parity_probe judges a tie from the reference side only**, so a
-  divergence where heylook sits in an exact tie reads DIVERGED. Record
-  heylook's top two as well (a pass-through processor) and call it a
-  NEAR-TIE when either side has the two picked tokens within one step at
-  that magnitude.
+- [x] **vlm_parity_probe judges a tie from both sides (v2.0.211).** Records
+  `heylook_top1_top2_margin` alongside `upstream_top1_top2_margin` and reports
+  `NEAR-TIE` when either side has top-1/top-2 within `NEAR_TIE_MARGIN` (`0.125`).
 - [ ] **Move the pin again past Blaizzy/mlx-vlm#2356** once it merges (restored
   qwen3_5 decode). Carried locally since v2.0.185 (`mlx_vlm_patches.py`); the
   pin move turns `TestCarriedPatches` red, and the fix is deleting the carry.
@@ -535,14 +530,13 @@ renders through `vlm_apply_chat_template` on both paths.
 Worked around with `chat_template.heylook.jinja` in that model's folder
 (untracked, no config write, revert = delete the file).
 
-- [ ] Consider a LOAD-TIME check: render a probe message with block-form
-  system content and warn if the output contains `{'type':` . Cheap, catches
-  the whole class, and needs no per-model knowledge. The alternative --
-  noticing that a model has quietly been reading a Python repr of its own
-  system prompt -- is not something the current surfaces would ever show.
-- [ ] Decide whether `render_prompt`'s preview should surface it instead (it
-  would have made this visible immediately, since the preview shows the
-  rendered prompt).
+- [x] **Load-time and template-editor block-content check (`v2.0.211`):**
+  `block_system_content_warning` in `chat_template_files.py` renders a probe
+  message with block-form system content (`[{"type": "text", "text": "..."}]`)
+  and warns in both `TemplateView.notes` and `template_info.read_template_info()`
+  if the output contains `{'type':`.
+- [x] `render_prompt`'s preview already shows the rendered prompt literally,
+  and `chat_template_files.view()` now attaches the explicit warning in `notes`.
 
 ## MLX vision prefill: what v2.0.55 left open (2026-09-21)
 
@@ -1368,9 +1362,7 @@ audit; design context `internal/research/expert_offload_design_frontend.md`
 - [ ] llama-server binary lifecycle: coderef build is pinned by checkout,
       not recorded anywhere machine-readable -- consider stamping the
       build SHA into logs at provider load.
-- [ ] Importer scan currently iterates each gguf dir 3x (pickers) --
-      fold into one listing pass next time that file is open (flagged by
-      /simplify efficiency review; scan-only cost, deliberately deferred).
+- [x] Importer scan single-pass GGUF directory cache (`v2.0.211`, `_iter_root_gguf_files` in `model_importer.py`).
 
 ### Optimization Plan Doc Refresh
 - [x] Update `docs/mlx_optimization_plan.md` -- phase 5 updated for v1.18.0 pre-filled cache pattern

@@ -124,12 +124,22 @@ def _run(args) -> dict:
 
     captured: list[dict] = []
     prompts: list[str] = []
+    heylook_margins: list[float] = []
     real_prepare = mp.vlm_prepare_inputs
+    lm = getattr(provider.model, "language_model", provider.model)
+    real_lm_call = lm.__call__
 
     def recording_prepare(*a, **kw):
         out = real_prepare(*a, **kw)
         captured.append(dict(out))
         prompts.append(kw.get("prompts"))
+        return out
+
+    def recording_lm_call(*a, **kw):
+        out = real_lm_call(*a, **kw)
+        logits = out.logits if hasattr(out, "logits") else out
+        top2 = mx.sort(logits[0, -1].reshape(-1))[-2:]
+        heylook_margins.append(float((top2[1] - top2[0]).tolist()))
         return out
 
     def reference_prompt(content) -> str:
@@ -143,14 +153,17 @@ def _run(args) -> dict:
                                    num_images=1, enable_thinking=False)
 
     mp.vlm_prepare_inputs = recording_prepare
+    lm.__call__ = recording_lm_call
     tokenizer = provider.get_tokenizer()
     stop_ids = set(provider._stop_tokens)
 
-    def heylook(content) -> list[int]:
+    def heylook(content) -> tuple[list[int], list[float]]:
         captured.clear()
         prompts.clear()
-        return [c.token for c in provider.create_chat_completion(
+        heylook_margins.clear()
+        toks = [c.token for c in provider.create_chat_completion(
             _request(args.model, content, args.tokens)) if c.token is not None]
+        return toks, list(heylook_margins)
 
     def upstream() -> tuple[list[int], list]:
         inputs = captured[-1]
@@ -166,7 +179,8 @@ def _run(args) -> dict:
             lps.append(lp)
         return toks, lps
 
-    def compare(label: str, ours: list[int], theirs: list[int], lps, content=None) -> dict:
+    def compare(label: str, ours: list[int], theirs: list[int], lps, content=None,
+                our_margins: list[float] | None = None) -> dict:
         n = min(len(ours), len(theirs))
         first = next((i for i in range(n) if ours[i] != theirs[i]), None)
         prompt_ok = None
@@ -178,9 +192,19 @@ def _run(args) -> dict:
                "heylook_text": tokenizer.decode(ours), "upstream_text": tokenizer.decode(theirs[:n])}
         if first is not None:
             top2 = mx.sort(lps[first].reshape(-1))[-2:]
-            margin = float((top2[1] - top2[0]).tolist())
-            row["upstream_top1_top2_margin"] = margin
-            row["verdict"] = "NEAR-TIE" if margin <= NEAR_TIE_MARGIN else "DIVERGED"
+            up_margin = float((top2[1] - top2[0]).tolist())
+            row["upstream_top1_top2_margin"] = up_margin
+            hl_margin = (
+                our_margins[first]
+                if our_margins is not None and first < len(our_margins)
+                else None
+            )
+            if hl_margin is not None:
+                row["heylook_top1_top2_margin"] = hl_margin
+            near_tie = up_margin <= NEAR_TIE_MARGIN or (
+                hl_margin is not None and hl_margin <= NEAR_TIE_MARGIN
+            )
+            row["verdict"] = "NEAR-TIE" if near_tie else "DIVERGED"
         elif len(ours) < len(theirs):
             # heylook ended first: legitimate only if upstream's NEXT token is
             # a stop token (heylook's engine stops without yielding it).
@@ -195,14 +219,15 @@ def _run(args) -> dict:
         # Text first, so the first vision run inherits whatever position state
         # a text generation leaves on the language model.
         heylook("Say hello in five words.")
-        ours_a = heylook(_vision_content(0))
+        ours_a, margins_a = heylook(_vision_content(0))
         theirs_a, lps_a = upstream()
-        rows.append(compare("vision after text", ours_a, theirs_a, lps_a, _vision_content(0)))
+        rows.append(compare("vision after text", ours_a, theirs_a, lps_a, _vision_content(0),
+                            our_margins=margins_a))
 
-        ours_b = heylook(_vision_content(1))
+        ours_b, margins_b = heylook(_vision_content(1))
         theirs_b, lps_b = upstream()
         rows.append(compare("vision after vision (different image)", ours_b, theirs_b, lps_b,
-                            _vision_content(1)))
+                            _vision_content(1), our_margins=margins_b))
 
         # The same image again with the prefix cache emptied and the vision
         # features kept: the prompt is prefilled in full from CACHED features,
@@ -212,10 +237,10 @@ def _run(args) -> dict:
         vcache = provider._strategies["vision"]._vision_cache
         hits = vcache.stats()["hits"]
         provider._apc = vlm_engine.make_apc_manager()
-        ours_c = heylook(_vision_content(1))
+        ours_c, margins_c = heylook(_vision_content(1))
         theirs_c, lps_c = upstream()
         row = compare("same image, cached features, fresh prefix cache", ours_c, theirs_c,
-                      lps_c, _vision_content(1))
+                      lps_c, _vision_content(1), our_margins=margins_c)
         row["feature_cache_hit"] = vcache.stats()["hits"] > hits
         row["equals_cold_run"] = ours_c == ours_b
         rows.append(row)

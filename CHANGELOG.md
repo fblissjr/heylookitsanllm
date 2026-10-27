@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.211]
+
+### Added
+
+- **Load-time and template-editor warning for string-only system branches on block-form content (`src/heylook_llm/chat_template_files.py`, `src/heylook_llm/providers/common/template_info.py`, `tests/unit/test_chat_template_files.py`).**
+  - `block_system_content_warning(body)` probes any Jinja chat template with a block-form system message (`[{"type": "text", "text": "__HEYLOOK_BLOCK_PROBE__"}]`, matching how `mlx-vlm` wraps system prompts for `LIST_WITH_*` models) and flags templates that render the raw Python dict repr (`{'type':`) into the model's context.
+  - `chat_template_files.view()` appends the warning to `TemplateView.notes` (visible in the Models page Chat template editor), and `template_info.read_template_info()` logs a `WARNING` at load time.
+- **Bilateral near-tie detection in `scripts/vlm_parity_probe.py`.**
+  - Records `heylook_top1_top2_margin` alongside `upstream_top1_top2_margin` by wrapping `language_model.__call__` (keeping `processors` untouched so speculative decoding is never blocked by `vlm_engine.drafting_blocker`), and classifies a divergence as `NEAR-TIE` whenever either `heylook` or upstream has a top-1/top-2 logit margin within `NEAR_TIE_MARGIN` (`0.125`).
+- **Single-pass GGUF directory listing cache in `ModelImporter` (`src/heylook_llm/model_importer.py`) and `perf_ab._timed` GGUF stream regression test (`tests/unit/test_perf_ab_verdict.py`).**
+  - `ModelImporter._iter_root_gguf_files` caches the filtered `.gguf` directory listing on `self._gguf_dir_cache` so `_pick_primary_gguf`, `_pick_mmproj`, and `_pick_draft_gguf` share one directory pass per scanned folder.
+  - Added `test_timed_on_gguf_shaped_stream_keys_ttft_on_first_output_not_token_count` in `tests/unit/test_perf_ab_verdict.py` to guard `scripts/perf_ab.py` `_timed` on GGUF-shaped streams where `generation_tokens` is reported only on the final usage chunk.
+- Verified: `tests/unit/` + `tests/contract/` (1607 passed). NOT run: `tests/smoke/`, `tests/eval/`.
+
 ## [2.0.210]
 
 ### Added

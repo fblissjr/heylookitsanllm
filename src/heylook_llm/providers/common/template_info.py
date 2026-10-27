@@ -318,6 +318,15 @@ def read_template_info(
     )
     reads_reasoning_content = bool(_REASONING_CONTENT_PATTERN.search(template))
 
+    if template:
+        from heylook_llm.chat_template_files import block_system_content_warning
+        block_warn = block_system_content_warning(template)
+        if block_warn:
+            logging.warning(
+                "chat template for %s (source=%s): %s",
+                model_dir.name, template_source, block_warn,
+            )
+
     return ModelTemplateInfo(
         chat_template=template,
         special_tokens=special_tokens,
