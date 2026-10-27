@@ -820,6 +820,123 @@ def test_worker_loop_handles_apc_snapshot_restore_and_unload(
     assert seen_r1 == [0, 5, 5]
 
 
+def test_rank0_and_rank1_speculative_cache_transaction_sync(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mlx_vlm.models.cache import ArraysCache, KVCache
+    from mlx_vlm.speculative.cache_state import start_speculative_cache
+
+    headers: list[Any] = []
+    monkeypatch.setattr(
+        mp.mx.distributed,
+        "send",
+        lambda x, dst, group=None: headers.append(x) or x,
+    )
+    monkeypatch.setattr(
+        mp.mx.distributed,
+        "recv_like",
+        lambda x, src, group=None: headers.pop(0),
+    )
+
+    mx = mp.mx
+
+    class _SpecPipelineLM:
+        def __init__(self, *, is_worker: bool = False) -> None:
+            self.layers = [_FakeLayer(0, 1), _FakeLayer(1, 2)]
+            self._is_worker = is_worker
+            self.last_worker_cache: Any = None
+
+        def make_cache(self):
+            kv = KVCache()
+            arr = ArraysCache(size=2)
+            return [kv, arr]
+
+        def __call__(self, inputs, cache=None, **kwargs):
+            b, s = int(inputs.shape[0]), int(inputs.shape[1])
+            if cache is not None:
+                if self._is_worker:
+                    self.last_worker_cache = cache
+                for c in cache:
+                    if isinstance(c, KVCache):
+                        k = mx.zeros((b, 1, s, 4), dtype=mx.float32)
+                        v = mx.zeros((b, 1, s, 4), dtype=mx.float32)
+                        c.update_and_fetch(k, v)
+                    elif isinstance(c, ArraysCache):
+                        if c[0] is None:
+                            c[0] = mx.zeros((b, 2, 4), dtype=mx.float32)
+                        if c[1] is None:
+                            c[1] = mx.zeros((b, 1, 4, 4), dtype=mx.float32)
+                        if c.is_speculating:
+                            # Slot 0: causal window of width 2 over s tokens -> source shape (b, s + 2, 4)
+                            win_src = mx.arange(s + 2, dtype=mx.float32).reshape(1, s + 2, 1) * mx.ones((b, s + 2, 4), dtype=mx.float32)
+                            c.record_speculative_window(0, win_src, 2)
+                            c[0] = win_src[:, -2:]
+                            # Slot 1: recurrent states over s tokens
+                            inter = (
+                                mx.arange(1, s, dtype=mx.float32).reshape(1, s - 1, 1, 1, 1)
+                                * mx.ones((b, s - 1, 1, 4, 4), dtype=mx.float32)
+                                if s > 1
+                                else None
+                            )
+                            final = mx.full((b, 1, 4, 4), float(s), dtype=mx.float32)
+                            c.record_speculative_states(1, inter, final)
+                            c[1] = final
+                            c.advance(s)
+                        else:
+                            c[0] = c[0] + float(s)
+                            c[1] = c[1] + float(s)
+                            c.advance(s)
+                    else:
+                        c.advance(s)
+            return inputs
+
+    g0 = _FakeGroup(0, 2)
+    g1 = _FakeGroup(1, 2)
+    r0_lm = _SpecPipelineLM(is_worker=False)
+    r1_lm = _SpecPipelineLM(is_worker=True)
+
+    # Apply asymmetric pipeline on Rank 0 so layer 1's cache is an _OffsetStubCache with spec_notify_group=g0
+    mp.apply_asymmetric_pipeline(r0_lm, group=g0, ratios=(0.5, 0.5))
+    mp.install_rank0_step_coordinator(r0_lm, group=g0)
+
+    c0 = r0_lm.make_cache()
+    assert isinstance(c0[0], KVCache)
+    assert isinstance(c0[1], _OffsetStubCache)
+
+    # 1. Prefill 4 tokens
+    r0_lm(mx.zeros((1, 4), dtype=mx.int32), cache=c0)
+    assert c0[0].offset == 4
+    assert c0[1].offset == 4
+
+    # 2. Speculative round: verify 4 draft tokens, accept 2 (keep 2 of 4)
+    txn = start_speculative_cache(c0, 4)
+    r0_lm(mx.zeros((1, 4), dtype=mx.int32), cache=c0)
+    assert c0[0].offset == 8
+    assert c0[1].offset == 8
+    txn.commit(2)
+    assert c0[0].offset == 6
+    assert c0[1].offset == 6
+
+    # 3. Speculative round that aborts completely (rolls back to 6)
+    txn2 = start_speculative_cache(c0, 3)
+    r0_lm(mx.zeros((1, 3), dtype=mx.int32), cache=c0)
+    assert c0[0].offset == 9
+    txn2.abort()
+    assert c0[0].offset == 6
+    assert c0[1].offset == 6
+
+    mp.send_pipeline_unload(group=g0)
+
+    steps = mp.run_pipeline_worker_loop(r1_lm, group=g1)
+    assert steps == 3
+    w_cache = r1_lm.last_worker_cache
+    assert w_cache is not None
+    # Both KVCache and ArraysCache on Rank 1 rolled back in lockstep with Rank 0 to 2 retained tokens (offset 6 on KV, state 2.0 on ArraysCache)!
+    assert w_cache[0].offset == 6
+    assert float(w_cache[1][1][0, 0, 0, 0].item()) == 2.0
+
+
+
 
 
 

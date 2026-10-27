@@ -833,7 +833,7 @@ def _field_options(cls) -> list[dict]:
             "default": prop.get("default"),
             "required": name in schema.get("required", []),
         }
-        for key in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "enum"):
+        for key in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "enum", "items"):
             if key in inner:
                 entry[key] = inner[key]
         # Pass-through hints declared on the field: `description` (what it

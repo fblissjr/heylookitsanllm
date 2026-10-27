@@ -2,12 +2,55 @@
 
 Cross-session task backlog organized by priority.
 
-*Last reviewed: 2026-09-25, a full triage (through v2.0.154); the "Next
-session" section below added at v2.0.167. Every section
-was classed done, obsolete, open or mixed with evidence
-(internal/claude/todo_triage.md); the done and obsolete ones moved verbatim
-to internal/archive/todo_closed_2026-09-25.md. Mixed sections stay whole: their
-checked-off items are history kept beside the open ones.*
+*Last reviewed: 2026-10-27 (through v2.0.210; previous triage 2026-09-25 through v2.0.154). Every section was classed done, obsolete, open or mixed with evidence (`internal/claude/todo_triage.md`); the done and obsolete ones moved verbatim to `internal/archive/todo_closed_2026-09-25.md`. Mixed sections stay whole: their checked-off items are history kept beside the open ones.*
+
+## 2026-10-27 Roadmap (Beyond Distributed Inference)
+
+Five active tracks across the backend and frontend, ordered by impact:
+
+### Track 1: Distributed Multi-Mac Inference (`v2.0.208` - `v2.0.210` — COMPLETE)
+- [x] **1.1 Rank-0 speculative decoding on pipelined MLX models (`v2.0.210`).** Enabled `draft_model_path` (MTP / DFlash / EAGLE3) on Rank 0 when `pipeline_ratios` is active, and synchronized `start_speculative_cache` transactions (`CMD_START_SPEC`, `CMD_COMMIT_SPEC`, `CMD_ABORT_SPEC`) across Rank 0 and Rank 1 so both `KVCache` and hybrid `ArraysCache` (Gated DeltaNet) layers roll back rejected draft tokens in lockstep.
+- [x] **1.2 Live worker Metal working-set ceilings in `ping` + `ram_fit` (`v2.0.210`).** Worker control port (`32423`) reports `local_worker_ceilings()` in `ping` and `prepare_model`; `ram_fit.fit_for_config` queries `probe_worker_ceilings` and adds a `worker_metal_working_set` `FitLine` rendered on the Models page.
+- [x] **1.3 GGUF `describe_observed()` RPC fallback status + UI `pipeline_ratios` (`v2.0.210`).** `_record_load_report` records `rpc = "single-node (fallback)"` when `_preflight_rpc_servers` falls back solo, `frontend/js/engine.js` surfaces `rpc single-node (fallback)`, and `MLXModelConfig.pipeline_ratios` is exposed as `ui="advanced"` (with numeric array parsing in `frontend/js/model-config.js`) while `pipeline_peers` and `rpc` remain `file_only=True`.
+- [ ] **1.4 Optional live 2-Mac speculative benchmark (`scripts/perf_ab.py`).** Run a clean `perf_ab.py` comparison on a 2-Mac pipelined model with and without its MTP/DFlash drafter and record in `internal/claude/perf/`.
+
+### Track 2: Mobile & Dark-Mode Workbench (`docs/project/plan_dark_mode.md` Phases 4 & 5)
+- [x] **Phase 1–3b + Phase 4 Steps 1–2 (`v2.0.191` - `v2.0.204`).** Lamplight tokens, Safari fixes, Home Screen manifest, Preset manager (`#/presets`), spacing tokens, and iOS Text Size support (`-apple-system-body` on touch, verified on iPhone 17 Pro).
+- [ ] **Phase 4 Steps 3–7 (Toward Workbench on phone width):**
+  - Step 3: Move phone navigation to the top bar (`+54pt` vertical message viewport).
+  - Step 4: Capsule composer (`field >= 260pt`).
+  - Step 5: Compact readout line (fold status chips into one scannable line).
+  - Step 6: Scroller ownership check on Safari 27.
+  - Step 7: Optional Graphite palette evaluation.
+- [ ] **Phase 5 (Phone battery & paint cost):**
+  - Step 1 (`bun run e2e:cost` paint-cost probe) shipped in `v2.0.201`.
+  - Steps 2–4: Capture phone baseline and trim streaming/idle repaint overhead.
+
+### Track 3: Engine Runtime, Caching, & Upstream Convergence (`docs/project/plan_runtime_visibility.md`)
+- [x] **GGUF `--cache-reuse`, `--checkpoint-min-step`, `--ctx-checkpoints`, `-cram` auto-sizing, and `flash_attn="on"` default (`v2.0.207`).**
+- [x] **MLX true text/image interleaving (`v2.0.207`) and 8-row packed Gated DeltaNet Metal kernel (`PATCH_GDN_PACKED`, `v2.0.208`).**
+- [ ] **Reasoning-strip re-prefill measurement on GGUF** (from Context Language Models paper): measure per-turn prompt vs cached tokens on a thinking conversation from the perf store and record in `internal/`.
+- [ ] **Retire local `mlx-vlm` carries (`mlx_vlm_patches.py`) as upstream merges them:**
+  - `PATCH_2356` (restored `qwen3_5` decode, `Blaizzy/mlx-vlm#2356`).
+  - `PATCH_GDN_PACKED` (8-row packed Gated DeltaNet kernel, once upstreamed from `forks/mlx-vlm`).
+  - Drafted APC capture-boundary PR (`vlm_engine.install_capture_policy`), once approved by owner to file.
+- [ ] **`vlm_parity_probe.py` bilateral near-tie detection:** record heylook's top-2 margin alongside the reference top-2 so an exact bf16 tie on heylook's side reports `NEAR-TIE` instead of `DIVERGED`.
+- [ ] **Load-time template block-content probe:** render a probe message with block-form system content at load or in `render_prompt` preview and warn if `{'type':` appears literally in the rendered prompt.
+
+### Track 4: Frontend Coverage, Observability UI, & Registry Ergonomics
+- [ ] **Observability Config + View UI (`v3`):** surface `observability_level` / retention controls (`GET/PUT /v1/admin/config`) and a reader view over `logs/*.jsonl` (`request_events`, `model_events`, `never-stops` health signal), then consolidate `memory.py`'s legacy JSONL streams into `observability.py`.
+- [ ] **Model Registry `kind` & GGUF derive-at-load:**
+  - Distinguish `chat` vs `draft`/`mtp` vs `embedding` entries so standalone draft heads are not advertised as chat models in `/v1/models`.
+  - Derive GGUF `modalities` and `supports_thinking` at load from GGUF headers (`gguf_metadata.py`), matching `MLXModelConfig._resolve_modalities`.
+- [ ] **Frontend E2E & Notebook Polish:**
+  - Add audio attachment staging/send check to `e2e:render` / `chat.mjs`.
+  - Port `refreshAfterResume` (`visibilitychange`/`pageshow` store re-adoption) to `notebook.js`.
+  - Add unit test for `scripts/perf_ab.py` `_timed` on a GGUF-shaped stream (tokens reported on the final chunk).
+
+### Track 5: Embedding Apps & Workbench Extensions (`apps/embedding-apps/`)
+- [x] **Allowlist proxy (`serve.py`), `kit/embed-kit.js`, Media Finder (`v2.0.205`), and Embedding Lab (`v2.0.206`).**
+- [ ] **Live browser verification & expanded evaluation sets:** run Media Finder and Embedding Lab across audio/video and larger multimodal corpora on MLX and GGUF embedding models.
+- [ ] **`jspace` token-walker & chat-turn default (`docs/jspace_integration_plan.md` Part 2):** flip `jspace` analyze to chat-turn default, display special tokens, and add assistant prefill / per-token possibility-horizon inspection.
 
 ## Cache follow-ups from the Context Language Models paper (2026-10-05)
 

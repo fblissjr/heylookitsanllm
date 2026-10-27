@@ -167,10 +167,11 @@ function distributedState(engine) {
   }
   const rpc = engine?.settings?.rpc;
   if (rpc?.value) {
+    const valStr = String(rpc.value);
     const split = engine?.settings?.tensor_split?.value;
     return {
       label: 'rpc',
-      word: split ? `split ${split}` : 'on',
+      word: valStr.includes('fallback') ? valStr : (split ? `split ${split}` : 'on'),
       provenance: rpc.provenance,
       reason: rpc.reason,
     };

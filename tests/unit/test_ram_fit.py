@@ -342,3 +342,108 @@ class TestSizing:
         with pytest.raises(RuntimeError, match="exceed this host's"):
             prov_big._preflight_rpc_servers()
 
+    def test_gguf_rpc_fallback_recorded_in_load_report_and_describe_observed(self, tmp_path, monkeypatch):
+        import socket
+        from heylook_llm.providers.llama_server_provider import LlamaServerProvider
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s_unused:
+            s_unused.bind(("127.0.0.1", 0))
+            unused_port = s_unused.getsockname()[1]
+
+        gguf_file = self._gguf(tmp_path / "model.gguf", 1024)
+        base_cfg = {
+            "model_path": str(gguf_file),
+            "rpc": f"127.0.0.1:{unused_port}",
+            "tensor_split": "20,80",
+        }
+        _patch_ceilings(monkeypatch, usable=180.0, working_set=180.0)
+        prov = LlamaServerProvider("test-gguf", dict(base_cfg), verbose=False)
+        prov._last_image_cap = None
+        prov._preflight_rpc_servers()
+        prov._record_load_report(
+            auto_ubatch=512,
+            auto_cache_ram_mb=8192,
+            keep_alive="300000",
+            keep_alive_reason="default",
+        )
+        obs = prov.describe_observed()
+        assert "rpc" in obs.settings
+        rpc_setting = obs.settings["rpc"]
+        assert rpc_setting.value == "single-node (fallback)"
+        assert rpc_setting.configured is None
+        assert rpc_setting.provenance == "observed"
+        assert "single-node" in (rpc_setting.reason or "")
+
+    def test_fit_for_config_includes_live_worker_metal_working_set(self, tmp_path, monkeypatch):
+        from heylook_llm.providers.common import mlx_pipeline as mp
+
+        mlx_dir = tmp_path / "mlx_big"
+        mlx_dir.mkdir()
+        # 100 GiB total weight (80 GiB local on Rank 0, 20 GiB worker on Rank 1)
+        monkeypatch.setattr(
+            ram_fit,
+            "size_config_gb",
+            lambda _cfg: (80.0, ["pipeline_ratios=[0.8, 0.2] -> 80% rank-0 local (80.0 GiB local, 20.0 GiB worker of 100.0 GiB)"]),
+        )
+        monkeypatch.setattr(ram_fit, "worker_weight_gb", lambda _cfg: 20.0)
+        _patch_ceilings(monkeypatch, usable=180.0, working_set=180.0)
+
+        cfg = {
+            "model_path": str(mlx_dir),
+            "pipeline_ratios": [0.8, 0.2],
+            "pipeline_peers": ["peer0.local", "peer1.local"],
+        }
+
+        # 1. Worker has 36 GiB working set -> 20 GiB + 4 GiB headroom = 24 GiB <= 36 GiB -> pass
+        monkeypatch.setattr(
+            mp,
+            "probe_worker_ceilings",
+            lambda _peers, **kw: {
+                "device": "Apple M4 Pro",
+                "working_set_gb": 36.0,
+                "max_buffer_gb": 24.0,
+                "reclaimable_gb": 40.0,
+            },
+        )
+        r_pass = fit_for_config(cfg, headroom_gb=8.0, hard_working_set=True)
+        assert r_pass.verdict == "pass"
+        w_line = next(l for l in r_pass.lines if l.ceiling == "worker_metal_working_set")
+        assert w_line.verdict == "pass"
+        assert w_line.need_gb == pytest.approx(24.0)
+        assert w_line.have_gb == pytest.approx(36.0)
+        assert any("worker Apple M4 Pro: 36.0 GiB working set" in n for n in r_pass.sizing_notes)
+
+        # 2. Worker only has 16 GiB working set -> 24 GiB > 16 GiB -> fail!
+        monkeypatch.setattr(
+            mp,
+            "probe_worker_ceilings",
+            lambda _peers, **kw: {
+                "device": "Apple M4",
+                "working_set_gb": 16.0,
+                "max_buffer_gb": 12.0,
+                "reclaimable_gb": 18.0,
+            },
+        )
+        r_fail = fit_for_config(cfg, headroom_gb=8.0, hard_working_set=True)
+        assert r_fail.verdict == "fail"
+        w_line_fail = next(l for l in r_fail.lines if l.ceiling == "worker_metal_working_set")
+        assert w_line_fail.verdict == "fail"
+
+    def test_pipeline_ratios_validator_and_admin_options(self):
+        from heylook_llm.admin_api import _field_options
+        from heylook_llm.config import FILE_ONLY_FIELDS, MLXModelConfig
+
+        assert "pipeline_ratios" not in FILE_ONLY_FIELDS
+        assert "pipeline_peers" in FILE_ONLY_FIELDS
+
+        c1 = MLXModelConfig(model_path="/tmp/m", pipeline_ratios="0.8, 0.2")
+        assert c1.pipeline_ratios == [0.8, 0.2]
+        c2 = MLXModelConfig(model_path="/tmp/m", pipeline_ratios=["0.75", "0.25"])
+        assert c2.pipeline_ratios == [0.75, 0.25]
+
+        opts = {o["name"]: o for o in _field_options(MLXModelConfig)}
+        assert "pipeline_ratios" in opts
+        assert opts["pipeline_ratios"]["ui"] == "advanced"
+        assert opts["pipeline_ratios"]["items"] == {"type": "number"}
+
+

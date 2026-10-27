@@ -1,9 +1,9 @@
 # Current Work
 
-Last updated: 2026-10-24, v2.0.207, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
+Last updated: 2026-10-27, v2.0.210, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
-live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md) (triaged 2026-09-25;
+live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md) (triaged 2026-09-25 and refreshed 2026-10-27;
 its closed sections are in the local, unversioned `internal/archive/todo_closed_2026-09-25.md`), and what each release
 did in `CHANGELOG.md` -- which is the only narrative for the span between the
 history sections below (they stop at v1.79.78) and today. That span was never
@@ -16,7 +16,11 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
+| v2.0.210 Distributed Track 1.1/1.2/1.3 (Rank-0 speculative decoding across pipelined MLX ranks via `CMD_START_SPEC`/`CMD_COMMIT_SPEC`/`CMD_ABORT_SPEC`, live worker Metal working-set ceilings in `ping`/`prepare_model` and `ram_fit.fit_for_config`, GGUF `describe_observed()` `rpc` fallback status, `MLXModelConfig.pipeline_ratios` `ui="advanced"` with numeric array support in `model-config.js`) + project roadmap refresh | unit + contract 1605 passed; `e2e:render` 105/105. NOT run: `tests/smoke/`, `tests/eval/` | v2.0.210 |
+| v2.0.209 Daemonized multi-Mac distributed inference (`scripts/mlx_pipeline_worker.py --daemon`, `scripts/worker_node.py`, bidirectional shard/metadata heal and `[scan].folders` sync, APC prefix snapshot/restore sync across ranks, `ram_fit`-gated single-node auto-fallback, frontend `pipeline`/`rpc` engine summary) | unit + contract 1601 passed; `e2e:render` 105/105; live browser `e2e:chat` 56/56 (1 skipped) and `e2e:pages` 33/33 on `Qwen3.5-0.8B-MLX-8bit`. NOT run: `tests/smoke/`, `tests/eval/` | v2.0.209 |
+| v2.0.208 Distributed GGUF (`ggml-rpc`, `rpc`, `tensor_split`) + asymmetric MLX pipeline sharding (`mlx_pipeline.py`, `pipeline_ratios`, `pipeline_peers`, `MLX_METAL_FAST_SYNCH=1`) + 8-row packed Gated DeltaNet Metal kernel (`PATCH_GDN_PACKED`) | unit + contract 1595 passed; `e2e:render` 105/105; `scripts/build_llama.py` (`llama-server` + `ggml-rpc-server` at `2280f0fd1`); 2-rank `mlx.launch -n 2` greedy parity on `Qwen3.5-0.8B-MLX-8bit`; live 2-Mac Thunderbolt Bridge smoke on both GGUF `ggml-rpc` (`unsloth_Qwen3.8-27B-UD-Q8_K_XL`, `--tensor-split 20,80`) and MLX asymmetric ring pipeline (`Qwen3.5-0.8B-MLX-8bit`, `ratios=[0.8, 0.2]`). NOT run: `tests/smoke/`, `tests/eval/` | v2.0.208 |
 | v2.0.207 MLX text/image interleaving + GGUF flash_attn default (`on`) + GGUF prompt-cache & checkpoint defaults (`cache_ram_mb`, `checkpoint_min_step`, `ctx_checkpoints`, `cache_reuse`) + `sensenova_u1` non-causal projector entry | unit + contract 1576 passed; `e2e:render` 105/105; `vlm_parity_probe.py` ok on `Qwen3.5-0.8B-MLX-8bit` (`prompt_matches_mlx_vlm=true`, `equals_cold_run=true`, `feature_cache_hit=true`); `perf_ab.py` on `unsloth_Qwen3.8-27B-UD-Q8_K_XL` (`on` vs `off`, 3 rounds x 3 reps, `short,vision`, record in `internal/claude/perf/ab_unsloth_Qwen3.8-27B-UD-Q8_K_XL_20261024-184514.json`); all 25 discovered models in scan folders validated with aligned sidecars. NOT run: live browser `e2e:chat` / `e2e:pages`, `tests/smoke/`, `tests/eval/` | v2.0.207 |
+| v2.0.205 / v2.0.206 `apps/embedding-apps/` (`serve.py` allowlist proxy, `kit/embed-kit.js`, Media Finder, Embedding Lab retrieval probe) | `test_embedding_apps_proxy.py` green; `node --test apps/embedding-apps/embedding-lab/metrics.test.mjs` 8/8; run live once in browser against MLX and GGUF EmbeddingGemma 2 on the sample set | v2.0.206 |
 | v2.0.204 dark mode phase 4 step 2, second attempt (iOS text size on touch; the load settings and Load are one group that stays inside the bar's second line) | unit + contract 1542; `e2e:render` 105/105 light and dark, with the bar check now run on a cold model at three root sizes (it failed on the previous frontend at all three, alone); screenshots main vs branch identical in dark for 15 loaded-model views after an identical control pair. The owner's iPhone check PASSED the same day: unloaded model, default and largest Text Size, the bar and composer fit and Load stays on screen. NOT run: the live page suites | v2.0.204 |
 | v2.0.203 REVERT of v2.0.202 (iOS text size on touch): the owner's iPhone check found the Load button cut off at the right of the chat bar's second line with a cold model | unit + contract 1542 on the reverted tree; `frontend/` and `tests/e2e/` are byte-identical to v2.0.201, whose `e2e:render` result stands (104/104 light). The miss reproduced in phone emulation at 402pt: Load sits inside the strip at the old root size and past its right edge at the new one | v2.0.203 |
 | v2.0.202 dark mode phase 4 step 2 (on touch the root takes iOS's body text style; touch fields `max(16px, 1rem)`) | unit + contract 1542; `e2e:render` 105/105 light and dark, including the new layout check at the two iOS root sizes; against the previous frontend that check fails and nothing else does. NOT run: anything on a device. Chrome drops the keyword, so whether WebKit applies it and the Text Size setting moves the page is OPEN until the owner's iPhone check | v2.0.202 |
@@ -54,7 +58,17 @@ Thinking DEPTH is covered by pinning depth-capable models:
 `--model mlx-text=gpt-oss-20b-MXFP4-Q8-mlx` and, since v2.0.151,
 `--model mlx-vision=mlx-community_Qwen3.8-27B-4bit` (39/39 on the vision arm).
 
-## Handoff -- start here (2026-09-26)
+## Handoff -- start here (2026-10-27, v2.0.210)
+
+**Distributed Multi-Mac Inference + Engine Parity (v2.0.207 - v2.0.210).**
+- **Distributed MLX & GGUF (`v2.0.208` - `v2.0.210`)**:
+  - Model-agnostic asymmetric MLX pipeline sharding (`src/heylook_llm/providers/common/mlx_pipeline.py`), persistent worker daemon (`scripts/mlx_pipeline_worker.py --daemon`), and unified secondary-Mac supervisor (`scripts/worker_node.py`, managing both `ggml-rpc-server -c` on `:50052` and the MLX worker daemon on `:32423`).
+  - Bidirectional missing-file heal during load (`prepare_worker_via_control_port`) and full `[scan].folders` catalog sync (`--sync-peer`).
+  - Multi-turn APC snapshot/restore synchronization across MLX pipeline ranks (`CMD_SAVE_SNAPSHOT` / `CMD_RESTORE_SNAPSHOT`) and Rank-0 speculative decoding (`draft_model_path`) with lockstep `KVCache` + `ArraysCache` rollback (`CMD_START_SPEC` / `CMD_COMMIT_SPEC` / `CMD_ABORT_SPEC`).
+  - Live worker Metal working-set ceilings in `ping`/`prepare_model` and `ram_fit.fit_for_config` (`worker_metal_working_set`), `ram_fit`-gated single-node auto-fallback on both MLX and GGUF (with `describe_observed()` reporting `rpc = "single-node (fallback)"`), and `pipeline_ratios` editable as `ui="advanced"` on the Models page.
+- **Open Roadmap Tracks**: see [TODO.md](./TODO.md) ("2026-10-27 Roadmap").
+
+## Earlier handoff (2026-09-26)
 
 **Settings session (v2.0.172 - v2.0.176, owner-driven).** The sampler
 drawer's thinking control is one knob built from the template, with the token

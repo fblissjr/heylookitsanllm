@@ -147,8 +147,19 @@ def _start_oneshot_control_responder(
                     req = _recv_json_msg(conn)
                     op = req.get("op")
                     if op == "ping":
-                        _send_json_msg(conn, {"status": "ok", "mode": "oneshot"})
+                        from heylook_llm.providers.common.mlx_pipeline import local_worker_ceilings
+
+                        _send_json_msg(
+                            conn,
+                            {
+                                "status": "ok",
+                                "mode": "oneshot",
+                                "ceilings": local_worker_ceilings(),
+                            },
+                        )
                     elif op == "prepare_model":
+                        from heylook_llm.providers.common.mlx_pipeline import local_worker_ceilings
+
                         files = req.get("files") or []
                         host_present = req.get("host_present")
                         receive_missing_files_on_worker(
@@ -159,7 +170,11 @@ def _start_oneshot_control_responder(
                         )
                         _send_json_msg(
                             conn,
-                            {"status": "ready", "target_dir": str(target_dir)},
+                            {
+                                "status": "ready",
+                                "target_dir": str(target_dir),
+                                "ceilings": local_worker_ceilings(),
+                            },
                         )
                 except Exception as exc:
                     logging.warning("One-shot control responder error: %s", exc)
@@ -232,6 +247,8 @@ def run_daemon(
                     req = _recv_json_msg(conn)
                     op = req.get("op")
                     if op == "ping":
+                        from heylook_llm.providers.common.mlx_pipeline import local_worker_ceilings
+
                         _send_json_msg(
                             conn,
                             {
@@ -239,6 +256,7 @@ def run_daemon(
                                 "mode": "daemon",
                                 "models_root": str(models_root),
                                 "active_session_id": active_session_id,
+                                "ceilings": local_worker_ceilings(),
                             },
                         )
                         continue
@@ -320,12 +338,15 @@ def run_daemon(
                     child_proc.stdin.write(cmd_line + "\n")
                     child_proc.stdin.flush()
 
+                    from heylook_llm.providers.common.mlx_pipeline import local_worker_ceilings
+
                     _send_json_msg(
                         conn,
                         {
                             "status": "ready",
                             "target_dir": str(target_dir),
                             "streamed_files": streamed,
+                            "ceilings": local_worker_ceilings(),
                         },
                     )
                 except Exception as exc:

@@ -66,6 +66,9 @@ CMD_RESET_CACHE = 2
 CMD_UNLOAD_MODEL = 4
 CMD_SAVE_SNAPSHOT = 6
 CMD_RESTORE_SNAPSHOT = 7
+CMD_START_SPEC = 8
+CMD_COMMIT_SPEC = 9
+CMD_ABORT_SPEC = 10
 CMD_SHUTDOWN = 99
 
 DEFAULT_RING_BASE_PORT = 32323
@@ -951,6 +954,62 @@ def sync_scan_folders_with_peer(
     }
 
 
+_WORKER_CEILING_CACHE: dict[tuple[str, int], tuple[float, Optional[dict[str, Any]]]] = {}
+_WORKER_CEILING_TTL_S = 5.0
+
+
+def local_worker_ceilings() -> dict[str, Any]:
+    """Return this node's Metal memory ceilings and reclaimable RAM for worker `ping` / `prepare_model`."""
+    from heylook_llm import ram_fit
+
+    out: dict[str, Any] = {
+        "reclaimable_gb": round(float(ram_fit.usable_gb()), 2),
+    }
+    metal = ram_fit.metal_ceilings()
+    if metal:
+        out["device"] = metal.get("device")
+        out["working_set_gb"] = round(float(metal["working_set_gb"]), 2)
+        out["max_buffer_gb"] = round(float(metal["max_buffer_gb"]), 2)
+        out["sysctl_wired_mb"] = int(metal.get("sysctl_wired_mb") or 0)
+    return out
+
+
+def probe_worker_ceilings(
+    peers: Sequence[str] | str,
+    *,
+    worker_rank: int = 1,
+    control_port: int = DEFAULT_CONTROL_PORT,
+    timeout_s: float = 0.4,
+) -> Optional[dict[str, Any]]:
+    """Query the worker control port for its live Metal memory ceilings.
+
+    Cached for 5 seconds per `(worker_host, control_port)` so `/v1/admin/models/{id}/fit`
+    stays fast while still reflecting live memory on the worker Mac.
+    """
+    import time
+
+    peer_list = parse_pipeline_peers(peers)
+    if len(peer_list) <= worker_rank:
+        return None
+    worker_host = peer_list[worker_rank].split(":")[0]
+    key = (worker_host, int(control_port))
+    now = time.monotonic()
+    cached = _WORKER_CEILING_CACHE.get(key)
+    if cached is not None and (now - cached[0]) < _WORKER_CEILING_TTL_S:
+        return cached[1]
+    try:
+        with socket.create_connection((worker_host, int(control_port)), timeout=timeout_s) as sock:
+            _send_json_msg(sock, {"op": "ping"})
+            reply = _recv_json_msg(sock)
+        ceilings = reply.get("ceilings") if isinstance(reply, dict) else None
+        result = dict(ceilings) if isinstance(ceilings, dict) else None
+    except Exception:
+        result = None
+    _WORKER_CEILING_CACHE[key] = (now, result)
+    return result
+
+
+
 def _extract_seq_len(x: Any) -> int:
     """Infer sequence length `L` from a hidden state tensor `(B, L, D)` or `(L, D)`."""
     shape = getattr(x, "shape", None)
@@ -976,11 +1035,16 @@ class _OffsetStubCache:
         self,
         left_padding: Optional[Sequence[int]] = None,
         offset: int = 0,
+        spec_notify_group: Any = None,
     ) -> None:
         self._idx: int = int(offset)
         self.keys: Any = None
         self.values: Any = None
         self._right_padding: Optional[mx.array] = None
+        self._spec_notify_group: Any = spec_notify_group
+        self._spec_generation: int = 0
+        self._spec_active: bool = False
+        self._spec_length: int = 0
         if left_padding is not None:
             pads = [int(p) for p in left_padding]
             self.left_padding: Optional[mx.array] = mx.array(pads, dtype=mx.int32)
@@ -988,6 +1052,71 @@ class _OffsetStubCache:
         else:
             self.left_padding = None
             self.offset = int(offset)
+
+    @property
+    def is_speculating(self) -> bool:
+        return self._spec_active
+
+    def start_speculation(self, length: int) -> int:
+        if self._spec_active:
+            raise RuntimeError("Speculative cache transaction already active.")
+        self._spec_generation += 1
+        self._spec_active = True
+        self._spec_length = int(length)
+        if self._spec_notify_group is not None:
+            hdr = mx.array(
+                [CMD_START_SPEC, int(length), 0, 0, 0, 0, 0, 0],
+                dtype=mx.int32,
+            )
+            mx.eval(mx.distributed.send(hdr, 1, group=self._spec_notify_group))
+        return self._spec_generation
+
+    def validate_speculation(
+        self, lengths: Sequence[int], generation: Optional[int] = None
+    ) -> list[int]:
+        if not self._spec_active or (
+            generation is not None and generation != self._spec_generation
+        ):
+            raise RuntimeError("No active speculative cache transaction.")
+        parsed = [int(x) for x in lengths]
+        if any(x < 0 or x > self._spec_length for x in parsed):
+            raise ValueError(
+                f"Retained speculative length must be in [0, {self._spec_length}]."
+            )
+        return parsed
+
+    def commit_speculation(
+        self, lengths: Sequence[int], generation: Optional[int] = None
+    ) -> None:
+        parsed = self.validate_speculation(lengths, generation)
+        max_retained = max(parsed) if parsed else 0
+        rejected = max(0, self._spec_length - max_retained)
+        if rejected > 0:
+            self.trim(rejected)
+        self._spec_active = False
+        self._spec_length = 0
+        if self._spec_notify_group is not None:
+            hdr = mx.array(
+                [CMD_COMMIT_SPEC, max_retained, 0, 0, 0, 0, 0, 0],
+                dtype=mx.int32,
+            )
+            mx.eval(mx.distributed.send(hdr, 1, group=self._spec_notify_group))
+
+    def abort_speculation(self, generation: Optional[int] = None) -> None:
+        if not self._spec_active:
+            return
+        if generation is not None and generation != self._spec_generation:
+            raise RuntimeError("Stale speculative cache transaction.")
+        if self._spec_length > 0:
+            self.trim(self._spec_length)
+        self._spec_active = False
+        self._spec_length = 0
+        if self._spec_notify_group is not None:
+            hdr = mx.array(
+                [CMD_ABORT_SPEC, 0, 0, 0, 0, 0, 0, 0],
+                dtype=mx.int32,
+            )
+            mx.eval(mx.distributed.send(hdr, 1, group=self._spec_notify_group))
 
     @property
     def nbytes(self) -> int:
@@ -1068,7 +1197,10 @@ class _OffsetStubCache:
         return self.merge(rows)
 
     def to_batch(self, left_padding: Sequence[int]) -> "_OffsetStubCache":
-        batched = _OffsetStubCache(left_padding=left_padding)
+        batched = _OffsetStubCache(
+            left_padding=left_padding,
+            spec_notify_group=self._spec_notify_group,
+        )
         if self._idx > 0:
             batched.advance(self._idx)
         return batched
@@ -1149,7 +1281,7 @@ class _OffsetStubCache:
         self._idx = max_idx
 
     def extract(self, idx: int) -> "_OffsetStubCache":
-        single = _OffsetStubCache()
+        single = _OffsetStubCache(spec_notify_group=self._spec_notify_group)
         if self.left_padding is not None:
             pad = int(self.left_padding[idx].item())
             single._idx = max(0, self._idx - pad)
@@ -1163,7 +1295,11 @@ class _OffsetStubCache:
         lengths = [c.size() for c in caches]
         max_length = max(lengths) if lengths else 0
         padding = [max_length - length for length in lengths]
-        merged = cls(left_padding=padding)
+        notify_group = next(
+            (c._spec_notify_group for c in caches if c._spec_notify_group is not None),
+            None,
+        )
+        merged = cls(left_padding=padding, spec_notify_group=notify_group)
         merged._idx = max_length
         merged.offset = merged.offset + max_length
         return merged
@@ -1501,6 +1637,78 @@ def apply_asymmetric_pipeline(
     lm = getattr(model, "language_model", model)
     if hasattr(lm, "_supports_batch_invariant_decode"):
         setattr(lm, "_supports_batch_invariant_decode", lambda: False)
+    if rank == 0 and world_size > 1:
+        from mlx_vlm.speculative.common import verify_forward
+
+        if hasattr(lm, "speculative_verify_hidden"):
+
+            def _pipeline_speculative_verify_hidden(
+                inputs: mx.array,
+                cache: Any = None,
+                *,
+                return_shared_kv: bool = False,
+                _lm: Any = lm,
+            ) -> tuple[Any, Any, Any]:
+                out, tx = verify_forward(
+                    _lm,
+                    inputs,
+                    cache,
+                    return_hidden=True,
+                    return_shared_kv=return_shared_kv,
+                    skip_logits=True,
+                )
+                hidden = out.hidden_states[-1] if out.hidden_states else out.logits
+                return hidden, out.shared_kv_states, tx
+
+            setattr(lm, "speculative_verify_hidden", _pipeline_speculative_verify_hidden)
+
+        if hasattr(lm, "speculative_verify_logits"):
+
+            def _pipeline_speculative_verify_logits(
+                inputs: mx.array,
+                cache: Any = None,
+                *,
+                return_shared_kv: bool = False,
+                _lm: Any = lm,
+            ) -> Any:
+                out, tx = verify_forward(
+                    _lm,
+                    inputs,
+                    cache,
+                    return_hidden=True,
+                    return_shared_kv=return_shared_kv,
+                )
+                out.gdn_states = tx
+                return out
+
+            setattr(lm, "speculative_verify_logits", _pipeline_speculative_verify_logits)
+
+        if hasattr(lm, "speculative_verify_dflash_hidden"):
+
+            def _pipeline_speculative_verify_dflash_hidden(
+                inputs: mx.array,
+                cache: Any = None,
+                target_layer_ids: Optional[list[int]] = None,
+                _lm: Any = lm,
+            ) -> tuple[Any, Any, Any]:
+                out, tx = verify_forward(
+                    _lm,
+                    inputs,
+                    cache,
+                    capture_layer_ids=list(target_layer_ids or []),
+                    return_hidden=True,
+                    skip_logits=True,
+                )
+                hs = list(out.hidden_states or [])
+                captured = hs[:-1] if hs else []
+                final_hidden = hs[-1] if hs else None
+                return captured, final_hidden, tx
+
+            setattr(
+                lm,
+                "speculative_verify_dflash_hidden",
+                _pipeline_speculative_verify_dflash_hidden,
+            )
 
     # Worker ranks do not run the vision tower, embedding table, or final LM
     # head when Rank 0 owns early layers + post-vision embedding merge + final
@@ -1531,9 +1739,17 @@ def apply_asymmetric_pipeline(
 
             def _make_pipeline_cache(_orig=orig_make_cache) -> list[Any]:
                 caches = list(_orig())
+                notified = False
                 for idx in range(len(caches)):
                     if not assignment.owns_layer(idx):
-                        caches[idx] = _OffsetStubCache()
+                        notify_grp = (
+                            group
+                            if (rank == 0 and world_size > 1 and not notified)
+                            else None
+                        )
+                        if notify_grp is not None:
+                            notified = True
+                        caches[idx] = _OffsetStubCache(spec_notify_group=notify_grp)
                 return caches
 
             setattr(_make_pipeline_cache, "_heylook_pipeline_wrapped", True)
@@ -1821,6 +2037,20 @@ def install_rank0_step_coordinator(
                 )
             )
 
+        if kwargs.get("speculative_verify"):
+            call_kw = dict(kwargs)
+            call_kw.pop("speculative_verify", None)
+            from mlx_vlm.speculative.cache_state import start_speculative_cache
+
+            tx = start_speculative_cache(cache or [], L)
+            try:
+                out = orig_call(inputs, *args, **call_kw)
+                out.gdn_states = tx
+                return out
+            except BaseException:
+                tx.abort()
+                raise
+
         return orig_call(inputs, *args, **kwargs)
 
     setattr(_coordinated_call, "_heylook_coordinator_wrapped", True)
@@ -2031,6 +2261,7 @@ def run_pipeline_worker_loop(
     hidden_size = int(getattr(args, "hidden_size", 4096))
 
     worker_cache = lm.make_cache()
+    worker_spec_tx: Any = None
     snapshot_store = _WorkerSnapshotStore()
     header_template = mx.zeros((8,), dtype=mx.int32)
     steps = 0
@@ -2072,8 +2303,26 @@ def run_pipeline_worker_loop(
             break
         if cmd == CMD_RESET_CACHE:
             worker_cache = lm.make_cache()
+            worker_spec_tx = None
             snapshot_store.clear()
             req_decode_steps = 0
+            continue
+        if cmd == CMD_START_SPEC:
+            from mlx_vlm.speculative.cache_state import start_speculative_cache
+
+            if worker_spec_tx is not None:
+                worker_spec_tx.abort()
+            worker_spec_tx = start_speculative_cache(worker_cache, B)
+            continue
+        if cmd == CMD_COMMIT_SPEC:
+            if worker_spec_tx is not None:
+                worker_spec_tx.commit([B])
+                worker_spec_tx = None
+            continue
+        if cmd == CMD_ABORT_SPEC:
+            if worker_spec_tx is not None:
+                worker_spec_tx.abort()
+                worker_spec_tx = None
             continue
         if cmd == CMD_SAVE_SNAPSHOT:
             snapshot_store.save(B, worker_cache)

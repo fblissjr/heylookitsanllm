@@ -586,8 +586,7 @@ class MLXModelConfig(BaseModel):
             "file and no config at all."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD})
     # Asymmetric distributed pipeline split ratios across MLX ranks (e.g.
-    # [0.8, 0.2] for a 192 GB M2 Ultra + 48 GB M4 Pro). File-only because it
-    # requires launching the server and worker under mlx.launch or pipeline_peers.
+    # [0.8, 0.2] for a 192 GB M2 Ultra + 48 GB M4 Pro).
     pipeline_ratios: Optional[List[float]] = Field(
         default=None,
         description=(
@@ -595,7 +594,7 @@ class MLXModelConfig(BaseModel):
             "parallelism (e.g. `[0.8, 0.2]` across a 192 GB primary and 48 GB "
             "worker). Unset = single-node unless `mx.distributed.init().size() > 1`, "
             "in which case `[0.8, 0.2]` is used for a 2-rank group."),
-        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "hidden", "file_only": True})
+        json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "advanced"})
     pipeline_peers: Optional[List[str]] = Field(
         default=None,
         description=(
@@ -606,6 +605,41 @@ class MLXModelConfig(BaseModel):
             "hostfile automatically without `mlx.launch` and connects directly "
             "to `scripts/mlx_pipeline_worker.py --rank 1 --peers ...`."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD, "ui": "hidden", "file_only": True})
+
+    @field_validator("pipeline_ratios", mode="before")
+    @classmethod
+    def _validate_pipeline_ratios(cls, v):
+        if v is None or v == "" or v == []:
+            return None
+        if isinstance(v, str):
+            raw_items = [tok.strip() for tok in v.replace("\n", ",").split(",") if tok.strip()]
+        elif isinstance(v, (list, tuple)):
+            raw_items = []
+            for item in v:
+                if isinstance(item, str):
+                    raw_items.extend(
+                        tok.strip()
+                        for tok in item.replace("\n", ",").split(",")
+                        if tok.strip()
+                    )
+                else:
+                    raw_items.append(item)
+        else:
+            raise ValueError("pipeline_ratios must be a list of positive numbers (e.g. [0.8, 0.2])")
+        if not raw_items:
+            return None
+        if len(raw_items) < 2:
+            raise ValueError("pipeline_ratios requires at least 2 rank weights (e.g. [0.8, 0.2])")
+        out: list[float] = []
+        for item in raw_items:
+            try:
+                val = float(item)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"pipeline_ratios entry {item!r} is not a number") from exc
+            if val <= 0:
+                raise ValueError("pipeline_ratios entries must be > 0")
+            out.append(val)
+        return out
 
 
     @model_validator(mode="after")

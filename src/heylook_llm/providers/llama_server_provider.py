@@ -1231,6 +1231,16 @@ class LlamaServerProvider(BaseProvider):
             "binary": Setting(value=binary, auto=binary, reason=binary_reason,
                               provenance="observed"),
         }
+        if getattr(self, "_rpc_fallback_reason", None):
+            rpc_effect = field_effect(GGUFModelConfig.model_fields["rpc"])
+            self._load_report["rpc"] = Setting(
+                value="single-node (fallback)",
+                configured=None,
+                auto=None,
+                reason=self._rpc_fallback_reason,
+                provenance="observed",
+                effect=rpc_effect,
+            )
         self._load_cache_report = {
             "ram_budget_mib": Fact(
                 value=eff_cram, provenance="observed",

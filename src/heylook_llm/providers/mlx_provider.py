@@ -1268,13 +1268,7 @@ class MLXProvider(BaseProvider):
                     from .common.mlx_pipeline import install_rank0_apc_sync
 
                     install_rank0_apc_sync(self._apc, group=pipe_grp)
-                    if self.config.get("draft_model_path"):
-                        self.drafter_skipped = (
-                            "speculative decoding is off when distributed pipeline is active"
-                        )
-                    self._draft = None
-                else:
-                    self._draft = self._load_drafter()
+                self._draft = self._load_drafter()
 
             logging.info(f"Successfully loaded {'VLM' if self.is_vlm else 'LLM'} model")
 

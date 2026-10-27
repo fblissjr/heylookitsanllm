@@ -68,12 +68,28 @@ function parseControlValue(field, raw) {
     }
     case 'boolean':
       return { value: raw === 'true' };
-    case 'array':
-      // One element per LINE, not comma-separated: array elements can
+    case 'array': {
+      // For numeric arrays (e.g. pipeline_ratios), split on newlines or commas
+      // and coerce each entry to a finite number.
+      const itemType = field.items?.type;
+      if (itemType === 'number' || itemType === 'integer') {
+        const tokens = raw.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+        const nums = [];
+        for (const tok of tokens) {
+          const n = Number(tok);
+          if (!Number.isFinite(n) || (itemType === 'integer' && !Number.isInteger(n))) {
+            return { error: `${field.name}: "${tok}" is not a valid ${itemType}` };
+          }
+          nums.push(n);
+        }
+        return { value: nums };
+      }
+      // One element per LINE, not comma-separated: string array elements can
       // legitimately contain commas (extra_args: --tensor-split "3,1",
       // -ot "a=CPU,b=GPU"), and a comma split silently rewrites them into a
       // different argv that only fails at the next spawn.
       return { value: raw.split('\n').map((s) => s.trim()).filter(Boolean) };
+    }
     default:
       return { value: raw };
   }
@@ -593,12 +609,29 @@ function buildFitMeter({ model, overrides, onGate }) {
     }
     rows.push(row('Reclaimable RAM', gib(r.reclaimable_gb),
       'total − anonymous − wired'));
+    const workerWs = r.lines.find((l) => l.ceiling === 'worker_metal_working_set');
+    if (workerWs) {
+      const wRow = row(
+        'Worker Metal working set',
+        `${gib(workerWs.need_gb)} / ${gib(workerWs.have_gb)}`,
+        workerWs.note || 'remote rank 1 Metal working set'
+      );
+      if (workerWs.verdict === 'fail') wRow.classList.add('cfg-fit__row--danger');
+      rows.push(wRow);
+    }
     rowsEl.replaceChildren(...rows);
 
     const pieces = [];
     const ws = r.lines.find((l) => l.ceiling === 'metal_working_set');
     const ram = r.lines.find((l) => l.ceiling === 'reclaimable_ram');
     const buf = r.lines.find((l) => l.ceiling === 'metal_max_buffer');
+    if (workerWs && workerWs.verdict === 'fail') {
+      const over = gib(workerWs.need_gb - workerWs.have_gb);
+      pieces.push(
+        `Worker slice exceeds ${workerWs.note || 'worker Metal working set'} by ${over} `
+        + `(needs ${gib(workerWs.need_gb)}, has ${gib(workerWs.have_gb)}).`
+      );
+    }
     if (ram?.verdict === 'fail') {
       // A LOADED model is itself holding the memory this line measures
       // against, so the counterfactual "could this be loaded" is depressed by

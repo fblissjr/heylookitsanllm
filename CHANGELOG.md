@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.210]
+
+### Added
+
+- **Rank-0 speculative decoding across pipelined MLX ranks (`src/heylook_llm/providers/common/mlx_pipeline.py`, `src/heylook_llm/providers/mlx_provider.py`).**
+  - `MLXProvider.load_model` now loads `draft_model_path` (MTP / DFlash / EAGLE3 drafters) on Rank 0 when `pipeline_ratios` is active, running draft steps locally on Rank 0 and verifying across the distributed pipeline.
+  - `_OffsetStubCache` implements `mlx_vlm.speculative.cache_state.start_speculative_cache`'s temporal cache protocol (`is_speculating`, `start_speculation`, `validate_speculation`, `commit_speculation`, `abort_speculation`), and Rank 0's first off-rank stub cache (`spec_notify_group`) broadcasts `CMD_START_SPEC`, `CMD_COMMIT_SPEC`, and `CMD_ABORT_SPEC` headers to Rank 1 so `run_pipeline_worker_loop` opens, commits (retaining `keep` tokens), or aborts speculative verification transactions in lockstep across both `KVCache` and hybrid `ArraysCache` (Gated DeltaNet) layers.
+  - `apply_asymmetric_pipeline` wraps `speculative_verify_hidden`, `speculative_verify_logits`, and `speculative_verify_dflash_hidden` on pipelined language models so target verification executes through the pipelined layer wrappers instead of single-node `_EXACT_SPECULATIVE_VERIFIER._layer`.
+- **Live worker Metal memory ceilings in worker control port and `ram_fit` (`src/heylook_llm/providers/common/mlx_pipeline.py`, `scripts/mlx_pipeline_worker.py`, `src/heylook_llm/ram_fit.py`, `frontend/js/model-config.js`).**
+  - `local_worker_ceilings` and `probe_worker_ceilings`: the worker control port (`32423`) returns the worker Mac's `working_set_gb`, `max_buffer_gb`, `reclaimable_gb`, and `device` in `ping` and `prepare_model` responses (cached for 5s on Rank 0).
+  - `ram_fit.worker_weight_gb` and `ram_fit.fit_for_config`: when sizing a model with `pipeline_ratios` and `pipeline_peers`, `fit_for_config` probes the worker's live Metal working set and appends a `worker_metal_working_set` `FitLine` (`verdict="fail"` if Rank 1's weight slice + headroom exceeds the worker's working set), rendered in the Models page **Memory fit** meter.
+- **GGUF `describe_observed()` RPC fallback status and UI-editable `pipeline_ratios` (`src/heylook_llm/providers/llama_server_provider.py`, `src/heylook_llm/config.py`, `src/heylook_llm/admin_api.py`, `frontend/js/engine.js`, `frontend/js/model-config.js`).**
+  - When `_preflight_rpc_servers` falls back to single-node because an `rpc` worker is unreachable and the model fits solo on the host, `_record_load_report` records `rpc = Setting(value="single-node (fallback)", configured=None, reason=self._rpc_fallback_reason, provenance="observed")`, and `frontend/js/engine.js` renders `rpc single-node (fallback)` in the engine summary.
+  - `MLXModelConfig.pipeline_ratios` is now `ui="advanced"` (with a `@field_validator` accepting comma- or newline-separated numbers and `_field_options` forwarding `items: {"type": "number"}` so `model-config.js` parses numeric arrays), while `pipeline_peers` and `rpc` remain `file_only=True` and `ui="hidden"`.
+- Verified: `tests/unit/` + `tests/contract/` (1605 passed), `bun run e2e:render` (105/105). NOT run: `tests/smoke/`, `tests/eval/`.
+
 ## [2.0.209]
 
 ### Added

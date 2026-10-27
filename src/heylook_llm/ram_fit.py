@@ -369,6 +369,27 @@ def size_config_gb(config: dict) -> tuple[float, list[str]]:
     return total / GB, notes
 
 
+def worker_weight_gb(config: dict) -> float:
+    """Return the worker Mac's resident weight GiB when distributed offload is active, else 0.0."""
+    frac, note = local_weight_fraction(config)
+    if note is None or frac >= 1.0:
+        return 0.0
+    primary = Path(config.get("model_path") or "")
+    if primary.is_dir():
+        primary_bytes = sum(
+            f.stat().st_size
+            for pattern in ("*.safetensors", "*.gguf")
+            for f in primary.rglob(pattern)
+        )
+    elif primary.is_file():
+        primary_bytes = _shard_set_bytes(primary)
+    else:
+        return 0.0
+    local_primary = int(primary_bytes * frac)
+    return max(0, primary_bytes - local_primary) / GB
+
+
+
 # ---------------------------------------------------------------------------
 # The fit verdict, structured
 # ---------------------------------------------------------------------------
@@ -530,8 +551,60 @@ def fit_for_config(config: dict, headroom_gb: float = 8.0,
         hard_working_set = is_mlx_config(config)
     size_gb, notes = size_config_gb(config)
     largest = largest_alloc_gb(config) or None
-    return evaluate_fit(size_gb, headroom_gb, hard_working_set, sizing_notes=notes,
-                        largest_alloc_gb=largest)
+    report = evaluate_fit(size_gb, headroom_gb, hard_working_set, sizing_notes=notes,
+                          largest_alloc_gb=largest)
+    if config.get("pipeline_ratios") and config.get("pipeline_peers"):
+        w_gb = worker_weight_gb(config)
+        if w_gb > 0:
+            try:
+                from heylook_llm.providers.common.mlx_pipeline import probe_worker_ceilings
+
+                worker_ceilings = probe_worker_ceilings(config["pipeline_peers"])
+            except Exception:
+                worker_ceilings = None
+            worker_ws = (
+                float(worker_ceilings["working_set_gb"])
+                if isinstance(worker_ceilings, dict)
+                and isinstance(worker_ceilings.get("working_set_gb"), (int, float))
+                and float(worker_ceilings["working_set_gb"]) > 0
+                else None
+            )
+            if worker_ws is not None:
+                worker_dev = (
+                    str(worker_ceilings.get("device") or "worker")
+                    if isinstance(worker_ceilings, dict)
+                    else "worker"
+                )
+                worker_reclaim = (
+                    float(worker_ceilings["reclaimable_gb"])
+                    if isinstance(worker_ceilings, dict)
+                    and isinstance(worker_ceilings.get("reclaimable_gb"), (int, float))
+                    else None
+                )
+                worker_need = w_gb + headroom_gb * 0.5
+                worker_ok = worker_need <= worker_ws
+                report.lines.append(
+                    FitLine(
+                        ceiling="worker_metal_working_set",
+                        verdict="pass" if worker_ok else "fail",
+                        need_gb=worker_need,
+                        have_gb=worker_ws,
+                        note=f"worker ({worker_dev}) Metal working set",
+                    )
+                )
+                reclaim_str = (
+                    f", {worker_reclaim:.1f} GiB reclaimable"
+                    if worker_reclaim is not None
+                    else ""
+                )
+                report.sizing_notes.append(
+                    f"worker {worker_dev}: {worker_ws:.1f} GiB working set{reclaim_str}"
+                )
+                if any(l.verdict == "fail" for l in report.lines):
+                    report.verdict = "fail"
+                elif any(l.verdict == "warn" for l in report.lines):
+                    report.verdict = "warn"
+    return report
 
 
 _DISTRIBUTED_CONFIG_KEYS = frozenset({
