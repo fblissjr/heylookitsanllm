@@ -2,7 +2,7 @@
 
 Cross-session task backlog organized by priority.
 
-*Last reviewed: 2026-10-27 (through v2.0.211; previous triage 2026-09-25 through v2.0.154). Every section was classed done, obsolete, open or mixed with evidence (`internal/claude/todo_triage.md`); the done and obsolete ones moved verbatim to `internal/archive/todo_closed_2026-09-25.md`. Mixed sections stay whole: their checked-off items are history kept beside the open ones.*
+*Last reviewed: 2026-10-27 (through v2.0.212; previous triage 2026-09-25 through v2.0.154). Every section was classed done, obsolete, open or mixed with evidence (`internal/claude/todo_triage.md`); the done and obsolete ones moved verbatim to `internal/archive/todo_closed_2026-09-25.md`. Mixed sections stay whole: their checked-off items are history kept beside the open ones.*
 
 ## 2026-10-27 Roadmap (Beyond Distributed Inference)
 
@@ -15,10 +15,8 @@ Five active tracks across the backend and frontend, ordered by impact:
 - [ ] **1.4 Optional live 2-Mac speculative benchmark (`scripts/perf_ab.py`).** Run a clean `perf_ab.py` comparison on a 2-Mac pipelined model with and without its MTP/DFlash drafter and record in `internal/claude/perf/`.
 
 ### Track 2: Mobile & Dark-Mode Workbench (`docs/project/plan_dark_mode.md` Phases 4 & 5)
-- [x] **Phase 1–3b + Phase 4 Steps 1–2 (`v2.0.191` - `v2.0.204`).** Lamplight tokens, Safari fixes, Home Screen manifest, Preset manager (`#/presets`), spacing tokens, and iOS Text Size support (`-apple-system-body` on touch, verified on iPhone 17 Pro).
-- [ ] **Phase 4 Steps 3–7 (Toward Workbench on phone width):**
-  - Step 3: Move phone navigation to the top bar (`+54pt` vertical message viewport).
-  - Step 4: Capsule composer (`field >= 260pt`).
+- [x] **Phase 1–3b + Phase 4 Steps 1–4 (`v2.0.191` - `v2.0.204`, `v2.0.212`).** Lamplight tokens, Safari fixes, Home Screen manifest, Preset manager (`#/presets`), spacing tokens, iOS Text Size support (`-apple-system-body` on touch, verified on iPhone 17 Pro), phone top-bar navigation (`#phone-nav` segmented control + single gear, `+11px` message viewport), and two-row capsule composer (`360pt` field width at `402pt`, icon Send/Stop button).
+- [ ] **Phase 4 Steps 5–7 (Toward Workbench on phone width):**
   - Step 5: Compact readout line (fold status chips into one scannable line).
   - Step 6: Scroller ownership check on Safari 27.
   - Step 7: Optional Graphite palette evaluation.

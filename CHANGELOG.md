@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.212]
+
+### Changed
+
+- **Dark mode Phase 4 Steps 3 & 4: phone top-bar navigation (`#phone-nav`) and two-row capsule composer (`frontend/index.html`, `frontend/js/app.js`, `frontend/js/settings-drawer.js`, `frontend/js/pages/chat.js`, `frontend/css/app.css`, `frontend/DESIGN.md`, `tests/e2e/render.mjs`, `tests/e2e/ios-sim.mjs`).**
+  - **Step 3 (Phone top navigation)**: replaced `#bottom-nav` at the foot of `#app` with `<nav id="phone-nav" aria-label="Pages">` above `<main id="main">`, rendering a segmented control (`.phone-nav__seg`: `Chat`, `Notes`, `Models`, `Perf`) with the settings gear (`#phone-nav .drawer-gear-phone`) beside it, hid `.chat__settings-btn` at `@media (max-width: 767px)` so only one gear appears on phone, and removed the retired `--bottom-nav-h` bottom inset reservation. Measured `.chat__messages` `clientHeight` rises by `+11px` at both `390x844` (`569px -> 580px`) and `402x874` (`599px -> 610px`), clearing the Step 3 gate (`>= --bottom-nav-h (54px) - H_header (49px) = +5px`).
+  - **Step 4 (Capsule composer)**: styled `.chat__composer` as a two-row capsule sharing one rounded border (`border: 1px solid var(--line-strong); border-radius: var(--r-big); background: var(--bg);`) with a `:has(textarea:focus-visible)` focus ring, a full-width top-row borderless `textarea` (`360pt` wide at `402pt` viewport, clearing the `>= 260pt` gate), and a bottom row of `44x44pt` borderless tool buttons plus a pill/circle `.btn--icon.btn--primary` Send/Stop icon button (`paintSendBtn`, `aria-label="Send"` / `"Stop"`, `.sr-only` text span preserving `textContent`).
+  - Updated `frontend/DESIGN.md` §7 to document the phone top-bar navigation, single phone gear rule, and two-row capsule composer.
+- Verified: `tests/unit/` + `tests/contract/` (1607 passed), `E2E_COLOR_SCHEME=light bun run e2e:render` (105/105), `E2E_COLOR_SCHEME=dark bun run e2e:render` (105/105). NOT run: live browser `e2e:chat` / `e2e:pages`, on-device iPhone check.
+
 ## [2.0.211]
 
 ### Added

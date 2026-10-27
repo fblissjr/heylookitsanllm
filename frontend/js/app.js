@@ -1,6 +1,6 @@
 // Hash router. Routes -> dynamic import of page modules (code-splitting
-// without a bundler). Nav (desktop sidebar + mobile bottom bar) is generated
-// from ROUTES, so nav-active bookkeeping lives here, not in pages.
+// without a bundler). Nav (desktop sidebar + phone top segmented bar) is
+// generated from ROUTES, so nav-active bookkeeping lives here, not in pages.
 
 import { createEl, sweepRetiredStorage } from './utils.js';
 import { mountSettingsDrawer } from './settings-drawer.js';
@@ -8,11 +8,11 @@ import { mountSettingsDrawer } from './settings-drawer.js';
 const ROUTES = {
   chat:     { title: 'Chat', short: 'Chat', load: () => import('./pages/chat.js') },
   notebook: { title: 'Notebook', short: 'Notes', load: () => import('./pages/notebook.js') },
-  embeddings: { title: 'Embeddings', short: 'Embed', load: () => import('./pages/embeddings.js'), bottomNav: false },
-  // Not in the phone's bottom nav (`bottomNav: false`): it is already five
-  // items wide with the gear, and the phone reaches this page from the
-  // settings drawer's "Manage presets" link (plan_dark_mode.md Phase 3b).
-  presets:  { title: 'Presets', short: 'Presets', load: () => import('./pages/presets.js'), bottomNav: false },
+  embeddings: { title: 'Embeddings', short: 'Embed', load: () => import('./pages/embeddings.js'), phoneNav: false },
+  // Not in the phone's top nav (`phoneNav: false`): it holds the four primary
+  // destinations plus the gear beside it, and the phone reaches this page from
+  // the settings drawer's "Manage presets" link (plan_dark_mode.md Phase 3b).
+  presets:  { title: 'Presets', short: 'Presets', load: () => import('./pages/presets.js'), phoneNav: false },
   models:   { title: 'Models', short: 'Models', load: () => import('./pages/models.js'), admin: true },
   perf:     { title: 'Performance', short: 'Perf', load: () => import('./pages/perf.js'), admin: true },
 };
@@ -21,7 +21,9 @@ sweepRetiredStorage();
 
 const main = document.getElementById('main');
 const navDesktop = document.getElementById('nav-desktop');
-const navBottom = document.getElementById('bottom-nav');
+const navPhone = document.getElementById('phone-nav');
+const phoneSeg = createEl('div', { class: 'phone-nav__seg' });
+navPhone.append(phoneSeg);
 const navLinks = [];
 
 let sepAdded = false;
@@ -33,15 +35,15 @@ for (const [name, route] of Object.entries(ROUTES)) {
   const desktop = createEl('a', { class: 'nav-item', href: `#/${name}`, dataset: { route: name } }, [route.title]);
   navDesktop.append(desktop);
   navLinks.push(desktop);
-  if (route.bottomNav === false) continue;
-  const bottom = createEl('a', { class: 'nav-item', href: `#/${name}`, dataset: { route: name } }, [route.short]);
-  navBottom.append(bottom);
-  navLinks.push(bottom);
+  if (route.phoneNav === false) continue;
+  const phone = createEl('a', { class: 'nav-item', href: `#/${name}`, dataset: { route: name } }, [route.short]);
+  phoneSeg.append(phone);
+  navLinks.push(phone);
 }
 
 // App-shell singleton: a persistent gear + right slide-over shared by every
 // page. Pages contribute to it in setup() and clear on teardown.
-mountSettingsDrawer(navDesktop, navBottom);
+mountSettingsDrawer(navDesktop, navPhone);
 
 let currentPage = null;
 let navToken = 0;

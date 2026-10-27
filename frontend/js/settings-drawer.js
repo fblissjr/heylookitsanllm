@@ -29,7 +29,7 @@ let bodyEl = null;    // render target (the ONLY thing render() replaces)
 let backdropEl = null;
 let closeBtn = null;
 let gearBtn = null;
-let bottomGearBtn = null;   // phone-width opener: a trailing item in #bottom-nav
+let phoneGearBtn = null;    // phone-width opener: trailing item beside the segmented control in #phone-nav
 let appEl = null;     // #app -- made inert while the modal drawer is open
 
 let isOpen = false;
@@ -40,7 +40,7 @@ let current = null;   // the registered page contribution (or null)
 // mount (once, by app.js)
 // ---------------------------------------------------------------------------
 
-export function mountSettingsDrawer(navDesktop, navBottom) {
+export function mountSettingsDrawer(navDesktop, navPhone) {
   if (mounted) return;
   mounted = true;
   appEl = document.getElementById('app');
@@ -52,17 +52,17 @@ export function mountSettingsDrawer(navDesktop, navBottom) {
   gearBtn.addEventListener('click', () => open(gearBtn));
   navDesktop.append(gearBtn);
 
-  // Phone widths hide #sidebar (and with it the desktop gear), so the drawer
-  // needs its own reachable affordance there -- a trailing gear item in the
-  // bottom nav (a bottom composer, e.g. chat, leaves no room for a floating
-  // FAB). #bottom-nav rides its own <=767px show/hide, and lives inside #app so
+  // Phone widths hide #sidebar (and with it the desktop gear) as well as
+  // chat's own bar gear, so the drawer has one reachable affordance on the
+  // phone: a trailing gear beside the segmented control in #phone-nav.
+  // #phone-nav rides its own <=767px show/hide, and lives inside #app so
   // the inert focus-trap covers it for free. Same open() target.
-  bottomGearBtn = createEl('button', {
-    type: 'button', class: 'nav-item drawer-gear-bottom',
+  phoneGearBtn = createEl('button', {
+    type: 'button', class: 'nav-item drawer-gear drawer-gear-phone',
     title: 'Settings', 'aria-label': 'Open settings',
   }, ['⚙']);
-  bottomGearBtn.addEventListener('click', () => open(bottomGearBtn));
-  navBottom.append(bottomGearBtn);
+  phoneGearBtn.addEventListener('click', () => open(phoneGearBtn));
+  navPhone.append(phoneGearBtn);
 
   backdropEl = createEl('div', { class: 'drawer-backdrop' });
   backdropEl.addEventListener('click', () => close());

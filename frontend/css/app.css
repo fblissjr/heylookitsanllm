@@ -80,7 +80,6 @@
   --t-fast: 140ms;
 
   --sidebar-w: 200px;
-  --bottom-nav-h: 54px;
 
   /* z scale: raised < drawer */
   --z-raised: 10;
@@ -197,38 +196,53 @@ code, pre, kbd { font-family: var(--mono); font-size: 0.875em; }
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
 }
 
-#bottom-nav { display: none; }
+#phone-nav { display: none; }
 
 @media (max-width: 767px) {
-  #app { grid-template-columns: 1fr; }
-  #sidebar { display: none; }
-  #main { padding-bottom: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom)); }
-
-  #bottom-nav {
-    display: flex;
-    position: fixed;
-    left: 0; right: 0; bottom: 0;
-    height: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom));
-    padding-bottom: env(safe-area-inset-bottom);
-    /* fixed, so #app's inline padding does not reach it */
-    padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
-    background: var(--surface);
-    border-top: 1px solid var(--line);
-    z-index: var(--z-raised);
+  #app {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
   }
-  #bottom-nav .nav-item {
+  #sidebar { display: none; }
+  #main { padding-bottom: env(safe-area-inset-bottom, 0px); }
+
+  #phone-nav {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: calc(2px + env(safe-area-inset-top, 0px)) var(--space-3) 2px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+  }
+  .phone-nav__seg {
     flex: 1;
+    min-width: 0;
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: var(--r-ctl);
+  }
+  #phone-nav .phone-nav__seg .nav-item {
+    flex: 1 1 auto;
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 0;
+    padding: var(--space-1) var(--space-1);
+    min-height: 36px;
+    border-radius: calc(var(--r-ctl) - 2px);
     font-size: var(--text-sm);
-    min-height: 44px;
-    white-space: nowrap;   /* keep labels single-line once the gear is a 7th item */
+    white-space: nowrap;
   }
-  #bottom-nav .nav-item--active { background: none; color: var(--accent); font-weight: 600; }
+  #phone-nav .phone-nav__seg .nav-item--active {
+    background: var(--brand-tint);
+    color: var(--ink);
+    font-weight: 600;
+  }
 }
 
 /* ================= shared controls ================= */
@@ -265,7 +279,7 @@ code, pre, kbd { font-family: var(--mono); font-size: 0.875em; }
 .btn--ghost { border-color: transparent; background: transparent; color: var(--ink-muted); }
 .btn--ghost:hover { background: var(--surface-2); color: var(--ink); }
 
-/* Square icon-only buttons (composer attach/thinking). 40px floor = touch
+/* Square icon-only buttons (composer attach/thinking/send). 40px floor = touch
    target; svg inherits currentColor. aria-pressed IS the toggle style hook. */
 .btn--icon {
   display: inline-flex;
@@ -278,6 +292,8 @@ code, pre, kbd { font-family: var(--mono); font-size: 0.875em; }
   color: var(--ink-muted);
 }
 .btn--icon:hover { color: var(--ink); }
+.btn--icon.btn--primary,
+.btn--icon.btn--primary:hover { color: var(--on-accent); }
 @media (hover: none) {
   /* iOS 44pt touch floor; desktop keeps the tighter 40px */
   .btn--icon { min-width: 44px; min-height: 44px; }
@@ -286,6 +302,18 @@ code, pre, kbd { font-family: var(--mono); font-size: 0.875em; }
   background: var(--brand-tint);
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 .btn--sm { padding: 0.2rem var(--space-2); font-size: var(--text-sm); min-height: 26px; }
@@ -549,12 +577,19 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
    (one class, declared earlier) still wins on the gear. */
 .drawer-gear { text-align: left; cursor: pointer; margin-top: var(--space-1); }
 :where(.drawer-gear) { background: none; border: none; font-family: inherit; }
-/* phone gear: the trailing item in #bottom-nav (itself hidden on desktop, so
-   this needs no display toggle). Reset native button chrome so it reads like
-   its sibling nav-item links; a compact trailing slot keeps label room. */
-.drawer-gear-bottom { cursor: pointer; }
-:where(.drawer-gear-bottom) { background: none; border: none; font-family: inherit; }
-#bottom-nav .drawer-gear-bottom { flex: 0 0 auto; min-width: 48px; font-size: 1.2rem; }
+/* phone gear: the trailing item beside the segmented control in #phone-nav
+   (itself hidden on desktop, so this needs no display toggle). */
+#phone-nav .drawer-gear-phone {
+  flex: 0 0 auto;
+  margin-top: 0;
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 1.15rem;
+}
 
 /* right slide-over + backdrop, both direct children of <body>. Closed, both
    are inert and `display: none`, not merely hidden: a fixed, edge-touching
@@ -1068,23 +1103,53 @@ h1, h2, h3 { text-wrap: balance; }
   display: block;
 }
 
+/* Capsule composer (Phase 4 step 4): one shared rounded border around two
+   rows -- the textarea field across the top row, and the tool buttons plus
+   the Send icon button along the bottom row. */
 .chat__composer {
   display: flex;
-  gap: var(--space-2);
-  align-items: flex-end;
-  padding: 0 var(--space-4) var(--space-4);
-  max-width: 46rem;
-  margin: 0 auto;
-  width: 100%;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  max-width: 44rem;
+  width: calc(100% - 2 * var(--space-4));
+  margin: 0 auto var(--space-4);
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-big);
+  transition: border-color var(--t-fast) var(--ease);
+}
+.chat__composer:has(textarea:focus-visible) {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
 }
 .chat__composer textarea {
-  flex: 1;
+  flex: 1 0 100%;
+  order: -1;
   resize: none;
-  border-radius: var(--r-big);
-  padding: 0.6rem 0.9rem;
+  border: none;
+  border-radius: calc(var(--r-big) - 4px);
+  background: transparent;
+  padding: var(--space-1);
   font-size: var(--text-body);
   line-height: 1.5;
   max-height: 200px;
+}
+.chat__composer textarea:focus-visible {
+  outline: none;
+}
+.chat__composer .btn--icon:not(.btn--primary):not([aria-pressed="true"]) {
+  border-color: transparent;
+  background: transparent;
+}
+.chat__composer .btn--icon:not(.btn--primary):not([aria-pressed="true"]):where(:hover) {
+  background: var(--surface-2);
+}
+.chat__composer .btn--primary {
+  margin-left: auto;
+  border-radius: 999px;
 }
 /* `field-sizing: content` lets the browser size the textarea, so autoGrow()
    returns early where it is supported -- WITH ITS PIXEL CAP. Three of these
@@ -1117,7 +1182,7 @@ h1, h2, h3 { text-wrap: balance; }
   .chat__convs {
     display: none;
     position: fixed;
-    inset: 0 20% calc(var(--bottom-nav-h) + env(safe-area-inset-bottom)) 0;
+    inset: 0 20% env(safe-area-inset-bottom, 0px) 0;
     z-index: var(--z-drawer);
     border-right: 1px solid var(--line-strong);
     padding-left: env(safe-area-inset-left, 0px);   /* fixed to the left edge */
@@ -1143,17 +1208,18 @@ h1, h2, h3 { text-wrap: balance; }
     padding: 0.35rem var(--space-3);
   }
   /* Two tiers, compact and non-wrapping. Tier one is what must stay one tap
-     away at all times -- Chats, the model select (stretched to what is left of
-     the line, with ellipsis for long names), the gear. Tier two is the
-     horizontal detail group (context size, Load, preset + system-prompt chips)
-     rendered as a sleek single-line horizontal strip with momentum scrolling,
-     so it NEVER wraps into 3+ rows or crushes message real estate. Safe-area
-     top inset cleanly clears iOS dynamic island / notch. */
+     away at all times -- Chats and the model select (stretched to what is left
+     of the line, with ellipsis for long names); the settings gear lives in
+     #phone-nav right above, so the bar's own gear is hidden on the phone.
+     Tier two is the horizontal detail group (context size, Load, preset +
+     system-prompt chips) rendered as a sleek single-line horizontal strip with
+     momentum scrolling, so it NEVER wraps into 3+ rows or crushes message real
+     estate. */
   .chat__bar {
     flex-wrap: wrap;
     row-gap: var(--space-1);
     column-gap: 0.4rem;
-    padding: calc(0.35rem + env(safe-area-inset-top, 0px)) 0.6rem 0.3rem;
+    padding: 0.35rem 0.6rem 0.3rem;
   }
   .chat__bar > select {
     flex: 1 1 0;
@@ -1167,11 +1233,7 @@ h1, h2, h3 { text-wrap: balance; }
     white-space: nowrap;
     overflow: hidden;
   }
-  .chat__settings-btn {
-    min-width: 40px;
-    min-height: 40px;
-    padding: var(--space-1);
-  }
+  .chat__settings-btn { display: none; }
   .chat__bar-spacer { display: none; }
   .chat__bar-detail {
     display: flex;
@@ -1259,15 +1321,14 @@ h1, h2, h3 { text-wrap: balance; }
      its pixel cap so the toolbar and Send stay on screen as it grows. */
   .chat__messages { padding: var(--space-4) var(--space-3) var(--space-2); }
   .chat__composer {
-    flex-wrap: wrap;
-    gap: 0.4rem var(--space-2);
-    padding: 0 var(--space-3) 0.6rem;
+    width: calc(100% - 2 * var(--space-3));
+    margin: 0 auto var(--space-1);
+    padding: 2px var(--space-2);
+    gap: 2px var(--space-2);
   }
-  .chat__composer textarea { flex: 1 0 100%; order: -1; }
-  .chat__composer .btn--primary {
-    margin-left: auto;
+  .chat__composer textarea {
     min-height: 44px;
-    padding: 0.55rem 1.1rem;
+    padding: var(--space-1);
   }
 }
 
@@ -1744,7 +1805,7 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
   .notebook__list-pane {
     display: none;
     position: fixed;
-    inset: 0 20% calc(var(--bottom-nav-h) + env(safe-area-inset-bottom)) 0;
+    inset: 0 20% env(safe-area-inset-bottom, 0px) 0;
     z-index: var(--z-drawer);
     border-right: 1px solid var(--line-strong);
     padding-left: env(safe-area-inset-left, 0px);   /* fixed to the left edge */
@@ -1755,7 +1816,7 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
   }
   .notebook__toolbar {
     display: flex;
-    padding: calc(0.35rem + env(safe-area-inset-top, 0px)) var(--space-3) var(--space-1);
+    padding: 0.35rem var(--space-3) var(--space-1);
   }
   .notebook__list-toggle {
     display: inline-block;

@@ -401,7 +401,11 @@ function buildSkeleton(ctx) {
   s.promptBtn.addEventListener('click', () => previewNextPrompt(ctx));
   s.promptPreviewEl = createEl('div', { class: 'prompt-preview chat__prompt-preview', hidden: true });
   s.attachStrip = createEl('div', { class: 'chat__attach', hidden: true });
-  s.sendBtn = createEl('button', { class: 'btn btn--primary' }, ['Send']);
+  s.sendBtn = createEl('button', {
+    class: 'btn btn--icon btn--primary',
+    'aria-label': 'Send',
+  });
+  setSendButton(s, false);
   // Three states, not two. A generation now OUTLIVES the response that
   // started it, so this conversation can be generating with no local stream
   // object -- you left mid-generation and came back, or another device
@@ -413,9 +417,10 @@ function buildSkeleton(ctx) {
     return send(ctx);
   });
 
-  // In-context settings entry: the sidebar-foot / bottom-nav gears are far
+  // In-context settings entry on desktop/tablet: the sidebar-foot gear is far
   // from the conversation, and the drawer holds chat's most-edited controls
-  // (system prompt, presets). Same singleton drawer; focus returns here.
+  // (system prompt, presets). Hidden on phone widths, where #phone-nav's gear
+  // sits right above the bar. Same singleton drawer; focus returns here.
   const settingsBtn = createEl('button', {
     class: 'btn btn--icon chat__settings-btn', title: 'Settings', 'aria-label': 'Open settings',
   });
@@ -553,6 +558,13 @@ const ICON_THINK =
   + 'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
   + '<path d="M9 18h6"/><path d="M10 22h4"/>'
   + '<path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.4 1 2.3h6c0-.9.4-1.8 1-2.3A7 7 0 0 0 12 2z"/></svg>';
+const ICON_SEND =
+  '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" '
+  + 'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>';
+const ICON_STOP =
+  '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">'
+  + '<rect x="5" y="5" width="14" height="14" rx="2"/></svg>';
 
 // Residency rides the option label (● resident / ○ idle) so the load cost is
 // visible in the act of choosing -- the only moment it can influence the
@@ -2301,14 +2313,20 @@ const isGeneratingNote = (text) => GENERATING_PREFIXES.some((p) => text.startsWi
 // mean two different things with nothing on screen distinguishing them.
 // The LOCAL stream's Stop is deliberately not here: it says something else
 // ("keep what has been generated so far") and is written where it is set.
+function paintSendBtn(btn, stopping, title) {
+  const label = stopping ? 'Stop' : 'Send';
+  btn.setAttribute('aria-label', label);
+  btn.innerHTML = `${stopping ? ICON_STOP : ICON_SEND}<span class="sr-only">${label}</span>`;
+  btn.title = title;
+}
+
 function setSendButton(s, remoteGenerating) {
-  s.sendBtn.textContent = remoteGenerating ? 'Stop' : 'Send';
   // The button says the same word for two different situations. Only the
   // tooltip can separate "stop what you are watching" from "stop a run you
   // are not subscribed to" without a second control.
-  s.sendBtn.title = remoteGenerating
+  paintSendBtn(s.sendBtn, remoteGenerating, remoteGenerating
     ? 'Stop the run finishing on the server for this conversation'
-    : '';
+    : '');
 }
 
 function setRemoteGenerating(ctx, on) {
@@ -3265,8 +3283,7 @@ function startStream(ctx, opts = {}) {
   renderMessages(ctx);
   scrollMessages(ctx, true);
   s.remoteGenerating = false;  // the local stream owns the button now
-  s.sendBtn.textContent = 'Stop';
-  s.sendBtn.title = 'Stop this run and keep what has been generated so far';
+  paintSendBtn(s.sendBtn, true, 'Stop this run and keep what has been generated so far');
   s.setUnloadGuard(true);
 
   // The dead air before the first token is the one moment the user cannot

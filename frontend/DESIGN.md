@@ -273,7 +273,7 @@ Managing the store of presets is a different job with a different surface:
 - **The Presets surface** is a page (`#/presets`, `pages/presets.js`): a card
   per preset with Edit, Rename, Duplicate and Delete, edited in place. It is
   in the sidebar and reached from the drawer's "Manage presets" link; it is
-  not a bottom-nav item. Its knob editor is built from `PARAM_META` against
+  not a phone-nav item. Its knob editor is built from `PARAM_META` against
   the preset's own bag and offers every knob, because a preset is
   model-agnostic. It must not reuse the drawer's sampler panel, which is a
   view of the sampler cache chat and notebook share.
@@ -349,37 +349,37 @@ owner: "equally well on desktop web and iPhone 17 Pro Safari").
   interaction is not ready.
 - **The settings entry point is device-specific, one drawer.** Desktop = a gear
   `nav-item` at the foot of the sidebar rail (a `<button>`: its native-chrome
-  reset sits in `:where()` so the `.nav-item` hover tint still wins on it); phone = a trailing `⚙` item in
-  `#bottom-nav` (`.drawer-gear-bottom`). **Not a floating FAB** — a page with a
-  *bottom* composer (chat) leaves no bottom-right corner free, so a FAB collides
-  with Send. The bottom-nav gear rides `#bottom-nav`'s own `<=767px` show/hide
-  and, being inside `#app`, is sealed by the drawer's focus-trap for free.
-  A page whose drawer contribution is a primary workflow (chat: system prompt +
-  presets) may additionally mount an **in-context opener in its own toolbar**
-  (chat's `.chat__settings-btn` gear, via `drawer.openSettings(btn)`) — same
-  singleton drawer, focus restored to the opener on close. In-context openers
-  live in a bar, never floating.
-- **The phone chat chrome is tiered, not wrapped.** Chat's top bar is two
-  tiers under 768px: tier one is what must stay one tap away (Chats, the model
-  select stretched to the rest of the line, the gear); tier two is the detail
-  group (`.chat__bar-detail`: context size, Load, preset + system-prompt
-  chips) on its own line as a non-wrapping horizontal strip with momentum
-  scrolling (`overflow-x: auto`), so it never wraps into 3+ vertical rows or
-  crushes the message viewport. On that strip the load settings and Load are
-  one group (`.chat__bar-load`) that never grows past the strip's visible
+  reset sits in `:where()` so the `.nav-item` hover tint still wins on it), plus
+  an in-context opener in chat's own toolbar (`.chat__settings-btn`, via
+  `drawer.openSettings(btn)`); phone = one trailing `⚙` button
+  (`.drawer-gear-phone`) beside the segmented page control in `#phone-nav` at
+  the top of the shell, with chat's bar gear hidden at `<=767px` so two gears
+  never sit a row apart. **Not a floating FAB** — a page with a *bottom*
+  composer (chat) leaves no bottom-right corner free, so a FAB collides with
+  Send. The phone-nav gear rides `#phone-nav`'s own `<=767px` show/hide and,
+  being inside `#app`, is sealed by the drawer's focus-trap for free; focus is
+  restored to whichever opener opened the singleton drawer on close.
+- **The phone chat chrome is tiered, not wrapped.** Under 768px the app shell
+  places `#phone-nav` at the top: a compact segmented control (Chat, Notes,
+  Models, Perf) with the settings gear beside it, replacing the fixed bottom
+  bar so the message viewport gains the difference. Chat's bar beneath it is two
+  tiers: tier one is what must stay one tap away (Chats and the model select
+  stretched to the rest of the line; the gear is in `#phone-nav` above); tier
+  two is the detail group (`.chat__bar-detail`: context size, Load, preset +
+  system-prompt chips) on its own line as a non-wrapping horizontal strip with
+  momentum scrolling (`overflow-x: auto`), so it never wraps into 3+ vertical
+  rows or crushes the message viewport. On that strip the load settings and Load
+  are one group (`.chat__bar-load`) that never grows past the strip's visible
   width: its selects shrink, the context select first, and Load does not, so
-  Load is on screen at any text size. The chips after the group scroll. The composer is two rows: the field spans the
-  width and the tool buttons plus Send sit beneath it. Both replace an
-  unconstrained wrapping flex row, which broke wherever the widths fell — at
-  402pt the chips took line two, the gear stranded alone on a third, and
-  three 44px icon buttons beside the field left it 147px wide. Safe-area top
-  insets ensure dynamic island / notch clearance without wasting vertical
-  space. Desktop is untouched — the wrapper is `display:contents` there and the
-  bar and composer are the flat rows they were.
+  Load is on screen at any text size. The chips after the group scroll. The
+  composer (`.chat__composer`) is a two-row capsule inside one shared rounded
+  border (`border-radius: var(--r-big)`): the textarea spans the top row and the
+  tool buttons plus the icon Send button (`aria-label="Send"`) sit on the row
+  beneath it. Safe-area top insets on `#phone-nav` ensure dynamic island / notch
+  clearance without wasting vertical space.
 - **Side safe areas are padded at the shell.** `#app` pads inline by the left
   and right insets, because a landscape phone is wide enough for the desktop
-  layout and puts the Dynamic Island over the rail. A fixed bar is outside
-  that padding and pads itself (`#bottom-nav`).
+  layout and puts the Dynamic Island over the rail.
 - **The drawer is a real modal dialog.** `role="dialog"` + `aria-modal`,
   `inert` while closed; on open it seals `#app` with `inert` (Tab can't escape),
   moves focus to Close, and on close restores focus to the opener. Escape and a
@@ -412,10 +412,10 @@ owner: "equally well on desktop web and iPhone 17 Pro Safari").
   strip too.
 - **Active nav carries `aria-current="page"`.** Set in the router alongside the
   `--active` class.
-- **Touch targets:** comfortable on phone — bottom-nav items ≥44px, models-page
-  actions bump to 44px, the attach-thumb remove control is ≥24px. `btn--sm`
-  (26px) is acceptable for dense desktop-hover action clusters (≥ the 24px AA
-  floor) but never the sole phone affordance.
+- **Touch targets:** comfortable on phone — phone-nav gear and composer controls
+  ≥44px, models-page actions bump to 44px, the attach-thumb remove control is
+  ≥24px. `btn--sm` (26px) is acceptable for dense desktop-hover action clusters
+  (≥ the 24px AA floor) but never the sole phone affordance.
 - **A typed field is committed as it is typed, never only on `change`.**
   `change` fires on blur, and WebKit does not move focus to a button that is
   tapped or clicked, so on the phone a value typed just before pressing a

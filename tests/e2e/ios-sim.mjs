@@ -224,7 +224,7 @@ const MEASURE = `
     textarea: r('.chat__composer textarea'),
     send: r('.chat__composer .btn--primary'),
     bar: r('.chat__bar'),
-    nav: r('#bottom-nav'),
+    nav: r('#phone-nav'),
     focused: document.activeElement && document.activeElement.tagName,
   };
 `;

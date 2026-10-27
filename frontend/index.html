@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <!-- Before the stylesheet, so the first paint is already in the right
-       scheme. theme-color is --surface (the bottom nav) for browsers that
+       scheme. theme-color is --surface (the phone top nav) for browsers that
        still read it; tests/unit/test_css_token_contrast.py derives both. -->
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f8f6f1">
@@ -43,8 +43,8 @@
       <div class="brand">hey<span class="brand__accent">look</span></div>
       <nav id="nav-desktop" aria-label="Pages"></nav>
     </aside>
+    <nav id="phone-nav" aria-label="Pages"></nav>
     <main id="main"></main>
-    <nav id="bottom-nav" aria-label="Pages"></nav>
   </div>
   <script type="module" src="js/app.js"></script>
 </body>

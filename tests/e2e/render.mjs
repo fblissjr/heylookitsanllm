@@ -2043,10 +2043,10 @@ async function main() {
         `"bare" reads ${JSON.stringify(bare?.text)}`);
       const nav = await mgr.page.evaluate(() => ({
         desktop: Boolean(document.querySelector('#nav-desktop a[href="#/presets"]')),
-        bottom: Boolean(document.querySelector('#bottom-nav a[href="#/presets"]')),
+        phone: Boolean(document.querySelector('#phone-nav a[href="#/presets"]')),
       }));
-      assert(nav.desktop && !nav.bottom,
-        `Presets belongs in the sidebar and not the phone's bottom nav, got ${JSON.stringify(nav)}`);
+      assert(nav.desktop && !nav.phone,
+        `Presets belongs in the sidebar and not the phone's top nav, got ${JSON.stringify(nav)}`);
     });
 
     await suite.check('an editor saved untouched writes back exactly what the preset stores', async () => {
@@ -2636,6 +2636,7 @@ async function main() {
           };
           const tierOne = shown(document.querySelectorAll(
             '.chat__bar > .chat__convs-toggle, .chat__bar > select, .chat__bar > .chat__settings-btn'));
+          const phoneNav = shown(document.querySelectorAll('#phone-nav .nav-item'));
           const load = shown(strip.querySelectorAll('.chat__load select, .chat__load input, .chat__load-btn'));
           const rest = shown(strip.querySelectorAll('button, select, input')).filter((el) => !load.includes(el));
           const composer = shown(document.querySelectorAll('.chat__composer > button, .chat__composer > textarea'));
@@ -2643,11 +2644,12 @@ async function main() {
           const out = {
             coarse: matchMedia('(pointer: coarse)').matches,
             tierOne: tierOne.length,
+            phoneNav: phoneNav.length,
             loadBtn: load.some((el) => el.classList.contains('chat__load-btn')),
             loadSelects: load.filter((el) => el.tagName === 'SELECT').length,
             rest: rest.length,
             pageOverflow: root.scrollWidth - w,
-            offScreen: [...tierOne, ...composer].filter((el) => !onScreen(el)).map(name),
+            offScreen: [...phoneNav, ...tierOne, ...composer].filter((el) => !onScreen(el)).map(name),
             // One line: every first-line control overlaps every other vertically.
             oneLine: Math.max(...lines.map((r) => r.top)) < Math.min(...lines.map((r) => r.bottom)),
             loadCut: load.filter((el) => !inStrip(el)).map(name),
@@ -2657,7 +2659,7 @@ async function main() {
               .filter((el, i, all) => i > 0
                 && el.getBoundingClientRect().left < all[i - 1].getBoundingClientRect().right - 0.5)
               .map(name),
-            clippedNav: shown(document.querySelectorAll('#bottom-nav .nav-item'))
+            clippedNav: phoneNav
               .filter((el) => el.scrollWidth > el.clientWidth).map((el) => el.textContent),
             fieldPx: parseFloat(getComputedStyle(document.querySelector('.chat__bar > select')).fontSize),
             messages: document.querySelector('.chat__messages').clientHeight,
@@ -2673,7 +2675,8 @@ async function main() {
         }, px);
         // Is this the state the check is about? If not, nothing below means anything.
         assert(m.coarse, 'the touch emulation is not live, so this measured the desktop layout');
-        assert(m.tierOne === 3, `expected Chats, the model select and the gear in the bar's first line, found ${m.tierOne}`);
+        assert(m.tierOne === 2, `expected Chats and the model select in the bar's first line on phone, found ${m.tierOne}`);
+        assert(m.phoneNav === 5, `expected 4 page tabs plus the gear in #phone-nav, found ${m.phoneNav}`);
         assert(m.loadBtn, 'Load is not showing, so the selected model is not cold and this is not the reported state');
         assert(m.loadSelects >= 2, `expected the context select and a load setting on the strip, found ${m.loadSelects} select(s)`);
         assert(m.rest >= 1, 'no chip on the strip, so the scroll-into-view half measured nothing');
