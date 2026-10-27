@@ -1080,6 +1080,23 @@ class MLXProvider(BaseProvider):
                         "field is ignored" if self.is_diffusion
                         else "every sampler field reaches the sampler")),
         }
+        assignment = getattr(getattr(self, "model", None), "_pipeline_assignment", None)
+        if assignment is not None and getattr(assignment, "world_size", 1) > 1:
+            decoding["pipeline"] = Fact(
+                value=(
+                    f"rank {assignment.rank}/{assignment.world_size} "
+                    f"(layers {assignment.start_layer}..{assignment.end_layer - 1} "
+                    f"of {assignment.total_layers})"
+                ),
+                provenance="observed",
+                source="asymmetric MLX pipeline sharding across distributed ranks",
+            )
+        elif getattr(self, "_pipeline_fallback_reason", None):
+            decoding["pipeline"] = Fact(
+                value="single-node (fallback)",
+                provenance="observed",
+                source=self._pipeline_fallback_reason,
+            )
 
         cache = {}
         if self._apc is not None:
@@ -1241,12 +1258,23 @@ class MLXProvider(BaseProvider):
                     getattr(self.model.config, "canvas_length", "?"),
                 )
 
-            if not self.is_diffusion and not self.config.get("pipeline_ratios"):
+            if not self.is_diffusion:
                 from mlx_vlm import apc as _apc
                 self._apc = vlm_engine.make_apc_manager()
                 self._apc_mode = _apc.APCCoordinator(
                     self._apc, self.model.language_model).legacy_mode
-                self._draft = self._load_drafter()
+                pipe_grp = getattr(self, "_pipeline_group", None)
+                if pipe_grp is not None and int(pipe_grp.size()) > 1:
+                    from .common.mlx_pipeline import install_rank0_apc_sync
+
+                    install_rank0_apc_sync(self._apc, group=pipe_grp)
+                    if self.config.get("draft_model_path"):
+                        self.drafter_skipped = (
+                            "speculative decoding is off when distributed pipeline is active"
+                        )
+                    self._draft = None
+                else:
+                    self._draft = self._load_drafter()
 
             logging.info(f"Successfully loaded {'VLM' if self.is_vlm else 'LLM'} model")
 
@@ -1334,25 +1362,51 @@ class MLXProvider(BaseProvider):
 
     def _load_vlm_with_fallback(self, model_path):
         """Load VLM model with fallback strategies for common issues."""
+        self._pipeline_group = None
+        self._pipeline_fallback_reason = None
         pipeline_ratios = self.config.get("pipeline_ratios")
         if pipeline_ratios:
             from .common.mlx_pipeline import (
+                PeerUnreachableError,
                 enable_fast_metal_synch,
                 install_rank0_step_coordinator,
                 selective_pipeline_load,
             )
             enable_fast_metal_synch()
             pipeline_peers = self.config.get("pipeline_peers")
-            model, processor = selective_pipeline_load(
-                model_path,
-                ratios=pipeline_ratios,
-                peers=pipeline_peers,
-                rank=0,
-                skip_audio=True,
-            )
-            self._pipeline_group = getattr(model, "_pipeline_group", None)
-            install_rank0_step_coordinator(model, group=self._pipeline_group)
-            return model, processor
+            try:
+                model, processor = selective_pipeline_load(
+                    model_path,
+                    ratios=pipeline_ratios,
+                    peers=pipeline_peers,
+                    rank=0,
+                    skip_audio=True,
+                )
+                self._pipeline_group = getattr(model, "_pipeline_group", None)
+                install_rank0_step_coordinator(model, group=self._pipeline_group)
+                return model, processor
+            except PeerUnreachableError as exc:
+                from heylook_llm import ram_fit
+
+                fits_solo, solo_report = ram_fit.can_fallback_to_single_node(
+                    dict(self.config), hard_working_set=True
+                )
+                ceiling_gb = solo_report.working_set_gb or solo_report.reclaimable_gb
+                if not fits_solo:
+                    raise RuntimeError(
+                        f"[MLX] {self.model_id}: distributed pipeline worker is "
+                        f"unreachable ({exc}), and solo weights + headroom "
+                        f"({solo_report.weights_gb + solo_report.headroom_gb:.1f} GiB) "
+                        f"exceed this host's {ceiling_gb:.1f} GiB ceiling. "
+                        f"Start `scripts/worker_node.py` on the peer Mac to load this model."
+                    ) from exc
+                self._pipeline_fallback_reason = (
+                    f"distributed worker unreachable ({exc}); running single-node "
+                    f"({solo_report.weights_gb:.1f} GiB solo fits {ceiling_gb:.1f} GiB ceiling)"
+                )
+                logging.warning(
+                    f"[MLX] {self.model_id}: {self._pipeline_fallback_reason}"
+                )
 
         # Strategy 1: Try with skip_audio=True (most common fix)
         try:
@@ -1919,11 +1973,11 @@ class MLXProvider(BaseProvider):
 
         if drain and getattr(self, "_pipeline_group", None) is not None:
             try:
-                from .common.mlx_pipeline import send_pipeline_shutdown
+                from .common.mlx_pipeline import send_pipeline_unload
 
-                send_pipeline_shutdown(group=self._pipeline_group)
+                send_pipeline_unload(group=self._pipeline_group)
             except Exception as exc:
-                logging.debug(f"Pipeline shutdown notification skipped: {exc}")
+                logging.debug(f"Pipeline unload notification skipped: {exc}")
             self._pipeline_group = None
 
         # Clean up models

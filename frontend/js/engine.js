@@ -160,6 +160,24 @@ function specState(engine) {
   return { word, provenance: spec.in_force?.provenance, reason };
 }
 
+function distributedState(engine) {
+  const pipe = engine?.decoding?.pipeline;
+  if (readFact(pipe)) {
+    return { label: 'pipeline', word: readFact(pipe), provenance: pipe.provenance, reason: pipe.source };
+  }
+  const rpc = engine?.settings?.rpc;
+  if (rpc?.value) {
+    const split = engine?.settings?.tensor_split?.value;
+    return {
+      label: 'rpc',
+      word: split ? `split ${split}` : 'on',
+      provenance: rpc.provenance,
+      reason: rpc.reason,
+    };
+  }
+  return null;
+}
+
 // A one-line summary for a collapsed panel or a chip.
 export function engineSummary(engine) {
   if (!engine) return '';
@@ -172,6 +190,8 @@ export function engineSummary(engine) {
   if (origin) parts.push(`template ${origin}`);
   const spec = specState(engine);
   if (spec) parts.push(`spec decode ${spec.word}`);
+  const dist = distributedState(engine);
+  if (dist) parts.push(`${dist.label} ${dist.word}`);
   return parts.filter(Boolean).join(' · ');
 }
 
@@ -260,6 +280,8 @@ export function renderEngineCompact(engine) {
   if (reuse) rows.push(factRow('cache reuse', reuse.value, reuse.provenance, reuse.source));
   const spec = specState(engine);
   if (spec) rows.push(factRow('spec decode', spec.word, spec.provenance, spec.reason));
+  const dist = distributedState(engine);
+  if (dist) rows.push(factRow(dist.label, dist.word, dist.provenance, dist.reason));
   return createEl('div', { class: 'engine-panel__body engine-panel__body--compact' }, [
     ...rows,
     createEl('a', { href: '#/models', class: 'small' }, ['Every setting and why: Models page']),

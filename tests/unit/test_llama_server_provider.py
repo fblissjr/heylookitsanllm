@@ -129,7 +129,22 @@ class TestBuildArgs:
         with pytest.raises(ValueError, match="invalid rpc endpoint"):
             bad._preflight_rpc_servers()
 
-        # Unreachable endpoint raises RuntimeError naming rpc_worker.sh
+        # Unreachable endpoint when model fits solo falls back to single-node
+        down_solo = make_provider(
+            model_path=str(_weights(tmp_path)),
+            rpc="worker.local:50053",
+            tensor_split="20,80",
+        )
+        down_solo._preflight_rpc_servers()
+        assert "rpc" not in down_solo.config
+        assert "tensor_split" not in down_solo.config
+
+        # Unreachable endpoint when model exceeds solo RAM raises RuntimeError naming rpc_worker.sh
+        monkeypatch.setattr(
+            llama_mod.ram_fit,
+            "can_fallback_to_single_node",
+            lambda _cfg, **kw: (False, llama_mod.ram_fit.evaluate_fit(500.0, 8.0, hard_working_set=False)),
+        )
         down = make_provider(model_path=str(_weights(tmp_path)), rpc="worker.local:50053")
         with pytest.raises(RuntimeError, match="rpc_worker.sh"):
             down._preflight_rpc_servers()

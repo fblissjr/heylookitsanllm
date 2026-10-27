@@ -89,18 +89,42 @@ Instead, [`src/heylook_llm/providers/common/mlx_pipeline.py`](../../src/heylook_
   - Off-rank cache slots use [`_OffsetStubCache`](../../src/heylook_llm/providers/common/mlx_pipeline.py), which implements `mlx-vlm`'s batching (`to_batch`, `extract`, `filter`, `extend`, `merge`) and Automatic Prefix Cache (`prefix_cache_snapshot`, `prefix_cache_restore`, `nbytes = 0`) contracts with zero GPU memory allocation.
 - **DAG-Safe Point-to-Point Hand-Offs (`mx.depends`)**:
   - Neither `mx.distributed.send` nor `mx.distributed.recv_like` adds an edge to its reference input in MLX's C++ computation graph (`mlx/distributed/ops.cpp`). [`attach_send_dependency`](../../src/heylook_llm/providers/common/mlx_pipeline.py) and [`_FinalStageRecvWrapper`](../../src/heylook_llm/providers/common/mlx_pipeline.py) bind the communication tokens into the returned hidden state via `mx.depends` so lazy evaluation schedules sends and receives in strict pipeline order without deadlocking.
-- **Lockstep Rank 0 $\to$ Rank 1 Coordinator**:
+- **Lockstep Rank 0 $\to$ Rank 1 Coordinator & Multi-Turn APC Sync**:
   - [`install_rank0_step_coordinator`](../../src/heylook_llm/providers/common/mlx_pipeline.py) broadcasts a compact `int32` control header (carrying batch size, sequence length, cache offset, and optional M-RoPE `position_ids` / `rope_deltas`) from Rank 0 before each `language_model` forward pass so [`run_pipeline_worker_loop`](../../src/heylook_llm/providers/common/mlx_pipeline.py) on Rank 1 executes its layer slice (`layers[K..L-1]`) in lockstep without running tokenization, the vision tower, or sampling.
+  - [`install_rank0_apc_sync`](../../src/heylook_llm/providers/common/mlx_pipeline.py) and [`_WorkerSnapshotStore`](../../src/heylook_llm/providers/common/mlx_pipeline.py) synchronize Rank 0's Automatic Prefix Cache (`APCManager.store_exact_cache` and `get_exact_cache`) with Rank 1 via `CMD_SAVE_SNAPSHOT` and `CMD_RESTORE_SNAPSHOT` headers, keeping both KV and hybrid-recurrent (`ArraysCache` / Gated DeltaNet) states aligned across multi-turn conversations and branched histories.
+- **Persistent Worker Daemon, Bidirectional Heal, & `[scan].folders` Catalog Sync**:
+  - [`resolve_default_models_root`](../../src/heylook_llm/providers/common/mlx_pipeline.py) reads `[scan].folders` from each machine's `heylook.toml` so synced files always land in the exact relative folder hierarchy (`<scan_folder>/<vendor>/<model_dir>/...`) configured on that machine.
+  - Before entering C++ `mx.distributed.init`, Rank 0 connects to the worker's TCP control socket (`DEFAULT_CONTROL_PORT = 32423` in [`prepare_worker_via_control_port`](../../src/heylook_llm/providers/common/mlx_pipeline.py)). Both machines bidirectionally heal each other's `<scan_folder>/<model_rel_path>` directory: if Rank 0 is missing a `tokenizer_config.json`, `vision_tower`, or `.safetensors` shard that the worker has (`offer_files`), the worker streams it to Rank 0 first; if the worker is missing `config.json`, `tokenizer*`, or Rank 1's assigned `.safetensors` shards (`need_files`), Rank 0 streams them to the worker.
+  - [`sync_scan_folders_with_peer`](../../src/heylook_llm/providers/common/mlx_pipeline.py) (invoked via `uv run python scripts/worker_node.py --sync-peer <peer-ip>`) bidirectionally synchronizes missing MLX and GGUF models, `mmproj` projectors, drafters, tokenizers, and `model.heylook.toml` files across both machines' `[scan].folders[0]` trees.
+  - [`resolve_host_ordered_peers`](../../src/heylook_llm/providers/common/mlx_pipeline.py) automatically places whichever Mac started `heylookllm` at Rank 0 (`index 0` of `pipeline_peers`).
+  - If the worker Mac is unplugged or unreachable, [`can_fallback_to_single_node`](../../src/heylook_llm/ram_fit.py) checks whether the full 100% model fits in the current host's Metal working-set / RAM ceiling: if it fits, `MLXProvider` and `LlamaServerProvider` automatically fall back to single-node execution with a warning; if the model exceeds the current host's solo capacity, model load fails fast with a clear `RuntimeError`.
 
-### Step-by-Step Guide (MLX Pipeline)
+### Step-by-Step Guide (Daily Single-User Workflow)
 
-1. **Run a 2-rank local parity check first (on a single Mac)**:
+1. **On the secondary Mac**, start the unified worker node supervisor (launches both `ggml-rpc-server -c` on `:50052` and `scripts/mlx_pipeline_worker.py --daemon` on `:32423`, auto-detecting the `bridge0` Thunderbolt IP and `[scan].folders[0]` from `heylook.toml`):
+   ```bash
+   uv run python scripts/worker_node.py
+   ```
+   *(To bidirectionally sync all missing MLX and GGUF models, tokenizers, vision towers, and `model.heylook.toml` files with the other Mac's `[scan].folders[0]`, add `--sync-peer <other-mac-ip>`, or `--sync-peer <other-mac-ip> --sync-metadata-only` to sync folder structure/configs/tokenizers immediately and stream weight shards on demand.)*
+2. **Configure `pipeline_ratios` and `pipeline_peers` in the model's `model.heylook.toml`** (inside the model's folder; plain top-level keys, no `[table]`):
+   ```toml
+   pipeline_ratios = [0.8, 0.2]
+   pipeline_peers = ["<primary-ip>", "<worker-ip>"]
+   ```
+3. **Start `heylookllm` on whichever Mac you are using as the host**:
+   - When you select the model in the Web UI or API, `heylookllm` contacts `<worker-ip>:32423`, streams any missing Rank-1 `.safetensors` shards to the worker's `--models-root` cache (`~/.cache/heylook/models`), and runs distributed inference across both Macs.
+   - When you switch models or unload, `heylookllm` sends `CMD_UNLOAD_MODEL` so the worker frees its GPU weights and returns to idle while keeping the daemon and ring ready for the next model.
+   - If the secondary Mac is asleep or unplugged, `heylookllm` automatically falls back to single-node mode whenever the full model fits in the host Mac's RAM/Metal budget.
+
+### One-Shot / Diagnostic CLI Modes
+
+1. **Run a 2-rank local parity check on a single Mac**:
    ```bash
    uv run python scripts/distributed_probe.py mlx-local \
      --model Qwen3.5-0.8B-MLX-8bit \
      --ratios 0.8,0.2
    ```
-2. **Run across two Macs over Thunderbolt Bridge (SSH-free `--peers` mode)**:
+2. **One-shot manual worker mode (`--model-path`)**:
    - On the secondary Mac (`<worker-ip>`, Rank 1):
      ```bash
      uv run python scripts/mlx_pipeline_worker.py \
@@ -129,12 +153,6 @@ Instead, [`src/heylook_llm/providers/common/mlx_pipeline.py`](../../src/heylook_
      --model <mlx-model-id-or-path> \
      --ratios 0.8,0.2
    ```
-4. **Configure `pipeline_ratios` and `pipeline_peers` in the model's `model.heylook.toml`** (inside the model's folder; plain top-level keys, no `[table]`):
-   ```toml
-   pipeline_ratios = [0.8, 0.2]
-   pipeline_peers = ["<primary-ip>", "<worker-ip>"]
-   ```
-   With `pipeline_peers` set, `heylookllm` on the primary Mac initializes its TCP ring directly on model load (no `mlx.launch` or SSH required) and connects to the running `scripts/mlx_pipeline_worker.py --rank 1 --peers <primary-ip>,<worker-ip>` process on the worker Mac. When `heylookllm` unloads the model, it automatically sends `CMD_SHUTDOWN` to the worker rank.
 
 ---
 

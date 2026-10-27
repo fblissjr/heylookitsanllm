@@ -269,3 +269,76 @@ class TestSizing:
             kwargs = {} if explicit is None else {"hard_working_set": explicit}
             report = fit_for_config({"model_path": str(paths[layout])}, **kwargs)
             assert report.hard_working_set is expected, (layout, explicit)
+
+    def test_can_fallback_to_single_node_and_recommend_split_ratios(self, tmp_path, monkeypatch):
+        from heylook_llm.ram_fit import can_fallback_to_single_node, recommend_split_ratios
+
+        mlx_dir = tmp_path / "mlx_model"
+        mlx_dir.mkdir()
+        # 100 GiB model (represented by mocked size_config_gb via file size or monkeypatch)
+        (mlx_dir / "model.safetensors").write_bytes(b"\0" * 1000)
+        cfg = {
+            "model_path": str(mlx_dir),
+            "pipeline_ratios": [0.8, 0.2],
+            "pipeline_peers": ["peer0.local", "peer1.local"],
+        }
+
+        # When local host working set is tiny, full model exceeds working set -> cannot fallback
+        _patch_ceilings(monkeypatch, usable=500.0, working_set=80.0)
+        orig_size = ram_fit.size_config_gb
+        monkeypatch.setattr(
+            ram_fit,
+            "size_config_gb",
+            lambda c: (80.0, ["pipeline_ratios=[0.8, 0.2]"])
+            if c.get("pipeline_ratios")
+            else (100.0, []),
+        )
+        can_solo, solo_report = can_fallback_to_single_node(cfg, hard_working_set=True)
+        assert can_solo is False
+        assert solo_report.verdict == "fail"
+
+        # When local host has 180 GiB working set, 100 GiB full model fits solo -> can fallback!
+        _patch_ceilings(monkeypatch, usable=500.0, working_set=180.0)
+        can_solo_ok, solo_report_ok = can_fallback_to_single_node(cfg, hard_working_set=True)
+        assert can_solo_ok is True
+        assert solo_report_ok.fits is True
+        monkeypatch.setattr(ram_fit, "size_config_gb", orig_size)
+
+        # recommend_split_ratios computes local/worker split from ceilings
+        r_local, r_worker = recommend_split_ratios(180.0, local_working_set_gb=180.0, worker_working_set_gb=48.0)
+        assert 0.7 <= r_local <= 0.9
+        assert pytest.approx(r_local + r_worker, abs=0.02) == 1.0
+
+    def test_provider_single_node_fallback_vs_fail_fast_when_peer_offline(self, tmp_path, monkeypatch):
+        import socket
+        from heylook_llm.providers.llama_server_provider import LlamaServerProvider
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s_unused:
+            s_unused.bind(("127.0.0.1", 0))
+            unused_port = s_unused.getsockname()[1]
+
+        gguf_file = self._gguf(tmp_path / "model.gguf", 1024)
+        base_cfg = {
+            "model_path": str(gguf_file),
+            "rpc": f"127.0.0.1:{unused_port}",
+            "tensor_split": "20,80",
+        }
+
+        # Case 1: Model fits solo on current host -> auto-fallback to single-node (strips rpc + tensor_split)
+        _patch_ceilings(monkeypatch, usable=180.0, working_set=180.0)
+        prov_ok = LlamaServerProvider("test-gguf", dict(base_cfg), verbose=False)
+        prov_ok._preflight_rpc_servers()
+        assert "rpc" not in prov_ok.config
+        assert "tensor_split" not in prov_ok.config
+
+        # Case 2: Model exceeds current host solo RAM -> fail fast with RuntimeError naming peer + size
+        _patch_ceilings(monkeypatch, usable=10.0, working_set=10.0)
+        monkeypatch.setattr(
+            ram_fit,
+            "can_fallback_to_single_node",
+            lambda _cfg, **kw: (False, evaluate_fit(190.0, 8.0, hard_working_set=False)),
+        )
+        prov_big = LlamaServerProvider("big-gguf", dict(base_cfg), verbose=False)
+        with pytest.raises(RuntimeError, match="exceed this host's"):
+            prov_big._preflight_rpc_servers()
+

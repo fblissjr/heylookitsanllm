@@ -181,6 +181,18 @@ def describe_static(model_id: str, cfg: dict, config_obj: Any, *,
             "mode": Fact(provenance="unknown",
                          source="decided at load: mlx-vlm's own diffusion check on the loaded model"),
             "request_fields": Fact(provenance="unknown", source="decided at load, with the mode"),
+            **(
+                {
+                    "pipeline": Fact(
+                        value="/".join(str(r) for r in cfg["pipeline_ratios"]),
+                        provenance="configured",
+                        source=f"pipeline_ratios={list(cfg['pipeline_ratios'])} configured; rank assignment decided at load",
+                    )
+                }
+                if isinstance(cfg.get("pipeline_ratios"), (list, tuple))
+                and len(cfg["pipeline_ratios"]) > 1
+                else {}
+            ),
         },
     )
 

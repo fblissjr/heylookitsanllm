@@ -479,6 +479,7 @@ def test_configure_manual_ring_and_init_pipeline_group(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from heylook_llm.config import MLXModelConfig
+    from heylook_llm.providers import mlx_describe
 
     cfg = MLXModelConfig(
         model_path="/tmp/fake-mlx",
@@ -486,6 +487,17 @@ def test_configure_manual_ring_and_init_pipeline_group(
         pipeline_peers=["peer0.local", "peer1.local"],
     )
     assert cfg.pipeline_peers == ["peer0.local", "peer1.local"]
+    desc = mlx_describe.describe_static(
+        "fake-mlx",
+        cfg.model_dump(),
+        cfg,
+        written=True,
+        derived={},
+    )
+    assert desc.decoding is not None
+    assert "pipeline" in desc.decoding
+    assert desc.decoding["pipeline"].value == "0.8/0.2"
+    assert desc.decoding["pipeline"].provenance == "configured"
 
     hostfile = mp.configure_manual_ring(["peer0.local", "peer1.local:40000"], rank=1)
     try:
@@ -506,11 +518,307 @@ def test_configure_manual_ring_and_init_pipeline_group(
             raise RuntimeError("couldn't connect")
         return _FakeGroup(0, 2)
 
+    monkeypatch.setattr(mp, "_CACHED_RING_GROUP", None)
     monkeypatch.setattr(mp.mx.distributed, "init", _fake_init)
     monkeypatch.setattr(mp.time, "sleep", lambda _s: None)
     grp = mp.init_pipeline_group(peers=["peer0.local", "peer1.local"], rank=0, max_wait_s=5.0)
     assert grp.size() == 2
     assert attempts["count"] == 2
+    # Subsequent call reuses the singleton ring group without calling mx.distributed.init again
+    grp2 = mp.init_pipeline_group(peers=["peer0.local", "peer1.local"], rank=0, max_wait_s=5.0)
+    assert grp2 is grp
+    assert attempts["count"] == 2
+    monkeypatch.setattr(mp, "_CACHED_RING_GROUP", None)
+
+
+def test_resolve_host_ordered_peers_places_local_host_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mp, "get_local_ip_addresses", lambda: {"198.51.100.2", "127.0.0.1"})
+    ordered = mp.resolve_host_ordered_peers(["198.51.100.1", "198.51.100.2:40000"])
+    assert ordered == ["198.51.100.2:40000", "198.51.100.1"]
+
+    # Already first stays first
+    assert mp.resolve_host_ordered_peers(["198.51.100.2", "198.51.100.1"]) == [
+        "198.51.100.2",
+        "198.51.100.1",
+    ]
+
+
+def test_control_port_streams_only_missing_rank1_shards_and_fails_fast_when_offline(
+    tmp_path: Path,
+) -> None:
+    import socket
+    import threading
+
+    host_model = tmp_path / "host" / "org" / "TestModel"
+    host_model.mkdir(parents=True)
+    (host_model / "config.json").write_text(json.dumps({"num_hidden_layers": 4}))
+    (host_model / "tokenizer_config.json").write_text("{}")
+
+    s1 = host_model / "model-00001-of-00002.safetensors"
+    s2 = host_model / "model-00002-of-00002.safetensors"
+    s1.write_bytes(b"SHARD_ONE_DATA" * 10)
+    s2.write_bytes(b"SHARD_TWO_DATA" * 12)
+    index = {
+        "weight_map": {
+            "language_model.model.layers.0.self_attn.q_proj.weight": s1.name,
+            "language_model.model.layers.1.self_attn.q_proj.weight": s1.name,
+            "language_model.model.layers.2.self_attn.q_proj.weight": s2.name,
+            "language_model.model.layers.3.self_attn.q_proj.weight": s2.name,
+        }
+    }
+    (host_model / "model.safetensors.index.json").write_text(json.dumps(index))
+
+    r1_assign = PipelineAssignment(rank=1, world_size=2, start_layer=2, end_layer=4, total_layers=4)
+    req_files = mp.list_required_files_for_rank(host_model, r1_assign)
+    req_names = [p.name for p in req_files]
+    assert "config.json" in req_names
+    assert "model-00002-of-00002.safetensors" in req_names
+    assert "model-00001-of-00002.safetensors" not in req_names
+
+    # 1. Unreachable control port raises PeerUnreachableError immediately
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s_unused:
+        s_unused.bind(("127.0.0.1", 0))
+        unused_port = s_unused.getsockname()[1]
+
+    with pytest.raises(mp.PeerUnreachableError, match="unreachable"):
+        mp.prepare_worker_via_control_port(
+            host_model,
+            peers=["127.0.0.1", "127.0.0.1"],
+            ratios=(0.5, 0.5),
+            control_port=unused_port,
+            timeout_s=0.3,
+        )
+
+    # 2. Live control port streams only missing Rank-1 files into worker_root
+    worker_root = tmp_path / "worker_models"
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+    received_meta: dict[str, Any] = {}
+
+    def _worker_thread() -> None:
+        conn, _ = srv.accept()
+        with conn:
+            req = mp._recv_json_msg(conn)
+            received_meta.update(req)
+            target_dir = worker_root / req["model_rel_path"]
+            mp.receive_missing_files_on_worker(conn, target_dir, req.get("files", []))
+            mp._send_json_msg(conn, {"status": "ready", "model_path": str(target_dir)})
+        srv.close()
+
+    t = threading.Thread(target=_worker_thread, daemon=True)
+    t.start()
+    mp.prepare_worker_via_control_port(
+        host_model,
+        peers=["127.0.0.1", "127.0.0.1"],
+        ratios=(0.5, 0.5),
+        control_port=port,
+        timeout_s=2.0,
+    )
+    t.join(timeout=2.0)
+
+    worker_model_dir = worker_root / received_meta["model_rel_path"]
+    assert (worker_model_dir / "config.json").exists()
+    assert (worker_model_dir / "model-00002-of-00002.safetensors").read_bytes() == s2.read_bytes()
+    assert not (worker_model_dir / "model-00001-of-00002.safetensors").exists()
+
+
+def test_bidirectional_heal_and_scan_folder_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import socket
+    import threading
+
+    # 1. Verify heylook.toml [scan].folders resolution
+    scan_dir_a = tmp_path / "mac_a_models"
+    scan_dir_b = tmp_path / "mac_b_models"
+    scan_dir_a.mkdir()
+    scan_dir_b.mkdir()
+    toml_a = tmp_path / "heylook_a.toml"
+    toml_a.write_text(f'[scan]\nfolders = ["{scan_dir_a.as_posix()}"]\n', encoding="utf-8")
+
+    assert mp.resolve_default_models_root(config_path=toml_a) == scan_dir_a.resolve()
+    monkeypatch.setenv("HEYLOOK_CONFIG", str(toml_a))
+    nested_model = scan_dir_a / "Qwen" / "TestVL"
+    nested_model.mkdir(parents=True)
+    assert mp.infer_model_rel_path(nested_model) == "Qwen/TestVL"
+
+    # 2. Bidirectional heal during prepare_worker_via_control_port:
+    # Host (Mac A) is missing tokenizer_config.json and shard 1 (which Worker Mac B has),
+    # while Worker (Mac B) is missing shard 2 (which Host Mac A has).
+    worker_model = scan_dir_b / "Qwen" / "TestVL"
+    worker_model.mkdir(parents=True)
+
+    cfg_bytes = json.dumps({"num_hidden_layers": 4}).encode("utf-8")
+    idx_bytes = json.dumps(
+        {
+            "weight_map": {
+                "vision_tower.patch_embed.weight": "model-00001-of-00002.safetensors",
+                "language_model.model.layers.0.self_attn.q_proj.weight": "model-00001-of-00002.safetensors",
+                "language_model.model.layers.1.self_attn.q_proj.weight": "model-00001-of-00002.safetensors",
+                "language_model.model.layers.2.self_attn.q_proj.weight": "model-00002-of-00002.safetensors",
+                "language_model.model.layers.3.self_attn.q_proj.weight": "model-00002-of-00002.safetensors",
+            }
+        }
+    ).encode("utf-8")
+    (nested_model / "config.json").write_bytes(cfg_bytes)
+    (nested_model / "model.safetensors.index.json").write_bytes(idx_bytes)
+    (nested_model / "model-00002-of-00002.safetensors").write_bytes(b"SHARD2_FROM_HOST")
+
+    (worker_model / "config.json").write_bytes(cfg_bytes)
+    (worker_model / "tokenizer_config.json").write_bytes(b'{"tokenizer": "from_worker"}')
+    (worker_model / "model-00001-of-00002.safetensors").write_bytes(b"SHARD1_VISION_FROM_WORKER")
+
+    # Also place a GGUF model only on Worker (Mac B) and an MLX config only on Host (Mac A)
+    gguf_b = scan_dir_b / "google" / "gemma-gguf"
+    gguf_b.mkdir(parents=True)
+    (gguf_b / "gemma.gguf").write_bytes(b"GGUF_WEIGHTS_ON_B")
+    (nested_model / "model.heylook.toml").write_bytes(b"pipeline_ratios = [0.5, 0.5]\n")
+
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(8)
+    port = srv.getsockname()[1]
+    stop_flag = {"stop": False}
+
+    def _daemon_loop() -> None:
+        while not stop_flag["stop"]:
+            try:
+                conn, _ = srv.accept()
+            except OSError:
+                break
+            with conn:
+                req = mp._recv_json_msg(conn)
+                if mp.handle_sync_control_request(conn, req, scan_dir_b):
+                    continue
+                if req.get("op") == "prepare_model":
+                    target = scan_dir_b / req["model_rel_path"]
+                    mp.receive_missing_files_on_worker(
+                        conn,
+                        target,
+                        req.get("files", []),
+                        host_present=req.get("host_present"),
+                    )
+                    mp._send_json_msg(conn, {"status": "ready", "target_dir": str(target)})
+
+    t = threading.Thread(target=_daemon_loop, daemon=True)
+    t.start()
+    try:
+        mp.prepare_worker_via_control_port(
+            nested_model,
+            peers=["127.0.0.1", "127.0.0.1"],
+            ratios=(0.5, 0.5),
+            control_port=port,
+            timeout_s=2.0,
+        )
+        # Host (Mac A) automatically pulled missing tokenizer_config.json + shard 1 from Worker (Mac B)!
+        assert (nested_model / "tokenizer_config.json").read_bytes() == b'{"tokenizer": "from_worker"}'
+        assert (nested_model / "model-00001-of-00002.safetensors").read_bytes() == b"SHARD1_VISION_FROM_WORKER"
+        # And Worker (Mac B) received missing shard 2 from Host (Mac A)!
+        assert (worker_model / "model-00002-of-00002.safetensors").read_bytes() == b"SHARD2_FROM_HOST"
+
+        # 3. Full bidirectional [scan].folders sync (both MLX and GGUF models)
+        summary = mp.sync_scan_folders_with_peer(
+            "127.0.0.1",
+            local_root=scan_dir_a,
+            control_port=port,
+            include_weights=True,
+        )
+        assert "google/gemma-gguf/gemma.gguf" in summary["pulled"]
+        assert "Qwen/TestVL/model.heylook.toml" in summary["pushed"]
+        assert (scan_dir_a / "google" / "gemma-gguf" / "gemma.gguf").read_bytes() == b"GGUF_WEIGHTS_ON_B"
+        assert (worker_model / "model.heylook.toml").read_bytes() == b"pipeline_ratios = [0.5, 0.5]\n"
+    finally:
+        stop_flag["stop"] = True
+        srv.close()
+        t.join(timeout=2.0)
+
+
+def test_worker_loop_handles_apc_snapshot_restore_and_unload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    headers: list[Any] = []
+    monkeypatch.setattr(
+        mp.mx.distributed,
+        "send",
+        lambda x, dst, group=None: headers.append(x) or x,
+    )
+    monkeypatch.setattr(
+        mp.mx.distributed,
+        "recv_like",
+        lambda x, src, group=None: headers.pop(0),
+    )
+
+    seen_r0: list[int] = []
+    seen_r1: list[int] = []
+
+    class _DummyLM:
+        def __init__(self, sink: list[int]) -> None:
+            self.layers = [_FakeLayer(0, 1)]
+            self._sink = sink
+
+        def make_cache(self):
+            return [_FakeKVCache()]
+
+        def __call__(self, inputs, cache=None, **kwargs):
+            s = int(inputs.shape[1])
+            if cache is not None:
+                self._sink.append(int(cache[0].offset))
+                for c in cache:
+                    c.advance(s)
+            return inputs
+
+    class _FakeAPC:
+        def __init__(self) -> None:
+            self._exact: dict[tuple[tuple[int, ...], int], Any] = {}
+
+        def store_exact_cache(self, token_ids: list[int], prompt_cache: Any, *, extra_hash: int = 0) -> bool:
+            self._exact[(tuple(token_ids), int(extra_hash))] = [c.offset for c in prompt_cache]
+            return True
+
+        def get_exact_cache(self, token_ids: list[int], extra_hash: int = 0):
+            for n in range(len(token_ids), 0, -1):
+                key = (tuple(token_ids[:n]), int(extra_hash))
+                if key in self._exact:
+                    saved = self._exact[key]
+                    restored = [_FakeKVCache() for _ in saved]
+                    for c, off in zip(restored, saved):
+                        c.offset = off
+                    return restored, n
+            return None, 0
+
+    r0_lm = _DummyLM(seen_r0)
+    r1_lm = _DummyLM(seen_r1)
+    g0 = _FakeGroup(0, 2)
+    g1 = _FakeGroup(1, 2)
+    mp.install_rank0_step_coordinator(r0_lm, group=g0)
+    apc = _FakeAPC()
+    mp.install_rank0_apc_sync(apc, group=g0)
+
+    # Turn 1: prefill 5 tokens -> store APC snapshot at 5 tokens
+    c0 = r0_lm.make_cache()
+    r0_lm(mp.mx.zeros((1, 5), dtype=mp.mx.int32), cache=c0)
+    apc.store_exact_cache([10, 20, 30, 40, 50], c0)
+    # Decode 1 token (offset advances to 6)
+    r0_lm(mp.mx.zeros((1, 1), dtype=mp.mx.int32), cache=c0)
+
+    # Turn 2: restore APC snapshot at 5 tokens -> prefill 3 suffix tokens (starting from offset 5!)
+    c0_turn2, prefix_len = apc.get_exact_cache([10, 20, 30, 40, 50, 60, 70, 80])
+    assert prefix_len == 5
+    r0_lm(mp.mx.zeros((1, 3), dtype=mp.mx.int32), cache=c0_turn2)
+
+    # Unload model on Rank 0 -> Rank 1 loop exits cleanly while keeping ring alive
+    mp.send_pipeline_unload(group=g0)
+
+    steps = mp.run_pipeline_worker_loop(r1_lm, group=g1)
+    assert steps == 3
+    # Offsets seen before each of the 3 forward passes on both Rank 0 and Rank 1: 0, 5, and 5 (restored from snapshot!)
+    assert seen_r0 == [0, 5, 5]
+    assert seen_r1 == [0, 5, 5]
+
 
 
 

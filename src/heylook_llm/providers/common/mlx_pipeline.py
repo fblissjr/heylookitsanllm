@@ -34,12 +34,19 @@ Macs (e.g. 80/20 across a 192 GB M2 Ultra and a 48 GB M4 Pro):
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 import logging
 import os
 import re
+import socket
+import struct
+import subprocess
 import tempfile
 import time
+import uuid
+from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,7 +63,23 @@ _LAYER_KEY_RE = re.compile(r"(?:^|\.)layers\.(\d+)\.")
 # Control opcodes broadcast from Rank 0 to worker ranks in lockstep mode
 CMD_FORWARD = 1
 CMD_RESET_CACHE = 2
+CMD_UNLOAD_MODEL = 4
+CMD_SAVE_SNAPSHOT = 6
+CMD_RESTORE_SNAPSHOT = 7
 CMD_SHUTDOWN = 99
+
+DEFAULT_RING_BASE_PORT = 32323
+DEFAULT_CONTROL_PORT = 32423
+DEFAULT_SNAPSHOT_MAX_ENTRIES = 8
+
+_HOST_SESSION_ID = f"{os.getpid()}-{uuid.uuid4().hex[:12]}"
+_CACHED_RING_GROUP: Any = None
+
+
+class PeerUnreachableError(RuntimeError):
+    """Raised when a configured MLX pipeline peer cannot be reached before
+    entering C++ `mx.distributed.init`."""
+
 
 # Dtype table for transmitting hidden states / position_ids metadata
 _DTYPE_TO_CODE: dict[Any, int] = {
@@ -105,17 +128,27 @@ def enable_fast_metal_synch(residency_refresh_ms: Optional[int] = None) -> dict[
     return applied
 
 
-def configure_manual_ring(
-    peers: Sequence[str] | str,
-    rank: int = 0,
-    base_port: int = 32323,
-) -> str:
-    """Populate `MLX_HOSTFILE` and `MLX_RANK` for SSH-free multi-Mac ring launch.
+def get_local_ip_addresses() -> set[str]:
+    """Return IPv4 addresses bound to interfaces on the current host."""
+    ips: set[str] = {"127.0.0.1", "localhost"}
+    try:
+        out = subprocess.check_output(["ifconfig"], text=True, timeout=2.0)
+        for m in re.finditer(r"\binet\s+(\d+\.\d+\.\d+\.\d+)\b", out):
+            ips.add(m.group(1))
+    except Exception:
+        pass
+    try:
+        hostname = socket.gethostname()
+        for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
+            if info[4] and info[4][0]:
+                ips.add(str(info[4][0]))
+    except Exception:
+        pass
+    return ips
 
-    `peers` may be a comma-separated string (`"<ip0>,<ip1>"`) or a sequence of
-    host strings (`["<ip0>", "<ip1>"]` or `["<ip0>:32323", "<ip1>:32324"]`).
-    Returns the path to the generated JSON hostfile.
-    """
+
+def parse_peer_list(peers: Sequence[str] | str) -> list[str]:
+    """Normalize a comma-separated string or sequence of peers into a list."""
     if isinstance(peers, str):
         items = [p.strip() for p in peers.split(",") if p.strip()]
     else:
@@ -124,6 +157,44 @@ def configure_manual_ring(
         raise ValueError(
             f"pipeline_peers requires at least 2 hosts, got {peers!r}"
         )
+    return items
+
+
+def resolve_host_ordered_peers(
+    peers: Sequence[str] | str,
+    *,
+    local_ips: Optional[set[str]] = None,
+) -> list[str]:
+    """Order `peers` so that whichever machine starts the server (Rank 0) is
+    first (`index 0`) and remote worker peer(s) follow.
+
+    If none or all of `peers` match `local_ips`, preserves the caller's order.
+    """
+    items = parse_peer_list(peers)
+    known_local = local_ips if local_ips is not None else get_local_ip_addresses()
+
+    def _host_only(ep: str) -> str:
+        return ep.rpartition(":")[0] if ":" in ep else ep
+
+    local_matches = [ep for ep in items if _host_only(ep) in known_local]
+    remote_matches = [ep for ep in items if _host_only(ep) not in known_local]
+    if len(local_matches) == 1 and remote_matches:
+        return [*local_matches, *remote_matches]
+    return items
+
+
+def configure_manual_ring(
+    peers: Sequence[str] | str,
+    rank: int = 0,
+    base_port: int = DEFAULT_RING_BASE_PORT,
+) -> str:
+    """Populate `MLX_HOSTFILE` and `MLX_RANK` for SSH-free multi-Mac ring launch.
+
+    `peers` may be a comma-separated string (`"<ip0>,<ip1>"`) or a sequence of
+    host strings (`["<ip0>", "<ip1>"]` or `["<ip0>:32323", "<ip1>:32324"]`).
+    Returns the path to the generated JSON hostfile.
+    """
+    items = parse_peer_list(peers)
     if not (0 <= rank < len(items)):
         raise ValueError(
             f"rank {rank} out of range for {len(items)} peers"
@@ -152,11 +223,14 @@ def init_pipeline_group(
 ) -> Any:
     """Initialize and return the `mlx.distributed` group for pipeline execution.
 
-    When `peers` (or `HEYLOOK_MLX_PEERS`) is provided, configures `MLX_HOSTFILE`
-    and `MLX_RANK` for SSH-free multi-Mac TCP ring connection and retries
-    `mx.distributed.init(strict=True, backend="ring")` until the peer connects
-    (or `max_wait_s` expires).
+    Caches the initialized ring group per process (`_CACHED_RING_GROUP`) so
+    multiple model loads/unloads in the same server and worker session reuse
+    the live ring connection.
     """
+    global _CACHED_RING_GROUP
+    if _CACHED_RING_GROUP is not None and int(_CACHED_RING_GROUP.size()) > 1:
+        return _CACHED_RING_GROUP
+
     effective_peers = peers if peers is not None else os.environ.get("HEYLOOK_MLX_PEERS")
     if effective_peers:
         env_rank = os.environ.get("HEYLOOK_MLX_RANK")
@@ -171,13 +245,21 @@ def init_pipeline_group(
         t0 = time.monotonic()
         while True:
             try:
-                return mx.distributed.init(strict=True, backend=ring_backend)
+                grp = mx.distributed.init(strict=True, backend=ring_backend)
+                if int(grp.size()) > 1:
+                    _CACHED_RING_GROUP = grp
+                return grp
             except RuntimeError as exc:
                 if max_wait_s is not None and (time.monotonic() - t0) >= max_wait_s:
-                    raise
+                    raise PeerUnreachableError(
+                        f"Timed out waiting for MLX ring peers ({effective_peers}): {exc}"
+                    ) from exc
                 _log.info("Still waiting for MLX ring peer (%s); retrying...", exc)
                 time.sleep(1.0)
-    return mx.distributed.init(strict=False, backend=backend)
+    grp = mx.distributed.init(strict=False, backend=backend)
+    if int(grp.size()) > 1:
+        _CACHED_RING_GROUP = grp
+    return grp
 
 
 def compute_asymmetric_layer_split(
@@ -272,6 +354,601 @@ def filter_safetensors_for_rank(
             needed_files.add(filename)
 
     return [model_dir / fname for fname in sorted(needed_files)]
+
+
+_METADATA_EXTENSIONS = frozenset({
+    ".json",
+    ".jinja",
+    ".txt",
+    ".model",
+    ".tiktoken",
+    ".spm",
+    ".py",
+    ".yaml",
+    ".yml",
+    ".toml",
+})
+
+
+def list_required_files_for_rank(
+    model_path: Path,
+    assignment: PipelineAssignment,
+) -> list[Path]:
+    """Return every file in `model_path` needed by `assignment.rank`:
+    all non-weight config/tokenizer files plus the rank's `.safetensors` shards.
+    """
+    model_dir = Path(model_path).expanduser().resolve()
+    if not model_dir.is_dir():
+        return []
+    meta_files = [
+        p
+        for p in sorted(model_dir.iterdir())
+        if p.is_file()
+        and p.suffix.lower() in _METADATA_EXTENSIONS
+        and p.name != "model.heylook.toml"
+    ]
+    shard_files = [
+        p.resolve() for p in filter_safetensors_for_rank(model_dir, assignment) if p.is_file()
+    ]
+    seen: set[Path] = set()
+    result: list[Path] = []
+    for p in [*meta_files, *shard_files]:
+        if p not in seen:
+            seen.add(p)
+            result.append(p)
+    return result
+
+
+def resolve_configured_scan_folders(
+    config_path: Optional[Path] = None,
+) -> list[Path]:
+    """Read `[scan].folders` from `heylook.toml` so model syncing and relative
+    path resolution automatically use the folder structure configured on this
+    machine."""
+    import tomllib
+
+    candidates: list[Path] = []
+    if config_path is not None:
+        candidates.append(Path(config_path).expanduser())
+    env_cfg = os.environ.get("HEYLOOK_CONFIG")
+    if env_cfg:
+        candidates.append(Path(env_cfg).expanduser())
+    candidates.append(Path.cwd() / "heylook.toml")
+    repo_root = Path(__file__).resolve().parents[4] / "heylook.toml"
+    if repo_root not in candidates:
+        candidates.append(repo_root)
+
+    folders: list[Path] = []
+    for cfg_file in candidates:
+        if not cfg_file.is_file():
+            continue
+        try:
+            data = tomllib.loads(cfg_file.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        scan_tbl = data.get("scan")
+        if isinstance(scan_tbl, dict):
+            raw_folders = scan_tbl.get("folders") or []
+            if isinstance(raw_folders, list):
+                for item in raw_folders:
+                    if isinstance(item, str) and item.strip():
+                        p = Path(item).expanduser().resolve()
+                        if p not in folders:
+                            folders.append(p)
+        if folders:
+            break
+    return folders
+
+
+def resolve_default_models_root(
+    models_root: Optional[Path | str] = None,
+    config_path: Optional[Path] = None,
+) -> Path:
+    """Resolve the active models root directory on this machine.
+
+    Priority:
+    1. Explicit `models_root` argument (if provided and not empty).
+    2. `HEYLOOK_MODELS_ROOT` environment variable.
+    3. First folder in `[scan].folders` from `heylook.toml`.
+    4. Fallback `~/.cache/heylook/models`.
+    """
+    if models_root is not None and str(models_root).strip():
+        return Path(models_root).expanduser().resolve()
+    env_root = os.environ.get("HEYLOOK_MODELS_ROOT")
+    if env_root and env_root.strip():
+        return Path(env_root).expanduser().resolve()
+    scan_folders = resolve_configured_scan_folders(config_path=config_path)
+    if scan_folders:
+        return scan_folders[0]
+    return Path("~/.cache/heylook/models").expanduser().resolve()
+
+
+def infer_model_rel_path(
+    model_path: Path,
+    models_root: Optional[Path] = None,
+) -> str:
+    """Derive a portable relative path (e.g. `Qwen/Qwen3.5-0.8B-MLX-8bit`) for
+    mirroring `model_path` under the peer's `[scan].folders` structure."""
+    resolved = Path(model_path).expanduser().resolve()
+    roots: list[Path] = []
+    if models_root is not None:
+        roots.append(Path(models_root).expanduser().resolve())
+    for sf in resolve_configured_scan_folders():
+        if sf not in roots:
+            roots.append(sf)
+    default_root = Path("~/.cache/heylook/models").expanduser().resolve()
+    if default_root not in roots:
+        roots.append(default_root)
+    for root in roots:
+        try:
+            rel = resolved.relative_to(root)
+            if str(rel) and str(rel) != ".":
+                return rel.as_posix()
+        except ValueError:
+            continue
+    if resolved.parent.name and resolved.parent.name not in ("", "/", "llms", "models"):
+        return f"{resolved.parent.name}/{resolved.name}"
+    return resolved.name
+
+
+def _recv_exact(sock: socket.socket, nbytes: int) -> bytes:
+    buf = bytearray()
+    while len(buf) < nbytes:
+        chunk = sock.recv(min(4 * 1024 * 1024, nbytes - len(buf)))
+        if not chunk:
+            raise ConnectionError(
+                f"Socket closed after {len(buf)} of {nbytes} bytes"
+            )
+        buf.extend(chunk)
+    return bytes(buf)
+
+
+def _send_json_msg(sock: socket.socket, payload: dict[str, Any]) -> None:
+    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    sock.sendall(struct.pack("!Q", len(raw)) + raw)
+
+
+def _recv_json_msg(sock: socket.socket) -> dict[str, Any]:
+    hdr = _recv_exact(sock, 8)
+    (length,) = struct.unpack("!Q", hdr)
+    raw = _recv_exact(sock, length)
+    return json.loads(raw.decode("utf-8"))
+
+
+def _stream_file_over_sock(sock: socket.socket, src_path: Path, rel_name: str) -> None:
+    fsize = int(src_path.stat().st_size)
+    _send_json_msg(sock, {"name": rel_name, "size": fsize})
+    with open(src_path, "rb") as f:
+        while True:
+            buf = f.read(4 * 1024 * 1024)
+            if not buf:
+                break
+            sock.sendall(buf)
+
+
+def _receive_file_from_sock(sock: socket.socket, base_dir: Path) -> tuple[str, int]:
+    meta = _recv_json_msg(sock)
+    rel_name = str(meta["name"])
+    fsize = int(meta["size"])
+    # Prevent path traversal outside base_dir
+    clean_parts = [p for p in Path(rel_name).parts if p not in ("", ".", "..", "/")]
+    if not clean_parts:
+        raise ValueError(f"Invalid relative filename in stream: {rel_name!r}")
+    final_path = base_dir.joinpath(*clean_parts)
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    part_path = final_path.parent / f".{final_path.name}.part.{os.getpid()}"
+    _log.info(
+        "Receiving %s (%.2f MiB) into %s...",
+        rel_name,
+        fsize / (1024**2),
+        final_path.parent,
+    )
+    remaining = fsize
+    try:
+        with open(part_path, "wb") as out_f:
+            while remaining > 0:
+                chunk = sock.recv(min(4 * 1024 * 1024, remaining))
+                if not chunk:
+                    raise ConnectionError(
+                        f"Connection closed while receiving {rel_name} "
+                        f"({remaining} bytes remaining)"
+                    )
+                out_f.write(chunk)
+                remaining -= len(chunk)
+        os.replace(part_path, final_path)
+    finally:
+        part_path.unlink(missing_ok=True)
+    return rel_name, fsize
+
+
+def prepare_worker_via_control_port(
+    model_dir: Path,
+    *,
+    ratios: Sequence[float],
+    peers: Sequence[str] | str,
+    worker_rank: int = 1,
+    control_port: int = DEFAULT_CONTROL_PORT,
+    timeout_s: float = 3.0,
+) -> dict[str, Any]:
+    """Connect to the worker daemon's TCP control port before `mx.distributed.init`,
+    bidirectionally heal any missing metadata/vision/shard files between Rank 0
+    and Rank 1, stream any missing Rank-1 `.safetensors` shards, and instruct
+    the worker to load its slice.
+
+    Raises :class:`PeerUnreachableError` immediately if the worker is offline
+    so Rank 0 never blocks indefinitely inside C++ `accept()`.
+    """
+    ordered_peers = resolve_host_ordered_peers(peers)
+    if worker_rank >= len(ordered_peers):
+        raise ValueError(
+            f"worker_rank {worker_rank} out of range for peers {ordered_peers}"
+        )
+    worker_ep = ordered_peers[worker_rank]
+    worker_host = worker_ep.rpartition(":")[0] if ":" in worker_ep else worker_ep
+
+    resolved_dir = Path(model_dir).expanduser().resolve()
+    resolved_dir.mkdir(parents=True, exist_ok=True)
+    model_rel_path = infer_model_rel_path(resolved_dir)
+
+    host_present = {
+        p.name: int(p.stat().st_size)
+        for p in sorted(resolved_dir.iterdir())
+        if p.is_file() and not p.name.startswith(".")
+    }
+
+    def _build_worker_manifest() -> tuple[list[dict[str, Any]], dict[str, Path]]:
+        total_layers = read_total_layers_from_config(resolved_dir)
+        spans = compute_asymmetric_layer_split(total_layers, ratios)
+        w_start, w_end = spans[worker_rank]
+        w_assignment = PipelineAssignment(
+            rank=worker_rank,
+            world_size=len(ordered_peers),
+            start_layer=w_start,
+            end_layer=w_end,
+            total_layers=total_layers,
+        )
+        req_files = list_required_files_for_rank(resolved_dir, w_assignment)
+        manifest = [
+            {"name": p.name, "size": int(p.stat().st_size)} for p in req_files
+        ]
+        by_name = {p.name: p for p in req_files}
+        return manifest, by_name
+
+    # If config.json exists locally, compute worker manifest now; otherwise
+    # let the worker offer config.json + any files it has first!
+    if (resolved_dir / "config.json").is_file():
+        file_manifest, files_by_name = _build_worker_manifest()
+    else:
+        file_manifest, files_by_name = [], {}
+
+    try:
+        sock = socket.create_connection((worker_host, int(control_port)), timeout=timeout_s)
+    except OSError as exc:
+        raise PeerUnreachableError(
+            f"MLX pipeline worker at {worker_host}:{control_port} is unreachable ({exc})"
+        ) from exc
+
+    with sock:
+        sock.settimeout(None)
+        _send_json_msg(
+            sock,
+            {
+                "op": "prepare_model",
+                "host_session_id": _HOST_SESSION_ID,
+                "model_rel_path": model_rel_path,
+                "ratios": [float(r) for r in ratios],
+                "peers": ordered_peers,
+                "rank": worker_rank,
+                "files": file_manifest,
+                "host_present": host_present,
+            },
+        )
+        reply = _recv_json_msg(sock)
+
+        # Reverse heal: if the worker has files in <scan_root>/<model_rel_path>
+        # that Rank 0 is missing (e.g., tokenizer, vision tower, or shards when
+        # roles are reversed), receive them on Rank 0 first!
+        if reply.get("status") == "offer_files":
+            offered: list[dict[str, Any]] = list(reply.get("offered") or [])
+            _log.info(
+                "Pulling %d missing file(s) for %s from peer %s:%d into %s...",
+                len(offered),
+                model_rel_path,
+                worker_host,
+                control_port,
+                resolved_dir,
+            )
+            for _ in offered:
+                _receive_file_from_sock(sock, resolved_dir)
+            file_manifest, files_by_name = _build_worker_manifest()
+            _send_json_msg(sock, {"files": file_manifest})
+            reply = _recv_json_msg(sock)
+
+        if reply.get("status") == "need_files":
+            missing: list[str] = list(reply.get("missing") or [])
+            total_bytes = sum(
+                files_by_name[name].stat().st_size
+                for name in missing
+                if name in files_by_name
+            )
+            _log.info(
+                "Streaming %d missing Rank-%d file(s) (%.2f GiB) for %s to %s:%d...",
+                len(missing),
+                worker_rank,
+                total_bytes / (1024**3),
+                model_rel_path,
+                worker_host,
+                control_port,
+            )
+            for name in missing:
+                src_path = files_by_name[name]
+                _stream_file_over_sock(sock, src_path, name)
+            reply = _recv_json_msg(sock)
+
+        if reply.get("status") != "ready":
+            raise RuntimeError(
+                f"MLX worker {worker_host}:{control_port} failed to prepare "
+                f"{model_rel_path}: {reply}"
+            )
+        return reply
+
+
+def receive_missing_files_on_worker(
+    sock: socket.socket,
+    target_dir: Path,
+    file_manifest: Sequence[dict[str, Any]],
+    *,
+    host_present: Optional[dict[str, int]] = None,
+) -> list[str]:
+    """Bidirectionally sync missing model files between Rank 0 and `target_dir`
+    on the worker:
+    1. If `host_present` is provided and `target_dir` contains files that the
+       host is missing, streams them to the host first (`offer_files`).
+    2. Checks `target_dir` against `file_manifest`, requests any missing or
+       size-mismatched files over `sock` (`need_files`), and atomically writes
+       them into `target_dir`.
+    Returns the list of filenames that were streamed into `target_dir`.
+    """
+    target_dir = Path(target_dir).expanduser().resolve()
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    if host_present is not None:
+        worker_extra: list[Path] = []
+        for p in sorted(target_dir.iterdir()):
+            if not p.is_file() or p.name.startswith("."):
+                continue
+            if p.name == "model.heylook.toml":
+                continue
+            if (
+                p.suffix.lower() in _METADATA_EXTENSIONS
+                or p.suffix.lower() in (".safetensors", ".gguf")
+            ):
+                st_size = int(p.stat().st_size)
+                if host_present.get(p.name) != st_size:
+                    worker_extra.append(p)
+        if worker_extra:
+            _send_json_msg(
+                sock,
+                {
+                    "status": "offer_files",
+                    "offered": [
+                        {"name": p.name, "size": int(p.stat().st_size)}
+                        for p in worker_extra
+                    ],
+                },
+            )
+            for p in worker_extra:
+                _stream_file_over_sock(sock, p, p.name)
+            updated = _recv_json_msg(sock)
+            file_manifest = list(updated.get("files") or file_manifest)
+
+    missing: list[str] = []
+    for item in file_manifest:
+        name = str(item["name"])
+        expected_size = int(item["size"])
+        dest = target_dir / name
+        if not dest.is_file() or dest.stat().st_size != expected_size:
+            missing.append(name)
+
+    if not missing:
+        return []
+
+    _send_json_msg(sock, {"status": "need_files", "missing": missing})
+    for _ in missing:
+        _receive_file_from_sock(sock, target_dir)
+    return missing
+
+
+_SYNCABLE_EXTENSIONS: frozenset[str] = _METADATA_EXTENSIONS | frozenset({
+    ".safetensors",
+    ".gguf",
+})
+
+
+def scan_models_tree(
+    models_root: Path,
+    *,
+    include_weights: bool = True,
+    model_filter: Optional[str] = None,
+) -> dict[str, int]:
+    """Scan `models_root` (`[scan].folders[0]`) and return `{rel_posix_path: size_bytes}`
+    for all model files (MLX `.safetensors`, GGUF `.gguf`, `mmproj`, drafters,
+    tokenizers, `config.json`, `*.jinja`, and `model.heylook.toml`)."""
+    root = Path(models_root).expanduser().resolve()
+    if not root.is_dir():
+        return {}
+    allowed_exts = (
+        _SYNCABLE_EXTENSIONS if include_weights else _METADATA_EXTENSIONS
+    )
+    entries: dict[str, int] = {}
+    for p in sorted(root.rglob("*")):
+        if not p.is_file() or p.name.startswith("."):
+            continue
+        if any(part.startswith(".") for part in p.relative_to(root).parts):
+            continue
+        if p.suffix.lower() not in allowed_exts:
+            continue
+        rel = p.relative_to(root).as_posix()
+        if model_filter and model_filter.lower() not in rel.lower():
+            continue
+        entries[rel] = int(p.stat().st_size)
+    return entries
+
+
+def handle_sync_control_request(
+    sock: socket.socket,
+    req: dict[str, Any],
+    models_root: Path,
+) -> bool:
+    """Handle `list_scan_tree`, `pull_scan_files`, and `push_scan_files` requests
+    on the worker daemon's control port (`32423`). Returns `True` if `req["op"]`
+    was a sync operation, or `False` otherwise."""
+    op = req.get("op")
+    root = Path(models_root).expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True)
+
+    if op == "list_scan_tree":
+        include_weights = bool(req.get("include_weights", True))
+        model_filter = req.get("model_filter")
+        tree = scan_models_tree(
+            root,
+            include_weights=include_weights,
+            model_filter=model_filter,
+        )
+        _send_json_msg(
+            sock,
+            {
+                "status": "ok",
+                "models_root": str(root),
+                "files": tree,
+            },
+        )
+        return True
+
+    if op == "pull_scan_files":
+        requested: list[str] = list(req.get("paths") or [])
+        valid: list[tuple[str, Path]] = []
+        for rel in requested:
+            clean_parts = [p for p in Path(rel).parts if p not in ("", ".", "..", "/")]
+            if not clean_parts:
+                continue
+            cand = root.joinpath(*clean_parts)
+            if cand.is_file():
+                valid.append(( Path(*clean_parts).as_posix(), cand))
+        _send_json_msg(
+            sock,
+            {
+                "status": "ok",
+                "count": len(valid),
+            },
+        )
+        for rel_posix, src_path in valid:
+            _stream_file_over_sock(sock, src_path, rel_posix)
+        return True
+
+    if op == "push_scan_files":
+        count = int(req.get("count") or 0)
+        _send_json_msg(sock, {"status": "ready_to_receive", "count": count})
+        received: list[str] = []
+        for _ in range(count):
+            rel_name, _ = _receive_file_from_sock(sock, root)
+            received.append(rel_name)
+        _send_json_msg(sock, {"status": "ok", "received": received})
+        return True
+
+    return False
+
+
+def sync_scan_folders_with_peer(
+    peer_host: str,
+    *,
+    local_root: Optional[Path | str] = None,
+    control_port: int = DEFAULT_CONTROL_PORT,
+    include_weights: bool = True,
+    model_filter: Optional[str] = None,
+    direction: str = "both",
+    timeout_s: float = 5.0,
+) -> dict[str, Any]:
+    """Bidirectionally synchronize the model folder structure (`[scan].folders[0]`
+    from `heylook.toml`) between this Mac and `peer_host:control_port`.
+
+    - Any MLX or GGUF model, vision tower, `mmproj`, drafter, tokenizer config,
+      or `model.heylook.toml` present on the peer and missing locally is pulled
+      into `<local_root>/<rel_path>`.
+    - Any file present locally and missing on the peer is pushed into
+      `<peer_root>/<rel_path>`.
+    """
+    host_only = peer_host.rpartition(":")[0] if ":" in peer_host else peer_host
+    resolved_local = resolve_default_models_root(local_root)
+    resolved_local.mkdir(parents=True, exist_ok=True)
+
+    # 1. Fetch peer's scan tree
+    with socket.create_connection((host_only, int(control_port)), timeout=timeout_s) as sock:
+        sock.settimeout(None)
+        _send_json_msg(
+            sock,
+            {
+                "op": "list_scan_tree",
+                "include_weights": include_weights,
+                "model_filter": model_filter,
+            },
+        )
+        reply = _recv_json_msg(sock)
+        if reply.get("status") != "ok":
+            raise RuntimeError(f"Failed to list peer scan tree from {host_only}:{control_port}: {reply}")
+        peer_files: dict[str, int] = {
+            str(k): int(v) for k, v in (reply.get("files") or {}).items()
+        }
+        peer_root = str(reply.get("models_root") or "")
+
+    local_files = scan_models_tree(
+        resolved_local,
+        include_weights=include_weights,
+        model_filter=model_filter,
+    )
+
+    to_pull = sorted(
+        rel
+        for rel, sz in peer_files.items()
+        if local_files.get(rel) != sz
+    ) if direction in ("both", "pull") else []
+
+    to_push = sorted(
+        rel
+        for rel, sz in local_files.items()
+        if peer_files.get(rel) != sz
+    ) if direction in ("both", "push") else []
+
+    pulled: list[str] = []
+    if to_pull:
+        with socket.create_connection((host_only, int(control_port)), timeout=timeout_s) as sock:
+            sock.settimeout(None)
+            _send_json_msg(sock, {"op": "pull_scan_files", "paths": to_pull})
+            hdr = _recv_json_msg(sock)
+            count = int(hdr.get("count") or 0)
+            for _ in range(count):
+                rel_name, _ = _receive_file_from_sock(sock, resolved_local)
+                pulled.append(rel_name)
+
+    pushed: list[str] = []
+    if to_push:
+        with socket.create_connection((host_only, int(control_port)), timeout=timeout_s) as sock:
+            sock.settimeout(None)
+            _send_json_msg(sock, {"op": "push_scan_files", "count": len(to_push)})
+            hdr = _recv_json_msg(sock)
+            if hdr.get("status") != "ready_to_receive":
+                raise RuntimeError(f"Peer rejected push_scan_files: {hdr}")
+            for rel in to_push:
+                _stream_file_over_sock(sock, resolved_local / rel, rel)
+            done = _recv_json_msg(sock)
+            pushed = list(done.get("received") or [])
+
+    return {
+        "local_root": str(resolved_local),
+        "peer_root": peer_root,
+        "pulled": pulled,
+        "pushed": pushed,
+    }
 
 
 def _extract_seq_len(x: Any) -> int:
@@ -921,27 +1598,54 @@ def selective_pipeline_load(
     peers: Optional[Sequence[str] | str] = None,
     rank: int = 0,
     skip_audio: bool = True,
+    control_port: Optional[int] = None,
+    control_timeout_s: float = 3.0,
 ) -> tuple[Any, Any]:
     """Load an `mlx-vlm` model with selective per-rank `.safetensors` loading
     and asymmetric layer pipeline sharding.
 
     1. Resolves `PipelineAssignment` from `config.json` before reading weights.
-    2. Runs `mlx_vlm.utils.load(..., lazy=True, strict=False)` inside
+    2. When `rank == 0` and `peers` is set, orders `peers` with the current
+       server host at Rank 0 ("whatever process starts the server is the default
+       host") and contacts the worker daemon's control port (`control_port`) to
+       verify reachability and stream any missing Rank-1 `.safetensors` shards
+       before entering C++ `mx.distributed.init`.
+    3. Runs `mlx_vlm.utils.load(..., lazy=True, strict=False)` inside
        `selective_safetensors_load_scope` so Rank 1 never opens or sanitizes
        Rank 0's shards.
-    3. Applies `apply_asymmetric_pipeline` to replace off-rank layers with
+    4. Applies `apply_asymmetric_pipeline` to replace off-rank layers with
        `_PassThroughLayer`s before calling `mx.eval(model.parameters())`.
     """
     from mlx_vlm.utils import get_model_path, load as vlm_load
 
     enable_fast_metal_synch()
+    resolved_dir = get_model_path(str(model_path))
+
+    effective_peers = peers if peers is not None else os.environ.get("HEYLOOK_MLX_PEERS")
+    if effective_peers and int(rank) == 0 and group is None:
+        ordered_peers = resolve_host_ordered_peers(effective_peers)
+        effective_peers = ordered_peers
+        eff_ctrl_port = (
+            control_port
+            if control_port is not None
+            else int(os.environ.get("HEYLOOK_MLX_CONTROL_PORT", str(DEFAULT_CONTROL_PORT)))
+        )
+        if eff_ctrl_port > 0:
+            prepare_worker_via_control_port(
+                resolved_dir,
+                ratios=ratios,
+                peers=ordered_peers,
+                worker_rank=1,
+                control_port=eff_ctrl_port,
+                timeout_s=control_timeout_s,
+            )
+
+    total_layers = read_total_layers_from_config(resolved_dir)
+
     if group is None:
-        group = init_pipeline_group(peers=peers, rank=rank)
+        group = init_pipeline_group(peers=effective_peers, rank=rank)
     rank = int(group.rank())
     world_size = int(group.size())
-
-    resolved_dir = get_model_path(str(model_path))
-    total_layers = read_total_layers_from_config(resolved_dir)
     if world_size <= 1:
         model, processor = vlm_load(str(resolved_dir), skip_audio=skip_audio)
         assignment = PipelineAssignment(
@@ -1134,6 +1838,169 @@ def install_rank0_step_coordinator(
         lm_cls.__call__ = _cls_call  # type: ignore[method-assign]
 
 
+def _clone_worker_cache(cache: Sequence[Any]) -> list[Any]:
+    """Deep-clone a worker rank's prompt cache for bounded LRU snapshot storage."""
+    try:
+        from mlx_vlm.apc import _clone_prompt_cache_for_apc
+
+        cloned = _clone_prompt_cache_for_apc(cache)
+        if cloned is not None:
+            return cloned
+    except Exception:
+        pass
+    out: list[Any] = []
+    for c in cache:
+        if isinstance(c, _OffsetStubCache):
+            stub = _OffsetStubCache(offset=c._idx)
+            stub.offset = c.offset
+            out.append(stub)
+        else:
+            out.append(copy.deepcopy(c))
+    return out
+
+
+class _WorkerSnapshotStore:
+    """Bounded LRU store of worker KV/recurrent cache snapshots keyed by
+    31-bit integer `snapshot_id`, kept in lockstep with Rank 0's APC wrapper."""
+
+    def __init__(self, max_entries: int = DEFAULT_SNAPSHOT_MAX_ENTRIES) -> None:
+        self.max_entries = max(1, int(max_entries))
+        self._entries: OrderedDict[int, list[Any]] = OrderedDict()
+
+    def save(self, snapshot_id: int, cache: Sequence[Any]) -> None:
+        sid = int(snapshot_id)
+        self._entries[sid] = _clone_worker_cache(cache)
+        self._entries.move_to_end(sid)
+        while len(self._entries) > self.max_entries:
+            self._entries.popitem(last=False)
+
+    def restore(self, snapshot_id: int, prefix_len: int = 0) -> Optional[list[Any]]:
+        sid = int(snapshot_id)
+        stored = self._entries.get(sid)
+        if stored is None:
+            return None
+        self._entries.move_to_end(sid)
+        restored = _clone_worker_cache(stored)
+        if prefix_len > 0:
+            _sync_worker_cache_offset(restored, int(prefix_len))
+        return restored
+
+    def clear(self) -> None:
+        self._entries.clear()
+
+
+def _snapshot_id_for_tokens(token_ids: Sequence[int], extra_hash: int = 0) -> int:
+    h = hashlib.sha256()
+    h.update(int(extra_hash).to_bytes(8, "little", signed=True))
+    h.update(struct.pack(f"<{len(token_ids)}i", *(int(t) for t in token_ids)))
+    val = int.from_bytes(h.digest()[:4], "little", signed=False) & 0x7FFFFFFF
+    return val or 1
+
+
+def install_rank0_apc_sync(
+    apc_manager: Any,
+    group: Any = None,
+    *,
+    max_entries: int = DEFAULT_SNAPSHOT_MAX_ENTRIES,
+) -> None:
+    """Wrap `apc_manager.store_exact_cache` and `apc_manager.get_exact_cache`
+    on Rank 0 so checkpoint stores and restores broadcast `CMD_SAVE_SNAPSHOT`
+    and `CMD_RESTORE_SNAPSHOT` headers to Rank 1 in lockstep.
+
+    Tracks the exact same bounded LRU key set (`max_entries`) on Rank 0 so that
+    if a snapshot was evicted on Rank 1, `get_exact_cache` safely reports a miss
+    (`(None, 0)`) rather than restoring a prefix Rank 1 no longer holds.
+    """
+    if apc_manager is None:
+        return
+    group = group or mx.distributed.init()
+    if int(group.size()) <= 1 or int(group.rank()) != 0:
+        return
+    if getattr(apc_manager, "_heylook_apc_sync_wrapped", False):
+        return
+
+    orig_store = getattr(apc_manager, "store_exact_cache", None)
+    orig_get = getattr(apc_manager, "get_exact_cache", None)
+    if not callable(orig_store) or not callable(orig_get):
+        return
+
+    resident: OrderedDict[tuple[tuple[int, ...], int], int] = OrderedDict()
+    cap = max(1, int(max_entries))
+
+    def _synced_store_exact_cache(
+        token_ids: Sequence[int],
+        prompt_cache: Sequence[Any],
+        *,
+        extra_hash: int = 0,
+    ) -> bool:
+        stored = bool(
+            orig_store(token_ids, prompt_cache, extra_hash=extra_hash)
+        )
+        if stored:
+            tok_tuple = tuple(int(t) for t in token_ids)
+            key = (tok_tuple, int(extra_hash))
+            snap_id = _snapshot_id_for_tokens(tok_tuple, int(extra_hash))
+            resident[key] = snap_id
+            resident.move_to_end(key)
+            while len(resident) > cap:
+                resident.popitem(last=False)
+            header = mx.array(
+                [CMD_SAVE_SNAPSHOT, snap_id, len(tok_tuple), 0, 0, 0, 0, 0],
+                dtype=mx.int32,
+            )
+            mx.eval(mx.distributed.send(header, 1, group=group))
+        return stored
+
+    def _synced_get_exact_cache(
+        token_ids: Sequence[int],
+        extra_hash: int = 0,
+        *args: Any,
+        **kwargs: Any,
+    ) -> tuple[Any, int]:
+        prompt_cache, prefix_len = orig_get(
+            token_ids, extra_hash, *args, **kwargs
+        )
+        if prompt_cache is None or int(prefix_len) <= 0:
+            return None, 0
+        matched_tuple = tuple(int(t) for t in token_ids[: int(prefix_len)])
+        key = (matched_tuple, int(extra_hash))
+        snap_id = resident.get(key)
+        if snap_id is None:
+            # Check if a longer trimmable prefix in resident covers matched_tuple
+            for (stored_toks, stored_extra), cand_id in reversed(list(resident.items())):
+                if (
+                    stored_extra == int(extra_hash)
+                    and len(stored_toks) >= len(matched_tuple)
+                    and stored_toks[: len(matched_tuple)] == matched_tuple
+                ):
+                    snap_id = cand_id
+                    key = (stored_toks, stored_extra)
+                    break
+        if snap_id is None:
+            return None, 0
+        resident.move_to_end(key)
+        header = mx.array(
+            [CMD_RESTORE_SNAPSHOT, snap_id, int(prefix_len), 0, 0, 0, 0, 0],
+            dtype=mx.int32,
+        )
+        mx.eval(mx.distributed.send(header, 1, group=group))
+        return prompt_cache, int(prefix_len)
+
+    apc_manager.store_exact_cache = _synced_store_exact_cache
+    apc_manager.get_exact_cache = _synced_get_exact_cache
+    setattr(apc_manager, "_heylook_apc_sync_wrapped", True)
+
+
+def send_pipeline_unload(group: Any = None) -> None:
+    """Send `CMD_UNLOAD_MODEL` from Rank 0 to Rank 1 so a daemon worker releases
+    its loaded model weights and returns to idle without closing the ring."""
+    group = group or mx.distributed.init()
+    if int(group.size()) <= 1 or int(group.rank()) != 0:
+        return
+    header = mx.array([CMD_UNLOAD_MODEL, 0, 0, 0, 0, 0, 0, 0], dtype=mx.int32)
+    mx.eval(mx.distributed.send(header, 1, group=group))
+
+
 def send_pipeline_shutdown(group: Any = None) -> None:
     """Send `CMD_SHUTDOWN` from Rank 0 to Rank 1 so the worker loop exits cleanly."""
     group = group or mx.distributed.init()
@@ -1164,6 +2031,7 @@ def run_pipeline_worker_loop(
     hidden_size = int(getattr(args, "hidden_size", 4096))
 
     worker_cache = lm.make_cache()
+    snapshot_store = _WorkerSnapshotStore()
     header_template = mx.zeros((8,), dtype=mx.int32)
     steps = 0
     req_decode_steps = 0
@@ -1189,7 +2057,7 @@ def run_pipeline_worker_loop(
         cmd, B, L, cache_offset, dtype_code, pos_ndim, pos_d0, has_rope_deltas = (
             int(x) for x in header.tolist()
         )
-        if cmd == CMD_SHUTDOWN:
+        if cmd in (CMD_SHUTDOWN, CMD_UNLOAD_MODEL):
             if req_decode_steps > 0:
                 elapsed = max(1e-6, time.perf_counter() - req_t0)
                 _log.info(
@@ -1198,11 +2066,34 @@ def run_pipeline_worker_loop(
                     req_decode_steps,
                     req_decode_steps / elapsed,
                 )
-            _log.info("Pipeline worker rank %d received CMD_SHUTDOWN", group.rank())
+            label = "CMD_UNLOAD_MODEL" if cmd == CMD_UNLOAD_MODEL else "CMD_SHUTDOWN"
+            _log.info("Pipeline worker rank %d received %s", group.rank(), label)
+            snapshot_store.clear()
             break
         if cmd == CMD_RESET_CACHE:
             worker_cache = lm.make_cache()
+            snapshot_store.clear()
             req_decode_steps = 0
+            continue
+        if cmd == CMD_SAVE_SNAPSHOT:
+            snapshot_store.save(B, worker_cache)
+            _log.debug(
+                "Pipeline worker rank %d saved APC snapshot id=%d (tokens=%d)",
+                group.rank(),
+                B,
+                L,
+            )
+            continue
+        if cmd == CMD_RESTORE_SNAPSHOT:
+            restored = snapshot_store.restore(B, prefix_len=L)
+            if restored is not None:
+                worker_cache = restored
+                _log.info(
+                    "Pipeline worker rank %d restored APC prefix (%s, cached_tokens=%d)",
+                    group.rank(),
+                    layer_span,
+                    L,
+                )
             continue
 
         if L > 1 or cache_offset == 0:

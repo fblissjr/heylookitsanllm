@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.209]
+
+### Added
+
+- **Daemonized multi-Mac distributed inference: persistent MLX worker daemon (`scripts/mlx_pipeline_worker.py --daemon`), unified `scripts/worker_node.py` supervisor, automatic Rank-1 shard streaming, APC prefix sync, and `ram_fit`-gated single-node auto-fallback.**
+  - `scripts/mlx_pipeline_worker.py --daemon` and `scripts/worker_node.py`: persistent background daemon on the secondary Mac listening on TCP control port `32423` (`DEFAULT_CONTROL_PORT`) and supervising both `ggml-rpc-server -c` (`:50052`) and MLX pipeline sessions across model loads and unloads (`CMD_UNLOAD_MODEL` frees Rank 1's GPU weights while keeping the ring alive for the next model).
+  - `resolve_configured_scan_folders`, `resolve_default_models_root`, `prepare_worker_via_control_port`, `receive_missing_files_on_worker`, and `sync_scan_folders_with_peer`: automatically resolves `[scan].folders[0]` from each machine's `heylook.toml` so synced files land in the configured folder structure (`<scan_folder>/<vendor>/<model_dir>/...`); bidirectionally heals missing `config.json`, `tokenizer*`, `vision_tower`, and `.safetensors` shards between Rank 0 and Rank 1 before `mx.distributed.init` (`PeerUnreachableError` on timeout so Rank 0 never blocks indefinitely in `accept()`); and supports full or metadata-only bidirectional MLX + GGUF catalog synchronization across `[scan].folders` via `scripts/worker_node.py --sync-peer <peer-ip>`.
+  - `resolve_host_ordered_peers`: automatically orders `pipeline_peers` with whichever machine started `heylookllm` at Rank 0 (`index 0`).
+  - `install_rank0_apc_sync` and `_WorkerSnapshotStore`: synchronizes Rank 0's Automatic Prefix Cache (`APCManager.store_exact_cache` and `get_exact_cache`) with Rank 1 via `CMD_SAVE_SNAPSHOT` and `CMD_RESTORE_SNAPSHOT` headers, keeping KV and hybrid-recurrent (`ArraysCache` / Gated DeltaNet) caches aligned across multi-turn chats and branched histories.
+  - `ram_fit.can_fallback_to_single_node`, `ram_fit.recommend_split_ratios`, dual-node `size_config_gb` notes, and frontend engine summary (`src/heylook_llm/providers/mlx_describe.py`, `frontend/js/engine.js`): when the worker Mac is unplugged or unreachable, `MLXProvider` and `LlamaServerProvider` automatically fall back to single-node execution if the full 100% model fits in the current host's Metal working-set / RAM ceiling, or fail fast with a clear `RuntimeError` if the model exceeds single-node capacity; `engineSummary` and `renderEngineCompact` surface active MLX `pipeline` and GGUF `rpc` state on both the Models page and the Chat bar.
+- Verified: `tests/unit/` + `tests/contract/` (1601 passed), `bun run e2e:render` (105/105), `bun run e2e` (`chat` 56/56, `pages` 33/33). NOT run: `tests/smoke/`, `tests/eval/`.
+
 ## [2.0.208]
 
 ### Added

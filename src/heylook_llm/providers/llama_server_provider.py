@@ -1356,11 +1356,27 @@ class LlamaServerProvider(BaseProvider):
                 with socket.create_connection((host, port), timeout=timeout_s):
                     pass
             except OSError as exc:
+                fits_solo, solo_report = ram_fit.can_fallback_to_single_node(
+                    dict(self.config), hard_working_set=False
+                )
+                ceiling_gb = solo_report.working_set_gb or solo_report.reclaimable_gb
+                if fits_solo:
+                    self._rpc_fallback_reason = (
+                        f"rpc-server at {ep} unreachable ({exc}); running single-node "
+                        f"({solo_report.weights_gb:.1f} GiB solo fits {ceiling_gb:.1f} GiB ceiling)"
+                    )
+                    logging.warning(f"[GGUF] {self.model_id}: {self._rpc_fallback_reason}")
+                    self.config.pop("rpc", None)
+                    self.config.pop("tensor_split", None)
+                    return
                 raise RuntimeError(
                     f"[GGUF] {self.model_id}: rpc-server at {ep} is unreachable "
-                    f"({exc}). Start it on the peer Mac with "
-                    f"`scripts/rpc_worker.sh --host {host} --port {port}` "
-                    f"or remove `rpc` from this model's config."
+                    f"({exc}), and solo weights + headroom "
+                    f"({solo_report.weights_gb + solo_report.headroom_gb:.1f} GiB) "
+                    f"exceed this host's {ceiling_gb:.1f} GiB ceiling. "
+                    f"Start it on the peer Mac with "
+                    f"`scripts/worker_node.py --host {host}` "
+                    f"(or `scripts/rpc_worker.sh --host {host} --port {port}`)."
                 ) from exc
 
     def _load_once(self):

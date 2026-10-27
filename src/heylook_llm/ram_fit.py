@@ -347,8 +347,10 @@ def size_config_gb(config: dict) -> tuple[float, list[str]]:
     frac, rpc_note = local_weight_fraction(config)
     if rpc_note is not None:
         local_primary = int(primary_bytes * frac)
+        worker_primary = max(0, primary_bytes - local_primary)
         notes.append(
-            f"{rpc_note} ({local_primary / GB:.1f} of {primary_bytes / GB:.1f} GiB)"
+            f"{rpc_note} ({local_primary / GB:.1f} GiB local, "
+            f"{worker_primary / GB:.1f} GiB worker of {primary_bytes / GB:.1f} GiB)"
         )
         total += local_primary
     else:
@@ -530,3 +532,67 @@ def fit_for_config(config: dict, headroom_gb: float = 8.0,
     largest = largest_alloc_gb(config) or None
     return evaluate_fit(size_gb, headroom_gb, hard_working_set, sizing_notes=notes,
                         largest_alloc_gb=largest)
+
+
+_DISTRIBUTED_CONFIG_KEYS = frozenset({
+    "pipeline_ratios",
+    "pipeline_peers",
+    "rpc",
+    "tensor_split",
+})
+
+
+def can_fallback_to_single_node(
+    config: dict,
+    *,
+    headroom_gb: float = 8.0,
+    hard_working_set: Optional[bool] = None,
+) -> tuple[bool, FitReport]:
+    """Return ``(fits_solo, solo_report)`` for ``config`` on the current host
+    with all distributed offload keys stripped.
+
+    Evaluates against the running process's own Metal working set and
+    reclaimable RAM ("whatever process starts the server is the default host"),
+    so a model that fits solo on the current host can fall back to single-node
+    when its peer Mac is unplugged, whereas a model that exceeds the current
+    host's solo budget fails fast with a clear diagnostic.
+    """
+    solo_cfg = {
+        k: v for k, v in config.items() if k not in _DISTRIBUTED_CONFIG_KEYS
+    }
+    report = fit_for_config(
+        solo_cfg, headroom_gb=headroom_gb, hard_working_set=hard_working_set
+    )
+    if unsizeable_reason(report) is not None:
+        return False, report
+    if hard_working_set is False and report.working_set_gb is not None:
+        # For GGUF, evaluate_fit marks metal_working_set as "warn" rather than
+        # "fail", but falling back solo when solo weights + headroom exceed the
+        # Metal working set would page heavily; require clearing working_set_gb.
+        need = report.weights_gb + report.headroom_gb
+        if need > report.working_set_gb:
+            return False, report
+    return report.fits, report
+
+
+def recommend_split_ratios(
+    total_weight_gb: float,
+    local_working_set_gb: float,
+    worker_working_set_gb: float,
+    headroom_gb: float = 8.0,
+) -> tuple[float, float]:
+    """Recommend ``(local_ratio, worker_ratio)`` proportional to each node's
+    usable Metal budget after headroom."""
+    local_usable = max(1.0, float(local_working_set_gb) - float(headroom_gb))
+    worker_usable = max(1.0, float(worker_working_set_gb) - float(headroom_gb) * 0.5)
+    total_usable = local_usable + worker_usable
+    # Keep as much weight on the primary host as its usable ceiling allows
+    # when total_weight_gb > 0, else split proportional to usable capacity.
+    if total_weight_gb > 0 and total_weight_gb <= total_usable:
+        local_target = min(local_usable, max(total_weight_gb - worker_usable, total_weight_gb * (local_usable / total_usable)))
+        local_r = round(min(0.95, max(0.05, local_target / total_weight_gb)), 2)
+    else:
+        local_r = round(min(0.95, max(0.05, local_usable / total_usable)), 2)
+    worker_r = round(1.0 - local_r, 2)
+    return local_r, worker_r
+
