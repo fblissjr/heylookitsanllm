@@ -365,18 +365,20 @@ owner: "equally well on desktop web and iPhone 17 Pro Safari").
   bar so the message viewport gains the difference. Chat's bar beneath it is two
   tiers: tier one is what must stay one tap away (Chats and the model select
   stretched to the rest of the line; the gear is in `#phone-nav` above); tier
-  two is the detail group (`.chat__bar-detail`: context size, Load, preset +
-  system-prompt chips) on its own line as a non-wrapping horizontal strip with
-  momentum scrolling (`overflow-x: auto`), so it never wraps into 3+ vertical
-  rows or crushes the message viewport. On that strip the load settings and Load
-  are one group (`.chat__bar-load`) that never grows past the strip's visible
-  width: its selects shrink, the context select first, and Load does not, so
-  Load is on screen at any text size. The chips after the group scroll. The
-  composer (`.chat__composer`) is a two-row capsule inside one shared rounded
-  border (`border-radius: var(--r-big)`): the textarea spans the top row and the
-  tool buttons plus the icon Send button (`aria-label="Send"`) sit on the row
-  beneath it. Safe-area top insets on `#phone-nav` ensure dynamic island / notch
-  clearance without wasting vertical space.
+  two is a compact mono readout line (`button.chat__readout`), showing runtime,
+  context, cold state, cache reuse, tok/s, preset and system-prompt state on
+  screen without a tap. Tapping `.chat__readout` toggles the bar's expandable
+  panel (`.chat__bar--panel-open` + `#chat-engine-panel`), which holds the
+  detail strip (`.chat__bar-detail`: context size, Load, preset + system-prompt
+  + engine chips) and the compact engine description. On that strip the load
+  settings and Load are one group (`.chat__bar-load`) that never grows past the
+  strip's visible width: its selects shrink, the context select first, and Load
+  does not, so Load is on screen at any text size. The chips after the group
+  scroll. The composer (`.chat__composer`) is a two-row capsule inside one
+  shared rounded border (`border-radius: var(--r-big)`): the textarea spans the
+  top row and the tool buttons plus the icon Send button (`aria-label="Send"`)
+  sit on the row beneath it. Safe-area top insets on `#phone-nav` ensure dynamic
+  island / notch clearance without wasting vertical space.
 - **Side safe areas are padded at the shell.** `#app` pads inline by the left
   and right insets, because a landscape phone is wide enough for the desktop
   layout and puts the Dynamic Island over the rail.

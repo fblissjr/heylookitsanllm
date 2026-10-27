@@ -2565,16 +2565,39 @@ async function main() {
     });
     await think.page.close();
 
+    await suite.check('dropping an audio clip stages a named audio chip and sends a base64 audio block', async () => {
+      const aud = await openChat(browser, base, { caps: ['audio'] });
+      const label = await aud.page.evaluate(
+        () => document.querySelector('.chat__thread').dataset.dropLabel);
+      assert(label === 'Drop audio to attach', `audio drop label reads "${label}"`);
+      const r = await dropFile(aud.page, { name: 'voice-memo.wav', type: 'audio/wav' });
+      assert(r.carried, 'the synthetic drop carried no files');
+      await waitFor(async () => (await thumbCount(aud.page)) === 1,
+        { timeout: 3000, message: 'dropped audio clip never reached the attach strip' });
+      const chipName = await aud.page.evaluate(
+        () => document.querySelector('.chat__attach .attach-thumb--audio .attach-thumb__audio-name')?.textContent);
+      assert(chipName === 'voice-memo.wav', `audio chip name reads ${JSON.stringify(chipName)}`);
+      const post = await sendAndCapturePost(aud, 'transcribe this clip');
+      const blocks = JSON.parse(post.postData).content;
+      const audioBlock = Array.isArray(blocks) ? blocks.find((b) => b.type === 'audio') : null;
+      assert(audioBlock && audioBlock.source?.type === 'base64'
+        && audioBlock.source?.media_type === 'audio/wav'
+        && audioBlock.source?.data === Buffer.from([1, 2, 3, 4]).toString('base64'),
+        `audio block on the wire was ${JSON.stringify(audioBlock)}`);
+      await aud.page.close();
+    });
+
     // ---- the gguf context select is reachable at PHONE width -------------
     // Reported missing on an iPhone (2026-09-04) where the desktop showed it.
-    // The bar wraps at phone widths; this pins that the select still lands
-    // inside the viewport, with the model's ceiling offered, for a gguf model
-    // picked from the model select on a phone.
+    // Phase 4 step 5 (plan_dark_mode.md): tier two of the phone chat bar is a
+    // mono readout line showing every chip fact without a tap; tapping the
+    // readout opens the bar panel holding the context select, load settings,
+    // Load button and chips.
     const ctxm = await openChat(browser, base, {
       mobile: true,
       secondModel: { id: 'gguf-model', caps: [], provider: 'gguf', loaded: false, context_length: 262144 },
     });
-    await suite.check('the context select shows for a gguf model at phone width', async () => {
+    await suite.check('the phone readout shows chip facts without a tap, and tapping it opens the context select', async () => {
       const { page } = ctxm;
       await page.evaluate(() => {
         const sel = [...document.querySelectorAll('select')].find((s) => s.title === 'Model');
@@ -2582,20 +2605,40 @@ async function main() {
         sel.dispatchEvent(new Event('change', { bubbles: true }));
       });
       await settle(page);
+      const readout = await page.$eval('.chat__readout', (el) => {
+        const r = el.getBoundingClientRect();
+        const detail = document.querySelector('.chat__bar-detail');
+        return {
+          text: el.textContent,
+          expanded: el.getAttribute('aria-expanded'),
+          w: r.width, h: r.height, left: r.left, right: r.right, top: r.top,
+          detailShown: detail.getClientRects().length > 0,
+        };
+      });
+      assert(readout.w > 0 && readout.h > 0 && readout.left >= 0 && readout.right <= 390,
+        `phone readout line not on screen: ${JSON.stringify(readout)}`);
+      assert(readout.expanded === 'false' && !readout.detailShown,
+        `bar panel opened before tapping the readout: ${JSON.stringify(readout)}`);
+      assert(readout.text.includes('ctx 256k') && readout.text.includes('cold') && readout.text.includes('No system prompt'),
+        `readout missing context, cold, or system-prompt fact without a tap: ${JSON.stringify(readout.text)}`);
+      await page.click('.chat__readout');
+      await settle(page);
       const info = await page.$eval('.chat__ctx-select', (el) => {
         const r = el.getBoundingClientRect();
         return {
+          expanded: document.querySelector('.chat__readout').getAttribute('aria-expanded'),
           hidden: el.hidden, w: r.width, h: r.height, left: r.left, right: r.right,
           top: r.top, options: [...el.options].map((o) => o.textContent),
         };
       });
+      assert(info.expanded === 'true', `tapping readout did not set aria-expanded: ${JSON.stringify(info)}`);
       assert(!info.hidden && info.w > 0 && info.h > 0, `context select not rendered: ${JSON.stringify(info)}`);
       assert(info.left >= 0 && info.right <= 390 && info.top >= 0,
         `context select lies outside the 390px viewport: ${JSON.stringify(info)}`);
       assert(info.options.some((o) => /\(max\)$/.test(o)), `no ceiling offered: ${JSON.stringify(info.options)}`);
       assert(info.h >= 44, `phone touch target under 44px: ${info.h}px`);
     });
-    await suite.check('touch: every chat bar control fits or scrolls into view at the iOS text sizes', async () => {
+    await suite.check('touch: readout and open bar panel controls fit or scroll into view at the iOS text sizes', async () => {
       // On touch the root takes iOS's body text style (app.css, "touch text
       // size"), so 1rem is 17px at the default Text Size and 23px at the
       // largest standard one (Apple's Dynamic Type sizes for Body); 16 is the
@@ -2604,15 +2647,10 @@ async function main() {
       // LAYOUT at those sizes. Whether WebKit honours the keyword is a device
       // check.
       //
-      // Measured with a COLD model selected, because that is when the bar's
-      // second line is fullest: the context select, the load settings and
-      // Load. That line is a strip that scrolls sideways (DESIGN.md §7), so
-      // "fits" has two parts. The load controls sit fully inside the strip
-      // with nothing scrolled: v2.0.202 pushed Load past the right edge on
-      // the owner's phone while the first line and the composer were fine,
-      // and the check that shipped with it looked only at those two.
-      // Everything else on the strip (the chips) has to come fully into view
-      // when the strip is scrolled to it.
+      // Measured in both states: with the panel closed (the readout line must
+      // stay on screen with every fact visible without a tap) and with the
+      // panel open (the load controls sit fully inside the strip with nothing
+      // scrolled, and the chips come into view when scrolled).
       const ROOT_PX = [16, 17, 23];
       const { page } = ctxm;
       const problems = [];
@@ -2623,16 +2661,24 @@ async function main() {
           const w = window.innerWidth;
           const shown = (els) => [...els].filter((el) => el.getClientRects().length);
           const name = (el) => `${el.tagName.toLowerCase()}${el.className ? '.' + el.className.split(' ').join('.') : ''}`;
+          const bar = document.querySelector('.chat__bar');
+          const readout = document.querySelector('.chat__readout');
           const strip = document.querySelector('.chat__bar-detail');
+          const onScreen = (el) => {
+            const r = el.getBoundingClientRect();
+            return r.left >= -0.5 && r.right <= w + 0.5;
+          };
+          // Closed panel check first: readout is visible and carries the facts.
+          bar.classList.remove('chat__bar--panel-open');
+          const closedReadoutShown = readout.getClientRects().length > 0 && onScreen(readout);
+          const closedStripHidden = strip.getClientRects().length === 0;
+          // Open panel check: load controls and chips inside the strip.
+          bar.classList.add('chat__bar--panel-open');
           strip.scrollLeft = 0;
           const box = strip.getBoundingClientRect();
           const inStrip = (el, slack = 0.5) => {
             const r = el.getBoundingClientRect();
             return r.left >= box.left - slack && r.right <= box.right + slack;
-          };
-          const onScreen = (el) => {
-            const r = el.getBoundingClientRect();
-            return r.left >= -0.5 && r.right <= w + 0.5;
           };
           const tierOne = shown(document.querySelectorAll(
             '.chat__bar > .chat__convs-toggle, .chat__bar > select, .chat__bar > .chat__settings-btn'));
@@ -2643,13 +2689,15 @@ async function main() {
           const lines = tierOne.map((el) => el.getBoundingClientRect());
           const out = {
             coarse: matchMedia('(pointer: coarse)').matches,
+            closedReadoutShown,
+            closedStripHidden,
             tierOne: tierOne.length,
             phoneNav: phoneNav.length,
             loadBtn: load.some((el) => el.classList.contains('chat__load-btn')),
             loadSelects: load.filter((el) => el.tagName === 'SELECT').length,
             rest: rest.length,
             pageOverflow: root.scrollWidth - w,
-            offScreen: [...phoneNav, ...tierOne, ...composer].filter((el) => !onScreen(el)).map(name),
+            offScreen: [...phoneNav, ...tierOne, readout, ...composer].filter((el) => !onScreen(el)).map(name),
             // One line: every first-line control overlaps every other vertically.
             oneLine: Math.max(...lines.map((r) => r.top)) < Math.min(...lines.map((r) => r.bottom)),
             loadCut: load.filter((el) => !inStrip(el)).map(name),
@@ -2675,6 +2723,8 @@ async function main() {
         }, px);
         // Is this the state the check is about? If not, nothing below means anything.
         assert(m.coarse, 'the touch emulation is not live, so this measured the desktop layout');
+        assert(m.closedReadoutShown && m.closedStripHidden,
+          'readout was not shown or detail strip was not hidden when the bar panel was closed');
         assert(m.tierOne === 2, `expected Chats and the model select in the bar's first line on phone, found ${m.tierOne}`);
         assert(m.phoneNav === 5, `expected 4 page tabs plus the gear in #phone-nav, found ${m.phoneNav}`);
         assert(m.loadBtn, 'Load is not showing, so the selected model is not cold and this is not the reported state');

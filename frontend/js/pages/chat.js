@@ -36,7 +36,7 @@ import { createPresetBar, paintPresetChip } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
 import { createDocumentWriter } from '../document-writer.js';
 import { createLoadPanel } from '../load-panel.js';
-import { contextRunning, readFact, renderEngineCompact } from '../engine.js';
+import { contextCeiling, contextRunning, readFact, renderEngineCompact } from '../engine.js';
 import { paintPromptPreview, paintPromptPreviewError } from '../prompt-preview.js';
 
 // A system prompt typed before any conversation exists has no owner: the
@@ -443,10 +443,22 @@ function buildSkeleton(ctx) {
     title: 'What runs this model, and with what',
   });
   s.engineChip.addEventListener('click', () => {
-    const open = s.enginePanelEl.hidden;
-    s.enginePanelEl.hidden = !open;
-    s.engineChip.setAttribute('aria-expanded', open ? 'true' : 'false');
-    if (open) paintEnginePanel(ctx);
+    setBarPanelOpen(ctx, s.enginePanelEl.hidden);
+  });
+
+  // Phone readout line (plan_dark_mode.md Phase 4 step 5): tier two of the
+  // phone chat bar is one mono line naming every fact the chips and load
+  // controls carry (runtime, context, cold state, cache reuse, tok/s, preset
+  // and system-prompt state). Tapping it toggles the bar's panel, which holds
+  // the load controls, chips and compact engine facts.
+  s.readoutBtn = createEl('button', {
+    class: 'chat__readout', type: 'button',
+    'aria-expanded': 'false', 'aria-controls': 'chat-engine-panel',
+    title: 'Show load controls and engine details',
+  });
+  s.readoutBtn.addEventListener('click', () => {
+    const open = !s.barEl?.classList.contains('chat__bar--panel-open');
+    setBarPanelOpen(ctx, open);
   });
 
   s.presetChip = createEl('button', {
@@ -475,27 +487,30 @@ function buildSkeleton(ctx) {
     });
   });
 
+  s.barEl = createEl('header', { class: 'chat__bar' }, [
+    convsToggle,
+    s.modelSelect,
+    s.readoutBtn,
+    createEl('div', { class: 'chat__bar-detail' }, [
+      // The load settings and Load are one group, so the phone layout can
+      // keep them inside the strip's visible width together (app.css):
+      // display:contents on desktop, like the wrapper around them.
+      createEl('div', { class: 'chat__bar-load' }, [s.loadPanel.element, s.loadNowBtn]),
+      s.presetChip,
+      s.sysPromptChip,
+      s.engineChip,
+    ]),
+    createEl('div', { class: 'chat__bar-spacer' }),
+    settingsBtn,
+  ]);
+
   const thread = createEl('section', { class: 'chat__thread' }, [
     // The bar's second tier (context size, Load, the two chips) is grouped so
     // the phone layout can put it on its own line: on desktop the wrapper is
     // display:contents and the bar is the flat row it always was. Without a
     // wrapper a wrapped flex row breaks wherever the widths happen to fall,
     // which at 402pt left the gear alone on a third row under the chips.
-    createEl('header', { class: 'chat__bar' }, [
-      convsToggle,
-      s.modelSelect,
-      createEl('div', { class: 'chat__bar-detail' }, [
-        // The load settings and Load are one group, so the phone layout can
-        // keep them inside the strip's visible width together (app.css):
-        // display:contents on desktop, like the wrapper around them.
-        createEl('div', { class: 'chat__bar-load' }, [s.loadPanel.element, s.loadNowBtn]),
-        s.presetChip,
-        s.sysPromptChip,
-        s.engineChip,
-      ]),
-      createEl('div', { class: 'chat__bar-spacer' }),
-      settingsBtn,
-    ]),
+    s.barEl,
     s.enginePanelEl,
     s.messagesEl,
     s.statusEl,
@@ -662,6 +677,16 @@ function refreshLoadBtn(ctx) {
   paintEngineChip(ctx);
 }
 
+function setBarPanelOpen(ctx, open) {
+  const s = ctx.state;
+  const next = Boolean(open);
+  s.barEl?.classList.toggle('chat__bar--panel-open', next);
+  s.enginePanelEl.hidden = !next;
+  s.engineChip?.setAttribute('aria-expanded', next ? 'true' : 'false');
+  s.readoutBtn?.setAttribute('aria-expanded', next ? 'true' : 'false');
+  if (next) paintEnginePanel(ctx);
+}
+
 function paintEngineChip(ctx) {
   const s = ctx.state;
   const engine = s.adminRows.get(s.modelSelect.value)?.engine;
@@ -669,18 +694,76 @@ function paintEngineChip(ctx) {
   s.engineChip.hidden = !runtime;
   if (runtime) {
     s.engineChip.textContent = runtime;
-  } else {
-    // A chip that vanished must not leave its panel open, describing nothing.
-    s.enginePanelEl.hidden = true;
-    s.engineChip.setAttribute('aria-expanded', 'false');
+  } else if (!matchMedia('(max-width: 767px)').matches) {
+    // On desktop the engine chip is the only opener: if it vanishes, close its
+    // panel so it does not sit open describing nothing. On phone the readout
+    // line opens the panel for the load controls as well, which remain live
+    // even when the model's row has no runtime fact.
+    setBarPanelOpen(ctx, false);
   }
   if (!s.enginePanelEl.hidden) paintEnginePanel(ctx);
+  paintReadout(ctx);
 }
 
 function paintEnginePanel(ctx) {
   const s = ctx.state;
   s.enginePanelEl.replaceChildren(
     renderEngineCompact(s.adminRows.get(s.modelSelect.value)?.engine));
+}
+
+function paintReadout(ctx) {
+  const s = ctx.state;
+  if (!s.readoutBtn) return;
+  const id = s.modelSelect?.value;
+  const row = id ? s.adminRows?.get(id) : null;
+  const engine = row?.engine;
+  const parts = [];
+
+  const runtime = readFact(engine?.runtime);
+  if (runtime) parts.push(runtime);
+
+  const ctxSelectEl = s.barEl?.querySelector('.chat__ctx-select');
+  const chosenCtx = ctxSelectEl && !ctxSelectEl.closest('[hidden]') && ctxSelectEl.value
+    ? Number(ctxSelectEl.value) : null;
+  const runningCtx = row?.loaded ? contextRunning(row) : null;
+  const storedCtx = row?.config?.ctx_size;
+  const ceilingCtx = contextCeiling(row);
+  const ctxVal = (Number.isFinite(chosenCtx) && chosenCtx > 0 ? chosenCtx : null)
+    ?? runningCtx ?? storedCtx ?? ceilingCtx;
+  if (ctxVal) parts.push(`ctx ${formatTokens(ctxVal)}`);
+
+  if (id && isCold(ctx, id)) parts.push('cold');
+
+  const lastAssistant = [...(s.messages ?? [])].reverse()
+    .find((m) => m.role === 'assistant' && m.stats);
+  const cache = lastAssistant?.stats?.cache;
+  if (cache) {
+    if (cache.outcome === 'reused') {
+      parts.push(`cache ${formatTokens(cache.cached_tokens)}/${formatTokens(cache.prompt_tokens)}`);
+    } else {
+      parts.push(cache.outcome === 'miss' ? 'cache miss' : 'cache not used');
+    }
+  } else {
+    const reuse = readFact(engine?.cache?.reuse_class)
+      ?? readFact(engine?.cache?.reuse_mode)
+      ?? readFact(engine?.cache?.reuse);
+    if (reuse != null) parts.push(`cache ${reuse}`);
+  }
+
+  if (lastAssistant?.stats?.generation_tps != null) {
+    parts.push(`${lastAssistant.stats.generation_tps.toFixed(1)} tok/s`);
+  }
+
+  if (s.presetChip && !s.presetChip.hidden && s.presetChip.textContent) {
+    parts.push(`preset: ${s.presetChip.textContent}`);
+  }
+
+  const sysText = s.sysPromptChip?.textContent || 'No system prompt';
+  parts.push(sysText);
+
+  const text = parts.join(' · ');
+  s.readoutBtn.textContent = text;
+  s.readoutBtn.setAttribute('aria-label', `${text}. Tap to toggle load controls and engine details.`);
 }
 
 async function loadModelNow(ctx) {
@@ -1113,6 +1196,7 @@ function paintSysPromptChip(ctx) {
   chip.setAttribute('aria-label', prompt
     ? `${label}. Click to edit the system prompt.`
     : 'No system prompt. Click to write one.');
+  paintReadout(ctx);
 }
 
 // ---------------------------------------------------------------------------
@@ -1568,6 +1652,7 @@ function renderMessages(ctx) {
       createEl('div', { class: 'empty-state' },
         ['Send a message below to start a new conversation.']),
     );
+    paintReadout(ctx);
     return;
   }
   const prev = s.msgNodes ?? new Map();
@@ -1611,6 +1696,7 @@ function renderMessages(ctx) {
   if (stream?.els?.msgEl) nodes.push(stream.els.msgEl);
   s.msgNodes = next;
   reconcileChildren(s.messagesInner, nodes);
+  paintReadout(ctx);
 }
 
 function buildThinkingEl(thinking, open = false) {

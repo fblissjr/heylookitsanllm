@@ -779,8 +779,9 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 .chat__ctx-custom { max-width: 6.5rem; }
 .chat__bar-spacer { flex: 1; }
 .chat__convs-toggle { display: none; }
+.chat__readout { display: none; }
 /* Desktop: the detail group is invisible to layout (see chat.js); the phone
-   block below turns it into the bar's second line. */
+   block below turns it into the bar's expandable panel under the readout line. */
 .chat__bar-detail { display: contents; }
 .chat__bar-load { display: contents; }
 
@@ -1207,14 +1208,15 @@ h1, h2, h3 { text-wrap: balance; }
     min-height: 44px;
     padding: 0.35rem var(--space-3);
   }
-  /* Two tiers, compact and non-wrapping. Tier one is what must stay one tap
+  /* Two tiers on a phone (Phase 4 step 5). Tier one is what must stay one tap
      away at all times -- Chats and the model select (stretched to what is left
      of the line, with ellipsis for long names); the settings gear lives in
      #phone-nav right above, so the bar's own gear is hidden on the phone.
-     Tier two is the horizontal detail group (context size, Load, preset +
-     system-prompt chips) rendered as a sleek single-line horizontal strip with
-     momentum scrolling, so it NEVER wraps into 3+ rows or crushes message real
-     estate. */
+     Tier two is the compact mono readout line (.chat__readout), showing
+     runtime, context, cold state, cache reuse, tok/s, preset and system-prompt
+     state without a tap. Tapping the readout line opens the panel beneath it
+     (.chat__bar--panel-open .chat__bar-detail + #chat-engine-panel), which
+     holds the load controls and chips. */
   .chat__bar {
     flex-wrap: wrap;
     row-gap: var(--space-1);
@@ -1235,7 +1237,37 @@ h1, h2, h3 { text-wrap: balance; }
   }
   .chat__settings-btn { display: none; }
   .chat__bar-spacer { display: none; }
-  .chat__bar-detail {
+  .chat__readout {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 var(--space-1);
+    flex: 1 0 100%;
+    min-width: 0;
+    min-height: 28px;
+    padding: 2px var(--space-1);
+    margin: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--r-ctl);
+    font-family: var(--mono);
+    font-size: var(--text-sm);
+    line-height: 1.35;
+    color: var(--ink-muted);
+    text-align: left;
+    cursor: pointer;
+    overflow-wrap: anywhere;
+  }
+  .chat__readout:where(:hover),
+  .chat__readout[aria-expanded="true"] {
+    background: var(--surface-2);
+    color: var(--ink);
+    border-color: var(--line);
+  }
+  .chat__bar:not(.chat__bar--panel-open) .chat__bar-detail {
+    display: none;
+  }
+  .chat__bar--panel-open .chat__bar-detail {
     display: flex;
     flex-wrap: nowrap;
     overflow-x: auto;
@@ -1246,8 +1278,9 @@ h1, h2, h3 { text-wrap: balance; }
     gap: 0.35rem;
     flex: 1 0 100%;
     min-width: 0;
-    order: 1;   /* after the gear, which follows it in DOM order */
-    padding: 0.05rem 0 0.05rem;
+    order: 1;   /* after the readout line */
+    padding: var(--space-1) 0 0.05rem;
+    border-top: 1px solid var(--line);
   }
   .chat__bar-detail::-webkit-scrollbar {
     display: none;

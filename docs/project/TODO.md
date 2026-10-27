@@ -2,7 +2,7 @@
 
 Cross-session task backlog organized by priority.
 
-*Last reviewed: 2026-10-27 (through v2.0.212; previous triage 2026-09-25 through v2.0.154). Every section was classed done, obsolete, open or mixed with evidence (`internal/claude/todo_triage.md`); the done and obsolete ones moved verbatim to `internal/archive/todo_closed_2026-09-25.md`. Mixed sections stay whole: their checked-off items are history kept beside the open ones.*
+*Last reviewed: 2026-10-27 (through v2.0.213; previous triage 2026-09-25 through v2.0.154). Every section was classed done, obsolete, open or mixed with evidence (`internal/claude/todo_triage.md`); the done and obsolete ones moved verbatim to `internal/archive/todo_closed_2026-09-25.md`. Mixed sections stay whole: their checked-off items are history kept beside the open ones.*
 
 ## 2026-10-27 Roadmap (Beyond Distributed Inference)
 
@@ -15,9 +15,8 @@ Five active tracks across the backend and frontend, ordered by impact:
 - [ ] **1.4 Optional live 2-Mac speculative benchmark (`scripts/perf_ab.py`).** Run a clean `perf_ab.py` comparison on a 2-Mac pipelined model with and without its MTP/DFlash drafter and record in `internal/claude/perf/`.
 
 ### Track 2: Mobile & Dark-Mode Workbench (`docs/project/plan_dark_mode.md` Phases 4 & 5)
-- [x] **Phase 1–3b + Phase 4 Steps 1–4 (`v2.0.191` - `v2.0.204`, `v2.0.212`).** Lamplight tokens, Safari fixes, Home Screen manifest, Preset manager (`#/presets`), spacing tokens, iOS Text Size support (`-apple-system-body` on touch, verified on iPhone 17 Pro), phone top-bar navigation (`#phone-nav` segmented control + single gear, `+11px` message viewport), and two-row capsule composer (`360pt` field width at `402pt`, icon Send/Stop button).
-- [ ] **Phase 4 Steps 5–7 (Toward Workbench on phone width):**
-  - Step 5: Compact readout line (fold status chips into one scannable line).
+- [x] **Phase 1–3b + Phase 4 Steps 1–5 (`v2.0.191` - `v2.0.204`, `v2.0.212` - `v2.0.213`).** Lamplight tokens, Safari fixes, Home Screen manifest, Preset manager (`#/presets`), spacing tokens, iOS Text Size support (`-apple-system-body` on touch, verified on iPhone 17 Pro), phone top-bar navigation (`#phone-nav` segmented control + single gear, `+11px` message viewport), two-row capsule composer (`360pt` field width at `402pt`, icon Send/Stop button), and phone chat-bar compact readout line (`button.chat__readout` showing runtime, context, cold state, cache reuse, tok/s, preset and system-prompt state without a tap, expanding `.chat__bar-detail` + `#chat-engine-panel` on tap).
+- [ ] **Phase 4 Steps 6–7 (Toward Workbench on phone width):**
   - Step 6: Scroller ownership check on Safari 27.
   - Step 7: Optional Graphite palette evaluation.
 - [ ] **Phase 5 (Phone battery & paint cost):**
@@ -40,9 +39,9 @@ Five active tracks across the backend and frontend, ordered by impact:
 - [ ] **Model Registry `kind` & GGUF derive-at-load:**
   - Distinguish `chat` vs `draft`/`mtp` vs `embedding` entries so standalone draft heads are not advertised as chat models in `/v1/models`.
   - Derive GGUF `modalities` and `supports_thinking` at load from GGUF headers (`gguf_metadata.py`), matching `MLXModelConfig._resolve_modalities`.
-- [ ] **Frontend E2E & Notebook Polish:**
-  - Add audio attachment staging/send check to `e2e:render` / `chat.mjs`.
-  - Port `refreshAfterResume` (`visibilitychange`/`pageshow` store re-adoption) to `notebook.js`.
+- [x] **Frontend E2E & Notebook Polish (`v2.0.211`, `v2.0.213`):**
+  - [x] Added audio attachment staging/send check to `e2e:render` (`v2.0.213`, `tests/e2e/render.mjs`).
+  - [x] `refreshAfterResume` (`visibilitychange`/`pageshow` store re-adoption) wired in `frontend/js/pages/notebook.js`.
   - [x] Added unit test for `scripts/perf_ab.py` `_timed` on a GGUF-shaped stream (`v2.0.211`, `test_perf_ab_verdict.py`) and single-pass GGUF directory listing cache (`_iter_root_gguf_files` in `model_importer.py`).
 
 ### Track 5: Embedding Apps & Workbench Extensions (`apps/embedding-apps/`)

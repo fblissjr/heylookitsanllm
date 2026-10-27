@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.213]
+
+### Changed
+
+- **Dark mode Phase 4 Step 5: phone chat-bar compact readout line and expandable load/engine panel (`frontend/js/pages/chat.js`, `frontend/css/app.css`, `frontend/DESIGN.md`, `docs/frontend_v3_user_guide.md`, `docs/project/plan_dark_mode.md`, `tests/e2e/render.mjs`).**
+  - On phone widths (`<= 767px`), tier two of `.chat__bar` is now a compact mono readout line (`button.chat__readout`, `paintReadout`) joining runtime, context (`ctx N`), `cold` state, cache reuse, `tok/s`, applied preset (`preset: X`), and system-prompt state (`No system prompt` / `System prompt: custom` / `System prompt: X (modified)`) with `' · '` so every fact the chips showed remains visible on screen without a tap.
+  - Tapping `.chat__readout` toggles `setBarPanelOpen` (`.chat__bar--panel-open` + `#chat-engine-panel`), revealing `.chat__bar-detail` (`.chat__ctx-select`, `.chat__load-select`, `Load`/`Reload`, and the chips) together with the compact engine facts. Desktop (`> 767px`) hides `.chat__readout` and keeps `.chat__bar-detail` inline via `display: contents`.
+- **Audio attachment staging and send E2E check (`tests/e2e/render.mjs`, `docs/project/TODO.md`).**
+  - Added `'dropping an audio clip stages a named audio chip and sends a base64 audio block'` to `tests/e2e/render.mjs`, verifying the `Drop audio to attach` drop label, `.attach-thumb--audio` chip rendering, and base64 `audio/wav` block assembly on `POST /v1/conversations/c1/messages`.
+- Verified: `tests/unit/` + `tests/contract/` (1607 passed), `E2E_COLOR_SCHEME=light bun run e2e:render` (106/106), `E2E_COLOR_SCHEME=dark bun run e2e:render` (106/106). NOT run: live browser `e2e:chat` / `e2e:pages`, on-device iPhone check.
+
 ## [2.0.212]
 
 ### Changed

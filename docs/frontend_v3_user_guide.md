@@ -290,11 +290,16 @@ your preset apply are all written to the store before the generation reads it.
 This is why a settings change takes effect on the next message with no explicit
 "apply" step.
 
-On a phone the composer is two rows: the message field spans the full width,
-and attach, thinking, prompt preview and Send sit on a row under it. The top
-bar is likewise two tiers, with Chats, the model and the gear on the first
-line and the context, Load and prompt chips on the second. The same controls
-are present as on desktop; only the arrangement changes.
+On a phone the composer is two rows inside one capsule border: the message
+field spans the full width, and attach, thinking, prompt preview and the icon
+Send button sit on a row under it. Page navigation and the settings gear sit in
+the top bar (`#phone-nav`) above the chat bar. The chat bar is two tiers, with
+Chats and the model picker on the first line and a compact mono readout line on
+the second showing context, cold state, cache reuse, tok/s, preset and
+system-prompt state at a glance; tapping the readout line opens the panel under
+the bar with the context select, load settings, Load, the chips and the engine
+details. The same controls are present as on desktop; only the arrangement
+changes.
 
 ### The wait before the first token
 
