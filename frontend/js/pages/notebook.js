@@ -19,6 +19,7 @@ import * as drawer from '../settings-drawer.js';
 import { createPresetBar, paintPresetChip } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
 import { createDocumentWriter } from '../document-writer.js';
+import { registerPageHotkeys } from '../hotkeys.js';
 
 // Match chat's streaming repaint rate: one paint per animation frame is up to
 // 120/s on a ProMotion phone and nobody reads at that rate.
@@ -115,6 +116,15 @@ export default createPage({
       onHide: ctx.onHide,
     }));
     ctx.onResume(ctx.guard(() => refreshAfterResume(ctx)));
+    registerPageHotkeys(ctx, {
+      onSubmit: () => {
+        if (!s.gen && s.activeId) startGenerate(ctx);
+      },
+      onEscape: () => {
+        if (s.gen) { stopGenerate(ctx); return true; }
+        return false;
+      },
+    });
     // One throttle for the whole mount (reads s.gen) -- a per-generation
     // throttle would pin each generation's head/tail copies until unmount.
     s.docWriter = createDocumentWriter({

@@ -4,6 +4,7 @@
 
 import { createEl, sweepRetiredStorage } from './utils.js';
 import { mountSettingsDrawer } from './settings-drawer.js';
+import { mountHotkeysModal } from './hotkeys.js';
 
 const ROUTES = {
   chat:     { title: 'Chat', short: 'Chat', load: () => import('./pages/chat.js') },
@@ -44,6 +45,7 @@ for (const [name, route] of Object.entries(ROUTES)) {
 // App-shell singleton: a persistent gear + right slide-over shared by every
 // page. Pages contribute to it in setup() and clear on teardown.
 mountSettingsDrawer(navDesktop, navPhone);
+mountHotkeysModal();
 
 let currentPage = null;
 let navToken = 0;

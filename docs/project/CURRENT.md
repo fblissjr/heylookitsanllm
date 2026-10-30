@@ -64,9 +64,14 @@ Thinking DEPTH is covered by pinning depth-capable models:
 `--model mlx-text=gpt-oss-20b-MXFP4-Q8-mlx` and, since v2.0.151,
 `--model mlx-vision=mlx-community_Qwen3.8-27B-4bit` (39/39 on the vision arm).
 
-## Handoff -- start here (2026-10-30, v2.0.217)
+## Handoff -- start here (2026-10-30, v2.0.218)
 
-**Observability UI, `EngineDescription.template.caps`, & Cross-Page Activity Indicator (`v2.0.216`), Live Mid-Stream "End Thinking" Control, Model Registry `kind` & GGUF Derive-at-Load, & Phase 5 Paint Cuts (`v2.0.215`), plus Upstream Convergence (`mlx-vlm` `918763c6`, `llama.cpp` `a34de8618` build 12015, `v2.0.214`).**
+**Shared Keyboard Shortcuts (`hotkeys.js`), `--ctrl-h-*` CSS Token Sweep, Phase 5 `e2e:cost` & `mlx_vlm_patches.py` A/B Verification (`v2.0.218`), Observability UI & `EngineDescription.template.caps` (`v2.0.216`), Live Mid-Stream "End Thinking" Control (`v2.0.215`), and Upstream Convergence (`v2.0.214`).**
+- **Shared Keyboard Shortcuts, `--ctrl-h-*` Token Sweep, & Runtime/Paint Benchmarks (`v2.0.218`)**:
+  - Added `frontend/js/hotkeys.js` (`mountHotkeysModal` + `registerPageHotkeys`) wired across `frontend/js/app.js`, `frontend/js/pages/chat.js`, and `frontend/js/pages/notebook.js`: `Cmd/Ctrl + Enter` triggers Chat Send or Notebook Generate, `Escape` stops an active stream or closes open bar/preview/dialog overlays, and `?` (outside editable fields) toggles a `<dialog class="hotkeys-dialog" closedby="any">` shortcut sheet with a Safari light-dismiss fallback (`render.mjs` 109/109).
+  - Swept all `28px`, `36px`, and `44px` control height/width literals across `frontend/css/app.css` to `var(--ctrl-h-sm)`, `var(--ctrl-h)`, and `var(--ctrl-h-touch)`.
+  - Re-verified `mlx_vlm_patches.py` (`PATCH_2356` & `PATCH_GDN_PACKED`) on `mlx-vlm` `918763c6` (`internal/claude/perf/mlx_vlm_patches_ab_2026-10-30.md`): confirmed `PATCH_2356` remains essential on `qwen3_5` because `APCCoordinator.merge_rows` still wraps a lone restored row in `BatchKVCache`, causing `Qwen3_5Model.__call__` to hit its second `_is_single_row_batch_cache(fa_cache)` block on every decode token and invoke two synchronous CPU `.item()` calls per token. Updated `mlx_vlm_patches.py` comments accordingly.
+  - Ran the Phase 5 `bun run e2e:cost` A/B/A/B probe comparing streaming `text-wrap: wrap` (`v2.0.215`) vs `text-wrap: pretty` and recorded the results in `internal/claude/perf/paint_cost_2026-10-30.md`.
 - **Observability UI, `EngineDescription.template.caps`, & Cross-Page Activity Indicator (`v2.0.216`)**:
   - Surfaced `chat_template_caps` on `EngineDescription.template.caps` (`TemplateFacts.caps` in `src/heylook_llm/providers/contract.py`, populated as `observed` from `llama-server` `/props` on loaded GGUF models in `LlamaServerProvider.describe_observed()` and `not_applicable` on MLX in `mlx_describe.py`).
   - Added `GET /v1/admin/config/logs?stream={events|metrics}&limit={1..500}` (`src/heylook_llm/config_api.py`) and the **Observability** section on `#/perf` (`frontend/js/pages/perf.js`, `frontend/js/api.js`, `frontend/css/app.css`) with live `observability_level` and `observability_retention_days` controls plus an `events` / `metrics` JSONL log reader.

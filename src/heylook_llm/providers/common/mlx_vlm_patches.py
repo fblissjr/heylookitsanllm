@@ -26,12 +26,16 @@ import os
 # mlx-vlm gives a cold single row the model's own caches (PromptProcessingBatch)
 # unless it drafts, quantizes KV or the model has no make_cache, but sends a
 # restored one through APCCoordinator.merge_rows, which builds BatchKVCache
-# even for one row. qwen3_5's single-row shortcut then extract()s and
-# re-merge()s the full KV of every full-attention layer on every decode step,
-# so a restored request decodes slower than the same request run cold. The PR
-# (as updated 2026-09-30) routes that row at the restore site in
-# generate/ar.py; this carry reaches the same outcome at merge_rows, the one
-# call the restore site makes, gated per generator by the same rule.
+# even for one row. Even after upstream 99b7f7c9 restricted the first
+# _extract_row_cache + merge block to h.shape[1] > 1, qwen3_5's second
+# _is_single_row_batch_cache(fa_cache) block runs on every decode token and
+# evaluates cache_left_padding.max().item() and query_left_padding.max().item()
+# synchronously on the CPU, so a restored request still decodes slower than a
+# cold one without this patch (re-verified on 918763c6; record in
+# internal/claude/perf/mlx_vlm_patches_ab_2026-10-30.md). The PR routes that
+# row at the restore site in generate/ar.py; this carry reaches the same
+# outcome at merge_rows, the one call the restore site makes, gated per
+# generator by the same rule.
 PATCH_2356 = "mlx-vlm#2356"
 MERGE_ROWS_PARAMS = ("picks", "prefix_lens", "kv_quant_config")  # bound method
 

@@ -4203,6 +4203,15 @@ async function main() {
       assert(putBody.observability_level === 'standard',
         `expected observability_level: "standard", got ${JSON.stringify(putBody)}`);
     });
+    await suite.check('keyboard shortcuts: ? toggles the hotkeys dialog and ignores editable fields', async () => {
+      await et.page.evaluate(() => document.activeElement?.blur?.());
+      await et.page.keyboard.type('?');
+      const opened = await et.page.evaluate(() => Boolean(document.querySelector('dialog.hotkeys-dialog[open]')));
+      assert(opened, 'pressing ? outside an input did not open dialog.hotkeys-dialog');
+      await et.page.keyboard.press('Escape');
+      const closed = await et.page.evaluate(() => !document.querySelector('dialog.hotkeys-dialog[open]'));
+      assert(closed, 'pressing Escape did not close dialog.hotkeys-dialog');
+    });
     await et.page.close();
 
   } catch (err) {

@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.218]
+
+### Added
+
+- **Shared Keyboard Shortcuts (`frontend/js/hotkeys.js`, `frontend/js/app.js`, `frontend/js/pages/chat.js`, `frontend/js/pages/notebook.js`, `frontend/css/app.css`, `tests/e2e/render.mjs`).**
+  - Added `mountHotkeysModal()` and `registerPageHotkeys()` in `frontend/js/hotkeys.js`:
+    - `?` (outside editable fields) toggles a `<dialog class="hotkeys-dialog" closedby="any">` keyboard shortcuts sheet with a Safari light-dismiss backdrop fallback.
+    - `Cmd/Ctrl + Enter` triggers Send on Chat or Generate on Notebook.
+    - `Escape` stops an active generation on Chat / Notebook or dismisses open bar/preview/dialog overlays.
+  - Added E2E check in `tests/e2e/render.mjs` (`109/109 passed`).
+
+### Changed
+
+- **Control Height Token Sweep & `mlx_vlm_patches.py` / `e2e:cost` Verification (`frontend/css/app.css`, `src/heylook_llm/providers/common/mlx_vlm_patches.py`, `docs/project/TODO.md`, `docs/project/CURRENT.md`, `docs/project/plan_dark_mode.md`).**
+  - Swept all hardcoded `28px`, `36px`, and `44px` control height/width literals across `frontend/css/app.css` to `var(--ctrl-h-sm)`, `var(--ctrl-h)`, and `var(--ctrl-h-touch)`.
+  - Re-verified `PATCH_2356` and `PATCH_GDN_PACKED` in `src/heylook_llm/providers/common/mlx_vlm_patches.py` on `mlx-vlm` `918763c6` (`internal/claude/perf/mlx_vlm_patches_ab_2026-10-30.md`): confirmed `PATCH_2356` remains required because `APCCoordinator.merge_rows` still wraps a lone restored row in `BatchKVCache`, causing `Qwen3_5Model.__call__` to hit its second `_is_single_row_batch_cache(fa_cache)` block on every decode token and invoke two synchronous CPU `.item()` calls per token.
+  - Recorded the Phase 5 `bun run e2e:cost` A/B/A/B paint-cost comparison in `internal/claude/perf/paint_cost_2026-10-30.md`.
+  - Verified: `tests/unit/test_css_token_contrast.py` (80 passed), `bun run e2e:render` (109/109).
+
 ## [2.0.217]
 
 ### Documentation

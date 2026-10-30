@@ -247,7 +247,7 @@ code, pre, kbd { font-family: var(--mono); font-size: 0.875em; }
     align-items: center;
     justify-content: center;
     padding: var(--space-1) var(--space-1);
-    min-height: 36px;
+    min-height: var(--ctrl-h);
     border-radius: calc(var(--r-ctl) - 2px);
     font-size: var(--text-sm);
     white-space: nowrap;
@@ -310,7 +310,7 @@ code, pre, kbd { font-family: var(--mono); font-size: 0.875em; }
 .btn--icon.btn--primary:hover { color: var(--on-accent); }
 @media (hover: none) {
   /* iOS 44pt touch floor; desktop keeps the tighter 40px */
-  .btn--icon { min-width: 44px; min-height: 44px; }
+  .btn--icon { min-width: var(--ctrl-h-touch); min-height: var(--ctrl-h-touch); }
 }
 .btn--icon[aria-pressed="true"] {
   background: var(--brand-tint);
@@ -436,7 +436,7 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   /* A real tap target on the phone. The box is reserved whether or not the
      key is overridden, so growing it costs the input its width once and the
      control never moves under the reader's finger. */
-  .settings-row__reset { width: 44px; height: 44px; margin: -0.6rem 0; }
+  .settings-row__reset { width: var(--ctrl-h-touch); height: var(--ctrl-h-touch); margin: -0.6rem 0; }
 }
 /* An overridden key reads as deliberate: the field's own border carries it
    (visible next to the greyed placeholder of an untouched neighbour) and the
@@ -596,8 +596,8 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 #phone-nav .drawer-gear-phone {
   flex: 0 0 auto;
   margin-top: 0;
-  min-width: 44px;
-  min-height: 44px;
+  min-width: var(--ctrl-h-touch);
+  min-height: var(--ctrl-h-touch);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -666,6 +666,70 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 @starting-style {
   .drawer--open { transform: translateX(100%); }
   .drawer-backdrop--open { opacity: 0; }
+}
+
+/* ================= keyboard shortcuts modal ================= */
+
+.hotkeys-dialog {
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 8px 28px var(--shadow-ink);
+  width: min(28rem, calc(100vw - 2 * var(--space-4)));
+  max-height: calc(100vh - 2 * var(--space-6));
+}
+.hotkeys-dialog::backdrop {
+  background: var(--scrim);
+}
+.hotkeys-dialog__box {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+.hotkeys-dialog__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+.hotkeys-dialog__head h2 {
+  font-size: var(--text-ui);
+  color: var(--ink-muted);
+  font-weight: 550;
+}
+.hotkeys-dialog__list {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-2) var(--space-4);
+  align-items: baseline;
+  font-size: var(--text-ui);
+}
+.hotkeys-dialog__keys {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+.hotkeys-dialog__kbd {
+  display: inline-block;
+  padding: 0.1rem 0.35rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-ctl);
+  background: var(--surface-2);
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  color: var(--ink);
+}
+.hotkeys-dialog__desc {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
 }
 
 
@@ -741,7 +805,7 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   .conv-item__edit { visibility: visible; }
   /* §7 touch floor wins over the compact desktop size above (the pane is
      full-width on a phone, so three 44px targets still leave the title room) */
-  .conv-item .btn--icon { min-width: 44px; min-height: 44px; }
+  .conv-item .btn--icon { min-width: var(--ctrl-h-touch); min-height: var(--ctrl-h-touch); }
 }
 
 .chat__thread {
@@ -1239,10 +1303,10 @@ html.tab-hidden *::after {
   }
   .message-bubble { max-width: 92%; }
   /* §7 touch targets for the bar's selects, Load button + the switch-warning actions. */
-  .chat__bar select { min-height: 44px; }
+  .chat__bar select { min-height: var(--ctrl-h-touch); }
   .chat__load-btn,
   .chat__switch-actions .btn {
-    min-height: 44px;
+    min-height: var(--ctrl-h-touch);
     padding: 0.35rem var(--space-3);
   }
   /* Two tiers on a phone (Phase 4 step 5). Tier one is what must stay one tap
@@ -1281,7 +1345,7 @@ html.tab-hidden *::after {
     gap: 0 var(--space-1);
     flex: 1 0 100%;
     min-width: 0;
-    min-height: 28px;
+    min-height: var(--ctrl-h-sm);
     padding: 2px var(--space-1);
     margin: 0;
     background: transparent;
@@ -1351,7 +1415,7 @@ html.tab-hidden *::after {
   .chat__ctx-custom {
     flex: 0 1 auto;
     min-width: 4rem;
-    min-height: 44px;
+    min-height: var(--ctrl-h-touch);
     padding: var(--space-1) var(--space-2);
     font-size: var(--text-sm);
     text-overflow: ellipsis;
@@ -1365,14 +1429,14 @@ html.tab-hidden *::after {
   .chat__ctx-custom { max-width: 6rem; }
   .chat__load-btn {
     flex: 0 0 auto;
-    min-height: 44px;
+    min-height: var(--ctrl-h-touch);
     padding: var(--space-1) var(--space-3);
     font-size: var(--text-sm);
   }
   .chat__preset-chip,
   .chat__sysprompt-chip {
     flex: 0 0 auto;
-    min-height: 36px;
+    min-height: var(--ctrl-h);
     padding: var(--space-1) 0.65rem;
     font-size: var(--text-sm);
     border-radius: 999px;
@@ -1397,7 +1461,7 @@ html.tab-hidden *::after {
     gap: 2px var(--space-2);
   }
   .chat__composer textarea {
-    min-height: 44px;
+    min-height: var(--ctrl-h-touch);
     padding: var(--space-1);
   }
 }
@@ -1717,18 +1781,18 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
   .model-row__actions .btn,
   .models__section-head .btn,
   .models__danger .btn {
-    min-height: 44px;
+    min-height: var(--ctrl-h-touch);
     padding: 0.55rem 0.9rem;
   }
-  .scan-controls .input { min-height: 44px; }
+  .scan-controls .input { min-height: var(--ctrl-h-touch); }
   /* Config editor stacks label-over-control on the phone; §7 touch targets. */
   .cfg-field {
     grid-template-columns: 1fr;
     grid-template-areas: "label" "control" "hint";
     align-items: stretch;
   }
-  .cfg-field > .input, .cfg-field > select { min-height: 44px; }
-  .cfg-actions .btn { min-height: 44px; padding: 0.55rem 0.9rem; }
+  .cfg-field > .input, .cfg-field > select { min-height: var(--ctrl-h-touch); }
+  .cfg-actions .btn { min-height: var(--ctrl-h-touch); padding: 0.55rem 0.9rem; }
 }
 
 
@@ -2108,7 +2172,7 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
   .embeddings { padding-top: calc(var(--space-4) + env(safe-area-inset-top, 0px)); }
 }
 @media (hover: none) {
-  .embeddings .btn, .embeddings .input, .embeddings select { min-height: 44px; }
+  .embeddings .btn, .embeddings .input, .embeddings select { min-height: var(--ctrl-h-touch); }
 }
 
 /* ==== page: presets ==== */
@@ -2190,9 +2254,9 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
   .presets { padding: calc(var(--space-4) + env(safe-area-inset-top, 0px)) var(--space-4) var(--space-10); }
   .preset-card__actions .btn,
   .preset-card__rename-row .btn,
-  .preset-edit__buttons .btn { min-height: 44px; padding: 0.55rem 0.9rem; }
+  .preset-edit__buttons .btn { min-height: var(--ctrl-h-touch); padding: 0.55rem 0.9rem; }
   .preset-card__rename,
-  .preset-edit__row .input { min-height: 44px; }
+  .preset-edit__row .input { min-height: var(--ctrl-h-touch); }
 }
 
 /* ================= themed model picker (desktop) ================= */

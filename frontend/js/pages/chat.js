@@ -38,6 +38,7 @@ import { createDocumentWriter } from '../document-writer.js';
 import { createLoadPanel } from '../load-panel.js';
 import { contextCeiling, contextRunning, readFact, renderEngineCompact } from '../engine.js';
 import { paintPromptPreview, paintPromptPreviewError } from '../prompt-preview.js';
+import { registerPageHotkeys } from '../hotkeys.js';
 
 // A system prompt typed before any conversation exists has no owner: the
 // server has nothing to attach it to, so it lived in page state alone and a
@@ -210,6 +211,18 @@ export default createPage({
     });
     ctx.onTeardown(s.paramsBinder);
     ctx.onTeardown(() => clearPendingAttachments(ctx));
+    registerPageHotkeys(ctx, {
+      onSubmit: () => {
+        if (!s.stream && !s.remoteGenerating) send(ctx);
+      },
+      onEscape: () => {
+        if (s.stream) { stopStream(ctx); return true; }
+        if (s.remoteGenerating) { stopRemote(ctx); return true; }
+        if (s.enginePanelEl && !s.enginePanelEl.hidden) { setBarPanelOpen(ctx, false); return true; }
+        if (s.promptPreviewEl && !s.promptPreviewEl.hidden) { s.promptPreviewEl.hidden = true; return true; }
+        return false;
+      },
+    });
 
     // The page is a mirror of the store: re-adopt it when the tab comes back
     // (why: refreshAfterResume). Each debounced writer owns its own hide

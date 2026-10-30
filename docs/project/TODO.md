@@ -2,7 +2,7 @@
 
 Cross-session task backlog organized by priority.
 
-*Last reviewed: 2026-10-30 (through v2.0.217; previous triage 2026-09-25 through v2.0.154). Every section was classed done, obsolete, open or mixed with evidence (`internal/claude/todo_triage.md`); the done and obsolete ones moved verbatim to `internal/archive/todo_closed_2026-09-25.md`. Mixed sections stay whole: their checked-off items are history kept beside the open ones.*
+*Last reviewed: 2026-10-30 (through v2.0.218; previous triage 2026-09-25 through v2.0.154). Every section was classed done, obsolete, open or mixed with evidence (`internal/claude/todo_triage.md`); the done and obsolete ones moved verbatim to `internal/archive/todo_closed_2026-09-25.md`. Mixed sections stay whole: their checked-off items are history kept beside the open ones.*
 
 ## 2026-10-30 Roadmap (Upstream Convergence, Engine Control, & Mobile Workbench)
 
@@ -15,10 +15,10 @@ Five active tracks across upstream kernels, backend engine control, model regist
   - Auto-discover MLX checkpoints that bundle `mtp.*` weights inside their own shards (`loader_routing.has_bundled_mlx_mtp` via `mlx_vlm.speculative.drafters.mtp_split`, `mlx-vlm#2457`), self-pairing `draft_model_path = str(path)` on scan and reporting `"built-in MTP head"` in `mlx_describe` and `MLXProvider.describe_observed()`.
   - Refused `LiquidAI/d1` (`D1Model`) sequence-classification checkpoints in `ModelImporter.scan_directory` (`_is_decision_checkpoint`, matching `mlx-vlm` `c62dbf92`).
 - [ ] **1.3 `mlx >= 0.32.5` core kernel bump (`pyproject.toml`, `uv.lock`).**
-  - Pull in `mlx#4719` (`head_dim=256` SDPA vector kernel on M1/M2 for Qwen3 / Qwen3.5 / Gemma 3 / Gemma 4), `mlx#4723` (`sdpa_split` compilation during speculative decoding), `mlx#4734` (native sliding-window attention mask in `mx.fast.scaled_dot_product_attention`), and `mlx#4737` (distributed ring group cleanup race fix).
-- [ ] **1.4 Retire or scope local `mlx-vlm` carries (`mlx_vlm_patches.py`) with `scripts/perf_ab.py`:**
-  - `PATCH_GDN_PACKED`: upstream `d13bd3cc` added `_make_gated_delta_packed_kernel` (`T > 1`) in `qwen3_5/gated_delta.py`. Run `perf_ab.py` on `Qwen3.5-0.8B-MLX-8bit` / `Qwen3.8-27B` comparing `T >= 1` (`PATCH_GDN_PACKED`) vs `T > 1` (upstream) for single-token decode, and keep `PATCH_GDN_PACKED` scoped to `mlx_vlm/models/gated_delta.py` (`qwen3_next`, `kimi_linear`, `lfm3`) until upstream ports it there.
-  - `PATCH_2356`: re-test restored `qwen3_5` decode throughput (`Blaizzy/mlx-vlm#2356`) on `918763c6` (`99b7f7c9` mask construction fix) via `perf_ab.py` and retire if parity holds.
+  - Checked 2026-10-30: `0.32.4` is the latest release published on PyPI (`0.32.5` is currently on `main` only). Bump once published on PyPI to pull in `mlx#4719` (`head_dim=256` SDPA vector kernel on M1/M2 for Qwen3 / Qwen3.5 / Gemma 3 / Gemma 4), `mlx#4723` (`sdpa_split` compilation during speculative decoding), `mlx#4734` (native sliding-window attention mask in `mx.fast.scaled_dot_product_attention`), and `mlx#4737` (distributed ring group cleanup race fix).
+- [x] **1.4 Re-verify local `mlx-vlm` carries (`mlx_vlm_patches.py`) on `918763c6` (`v2.0.218`, record in `internal/claude/perf/mlx_vlm_patches_ab_2026-10-30.md`):**
+  - `PATCH_2356`: re-tested on `Qwen3.5-0.8B-MLX-8bit` across cold and APC-restored single-row generations (`internal/claude/perf/mlx_vlm_patches_ab_2026-10-30.md`). **Kept**: without `PATCH_2356`, `APCCoordinator.merge_rows` still wraps a lone restored row in `BatchKVCache`, causing `Qwen3_5Model.__call__` to enter its second `_is_single_row_batch_cache(fa_cache)` block on every decode token and call `cache_left_padding.max().item()` + `query_left_padding.max().item()` synchronously on the CPU, degrading restored single-row decode and suffix prefill relative to cold generation.
+  - `PATCH_GDN_PACKED`: upstream `d13bd3cc` added `_gated_delta_kernel_packed` in `mlx_vlm/models/qwen3_5/gated_delta.py`; kept `PATCH_GDN_PACKED` scoped to shared `mlx_vlm/models/gated_delta.py` (`qwen3_next`, `kimi_linear`, `lfm3`) until upstream ports it there.
   - Drafted APC capture-boundary PR (`vlm_engine.install_capture_policy`), once approved by owner to file.
 - [ ] **1.5 Gemma 4 MLX vision parity re-verification (`scripts/vlm_parity_probe.py`).** Re-run `vlm_parity_probe.py` on Gemma 4 (`gemma-4-26B-A4B`) following upstream `8dd77461` (`gemma4/vision.py` channels-last weight transposition fix).
 - [ ] **1.6 Live 2-Mac speculative benchmark (`scripts/perf_ab.py`).** Run a clean `perf_ab.py` comparison on a 2-Mac pipelined model with and without its MTP/DFlash drafter and record in `internal/claude/perf/`.
@@ -51,17 +51,18 @@ Five active tracks across upstream kernels, backend engine control, model regist
 ### Track 4: Mobile & Dark-Mode Workbench (`docs/project/plan_dark_mode.md` Phases 4 & 5)
 - [x] **4.1 Phase 1–3b + Phase 4 Steps 1–5 (`v2.0.191` - `v2.0.204`, `v2.0.212` - `v2.0.213`).** Lamplight tokens, Safari fixes, Home Screen manifest, Preset manager (`#/presets`), spacing tokens, iOS Text Size support (`-apple-system-body` on touch, verified on iPhone 17 Pro), phone top-bar navigation (`#phone-nav` segmented control + single gear, `+11px` message viewport), two-row capsule composer (`360pt` field width at `402pt`, icon Send/Stop button), and phone chat-bar compact readout line (`button.chat__readout` showing runtime, context, cold state, cache reuse, tok/s, preset and system-prompt state without a tap, expanding `.chat__bar-detail` + `#chat-engine-panel` on tap).
 - [ ] **4.2 Phase 4 Steps 6–7 (Token sweeps & Safari 27 scroller check):**
-  - Defined `--text-xs: 0.75rem`, `--ctrl-h-sm: 28px`, `--ctrl-h: 36px`, and `--ctrl-h-touch: 44px` in `:root` (`frontend/css/app.css`, `v2.0.216`).
-  - Remaining: Scroller ownership check on Safari 27 + full literal sweep across `frontend/css/app.css` + optional Graphite palette evaluation.
-- [x] **4.3 Phase 5 CSS/DOM paint & background-tab cuts (`v2.0.215`; device baseline & `e2e:cost` re-measurement open):**
+  - Defined `--text-xs: 0.75rem`, `--ctrl-h-sm: 28px`, `--ctrl-h: 36px`, and `--ctrl-h-touch: 44px` in `:root` (`v2.0.216`) and swept all `28px`, `36px`, and `44px` control height/width literals across `frontend/css/app.css` (`v2.0.218`).
+  - Remaining: Scroller ownership check on Safari 27 + off-grid spacing/radius sweep for Step 7 (Graphite palette evaluation).
+- [x] **4.3 Phase 5 CSS/DOM paint & background-tab cuts (`v2.0.215`, `e2e:cost` probe recorded in `v2.0.218`):**
   - Step 1 (`bun run e2e:cost` paint-cost probe) shipped in `v2.0.201`.
   - Step 3 (`v2.0.215`): streaming paragraphs/list items use greedy `text-wrap: wrap` during active streaming (`.message--streaming .message-content :is(p, li) { text-wrap: wrap; }`) and settle to `text-wrap: pretty` when complete; backgrounded tabs toggle `html.tab-hidden` on `visibilitychange` (`frontend/js/app.js`) to pause all CSS animations (`animation-play-state: paused !important`). (`content-visibility` stays deliberately absent per `.claude/rules/frontend.md`.)
-  - Open: capture `bun run e2e:cost` before/after comparison in `internal/claude/perf/` and verify streaming markdown coalesce cadence on phone emulation.
+  - Step 4 (`v2.0.218`): ran `bun run e2e:cost` A/B/A/B comparison (`wrap` vs `pretty` during streaming) and recorded in `internal/claude/perf/paint_cost_2026-10-30.md`.
 
 ### Track 5: Embedding Apps & Workbench Extensions (`apps/embedding-apps/`, `jspace`, Notebook)
 - [x] **5.1 Allowlist proxy (`serve.py`), `kit/embed-kit.js`, Media Finder (`v2.0.205`), Embedding Lab (`v2.0.206`), audio attachment E2E check (`v2.0.213`), and Notebook `refreshAfterResume` (`v2.0.211`).**
-- [ ] **5.2 `jspace` Part 2 & Shared Keyboard Shortcuts (`docs/jspace_integration_plan.md`):**
-  - Wire shared `frontend/js/hotkeys.js` across Chat, Notebook, Models, and `jspace` (`Cmd/Ctrl+Enter` send/continue, `Escape` stop/close, `?` shortcut modal).
+- [x] **5.2 Shared Keyboard Shortcuts (`frontend/js/hotkeys.js`, `v2.0.218`):**
+  - Added `frontend/js/hotkeys.js` (`mountHotkeysModal` + `registerPageHotkeys`) wired across `app.js`, `chat.js`, and `notebook.js`: `Cmd/Ctrl+Enter` sends/generates, `Escape` stops an active stream or closes open bar/preview/dialog overlays, and `?` (outside editable fields) toggles a native `<dialog class="hotkeys-dialog" closedby="any">` shortcut sheet with Safari backdrop light-dismiss fallback (`render.mjs` 109/109).
+- [ ] **5.3 `jspace` Part 2 (`docs/jspace_integration_plan.md`):**
   - Flip `jspace` analyze to chat-turn default, display special tokens, and add assistant prefill / per-token possibility-horizon inspection.
 - [ ] **5.3 Notebook Save-to-Conversations (`frontend/js/pages/notebook.js`):** add "Save to Conversations" action persisting a Notebook buffer into the shared DuckDB store (`kind: 'notebook'`) so buffers survive browser storage clears and sync across Desktop and iPhone.
 - [ ] **5.4 Live browser verification & expanded evaluation sets:** run Media Finder and Embedding Lab across audio/video and larger multimodal corpora on MLX and GGUF embedding models.
