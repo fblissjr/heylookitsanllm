@@ -22,7 +22,11 @@ from heylook_llm.modality_detect import (
     has_vision_weight_files,
     read_model_config_json,
 )
-from heylook_llm.providers.common.loader_routing import hidden_size, mlx_drafter_kind
+from heylook_llm.providers.common.loader_routing import (
+    has_bundled_mlx_mtp,
+    hidden_size,
+    mlx_drafter_kind,
+)
 
 __all__ = ["ModelImporter"]
 
@@ -81,6 +85,8 @@ class ModelImporter:
                 logging.info(f"Skipping drafter/assistant checkpoint (not servable on its own): {rel_path}")
             elif self._is_embedding_checkpoint(root_path, config_data):
                 logging.info(f"Skipping embedding checkpoint (no provider serves it): {rel_path}")
+            elif self._is_decision_checkpoint(config_data):
+                logging.info(f"Skipping decision checkpoint (not a chat model): {rel_path}")
             elif self._is_gguf_model(root_path):
                 logging.info(f"Found GGUF model in: {rel_path}")
                 model = self._create_gguf_entry(root_path)
@@ -239,6 +245,19 @@ class ModelImporter:
             return any(d.is_dir() and d.name.endswith("_Dense") for d in path.iterdir())
         except OSError:
             return False
+
+    def _is_decision_checkpoint(self, config_data: Optional[dict]) -> bool:
+        """LiquidAI d1 decision checkpoints (D1Model).
+
+        d1-2B, d1-omni-2B, and d1-3B reuse lfm3_vl / lfm3_omni / lfm2_vl
+        model_type with no causal chat head; mlx-vlm refuses them at load
+        (c62dbf92). Refuse them here before the mlx branch imports them as
+        enabled chat models."""
+        if not config_data:
+            return False
+        architectures = config_data.get("architectures") or ()
+        auto_model = str((config_data.get("auto_map") or {}).get("AutoModel", ""))
+        return "D1Model" in architectures or auto_model.endswith("D1Model")
 
     def _is_gguf_model(self, path: Path) -> bool:
         """Dir containing >=1 PRIMARY .gguf file (root level only).
@@ -442,17 +461,20 @@ class ModelImporter:
         return None, None, None
 
     def _pick_mlx_drafter(self, path: Path, config_data: Optional[dict]) -> Optional[Path]:
-        """The standalone mlx-vlm drafter for this MLX model, or None.
+        """The standalone or bundled mlx-vlm drafter for this MLX model, or None.
 
-        A neighbouring folder (same parent) that is a drafter
-        (``mlx_drafter_kind``) and whose name, less its last ``-segment``,
-        begins this model's name: ``mlx_vlm.convert --mtp`` writes
-        ``<model>-mtp``, and one drafter serves every conversion of the model
-        beside it (``<model>``, ``<model>-8bit``). Its hidden size must match
-        this model's, which keeps a smaller sibling's drafter off a bigger
-        model whose name it prefixes. Exactly one candidate or none: an
-        ambiguous pairing is left to ``draft_model_path`` in the model's
-        model.heylook.toml.
+        1. A neighbouring folder (same parent) that is a standalone drafter
+           (``mlx_drafter_kind``) and whose name, less its last ``-segment``,
+           begins this model's name: ``mlx_vlm.convert --mtp`` writes
+           ``<model>-mtp``, and one drafter serves every conversion of the model
+           beside it (``<model>``, ``<model>-8bit``). Its hidden size must match
+           this model's, which keeps a smaller sibling's drafter off a bigger
+           model whose name it prefixes. Exactly one candidate or none: an
+           ambiguous sibling pairing falls through.
+        2. An MTP head bundled inside the checkpoint's own weights
+           (``has_bundled_mlx_mtp``, mlx-vlm#2457): returns ``path`` itself so
+           ``load_drafter`` splits the ``mtp.*`` tensors in memory at load,
+           matching GGUF's built-in ``draft-mtp`` rule.
         """
         if config_data is None:
             config_data = self._read_model_config(path)
@@ -471,7 +493,11 @@ class ModelImporter:
         if len(found) > 1:
             logging.info(f"[import] {path.name}: {len(found)} neighbouring drafters "
                          f"({', '.join(f.name for f in found)}); pairing none")
-        return found[0] if len(found) == 1 else None
+        elif len(found) == 1:
+            return found[0]
+        if has_bundled_mlx_mtp(path, config_data):
+            return path
+        return None
 
     @staticmethod
     def _subdirs(path: Path) -> list:
@@ -632,8 +658,10 @@ class ModelImporter:
             # 2026-09-24, same as gguf); unset draft_model_path in the model's
             # model.heylook.toml to keep it off.
             config["draft_model_path"] = str(draft)
-            logging.info(f"[import] {model_id}: speculative decoding on -- "
-                         f"drafter from neighbouring folder {draft.name}/")
+            why = ("MTP head built into the weights"
+                   if draft == path
+                   else f"drafter from neighbouring folder {draft.name}/")
+            logging.info(f"[import] {model_id}: speculative decoding on -- {why}")
 
         return self._apply_sidecar(
             {"id": model_id, "provider": "mlx", "config": config}, path)

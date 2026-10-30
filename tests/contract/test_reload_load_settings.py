@@ -38,7 +38,7 @@ def _stored(mock_service):
 
 
 @pytest.fixture
-def heylook_toml(app, tmp_path, monkeypatch):
+def heylook_toml(app, tmp_path):
     """A REAL ModelService over a throwaway heylook.toml, standing in for the
     session's mock service for one test: what the route wrote is then read
     back from the file and through GET, not from a record of calls."""
@@ -54,8 +54,12 @@ def heylook_toml(app, tmp_path, monkeypatch):
         "[models.config]\n"
         'model_path = "/fake/model.gguf"\n'
     )
-    monkeypatch.setattr(app.state, "model_service", ModelService(str(path)))
-    return path
+    previous = getattr(app.state, "model_service", None)
+    app.state.model_service = ModelService(str(path))
+    try:
+        yield path
+    finally:
+        app.state.model_service = previous
 
 
 def _row_config(client):

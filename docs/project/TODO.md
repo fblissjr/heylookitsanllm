@@ -2,52 +2,69 @@
 
 Cross-session task backlog organized by priority.
 
-*Last reviewed: 2026-10-27 (through v2.0.213; previous triage 2026-09-25 through v2.0.154). Every section was classed done, obsolete, open or mixed with evidence (`internal/claude/todo_triage.md`); the done and obsolete ones moved verbatim to `internal/archive/todo_closed_2026-09-25.md`. Mixed sections stay whole: their checked-off items are history kept beside the open ones.*
+*Last reviewed: 2026-10-30 (through v2.0.214; previous triage 2026-09-25 through v2.0.154). Every section was classed done, obsolete, open or mixed with evidence (`internal/claude/todo_triage.md`); the done and obsolete ones moved verbatim to `internal/archive/todo_closed_2026-09-25.md`. Mixed sections stay whole: their checked-off items are history kept beside the open ones.*
 
-## 2026-10-27 Roadmap (Beyond Distributed Inference)
+## 2026-10-30 Roadmap (Upstream Convergence, Engine Control, & Mobile Workbench)
 
-Five active tracks across the backend and frontend, ordered by impact:
+Five active tracks across upstream kernels, backend engine control, model registry/observability, and the mobile/desktop workbench, ordered by impact:
 
-### Track 1: Distributed Multi-Mac Inference (`v2.0.208` - `v2.0.210` — COMPLETE)
-- [x] **1.1 Rank-0 speculative decoding on pipelined MLX models (`v2.0.210`).** Enabled `draft_model_path` (MTP / DFlash / EAGLE3) on Rank 0 when `pipeline_ratios` is active, and synchronized `start_speculative_cache` transactions (`CMD_START_SPEC`, `CMD_COMMIT_SPEC`, `CMD_ABORT_SPEC`) across Rank 0 and Rank 1 so both `KVCache` and hybrid `ArraysCache` (Gated DeltaNet) layers roll back rejected draft tokens in lockstep.
-- [x] **1.2 Live worker Metal working-set ceilings in `ping` + `ram_fit` (`v2.0.210`).** Worker control port (`32423`) reports `local_worker_ceilings()` in `ping` and `prepare_model`; `ram_fit.fit_for_config` queries `probe_worker_ceilings` and adds a `worker_metal_working_set` `FitLine` rendered on the Models page.
-- [x] **1.3 GGUF `describe_observed()` RPC fallback status + UI `pipeline_ratios` (`v2.0.210`).** `_record_load_report` records `rpc = "single-node (fallback)"` when `_preflight_rpc_servers` falls back solo, `frontend/js/engine.js` surfaces `rpc single-node (fallback)`, and `MLXModelConfig.pipeline_ratios` is exposed as `ui="advanced"` (with numeric array parsing in `frontend/js/model-config.js`) while `pipeline_peers` and `rpc` remain `file_only=True`.
-- [ ] **1.4 Optional live 2-Mac speculative benchmark (`scripts/perf_ab.py`).** Run a clean `perf_ab.py` comparison on a 2-Mac pipelined model with and without its MTP/DFlash drafter and record in `internal/claude/perf/`.
-
-### Track 2: Mobile & Dark-Mode Workbench (`docs/project/plan_dark_mode.md` Phases 4 & 5)
-- [x] **Phase 1–3b + Phase 4 Steps 1–5 (`v2.0.191` - `v2.0.204`, `v2.0.212` - `v2.0.213`).** Lamplight tokens, Safari fixes, Home Screen manifest, Preset manager (`#/presets`), spacing tokens, iOS Text Size support (`-apple-system-body` on touch, verified on iPhone 17 Pro), phone top-bar navigation (`#phone-nav` segmented control + single gear, `+11px` message viewport), two-row capsule composer (`360pt` field width at `402pt`, icon Send/Stop button), and phone chat-bar compact readout line (`button.chat__readout` showing runtime, context, cold state, cache reuse, tok/s, preset and system-prompt state without a tap, expanding `.chat__bar-detail` + `#chat-engine-panel` on tap).
-- [ ] **Phase 4 Steps 6–7 (Toward Workbench on phone width):**
-  - Step 6: Scroller ownership check on Safari 27.
-  - Step 7: Optional Graphite palette evaluation.
-- [ ] **Phase 5 (Phone battery & paint cost):**
-  - Step 1 (`bun run e2e:cost` paint-cost probe) shipped in `v2.0.201`.
-  - Steps 2–4: Capture phone baseline and trim streaming/idle repaint overhead.
-
-### Track 3: Engine Runtime, Caching, & Upstream Convergence (`docs/project/plan_runtime_visibility.md`)
-- [x] **GGUF `--cache-reuse`, `--checkpoint-min-step`, `--ctx-checkpoints`, `-cram` auto-sizing, and `flash_attn="on"` default (`v2.0.207`).**
-- [x] **MLX true text/image interleaving (`v2.0.207`) and 8-row packed Gated DeltaNet Metal kernel (`PATCH_GDN_PACKED`, `v2.0.208`).**
-- [ ] **Reasoning-strip re-prefill measurement on GGUF** (from Context Language Models paper): measure per-turn prompt vs cached tokens on a thinking conversation from the perf store and record in `internal/`.
-- [ ] **Retire local `mlx-vlm` carries (`mlx_vlm_patches.py`) as upstream merges them:**
-  - `PATCH_2356` (restored `qwen3_5` decode, `Blaizzy/mlx-vlm#2356`).
-  - `PATCH_GDN_PACKED` (8-row packed Gated DeltaNet kernel, once upstreamed from `forks/mlx-vlm`).
+### Track 1: Upstream Convergence, Kernel Upgrades, & Speculative Decoding
+- [x] **1.1 Distributed Multi-Mac Inference (`v2.0.208` - `v2.0.210`).** Asymmetric MLX pipeline sharding (`mlx_pipeline.py`), persistent worker daemon (`mlx_pipeline_worker.py --daemon`), secondary-Mac supervisor (`worker_node.py`), Rank-0 speculative decoding across pipelined ranks (`CMD_START_SPEC`/`CMD_COMMIT_SPEC`/`CMD_ABORT_SPEC`), live worker Metal working-set ceilings in `ping`/`prepare_model` and `ram_fit`, GGUF `describe_observed()` `rpc = "single-node (fallback)"`, and `pipeline_ratios` `ui="advanced"` on the Models page.
+- [x] **1.2 `mlx-vlm` `918763c6` + `llama.cpp` `a34de8618` (build 12015) convergence & Bundled MLX MTP auto-discovery (`v2.0.214`).**
+  - Updated `vlm_engine.capture_lengths` and `install_capture_policy` for upstream `APCCoordinator.checkpoint_lengths` (`f4064e95`: `extra_hash`, `stable_prefix_len`, and `mgr.checkpoint_prefix_length` boundary folding).
+  - Auto-discover MLX checkpoints that bundle `mtp.*` weights inside their own shards (`loader_routing.has_bundled_mlx_mtp` via `mlx_vlm.speculative.drafters.mtp_split`, `mlx-vlm#2457`), self-pairing `draft_model_path = str(path)` on scan and reporting `"built-in MTP head"` in `mlx_describe` and `MLXProvider.describe_observed()`.
+  - Refused `LiquidAI/d1` (`D1Model`) sequence-classification checkpoints in `ModelImporter.scan_directory` (`_is_decision_checkpoint`, matching `mlx-vlm` `c62dbf92`).
+- [ ] **1.3 `mlx >= 0.32.5` core kernel bump (`pyproject.toml`, `uv.lock`).**
+  - Pull in `mlx#4719` (`head_dim=256` SDPA vector kernel on M1/M2 for Qwen3 / Qwen3.5 / Gemma 3 / Gemma 4), `mlx#4723` (`sdpa_split` compilation during speculative decoding), `mlx#4734` (native sliding-window attention mask in `mx.fast.scaled_dot_product_attention`), and `mlx#4737` (distributed ring group cleanup race fix).
+- [ ] **1.4 Retire or scope local `mlx-vlm` carries (`mlx_vlm_patches.py`) with `scripts/perf_ab.py`:**
+  - `PATCH_GDN_PACKED`: upstream `d13bd3cc` added `_make_gated_delta_packed_kernel` (`T > 1`) in `qwen3_5/gated_delta.py`. Run `perf_ab.py` on `Qwen3.5-0.8B-MLX-8bit` / `Qwen3.8-27B` comparing `T >= 1` (`PATCH_GDN_PACKED`) vs `T > 1` (upstream) for single-token decode, and keep `PATCH_GDN_PACKED` scoped to `mlx_vlm/models/gated_delta.py` (`qwen3_next`, `kimi_linear`, `lfm3`) until upstream ports it there.
+  - `PATCH_2356`: re-test restored `qwen3_5` decode throughput (`Blaizzy/mlx-vlm#2356`) on `918763c6` (`99b7f7c9` mask construction fix) via `perf_ab.py` and retire if parity holds.
   - Drafted APC capture-boundary PR (`vlm_engine.install_capture_policy`), once approved by owner to file.
-- [x] **`vlm_parity_probe.py` bilateral near-tie detection (`v2.0.211`):** records `heylook_top1_top2_margin` alongside `upstream_top1_top2_margin` and reports `NEAR-TIE` when either side's top-2 margin is `<= 0.125`.
-- [x] **Load-time template block-content probe (`v2.0.211`):** `block_system_content_warning` in `chat_template_files.py` probes block-form system content and warns in both `TemplateView.notes` and `template_info.read_template_info()` if `{'type':` appears literally in the rendered prompt.
+- [ ] **1.5 Gemma 4 MLX vision parity re-verification (`scripts/vlm_parity_probe.py`).** Re-run `vlm_parity_probe.py` on Gemma 4 (`gemma-4-26B-A4B`) following upstream `8dd77461` (`gemma4/vision.py` channels-last weight transposition fix).
+- [ ] **1.6 Live 2-Mac speculative benchmark (`scripts/perf_ab.py`).** Run a clean `perf_ab.py` comparison on a 2-Mac pipelined model with and without its MTP/DFlash drafter and record in `internal/claude/perf/`.
 
-### Track 4: Frontend Coverage, Observability UI, & Registry Ergonomics
-- [ ] **Observability Config + View UI (`v3`):** surface `observability_level` / retention controls (`GET/PUT /v1/admin/config`) and a reader view over `logs/*.jsonl` (`request_events`, `model_events`, `never-stops` health signal), then consolidate `memory.py`'s legacy JSONL streams into `observability.py`.
-- [ ] **Model Registry `kind` & GGUF derive-at-load:**
-  - Distinguish `chat` vs `draft`/`mtp` vs `embedding` entries so standalone draft heads are not advertised as chat models in `/v1/models`.
-  - Derive GGUF `modalities` and `supports_thinking` at load from GGUF headers (`gguf_metadata.py`), matching `MLXModelConfig._resolve_modalities`.
-- [x] **Frontend E2E & Notebook Polish (`v2.0.211`, `v2.0.213`):**
-  - [x] Added audio attachment staging/send check to `e2e:render` (`v2.0.213`, `tests/e2e/render.mjs`).
-  - [x] `refreshAfterResume` (`visibilitychange`/`pageshow` store re-adoption) wired in `frontend/js/pages/notebook.js`.
-  - [x] Added unit test for `scripts/perf_ab.py` `_timed` on a GGUF-shaped stream (`v2.0.211`, `test_perf_ab_verdict.py`) and single-pass GGUF directory listing cache (`_iter_root_gguf_files` in `model_importer.py`).
+### Track 2: Engine Runtime, Mid-Stream Thinking Control, & Caching (`docs/project/plan_runtime_visibility.md`)
+- [x] **2.1 GGUF `--cache-reuse`, `--checkpoint-min-step`, `--ctx-checkpoints`, `-cram` auto-sizing, and `flash_attn="on"` default (`v2.0.207`).**
+- [x] **2.2 MLX true text/image interleaving (`v2.0.207`), bilateral near-tie detection (`v2.0.211`), and load-time template block-content probe (`v2.0.211`).**
+- [ ] **2.3 Live Mid-Stream "End Thinking" Control (`POST /v1/chat/completions/control` + Chat UI button):**
+  - **GGUF arm**: proxy `POST /slots/{id}?action=control` (`{"action": "reasoning_end"}`, landed in `llama.cpp` `b7c95d4c5` / `#31390`) on the active slot in `LlamaServerProvider`.
+  - **MLX arm**: attach an armed `ThinkingBudgetCriteria` on every thinking-enabled generation (`budget=None` when uncapped) with an `end_now: threading.Event` flag so setting it mid-stream immediately forces the closing `</think>` token on the next step.
+  - **Chat UI**: add an inline **"End thinking"** action button inside the streaming thinking block header (`frontend/js/pages/chat.js`) so the user can transition a long reasoning trace straight into the final answer without cancelling generation.
+- [ ] **2.4 GGUF `/props` `chat_template_caps` (`#31271`) & hybrid recurrent speculative rollback (`#31350`) verification:**
+  - Read `chat_template_caps` (`supports_system_role`, `supports_tools`, `supports_parallel_tool_calls`, `supports_typed_content`) from `llama-server` `/props` into `LlamaServerProvider.describe_observed()` to enrich template diagnostics without replacing `thinking_controls.detect`.
+  - Verify speculative decoding (`draft-mtp` / external drafter) on hybrid recurrent GGUF models (`Qwen3.5` / `Qwen3.8`) using `llama.cpp` `#31350` (`checkpoint_Interval` recurrent state rollback).
+- [ ] **2.5 Reasoning-strip re-prefill measurement on GGUF** (from Context Language Models paper): measure per-turn prompt vs cached tokens on a thinking conversation from the perf store and record in `internal/`.
 
-### Track 5: Embedding Apps & Workbench Extensions (`apps/embedding-apps/`)
-- [x] **Allowlist proxy (`serve.py`), `kit/embed-kit.js`, Media Finder (`v2.0.205`), and Embedding Lab (`v2.0.206`).**
-- [ ] **Live browser verification & expanded evaluation sets:** run Media Finder and Embedding Lab across audio/video and larger multimodal corpora on MLX and GGUF embedding models.
-- [ ] **`jspace` token-walker & chat-turn default (`docs/jspace_integration_plan.md` Part 2):** flip `jspace` analyze to chat-turn default, display special tokens, and add assistant prefill / per-token possibility-horizon inspection.
+### Track 3: Model Registry Ergonomics, Observability, & Runtime Visibility UI
+- [ ] **3.1 Runtime Visibility UI (`docs/project/plan_runtime_visibility.md` Track 4 Phase 3b):**
+  - Header activity pill (`frontend/index.html`, `frontend/js/app.js`) showing live prefill progress (`prefill N/M`), active generation, or idle state across pages.
+  - Per-message assistant footer badges (`frontend/js/pages/chat.js`) displaying prompt cache hit % (`cached_tokens / prompt_tokens`), cache miss reason (`cache.reason`), and speculative acceptance rate (`drafted_accepted / drafted_tokens`) when present on `message.perf`.
+- [ ] **3.2 Model Registry `kind` & GGUF derive-at-load (6a follow-up):**
+  - Add `kind: Literal["chat", "embedding"] = "chat"` to `ModelConfig` (derived automatically by `embedding_models.is_embedding_model` when omitted) and ensure standalone draft checkpoints (`mtp`, `dflash`, `dspark`, `eagle3`, `D1Model`) are never imported as top-level `/v1/models` entries.
+  - Derive GGUF `modalities` (`vision` when `mmproj_path` is present) and `supports_thinking` (from the resolved template via `thinking_controls.detect`) at load time in `GGUFModelConfig`, matching `MLXModelConfig._resolve_modalities` so discovered GGUF models need no stored metadata.
+- [ ] **3.3 Non-streaming `generation_ms` & `memory.py` consolidation:**
+  - Populate `generation_ms` (alongside `queue_ms` and `load_ms`) on non-streaming `/v1/chat/completions` and `/v1/messages` responses when `timing=True`.
+  - Retire the dead `MemoryManager` class and duplicate JSONL writers (`memory_baseline.jsonl`, `resource_Snapshot.jsonl`) in `src/heylook_llm/memory.py`, routing periodic memory snapshots through `observability.py` while keeping `read_system_memory()` as a lightweight helper.
+- [ ] **3.4 Observability Config + View UI (`v3`):** surface `observability_level` / retention controls (`GET/PUT /v1/admin/config`) and a reader view over `logs/*.jsonl` (`request_events`, `model_events`, `never-stops` health signal).
+
+### Track 4: Mobile & Dark-Mode Workbench (`docs/project/plan_dark_mode.md` Phases 4 & 5)
+- [x] **4.1 Phase 1–3b + Phase 4 Steps 1–5 (`v2.0.191` - `v2.0.204`, `v2.0.212` - `v2.0.213`).** Lamplight tokens, Safari fixes, Home Screen manifest, Preset manager (`#/presets`), spacing tokens, iOS Text Size support (`-apple-system-body` on touch, verified on iPhone 17 Pro), phone top-bar navigation (`#phone-nav` segmented control + single gear, `+11px` message viewport), two-row capsule composer (`360pt` field width at `402pt`, icon Send/Stop button), and phone chat-bar compact readout line (`button.chat__readout` showing runtime, context, cold state, cache reuse, tok/s, preset and system-prompt state without a tap, expanding `.chat__bar-detail` + `#chat-engine-panel` on tap).
+- [ ] **4.2 Phase 4 Steps 6–7 (Token sweeps & Safari 27 scroller check):**
+  - Step 6: Scroller ownership check on Safari 27 + font-size/weight token sweep (`frontend/css/tokens.css`, `frontend/css/app.css`).
+  - Step 7: Radius and control-height token sweep (`--r-*`, `--ctrl-h-*`) + optional Graphite palette evaluation.
+- [ ] **4.3 Phase 5 (Phone battery & paint cost, Steps 2–4):**
+  - Step 1 (`bun run e2e:cost` paint-cost probe) shipped in `v2.0.201`.
+  - Step 2: Capture phone baseline with `bun run e2e:cost` (`internal/claude/perf/`).
+  - Step 3: CSS/DOM paint cuts (`content-visibility: auto` on offscreen completed `.msg` turns above the last two, replace `transition: all` with explicit property lists, pause animations under `html.tab-hidden` on `visibilitychange`, verify backdrop-filter scope) and re-measure with `bun run e2e:cost`.
+  - Step 4: Verify streaming markdown coalesce cadence on phone emulation.
+
+### Track 5: Embedding Apps & Workbench Extensions (`apps/embedding-apps/`, `jspace`, Notebook)
+- [x] **5.1 Allowlist proxy (`serve.py`), `kit/embed-kit.js`, Media Finder (`v2.0.205`), Embedding Lab (`v2.0.206`), audio attachment E2E check (`v2.0.213`), and Notebook `refreshAfterResume` (`v2.0.211`).**
+- [ ] **5.2 `jspace` Part 2 & Shared Keyboard Shortcuts (`docs/jspace_integration_plan.md`):**
+  - Wire shared `frontend/js/hotkeys.js` across Chat, Notebook, Models, and `jspace` (`Cmd/Ctrl+Enter` send/continue, `Escape` stop/close, `?` shortcut modal).
+  - Flip `jspace` analyze to chat-turn default, display special tokens, and add assistant prefill / per-token possibility-horizon inspection.
+- [ ] **5.3 Notebook Save-to-Conversations (`frontend/js/pages/notebook.js`):** add "Save to Conversations" action persisting a Notebook buffer into the shared DuckDB store (`kind: 'notebook'`) so buffers survive browser storage clears and sync across Desktop and iPhone.
+- [ ] **5.4 Live browser verification & expanded evaluation sets:** run Media Finder and Embedding Lab across audio/video and larger multimodal corpora on MLX and GGUF embedding models.
 
 ## Cache follow-ups from the Context Language Models paper (2026-10-05)
 

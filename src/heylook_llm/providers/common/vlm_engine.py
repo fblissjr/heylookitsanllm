@@ -96,6 +96,8 @@ def capture_lengths(final: int, *, interval: int, block_size: int, captures: int
         first = max(interval, last - (captures - 2) * interval)
         candidates.extend(range(first, last + 1, interval))
     for n in candidates:
+        if n < min_tokens:
+            continue
         n = adjust(n)
         if min_tokens <= n < final:
             lengths.add(n)
@@ -154,15 +156,16 @@ def install_capture_policy(bg, boundaries: Iterable[int]) -> None:
 
     bounds = tuple(boundaries)
 
-    def lengths(token_ids, media_token_ids):
+    def lengths(token_ids, media_token_ids, *, extra_hash: int = 0, stable_prefix_len: int = 0):
         final = coord.checkpoint_len(token_ids, media_token_ids)
         if final <= 0:
             return []
         mgr = coord.manager
+        stable = mgr.checkpoint_prefix_length(token_ids, extra_hash=extra_hash)
         return capture_lengths(
             final, interval=mgr.checkpoint_interval_tokens, block_size=mgr.block_size,
             captures=APC_CHECKPOINT_CAPTURES, min_tokens=mgr.exact_cache_min_tokens,
-            boundaries=bounds,
+            boundaries=(*bounds, stable_prefix_len, stable),
             adjust=lambda n: adjust_prefix_to_text_suffix_boundary(
                 token_ids, n, media_token_ids, max_prefix_tokens=final))
 

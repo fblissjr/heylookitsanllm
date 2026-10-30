@@ -135,8 +135,9 @@ def test_a_route_that_lets_model_busy_out_answers_503(monkeypatch):
         raise ModelBusyError("MODEL_BUSY: probe")
 
     # The DNS-rebinding guard reads allowed_hosts through the router.
-    monkeypatch.setattr(app.state, "router_instance", SimpleNamespace(
-        app_config=SimpleNamespace(allowed_hosts=["testserver"])), raising=False)
+    old_state = dict(app.state._state)
+    app.state.router_instance = SimpleNamespace(
+        app_config=SimpleNamespace(allowed_hosts=["testserver"]))
     path = "/__probe__/model-busy"
     app.add_api_route(path, probe, methods=["GET"], include_in_schema=False)
     try:
@@ -144,6 +145,8 @@ def test_a_route_that_lets_model_busy_out_answers_503(monkeypatch):
     finally:
         app.router.routes[:] = [rt for rt in app.router.routes
                                 if getattr(rt, "path", None) != path]
+        app.state._state.clear()
+        app.state._state.update(old_state)
 
     assert r.status_code == 503, (
         "a route that lets ModelBusyError out no longer answers 503 -- api.py's "

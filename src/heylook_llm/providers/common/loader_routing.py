@@ -99,6 +99,32 @@ def hidden_size(config_data: Optional[dict]) -> Optional[int]:
     return size if isinstance(size, int) else None
 
 
+def has_bundled_mlx_mtp(path: Path, config_data: Optional[dict] = None) -> bool:
+    """Whether an MLX checkpoint bundles native ``mtp.*`` tensors that
+    ``mlx_vlm.speculative.drafters.load_drafter`` can split and load in memory
+    (mlx-vlm#2457).
+
+    Delegates to mlx-vlm's own ``get_mtp_splitter`` and ``iter_selected`` so
+    the family table and tensor-key predicate stay single-sourced upstream.
+    Any failure (mocked mlx-vlm, missing/unreadable shard headers) is False."""
+    if config_data is None:
+        from ...modality_detect import read_model_config_json
+        config_data = read_model_config_json(path)
+    if not isinstance(config_data, dict) or not config_data:
+        return False
+    try:
+        from mlx_vlm.speculative.drafters.mtp_split import get_mtp_splitter
+        splitter = get_mtp_splitter(source_config=config_data)
+        if splitter is None:
+            return False
+        tc = splitter.read_text_config(config_data)
+        for _ in splitter.iter_selected(path, tc):
+            return True
+    except Exception:
+        return False
+    return False
+
+
 def read_model_type(model_path: str) -> Optional[str]:
     """The ``model_type`` from a model dir's config.json, or None. Defensive --
     a missing/odd config (draft/MTP heads, sparse checkpoints) yields None."""

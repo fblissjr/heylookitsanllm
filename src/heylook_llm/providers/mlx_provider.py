@@ -1124,9 +1124,13 @@ class MLXProvider(BaseProvider):
 
         if self._draft is not None:
             drafter, kind = self._draft
+            draft_path = Path(str(self.config.get("draft_model_path"))).expanduser()
+            model_path = Path(str(self.config.get("model_path"))).expanduser()
+            where = (f"built-in {kind} head"
+                     if draft_path == model_path
+                     else f"{kind} drafter {draft_path.name}")
             return Fact(value=True, provenance="observed", source=(
-                f"{kind} drafter {Path(str(self.config.get('draft_model_path'))).name} "
-                f"loaded; a request with a penalty, logit bias, structured output "
+                f"{where} loaded; a request with a penalty, logit bias, structured output "
                 f"or thinking budget runs without it"))
         return Fact(value=False, provenance="observed",
                     source=self.drafter_skipped or "loaded without a drafter")

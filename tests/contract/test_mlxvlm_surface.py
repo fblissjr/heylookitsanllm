@@ -353,21 +353,44 @@ class TestVlmEngineSurface:
         from types import SimpleNamespace
 
         from mlx_vlm.apc_coordinator import APCCoordinator
-        from heylook_llm.providers.common.vlm_engine import capture_lengths
+        from heylook_llm.providers.common.vlm_engine import (
+            capture_lengths,
+            install_capture_policy,
+        )
 
         for final, entries, interval in [(1000, 3, 64), (130, 3, 64), (5000, 5, 100), (40, 3, 64)]:
             mgr = SimpleNamespace(checkpoint_interval_tokens=interval, _exact_cache_max=entries,
-                                  disk=None, block_size=16, exact_cache_min_tokens=16)
+                                  disk=None, block_size=16, exact_cache_min_tokens=16,
+                                  checkpoint_prefix_length=lambda *_a, **_kw: 0)
             stub = SimpleNamespace(manager=mgr, checkpoint_len=lambda ids, media, f=final: f)
             upstream = APCCoordinator.checkpoint_lengths(stub, list(range(final + 1)), set())
             ours = capture_lengths(final, interval=interval, block_size=16, captures=entries,
                                    min_tokens=16)
             assert ours == upstream, (final, entries, interval)
+
+        # Verify install_capture_policy's replacement accepts every parameter
+        # APCCoordinator.checkpoint_lengths takes (including extra_hash and
+        # stable_prefix_len) and includes observed/passed prefix boundaries.
+        mgr = SimpleNamespace(checkpoint_interval_tokens=64, _exact_cache_max=16,
+                              disk=None, block_size=16, exact_cache_min_tokens=16,
+                              checkpoint_prefix_length=lambda *_a, **_kw: 48)
+        coord = SimpleNamespace(enabled=True, is_checkpoint=True, manager=mgr,
+                                checkpoint_len=lambda ids, media: 200)
+        bg = SimpleNamespace(apc=coord)
+        install_capture_policy(bg, [32])
+        expected_params = [
+            name for name in inspect.signature(APCCoordinator.checkpoint_lengths).parameters
+            if name != "self"
+        ]
+        assert list(inspect.signature(coord.checkpoint_lengths).parameters) == expected_params
+        got = coord.checkpoint_lengths(list(range(201)), set(), extra_hash=7, stable_prefix_len=24)
+        assert 24 in got and 32 in got and 48 in got and 200 in got
+
         # ... and the generator builds its coordinator per instance and asks
         # it (not a module function) for the lengths, so the override binds.
         src = inspect.getsource(importlib.import_module("mlx_vlm.generate.ar"))
         assert "self.apc = (" in src and "APCCoordinator(apc_manager, model)" in src
-        assert "coordinator.checkpoint_lengths(ids_list" in src
+        assert "coordinator.checkpoint_lengths(" in src
         for attr in ("enabled", "is_checkpoint", "checkpoint_len"):
             assert hasattr(APCCoordinator, attr), attr
 
@@ -388,6 +411,7 @@ class TestSpeculativeSurface:
     def test_the_drafter_surface_we_call(self):
         from mlx_vlm.generate.ar import BatchGenerator, SpeculativeGenerationBatch
         from mlx_vlm.speculative import drafters
+        from mlx_vlm.speculative.drafters import mtp_split
 
         params = inspect.signature(BatchGenerator.__init__).parameters
         for name in ("draft_model", "draft_kind", "draft_block_size"):
@@ -395,6 +419,9 @@ class TestSpeculativeSurface:
         for name in ("load_drafter", "validate_drafter_compatibility"):
             assert callable(getattr(drafters, name)), name
         assert isinstance(drafters.DRAFTER_KIND_BY_MODEL_TYPE, dict)
+        for name in ("get_mtp_splitter", "detect_mtp_splitter"):
+            assert callable(getattr(mtp_split, name)), name
+        assert isinstance(mtp_split.MTP_SPLITTERS, dict)
         # vlm_engine.drafting_blocker keeps a request with logits processors
         # or a thinking budget off the drafter because this batch takes
         # neither. When it does, the blocker's rule for it is dead weight.

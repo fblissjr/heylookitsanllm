@@ -1,9 +1,9 @@
 # Current Work
 
-Last updated: 2026-10-27, v2.0.213, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
+Last updated: 2026-10-30, v2.0.214, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
-live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md) (triaged 2026-09-25 and refreshed 2026-10-27;
+live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md) (triaged 2026-09-25 and refreshed 2026-10-30;
 its closed sections are in the local, unversioned `internal/archive/todo_closed_2026-09-25.md`), and what each release
 did in `CHANGELOG.md` -- which is the only narrative for the span between the
 history sections below (they stop at v1.79.78) and today. That span was never
@@ -16,6 +16,7 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
+| v2.0.214 `mlx-vlm` `918763c6` & `llama.cpp` `a34de8618` (build 12015) convergence (`vlm_engine.capture_lengths` + `install_capture_policy` `extra_hash`/`stable_prefix_len`), bundled MLX MTP drafter auto-discovery (`loader_routing.has_bundled_mlx_mtp`, `model_importer._pick_mlx_drafter`, `mlx_describe._speculative`, `MLXProvider._spec_in_force`), `LiquidAI/d1` (`D1Model`) scan refusal (`_is_decision_checkpoint`), `pytest` 9.2.0 `starlette.datastructures.State` fixture teardown fix, and 2026-10-30 5-track roadmap refresh in `TODO.md` | unit + contract 1610 passed. NOT run: `tests/smoke/`, `tests/eval/`, live browser `e2e:chat` / `e2e:pages` | v2.0.214 |
 | v2.0.213 dark mode Phase 4 Step 5 (phone chat-bar compact readout line `button.chat__readout` showing runtime, context, cold state, cache reuse, tok/s, preset and system-prompt state without a tap, expanding `.chat__bar-detail` + `#chat-engine-panel` on tap) + audio attachment E2E check in `render.mjs` | unit + contract 1607 passed; `e2e:render` 106/106 in both light and dark. NOT run: live browser `e2e:chat` / `e2e:pages`, on-device iPhone check | v2.0.213 |
 | v2.0.212 dark mode Phase 4 Steps 3 & 4 (phone top-bar navigation `#phone-nav` with segmented control + trailing gear, `.chat__settings-btn` hidden on phone, two-row capsule composer `.chat__composer` with `360pt` field width at `402pt` and icon Send/Stop button) | unit + contract 1607 passed; `e2e:render` 105/105 in both light and dark; `.chat__messages` `clientHeight` rises `+11px` (`569px -> 580px` at `390x844`, `599px -> 610px` at `402x874`, clearing the `>= +5px` gate) and textarea width is `360pt` at `402pt` (clearing `>= 260pt`). NOT run: live browser `e2e:chat` / `e2e:pages`, on-device iPhone check | v2.0.212 |
 | v2.0.211 Tier 1 backend/probe quick wins (`block_system_content_warning` in `chat_template_files.py` and `template_info.py`, bilateral near-tie detection in `scripts/vlm_parity_probe.py`, single-pass `_iter_root_gguf_files` cache in `model_importer.py`, and `perf_ab._timed` GGUF stream test in `test_perf_ab_verdict.py`) | unit + contract 1607 passed. NOT run: `tests/smoke/`, `tests/eval/` | v2.0.211 |
@@ -61,15 +62,19 @@ Thinking DEPTH is covered by pinning depth-capable models:
 `--model mlx-text=gpt-oss-20b-MXFP4-Q8-mlx` and, since v2.0.151,
 `--model mlx-vision=mlx-community_Qwen3.8-27B-4bit` (39/39 on the vision arm).
 
-## Handoff -- start here (2026-10-27, v2.0.210)
+## Handoff -- start here (2026-10-30, v2.0.214)
 
-**Distributed Multi-Mac Inference + Engine Parity (v2.0.207 - v2.0.210).**
+**Upstream Convergence (`mlx-vlm` `918763c6`, `llama.cpp` `a34de8618` build 12015), Bundled MLX MTP Auto-Discovery, & 5-Track Roadmap (`v2.0.214`).**
+- **Upstream `mlx-vlm` `918763c6` & `llama.cpp` `a34de8618` Convergence (`v2.0.214`)**:
+  - Updated `vlm_engine.capture_lengths` and `install_capture_policy` to match `mlx-vlm` `f4064e95` (`APCCoordinator.checkpoint_lengths` signature `extra_hash` / `stable_prefix_len` and `mgr.checkpoint_prefix_length` boundary folding).
+  - Added bundled MLX MTP drafter auto-discovery (`loader_routing.has_bundled_mlx_mtp` delegating to `mlx_vlm.speculative.drafters.mtp_split`, `mlx-vlm#2457`), so `ModelImporter` self-pairs `draft_model_path = str(path)` when an MLX checkpoint carries `mtp.*` weights in its own shards and `mlx_describe` / `MLXProvider.describe_observed()` report `"built-in MTP head"`.
+  - Refused `LiquidAI/d1` (`D1Model`) sequence-classification checkpoints during `ModelImporter.scan_directory` (`_is_decision_checkpoint`, matching `mlx-vlm` `c62dbf92`).
 - **Distributed MLX & GGUF (`v2.0.208` - `v2.0.210`)**:
   - Model-agnostic asymmetric MLX pipeline sharding (`src/heylook_llm/providers/common/mlx_pipeline.py`), persistent worker daemon (`scripts/mlx_pipeline_worker.py --daemon`), and unified secondary-Mac supervisor (`scripts/worker_node.py`, managing both `ggml-rpc-server -c` on `:50052` and the MLX worker daemon on `:32423`).
   - Bidirectional missing-file heal during load (`prepare_worker_via_control_port`) and full `[scan].folders` catalog sync (`--sync-peer`).
   - Multi-turn APC snapshot/restore synchronization across MLX pipeline ranks (`CMD_SAVE_SNAPSHOT` / `CMD_RESTORE_SNAPSHOT`) and Rank-0 speculative decoding (`draft_model_path`) with lockstep `KVCache` + `ArraysCache` rollback (`CMD_START_SPEC` / `CMD_COMMIT_SPEC` / `CMD_ABORT_SPEC`).
   - Live worker Metal working-set ceilings in `ping`/`prepare_model` and `ram_fit.fit_for_config` (`worker_metal_working_set`), `ram_fit`-gated single-node auto-fallback on both MLX and GGUF (with `describe_observed()` reporting `rpc = "single-node (fallback)"`), and `pipeline_ratios` editable as `ui="advanced"` on the Models page.
-- **Open Roadmap Tracks**: see [TODO.md](./TODO.md) ("2026-10-27 Roadmap").
+- **Open Roadmap Tracks**: see [TODO.md](./TODO.md) ("2026-10-30 Roadmap").
 
 ## Earlier handoff (2026-09-26)
 

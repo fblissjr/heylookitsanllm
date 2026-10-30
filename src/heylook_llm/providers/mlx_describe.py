@@ -213,9 +213,13 @@ def _speculative(cfg: dict, derived: dict, written) -> dict:
     if drafter:
         path = Path(str(drafter)).expanduser()
         home = Path(str(cfg.get("model_path") or "")).expanduser()
-        where = (f"the neighbouring folder {path.name}/" if path.parent == home.parent
-                 else "a folder outside the model's parent")
-        d = Fact(value=path.name, provenance=prov, source=f"{how}, {where}")
+        if path == home:
+            d = Fact(value="built-in MTP head", provenance=prov,
+                     source=f"{how}: the target's own weights carry the head")
+        else:
+            where = (f"the neighbouring folder {path.name}/" if path.parent == home.parent
+                     else "a folder outside the model's parent")
+            d = Fact(value=path.name, provenance=prov, source=f"{how}, {where}")
         model_type = (read_model_config_json(path) or {}).get("model_type")
         t = Fact(value=model_type if isinstance(model_type, str) else None,
                  provenance="derived" if model_type else "unknown",

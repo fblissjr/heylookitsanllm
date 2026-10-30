@@ -58,10 +58,13 @@ def served(tmp_path, monkeypatch):
     # teardown-crash class tests/README warns about.
     router.warm_model_facts = lambda: None
 
-    for name in ("router_instance", "db", "memory_manager"):
-        monkeypatch.setattr(app.state, name, getattr(app.state, name, None), raising=False)
+    old_state = dict(app.state._state)
     app.state.router_instance = router
-    return app, router
+    try:
+        yield app, router
+    finally:
+        app.state._state.clear()
+        app.state._state.update(old_state)
 
 
 def _serve_and_load(app):

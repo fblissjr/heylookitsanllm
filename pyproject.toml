@@ -106,7 +106,19 @@ version = { attr = "heylook_llm.__version__" }
 # mlx-vlm pins). Keep equal to the [project.dependencies] floor.
 override-dependencies = ["transformers>=5.15.0"]
 
-
+[tool.uv.sources]
+# COMMITTED git pin (owner decision 2026-09-05, when it also covered mlx-lm;
+# mlx-lm left the dependency set in plan W10 stage 3, its streaming
+# detokenizer vendored as providers/common/lm_detokenizer.py). mlx-vlm is the
+# engine every MLX model runs on, and the server is written against its main,
+# not a PyPI release. Exact `rev` on purpose, never `branch`: a branch pin
+# moves under a plain `uv lock --upgrade` and the manifest would stop saying
+# what it depends on. Moving the pin = edit the rev here, `uv lock && uv sync`
+# (the rev edit is what moves it), run the suite, name the new SHA in the
+# commit message; no CHANGELOG entry. The pre-commit guard still blocks a git pin by default;
+# committing one is HEYLOOK_ALLOW_CHANNEL_COMMIT=1, so the act stays
+# deliberate. `mlx` itself is a PyPI release, not pinned here.
+mlx-vlm = { git = "https://github.com/Blaizzy/mlx-vlm", rev = "918763c6875c80e82f9f48344dfad4763346fea8" }
 
 # ── Pytest ──────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]

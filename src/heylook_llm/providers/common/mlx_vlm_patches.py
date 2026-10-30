@@ -37,9 +37,11 @@ MERGE_ROWS_PARAMS = ("picks", "prefix_lens", "kv_quant_config")  # bound method
 
 # Carry of mlx-lm's 8-row packed Gated DeltaNet Metal kernel
 # (_make_gated_delta_packed_kernel) for scalar-gated Dk=128, Dv % 8 == 0
-# recurrence (Qwen3.5 / Qwen3.8). Staged in forks/mlx-vlm/mlx_vlm/models/gated_delta.py;
-# carried here so the pinned upstream mlx-vlm in .venv runs the packed kernel
-# immediately. Retires once the upstream pin defines _gated_delta_kernel_packed.
+# multi-token recurrence. Upstream mlx-vlm landed this in
+# mlx_vlm/models/qwen3_5/gated_delta.py (d13bd3cc, T > 1); this carry covers
+# the shared mlx_vlm/models/gated_delta.py module (qwen3_next, kimi_linear,
+# lfm3) until it is synced there too. Retires once mlx_vlm.models.gated_delta
+# defines _gated_delta_kernel_packed.
 PATCH_GDN_PACKED = "mlx-vlm#gdn-packed"
 GDN_KERNEL_PARAMS = ("q", "k", "v", "g", "beta", "state", "mask", "state_steps")
 

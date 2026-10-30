@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.214]
+
+### Added
+
+- **Bundled MLX MTP drafter auto-discovery and `LiquidAI/d1` scan refusal (`src/heylook_llm/providers/common/loader_routing.py`, `src/heylook_llm/model_importer.py`, `src/heylook_llm/providers/mlx_describe.py`, `src/heylook_llm/providers/mlx_provider.py`, `tests/unit/test_gguf_import.py`).**
+  - `loader_routing.has_bundled_mlx_mtp(path, config_data)` delegates to `mlx_vlm.speculative.drafters.mtp_split.get_mtp_splitter` (`mlx-vlm#2457` / `c32e07b8`) to detect MLX checkpoints (`qwen3_5`, `qwen3_next`, `deepseek_v32`, `glm4_moe`, `mimo_v2_flash`, `step3p5`) whose `model.safetensors.index.json` (or `model.safetensors` header) carries `mtp.*` weights alongside the main model weights.
+  - When no standalone sibling `<model>-mtp` folder exists, `ModelImporter._pick_mlx_drafter` and `_create_mlx_entry` self-pair `draft_model_path = str(path)`, and both `mlx_describe._speculative` and `MLXProvider._spec_in_force` report `"built-in MTP head"` (matching GGUF's built-in `draft-mtp` wording).
+  - `ModelImporter._is_decision_checkpoint` refuses `LiquidAI/d1` (`D1Model` sequence-classification checkpoints on an `lfm2` backbone, `mlx-vlm` `c62dbf92`) during directory scan so they are not imported as servable chat models.
+
+### Changed
+
+- **Upstream `mlx-vlm` `918763c6` & `llama.cpp` `a34de8618` (build 12015) convergence (`pyproject.toml`, `uv.lock`, `src/heylook_llm/providers/common/vlm_engine.py`, `src/heylook_llm/providers/common/mlx_vlm_patches.py`, `tests/contract/test_mlxvlm_surface.py`).**
+  - Updated `vlm_engine.capture_lengths` to filter candidate multiples `< min_tokens` before calling `adjust(n)`, and updated `vlm_engine.install_capture_policy`'s `lengths` wrapper to accept `extra_hash: int = 0` and `stable_prefix_len: int = 0` and fold `stable_prefix_len` + `mgr.checkpoint_prefix_length(token_ids, extra_hash=extra_hash)` into capture boundaries (matching `mlx-vlm` `f4064e95`).
+  - Documented upstream's `qwen3_5` packed Gated DeltaNet kernel (`d13bd3cc`) in `mlx_vlm_patches.py` while keeping `PATCH_GDN_PACKED` active on shared `mlx_vlm/models/gated_delta.py` (`qwen3_next`, `kimi_linear`, `lfm3`).
+  - Fixed `starlette.datastructures.State` teardown in `tests/contract/test_reload_load_settings.py`, `tests/unit/test_shutdown_teardown.py`, and `tests/unit/test_model_busy_reaches_the_handler.py` under `pytest` 9.2.0 (`inspect.getattr_static` on `app.state` does not read `app.state._state`).
+  - Refreshed the 5-track project roadmap in `docs/project/TODO.md` and `docs/project/CURRENT.md`.
+- Verified: `tests/unit/` + `tests/contract/` (1610 passed). NOT run: `tests/smoke/`, `tests/eval/`, live browser `e2e:chat` / `e2e:pages`.
+
 ## [2.0.213]
 
 ### Changed

@@ -89,6 +89,21 @@ class TestAssistantCheckpointSkipped:
         ids = [m["id"] for m in found]
         assert d.name not in ids
 
+    @pytest.mark.parametrize("config", [
+        {"architectures": ["D1Model"], "model_type": "lfm2"},
+        {"auto_map": {"AutoModel": "modeling_d1.D1Model"}, "model_type": "lfm2"},
+    ], ids=["architectures_d1", "auto_map_d1"])
+    def test_decision_checkpoint_not_imported(self, importer, tmp_path, config):
+        # LiquidAI/d1 is a sequence-classification checkpoint on an lfm2
+        # backbone (no causal LM head). mlx-vlm refuses it at load; scan must
+        # not import it as a chat model.
+        d = tmp_path / "LiquidAI_d1"
+        d.mkdir()
+        (d / "config.json").write_text(json.dumps(config))
+        _write_bytes(d / "model.safetensors", 1000)
+        found = importer.scan_directory(str(tmp_path))
+        assert [m["id"] for m in found] == []
+
     # Regression guard: the assistant-checkpoint refusal must not
     # collaterally swallow legitimate MLX checkpoints, with or without an
     # `architectures` list.
@@ -127,6 +142,46 @@ def test_an_mlx_drafter_folder_pairs_onto_its_models_and_is_not_one(importer, tm
     found = {e["id"]: e["config"].get("draft_model_path")
              for e in importer.scan_directory(str(tmp_path))}
     assert found == {"m": str(drafter), "m-8bit": str(drafter), "m-big": None, "lag": None}
+
+
+@pytest.mark.unit
+def test_an_mlx_checkpoint_with_bundled_mtp_weights_pairs_itself_as_drafter(importer, tmp_path):
+    """When an MLX checkpoint bundles mtp.* weights in its own shards
+    (mlx-vlm#2457), discovery pairs the model directory itself as
+    draft_model_path and mlx_describe reports 'built-in MTP head'."""
+    from heylook_llm.config import MLXModelConfig
+    from heylook_llm.providers import mlx_describe
+
+    bundled = tmp_path / "qwen35-bundled"
+    bundled.mkdir()
+    (bundled / "config.json").write_text(json.dumps(
+        {"model_type": "qwen3_5", "text_config": {"hidden_size": 64}}))
+    _write_bytes(bundled / "model-00001-of-00001.safetensors", 1000)
+    (bundled / "model.safetensors.index.json").write_text(json.dumps(
+        {"weight_map": {
+            "language_model.model.layers.0.self_attn.q_proj.weight": "model-00001-of-00001.safetensors",
+            "mtp.layers.0.self_attn.q_proj.weight": "model-00001-of-00001.safetensors",
+        }}))
+
+    plain = tmp_path / "qwen35-plain"
+    plain.mkdir()
+    (plain / "config.json").write_text(json.dumps(
+        {"model_type": "qwen3_5", "text_config": {"hidden_size": 64}}))
+    _write_bytes(plain / "model-00001-of-00001.safetensors", 1000)
+    (plain / "model.safetensors.index.json").write_text(json.dumps(
+        {"weight_map": {
+            "language_model.model.layers.0.self_attn.q_proj.weight": "model-00001-of-00001.safetensors",
+        }}))
+
+    found = {e["id"]: e["config"].get("draft_model_path")
+             for e in importer.scan_directory(str(tmp_path))}
+    assert found == {"qwen35-bundled": str(bundled), "qwen35-plain": None}
+
+    cfg = {"model_path": str(bundled), "draft_model_path": str(bundled)}
+    desc = mlx_describe.describe_static(
+        "qwen35-bundled", cfg, MLXModelConfig(**cfg), written=False, derived=cfg)
+    assert desc.speculative["drafter"].value == "built-in MTP head"
+    assert "the target's own weights carry the head" in desc.speculative["drafter"].source
 
 
 # ---------------------------------------------------------------------------
