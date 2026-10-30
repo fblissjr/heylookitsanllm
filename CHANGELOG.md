@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.219]
+
+### Changed
+
+- **Engine panel `template.caps` formatting & `Escape` hotkeys on Models and Presets (`frontend/js/engine.js`, `frontend/js/pages/models.js`, `frontend/js/pages/presets.js`).**
+  - Formatted `engine.template.caps` (`factValue('caps', value)` in `frontend/js/engine.js`) as readable capability names (`system role, tools, typed content`, or `none`) rather than raw JSON when displayed in the Models page's Engine panel.
+  - Wired `registerPageHotkeys` in `frontend/js/pages/models.js` (so `Escape` closes the open model configuration panel when no unsaved template draft is dirty) and `frontend/js/pages/presets.js` (so `Escape` cancels an open preset editor or rename card).
+  - Verified: `tests/unit/` + `tests/contract/` (1615 passed). NOT run: `tests/smoke/`, `tests/eval/`.
+
 ## [2.0.218]
 
 ### Added

@@ -16,6 +16,7 @@ import { api } from '../api.js';
 import * as drawer from '../settings-drawer.js';
 import { createModelConfigEditor, configSummary, hasUnsavedTemplate } from '../model-config.js';
 import { contextCeiling, engineSummary, renderEngine } from '../engine.js';
+import { registerPageHotkeys } from '../hotkeys.js';
 
 export default createPage({
   async setup(ctx) {
@@ -47,6 +48,16 @@ export default createPage({
     // No sampler/page settings here -- register so the drawer still offers the
     // global Display prefs and hides the sampler panel.
     ctx.onTeardown(drawer.registerSettings({ samplers: 'hidden' }));
+    registerPageHotkeys(ctx, {
+      onEscape: () => {
+        if (s.configOpenId && !hasUnsavedTemplate(s.configDrafts)) {
+          s.configOpenId = null;
+          renderModelList(ctx);
+          return true;
+        }
+        return false;
+      },
+    });
     // The option schema also feeds the per-row summary chip, so fetch it
     // eagerly but NON-fatally -- the page must work without it (Configure
     // retries the fetch and reports failure itself).

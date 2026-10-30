@@ -33,6 +33,7 @@ import { createPage } from '../page.js';
 import { api } from '../api.js';
 import { createEl, setStatus, armedConfirm, autoGrow, createUnloadGuard } from '../utils.js';
 import { PARAM_META } from '../settings.js';
+import { registerPageHotkeys } from '../hotkeys.js';
 
 export default createPage({
   async setup(ctx) {
@@ -61,6 +62,18 @@ export default createPage({
     // with an open editor are left alone: their typed text is the user's, and
     // Save's own re-read is what protects the store from it.
     ctx.onResume(() => { if (!s.openEditors.size) load(ctx); });
+    registerPageHotkeys(ctx, {
+      onEscape: () => {
+        if (!s.openEditors.size) return false;
+        const cancelBtn = [...ctx.el.querySelectorAll('.preset-edit__buttons .btn, .preset-card__rename-row .btn')]
+          .find((b) => b.textContent === 'Cancel');
+        if (cancelBtn) {
+          cancelBtn.click();
+          return true;
+        }
+        return false;
+      },
+    });
     await load(ctx);
   },
 });

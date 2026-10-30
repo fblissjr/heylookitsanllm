@@ -98,8 +98,15 @@ function isFact(node) {
 
 // A slot's facts, flattened one level: {length: Fact, running: Fact} ->
 // "length", "running". Works for any later slot shaped the same way.
-// A byte count reads as bytes, not as a twelve-digit integer.
+// A byte count reads as bytes, not as a twelve-digit integer; a capability
+// flag map (template.caps) reads as words rather than raw JSON.
 function factValue(key, value) {
+  if (key === 'caps' && value && typeof value === 'object' && !Array.isArray(value)) {
+    const on = Object.entries(value)
+      .filter(([, v]) => v === true)
+      .map(([k]) => k.replace(/^supports_/, '').replace(/_/g, ' '));
+    return on.length ? on.join(', ') : 'none';
+  }
   return key.endsWith('_bytes') && typeof value === 'number' ? formatBytes(value) : value;
 }
 

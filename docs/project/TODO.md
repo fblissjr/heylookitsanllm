@@ -2,7 +2,7 @@
 
 Cross-session task backlog organized by priority.
 
-*Last reviewed: 2026-10-30 (through v2.0.218; previous triage 2026-09-25 through v2.0.154). Every section was classed done, obsolete, open or mixed with evidence (`internal/claude/todo_triage.md`); the done and obsolete ones moved verbatim to `internal/archive/todo_closed_2026-09-25.md`. Mixed sections stay whole: their checked-off items are history kept beside the open ones.*
+*Last reviewed: 2026-10-30 (through v2.0.219; previous triage 2026-09-25 through v2.0.154). Every section was classed done, obsolete, open or mixed with evidence (`internal/claude/todo_triage.md`); the done and obsolete ones moved verbatim to `internal/archive/todo_closed_2026-09-25.md`. Mixed sections stay whole: their checked-off items are history kept beside the open ones.*
 
 ## 2026-10-30 Roadmap (Upstream Convergence, Engine Control, & Mobile Workbench)
 
@@ -60,8 +60,8 @@ Five active tracks across upstream kernels, backend engine control, model regist
 
 ### Track 5: Embedding Apps & Workbench Extensions (`apps/embedding-apps/`, `jspace`, Notebook)
 - [x] **5.1 Allowlist proxy (`serve.py`), `kit/embed-kit.js`, Media Finder (`v2.0.205`), Embedding Lab (`v2.0.206`), audio attachment E2E check (`v2.0.213`), and Notebook `refreshAfterResume` (`v2.0.211`).**
-- [x] **5.2 Shared Keyboard Shortcuts (`frontend/js/hotkeys.js`, `v2.0.218`):**
-  - Added `frontend/js/hotkeys.js` (`mountHotkeysModal` + `registerPageHotkeys`) wired across `app.js`, `chat.js`, and `notebook.js`: `Cmd/Ctrl+Enter` sends/generates, `Escape` stops an active stream or closes open bar/preview/dialog overlays, and `?` (outside editable fields) toggles a native `<dialog class="hotkeys-dialog" closedby="any">` shortcut sheet with Safari backdrop light-dismiss fallback (`render.mjs` 109/109).
+- [x] **5.2 Shared Keyboard Shortcuts (`frontend/js/hotkeys.js`, `v2.0.218` - `v2.0.219`):**
+  - Added `frontend/js/hotkeys.js` (`mountHotkeysModal` + `registerPageHotkeys`) wired across `app.js`, `chat.js`, `notebook.js`, `models.js`, and `presets.js`: `Cmd/Ctrl+Enter` sends/generates, `Escape` stops an active stream or closes open bar/preview/config/editor/dialog overlays, and `?` (outside editable fields) toggles a native `<dialog class="hotkeys-dialog" closedby="any">` shortcut sheet with Safari backdrop light-dismiss fallback (`render.mjs` 109/109).
 - [ ] **5.3 `jspace` Part 2 (`docs/jspace_integration_plan.md`):**
   - Flip `jspace` analyze to chat-turn default, display special tokens, and add assistant prefill / per-token possibility-horizon inspection.
 - [ ] **5.3 Notebook Save-to-Conversations (`frontend/js/pages/notebook.js`):** add "Save to Conversations" action persisting a Notebook buffer into the shared DuckDB store (`kind: 'notebook'`) so buffers survive browser storage clears and sync across Desktop and iPhone.
