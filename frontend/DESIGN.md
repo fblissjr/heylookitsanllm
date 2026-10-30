@@ -64,10 +64,10 @@ block laid over it, and fails on any colour literal outside `:root`. Every pair 
 by decision and named in the test.
 
 Type: system stack (`--font`) + `--mono` for anything numeric, token-literal, or
-telemetry. Scale: `--text-sm 0.8125rem / --text-ui 0.875rem / --text-body 1rem /
---text-lg 1.1875rem` — four sizes, no more. Radii: `--r-ctl 6px / --r-card 10px /
---r-big 14px`. Motion: `--t-fast 140ms var(--ease)`; every animation has a
-`prefers-reduced-motion` fallback (global kill switch in `app.css`).
+telemetry. Scale: `--text-xs 0.75rem / --text-sm 0.8125rem / --text-ui 0.875rem / --text-body 1rem /
+--text-lg 1.1875rem`. Control heights: `--ctrl-h-sm 28px / --ctrl-h 36px / --ctrl-h-touch 44px`.
+Radii: `--r-ctl 6px / --r-card 10px / --r-big 14px`. Motion: `--t-fast 140ms var(--ease)`; every animation has a
+`prefers-reduced-motion` fallback (global kill switch in `app.css`, plus `html.tab-hidden` pausing animations when backgrounded).
 
 Spacing: `--space-N`, where N is the step's multiple of 0.25rem (`--space-2` is
 0.5rem, `--space-12` is 3rem; the list is in `:root`). Padding, margin and gap

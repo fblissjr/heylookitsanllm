@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.217]
+
+### Documentation
+
+- **Synced wiki, project handoff/roadmap, and frontend design docs with `v2.0.214` - `v2.0.216` (`docs/wiki/backend_core.md`, `docs/wiki/frontend_core.md`, `docs/wiki/providers_architecture.md`, `docs/wiki/llama_server_build_and_spawn.md`, `docs/project/CURRENT.md`, `docs/project/TODO.md`, `docs/project/plan_dark_mode.md`, `frontend/DESIGN.md`).**
+  - Documented `POST /v1/conversations/{id}/generate/reasoning-end`, `POST /v1/requests/{id}/reasoning-end`, and `GET /v1/admin/config/logs` in `docs/wiki/backend_core.md`, alongside `ModelConfig.kind` and `GGUFModelConfig._resolve_modalities_and_thinking`.
+  - Documented the `#/perf` **Observability** section (`observability_level`, `observability_retention_days`, and JSONL `events`/`metrics` log reader), the Chat mid-stream **End thinking** control (`button.thinking__end`), and the cross-page `.nav-item--busy` indicator (`heylook:chat-activity`) in `docs/wiki/frontend_core.md`.
+  - Documented `EngineDescription.template.caps` (`chat_template_caps` from `llama-server` `/props`), bundled MLX MTP drafter auto-discovery (`loader_routing.has_bundled_mlx_mtp`), and mid-stream thinking termination (`reasoning_control` / `/v1/chat/completions/control` on GGUF and standby `ThinkingBudgetCriteria` on MLX) in `docs/wiki/providers_architecture.md` and `docs/wiki/llama_server_build_and_spawn.md`.
+  - Updated `frontend/DESIGN.md` with `--text-xs`, `--ctrl-h-sm` / `--ctrl-h` / `--ctrl-h-touch`, and `html.tab-hidden` background animation pause, and refreshed `docs/project/CURRENT.md`, `docs/project/TODO.md`, and `docs/project/plan_dark_mode.md`.
+
 ## [2.0.216]
 
 ### Added

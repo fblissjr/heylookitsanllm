@@ -15,7 +15,7 @@ The entry point [`api.py`](../../src/heylook_llm/api.py) is intended as the **ap
 ```
 Route modules in src/heylook_llm/:
 ├── messages_api.py              # THE inference wire: POST /v1/messages
-├── conversation_generate_api.py # Server-owned generation: POST /v1/conversations/{id}/generate
+├── conversation_generate_api.py # Server-owned generation: POST /v1/conversations/{id}/generate, DELETE .../generate, POST .../generate/reasoning-end
 ├── conversation_api.py          # Conversation & message CRUD: /v1/conversations/*
 ├── notebook_api.py              # Notebook documents: /v1/notebooks/*
 ├── preset_api.py                # Preset management: /v1/presets/*
@@ -28,10 +28,10 @@ Route modules in src/heylook_llm/:
 │                                #                          discovered, validate, samplers,
 │                                #                          scan-config)
 │                                #   admin_ops_router    -> /v1/admin         (model-options, ops)
-├── config_api.py                # Operational settings: /v1/admin/config
+├── config_api.py                # Operational settings & JSONL log reader: /v1/admin/config, /v1/admin/config/logs
 ├── monitoring_api.py            # /v1/capabilities, /v1/system/metrics,
 │                                # /v1/performance/profile/{time_range}, /v1/cache/clear
-├── requests_api.py              # Execution cancellation: DELETE /v1/requests/{id}
+├── requests_api.py              # Execution cancellation & mid-stream thinking end: DELETE /v1/requests/{id}, POST /v1/requests/{id}/reasoning-end
 ├── telemetry_api.py             # Frontend ingestion: /v1/telemetry/events
 ├── frontend_static.py           # Static assets: /, /index.html, /icon.svg (+ /favicon.ico), /manifest.json, /apple-touch-icon.png, /js/*, /css/*
 └── openapi_doc.py               # Custom OpenAPI schema & documentation narrative
@@ -123,7 +123,10 @@ The classes themselves, and which field declares which, are in [`config.py`](../
 
 What is worth carrying here is the shape and the two traps:
 - **Classification is provider-aware, deliberately.** The same field name can hold a different class on different providers -- `modalities` is merely descriptive for GGUF but forces a reload on MLX, because there it decides at load whether the model is served with vision (the template path and the image guard).
-- **A model's `id` carries no effect metadata at all.** It is a bare annotation on `ModelConfig`, not a field of any provider config class; `model_path` is the one that declares identity.
+- **A model's `id` and `kind` live on `ModelConfig`.** `id` is a bare annotation on `ModelConfig` (`model_path` declares identity); `kind` (`"chat" | "embedding"`) derives automatically via `embedding_models.embedding_info` when omitted without marking `"kind"` in `__pydantic_fields_set__`. Similarly, both `MLXModelConfig._resolve_modalities` and `GGUFModelConfig._resolve_modalities_and_thinking` derive `modalities` (and `supports_thinking` on GGUF) at validation time without marking them in `__pydantic_fields_set__`.
+- **When `AbortEvent.is_set()` or `end_reasoning()` fires**:
+  - For cancellation (`DELETE /v1/requests/{request_id}` or `DELETE /v1/conversations/{id}/generate`): `MLXProvider` stops at the next token boundary, and `LlamaServerProvider` immediately closes the HTTP stream to `llama-server` (freeing the slot).
+  - For mid-stream thinking termination (`POST /v1/requests/{request_id}/reasoning-end` or `POST /v1/conversations/{id}/generate/reasoning-end`): `AbortEvent.end_reasoning()` triggers `LlamaServerProvider`'s registered callback to POST `{"id": cmpl_id, "action": "reasoning_end"}` to `llama-server` `/v1/chat/completions/control`, or signals `vlm_engine` on MLX (`AbortEvent.pop_end_reasoning()`) to arm its standby `ThinkingBudgetCriteria` (`budget_exceeded = True`) and force the closing `\n` + `</think>` sequence on the next decode steps.
 
 A sibling annotation rides the same derivation and is required on every field for the same reason: **`description`** (what the field does and why you would reach for it, which `/v1/admin/model-options` is the only surface to publish -- these classes are never bound as a typed request body, so they do not appear in `/openapi.json`). Which engine a field reaches is its config class; see [providers_architecture.md §3.5](./providers_architecture.md#35-which-config-fields-apply-to-which-engine) for the one exception.
 

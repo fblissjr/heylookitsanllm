@@ -64,9 +64,14 @@ Thinking DEPTH is covered by pinning depth-capable models:
 `--model mlx-text=gpt-oss-20b-MXFP4-Q8-mlx` and, since v2.0.151,
 `--model mlx-vision=mlx-community_Qwen3.8-27B-4bit` (39/39 on the vision arm).
 
-## Handoff -- start here (2026-10-30, v2.0.215)
+## Handoff -- start here (2026-10-30, v2.0.217)
 
-**Live Mid-Stream "End Thinking" Control, Model Registry `kind` & GGUF Derive-at-Load, & Phase 5 Paint Cuts (`v2.0.215`), plus Upstream Convergence (`mlx-vlm` `918763c6`, `llama.cpp` `a34de8618` build 12015, `v2.0.214`).**
+**Observability UI, `EngineDescription.template.caps`, & Cross-Page Activity Indicator (`v2.0.216`), Live Mid-Stream "End Thinking" Control, Model Registry `kind` & GGUF Derive-at-Load, & Phase 5 Paint Cuts (`v2.0.215`), plus Upstream Convergence (`mlx-vlm` `918763c6`, `llama.cpp` `a34de8618` build 12015, `v2.0.214`).**
+- **Observability UI, `EngineDescription.template.caps`, & Cross-Page Activity Indicator (`v2.0.216`)**:
+  - Surfaced `chat_template_caps` on `EngineDescription.template.caps` (`TemplateFacts.caps` in `src/heylook_llm/providers/contract.py`, populated as `observed` from `llama-server` `/props` on loaded GGUF models in `LlamaServerProvider.describe_observed()` and `not_applicable` on MLX in `mlx_describe.py`).
+  - Added `GET /v1/admin/config/logs?stream={events|metrics}&limit={1..500}` (`src/heylook_llm/config_api.py`) and the **Observability** section on `#/perf` (`frontend/js/pages/perf.js`, `frontend/js/api.js`, `frontend/css/app.css`) with live `observability_level` and `observability_retention_days` controls plus an `events` / `metrics` JSONL log reader.
+  - Added cross-page nav activity indicator (`heylook:chat-activity` custom event in `frontend/js/pages/chat.js` + `.nav-item--busy` on `#nav a[href="#/chat"]` and `#phone-nav a[href="#/chat"]` in `frontend/js/app.js` and `frontend/css/app.css`) and defined `--text-xs: 0.75rem`, `--ctrl-h-sm: 28px`, `--ctrl-h: 36px`, and `--ctrl-h-touch: 44px` in `:root` (`frontend/css/app.css`).
+  - Verified with `uv run pytest tests/unit/ tests/contract/ -q` (`1615 passed`) and `bun run e2e:render` (`108/108 passed`).
 - **Mid-Stream "End Thinking" Control & `/props` `chat_template_caps` (`v2.0.215`)**:
   - Added `POST /v1/conversations/{conv_id}/generate/reasoning-end` and `POST /v1/requests/{request_id}/reasoning-end`, backed by `AbortEvent.end_reasoning()` / `RequestRegistry.end_reasoning()`.
   - On GGUF, `LlamaServerProvider._build_payload` sets `reasoning_control: True` when thinking is enabled or resumed, and `_stream_chunks` binds `abort_event.set_end_reasoning_callback` on the first SSE frame carrying `"id"` to POST `{"id": cmpl_id, "action": "reasoning_end"}` to `llama-server`'s `/v1/chat/completions/control` (`#31390`). `_read_running_ctx()` also parses `chat_template_caps` (`#31271`) from `/props`.

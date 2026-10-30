@@ -215,7 +215,7 @@ sequenceDiagram
 
 ### 3.3. Readiness Polling & Running Context Capture
 1. **Polling `/health`**: polls on a fixed short interval up to `startup_timeout_s` (the default is on the field in [`config.py`](../../src/heylook_llm/config.py)). A 503 carrying `"Loading model"` means it is still loading weights and warming Metal shaders; 200 means ready. Any process exit during the wait -- **including a clean one** -- is a load failure.
-2. **Capturing `running_ctx` via `/props`**: Immediately after `/health` passes, the provider queries `GET /props` to inspect `default_generation_settings.n_ctx`. This records the actual context memory allocated by `llama-server`, which is reported via admin APIs.
+2. **Capturing `running_ctx` and `chat_template_caps` via `/props`**: Immediately after `/health` passes, the provider queries `GET /props` (`_read_running_ctx()`) to inspect `default_generation_settings.n_ctx` (the actual context memory allocated by `llama-server`) and `chat_template_caps` (`supports_system_role`, `supports_tools`, `supports_parallel_tool_calls`, `supports_typed_content`), which are surfaced via admin APIs (`engine.context` and `engine.template.caps`).
 
 ---
 
