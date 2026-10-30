@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.221]
+
+### Documentation
+
+- **Recorded Track 1.5, Track 2.4, and Track 2.5 runtime verification probes (`docs/project/TODO.md`, `docs/project/CURRENT.md`).**
+  - **Track 1.5 (`internal/claude/perf/vlm_parity_2026-10-30.md`)**: Verified `scripts/vlm_parity_probe.py` on `Qwen3.5-0.8B-MLX-8bit` against `mlx-vlm` `918763c6` (`ok=true`, `negative_control_images_differ=true`, `prompt_matches_mlx_vlm=true`, `feature_cache_hit=true`, `equals_cold_run=true`) and verified `mlx_vlm.models.gemma4` commit `8dd77461` (`Model.sanitize` channels-last weight transposition and `Gemma4ImageProcessor` 1px/3px PIL channels-last fix) in-process.
+  - **Track 2.4 (`internal/claude/perf/gguf_hybrid_spec_and_reasoning_cache_2026-10-30.md`)**: Verified built-in `--spec-type draft-mtp` speculative decoding on hybrid recurrent `unsloth_Qwen3.8-27B-UD-Q8_K_XL` against `llama-server` build 12015 (`llama.cpp` `#31350` recurrent state checkpoint rollback), confirming `speculative.in_force = True` and high draft acceptance across greedy and stochastic (`temperature=0.6`) generation.
+  - **Track 2.5 (`internal/claude/perf/gguf_hybrid_spec_and_reasoning_cache_2026-10-30.md`)**: Measured 3-turn thinking conversations on `unsloth_Qwen3.8-27B-UD-Q8_K_XL`, confirming that preserving `ChatMessage.thinking` as `reasoning_content` (`heylook` default + `--reasoning-preserve` and `supports_preserve_reasoning: true`) reuses the slot prefix through the prior assistant turn's final checkpoint, whereas stripping prior `thinking` causes immediate prompt divergence at `<think>\n\n</think>` and rolls back to the pre-assistant checkpoint.
+
 ## [2.0.220]
 
 ### Documentation

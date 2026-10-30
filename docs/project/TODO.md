@@ -2,7 +2,7 @@
 
 Cross-session task backlog organized by priority.
 
-*Last reviewed: 2026-10-30 (through v2.0.219; previous triage 2026-09-25 through v2.0.154). Every section was classed done, obsolete, open or mixed with evidence (`internal/claude/todo_triage.md`); the done and obsolete ones moved verbatim to `internal/archive/todo_closed_2026-09-25.md`. Mixed sections stay whole: their checked-off items are history kept beside the open ones.*
+*Last reviewed: 2026-10-30 (through v2.0.221; previous triage 2026-09-25 through v2.0.154). Every section was classed done, obsolete, open or mixed with evidence (`internal/claude/todo_triage.md`); the done and obsolete ones moved verbatim to `internal/archive/todo_closed_2026-09-25.md`. Mixed sections stay whole: their checked-off items are history kept beside the open ones.*
 
 ## 2026-10-30 Roadmap (Upstream Convergence, Engine Control, & Mobile Workbench)
 
@@ -20,7 +20,9 @@ Five active tracks across upstream kernels, backend engine control, model regist
   - `PATCH_2356`: re-tested on `Qwen3.5-0.8B-MLX-8bit` across cold and APC-restored single-row generations (`internal/claude/perf/mlx_vlm_patches_ab_2026-10-30.md`). **Kept**: without `PATCH_2356`, `APCCoordinator.merge_rows` still wraps a lone restored row in `BatchKVCache`, causing `Qwen3_5Model.__call__` to enter its second `_is_single_row_batch_cache(fa_cache)` block on every decode token and call `cache_left_padding.max().item()` + `query_left_padding.max().item()` synchronously on the CPU, degrading restored single-row decode and suffix prefill relative to cold generation.
   - `PATCH_GDN_PACKED`: upstream `d13bd3cc` added `_gated_delta_kernel_packed` in `mlx_vlm/models/qwen3_5/gated_delta.py`; kept `PATCH_GDN_PACKED` scoped to shared `mlx_vlm/models/gated_delta.py` (`qwen3_next`, `kimi_linear`, `lfm3`) until upstream ports it there.
   - Drafted APC capture-boundary PR (`vlm_engine.install_capture_policy`), once approved by owner to file.
-- [ ] **1.5 Gemma 4 MLX vision parity re-verification (`scripts/vlm_parity_probe.py`).** Re-run `vlm_parity_probe.py` on Gemma 4 (`gemma-4-26B-A4B`) following upstream `8dd77461` (`gemma4/vision.py` channels-last weight transposition fix).
+- [x] **1.5 MLX vision parity & Gemma 4 `8dd77461` verification (`scripts/vlm_parity_probe.py`, `v2.0.221`, record in `internal/claude/perf/vlm_parity_2026-10-30.md`):**
+  - Ran `scripts/vlm_parity_probe.py --model Qwen3.5-0.8B-MLX-8bit` on `mlx-vlm` `918763c6`: `ok=true`, `negative_control_images_differ=true`, `prompt_matches_mlx_vlm=true`, `feature_cache_hit=true`, `equals_cold_run=true` (`MATCH` on vision-after-text and exact match between cached-feature prefill and cold prefill; 1-quantum bf16 `NEAR-TIE` on vision-after-vision).
+  - Verified `mlx_vlm.models.gemma4` commit `8dd77461` (`Model.sanitize` channels-last weight transposition, `Gemma4ImageProcessor` / `Gemma4UnifiedImageProcessor` 1px/3px PIL channels-last fix, `VisionModel`, and `UnifiedModel.encode_image`) in-process on synthetic configurations (no autoregressive Gemma 4 VLM checkpoint is currently stored in the local model directory).
 - [ ] **1.6 Live 2-Mac speculative benchmark (`scripts/perf_ab.py`).** Run a clean `perf_ab.py` comparison on a 2-Mac pipelined model with and without its MTP/DFlash drafter and record in `internal/claude/perf/`.
 
 ### Track 2: Engine Runtime, Mid-Stream Thinking Control, & Caching (`docs/project/plan_runtime_visibility.md`)
@@ -30,10 +32,11 @@ Five active tracks across upstream kernels, backend engine control, model regist
   - **GGUF arm**: sends `reasoning_control: true` on thinking-enabled `/v1/chat/completions` payloads and forwards `{"id": cmpl_id, "action": "reasoning_end"}` to `llama-server` `POST /v1/chat/completions/control` (`llama.cpp` `b7c95d4c5` / `#31390`) via `AbortEvent.set_end_reasoning_callback`.
   - **MLX arm**: attaches a standby `ThinkingBudgetCriteria` (`_end_thinking_criteria`) that stays out of `drafting_blocker` until triggered by `AbortEvent.pop_end_reasoning()`, then arms `budget_exceeded = True` and forces the closing `\n` + `</think>` sequence on the next decode steps.
   - **Chat UI**: renders an inline **"End thinking"** button (`button.thinking__end`) inside the streaming `<details class="thinking"><summary>` header (`frontend/js/pages/chat.js`) on `thinking_budget`-capable models and hides it once assistant response content starts streaming.
-- [x] **2.4 GGUF `/props` `chat_template_caps` (`#31271`, `v2.0.215` - `v2.0.216`) & hybrid recurrent speculative rollback (`#31350`):**
+- [x] **2.4 GGUF `/props` `chat_template_caps` (`#31271`, `v2.0.215` - `v2.0.216`) & hybrid recurrent speculative rollback (`#31350`, `v2.0.221`, record in `internal/claude/perf/gguf_hybrid_spec_and_reasoning_cache_2026-10-30.md`):**
   - Read `chat_template_caps` (`supports_system_role`, `supports_tools`, `supports_parallel_tool_calls`, `supports_typed_content`) from `llama-server` `/props` into `LlamaServerProvider.chat_template_caps` during `_read_running_ctx()` and surfaced it as `engine.template.caps` (`TemplateFacts.caps` in `providers/contract.py`, `v2.0.216`).
-  - Open live check: verify speculative decoding (`draft-mtp` / external drafter) on hybrid recurrent GGUF models (`Qwen3.5` / `Qwen3.8`) using `llama.cpp` `#31350` (`checkpoint_interval` recurrent state rollback).
-- [ ] **2.5 Reasoning-strip re-prefill measurement on GGUF** (from Context Language Models paper): measure per-turn prompt vs cached tokens on a thinking conversation from the perf store and record in `internal/`.
+  - Verified speculative decoding (`--spec-type draft-mtp`, auto-paired from built-in `blk.64.nextn.*` tensors) on hybrid recurrent `unsloth_Qwen3.8-27B-UD-Q8_K_XL` against `llama-server` build 12015 (`#31350` `checkpoint_interval` recurrent state rollback): `describe_observed()` reports `speculative.in_force = True` and high draft acceptance across both greedy and stochastic sampling (`internal/claude/perf/gguf_hybrid_spec_and_reasoning_cache_2026-10-30.md`).
+- [x] **2.5 Reasoning-strip vs preserved-reasoning cache reuse measurement on GGUF (`v2.0.221`, record in `internal/claude/perf/gguf_hybrid_spec_and_reasoning_cache_2026-10-30.md`):**
+  - Measured 3-turn thinking conversations on `unsloth_Qwen3.8-27B-UD-Q8_K_XL`: with `heylook`'s default (`ChatMessage.thinking` sent as `reasoning_content` + `llama-server` `--reasoning-preserve` and `supports_preserve_reasoning: true`), `llama-server` reuses the slot prefix through the prior turn's final checkpoint and only prefills the new user turn plus the trailing tokens after the last checkpoint; when prior `thinking` is stripped (`thinking=None`), the template's empty `<think>` block causes immediate divergence at the start of the prior assistant turn and forces re-prefill of the entire prior assistant reply plus the new user turn.
 
 ### Track 3: Model Registry Ergonomics, Observability, & Runtime Visibility UI
 - [x] **3.1 Runtime Visibility UI (`docs/project/plan_runtime_visibility.md`, `v2.0.213`, `v2.0.216`):**
@@ -74,12 +77,7 @@ conditions written down. Source: arXiv 2609.37725 and its code (SCR is a
 SGLang patch; the recurrent-state checkpoints it asks for already exist on
 both heylook arms). Mirrored on the dark-mode plan doc's task board.
 
-- [ ] **Reasoning-strip re-prefill on the gguf arm.** heylook sends prior
-  thinking as `reasoning_content` and the Qwen template drops it from
-  non-final turns, so the prefix match should stop at the previous assistant
-  message every turn. Read it from the perf store (prompt vs cached tokens
-  and cause, per turn of a thinking conversation). Expected: one answer's
-  length per turn; if so, accept and record the figure in `internal/`.
+- [x] **Reasoning-strip re-prefill on the gguf arm (v2.0.221).** Measured on `unsloth_Qwen3.8-27B-UD-Q8_K_XL` (`internal/claude/perf/gguf_hybrid_spec_and_reasoning_cache_2026-10-30.md`): when `ChatMessage.thinking` is preserved as `reasoning_content` (`heylook` default + `llama-server` `--reasoning-preserve` and `supports_preserve_reasoning: true`), `llama-server` reuses the slot prefix through the prior turn's final checkpoint and only prefills the new user turn plus the trailing tokens after the last checkpoint; when prior `thinking` is stripped, the prompt diverges at the start of the prior assistant turn (`<think>\n\n</think>`) and rolls back to the pre-assistant checkpoint, re-prefilling the prior assistant reply plus the new user turn.
 - [x] **`--cache-reuse` on a full-attention gguf (v2.0.207).** First-class `GGUFModelConfig.cache_reuse` (`--cache-reuse`), auto-set to `256` on text-only `full_attention` models (`cache_reuse_decision`) and marked `not_applicable` whenever `mmproj_path` is set or on `hybrid_recurrent`/`sliding_window` models.
 - [x] **`--checkpoint-min-step` on a hybrid gguf (v2.0.207).** First-class `GGUFModelConfig.checkpoint_min_step` (`--checkpoint-min-step`) and `ctx_checkpoints` (`--ctx-checkpoints`), with `checkpoint_min_step` auto-set to `256` on `hybrid_recurrent` and `sliding_window` models (`checkpoint_min_step_decision`) and `-cram` (`cache_ram_mb`) auto-sized from working-set headroom up to `32768` MiB at spawn (`_auto_cache_ram_mb`).
 
