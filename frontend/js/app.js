@@ -108,4 +108,7 @@ async function navigate() {
 }
 
 window.addEventListener('hashchange', navigate);
+document.addEventListener('visibilitychange', () => {
+  document.documentElement.classList.toggle('tab-hidden', document.visibilityState === 'hidden');
+});
 navigate();

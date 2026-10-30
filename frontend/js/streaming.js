@@ -261,3 +261,12 @@ export function stopGenerate(convId) {
     headers: { 'X-Request-ID': requestId() },
   }).then((res) => res.status).catch(() => null);
 }
+
+// Mid-stream reasoning end: close the active thinking block and transition to
+// the final response without aborting the generation.
+export function endReasoningGenerate(convId) {
+  return fetch(`/v1/conversations/${convId}/generate/reasoning-end`, {
+    method: 'POST',
+    headers: { 'X-Request-ID': requestId() },
+  }).then((res) => res.status).catch(() => null);
+}

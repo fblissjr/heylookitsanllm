@@ -850,6 +850,21 @@ async def stop_generation(conv_id: str):
     return {"status": "stopping", "conversation_id": conv_id}
 
 
+@generate_router.post(
+    "/{conv_id}/generate/reasoning-end",
+    summary="End Reasoning Early",
+    description="Signal the active generation on this conversation to close "
+                "its open thinking block at the next token boundary and "
+                "transition to content generation. 404 if none is active.",
+)
+async def end_conversation_reasoning(conv_id: str):
+    run = _ACTIVE.get(conv_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="No active generation for this conversation")
+    run.abort_event.end_reasoning()
+    return {"status": "ending_reasoning", "conversation_id": conv_id}
+
+
 # ---------------------------------------------------------------------------
 # Streaming + persistence
 # ---------------------------------------------------------------------------

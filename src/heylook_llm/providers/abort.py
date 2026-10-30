@@ -39,11 +39,13 @@ class AbortEvent:
             break
     """
 
-    __slots__ = ("_event", "_prefill")
+    __slots__ = ("_event", "_prefill", "_end_reasoning", "_end_reasoning_cb")
 
     def __init__(self) -> None:
         self._event = threading.Event()
         self._prefill: tuple[int, int] | None = None
+        self._end_reasoning = threading.Event()
+        self._end_reasoning_cb = None
 
     def set(self) -> None:
         """Signal abort."""
@@ -53,10 +55,40 @@ class AbortEvent:
         """Reset for a new generation."""
         self._event.clear()
         self._prefill = None
+        self._end_reasoning.clear()
+        self._end_reasoning_cb = None
 
     def is_set(self) -> bool:
         """Check if abort has been signaled."""
         return self._event.is_set()
+
+    def end_reasoning(self) -> bool:
+        """Signal the generation loop to close the open thinking block early."""
+        self._end_reasoning.set()
+        cb = self._end_reasoning_cb
+        if cb is not None:
+            try:
+                cb()
+            except Exception:
+                pass
+        return True
+
+    def pop_end_reasoning(self) -> bool:
+        """Consume a pending end-reasoning signal once."""
+        if self._end_reasoning.is_set():
+            self._end_reasoning.clear()
+            return True
+        return False
+
+    def set_end_reasoning_callback(self, cb) -> None:
+        """Register an out-of-band callback (e.g. llama-server /v1/chat/completions/control)."""
+        self._end_reasoning_cb = cb
+        if self._end_reasoning.is_set() and cb is not None:
+            self._end_reasoning.clear()
+            try:
+                cb()
+            except Exception:
+                pass
 
     def set_prefill_progress(self, processed: int, total: int) -> None:
         """Report prefill progress: ``processed`` of ``total`` prompt tokens.

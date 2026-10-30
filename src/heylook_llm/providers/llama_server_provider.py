@@ -1633,7 +1633,8 @@ class LlamaServerProvider(BaseProvider):
         )
 
     def _read_running_ctx(self) -> Optional[int]:
-        """``n_ctx`` of the live slot, from /props. Best-effort, None if unsure.
+        """``n_ctx`` and ``chat_template_caps`` of the live slot, from /props.
+        Best-effort, None if unsure.
 
         One read at ready time, not per request: the value is fixed for the
         life of the process (context is a spawn-time argument), and /props is
@@ -1643,10 +1644,20 @@ class LlamaServerProvider(BaseProvider):
             return None
         try:
             with urllib.request.urlopen(self._base_url + "/props", timeout=10) as resp:
-                return self._ctx_from_props(json.loads(resp.read()))
+                props = json.loads(resp.read())
+                self.chat_template_caps = self._template_caps_from_props(props)
+                return self._ctx_from_props(props)
         except Exception as e:
             logging.debug(f"[GGUF] could not read /props for '{self.model_id}': {e}")
             return None
+
+    @staticmethod
+    def _template_caps_from_props(props: dict) -> Optional[dict]:
+        """The ``chat_template_caps`` block out of a /props payload, or None."""
+        caps = props.get("chat_template_caps") if isinstance(props, dict) else None
+        if isinstance(caps, dict):
+            return {k: bool(v) for k, v in caps.items() if isinstance(k, str) and isinstance(v, bool)}
+        return None
 
     @staticmethod
     def _ctx_from_props(props: dict) -> Optional[int]:
@@ -1724,6 +1735,7 @@ class LlamaServerProvider(BaseProvider):
         self._proc = None
         self._base_url = None
         self.running_ctx = None
+        self.chat_template_caps = None
         self._context_used = None
         if proc is None or proc.poll() is not None:
             with _ACTIVE_PROCS_LOCK:
@@ -1872,6 +1884,8 @@ class LlamaServerProvider(BaseProvider):
         if enable_thinking is not None:
             # must be a JSON bool -- llama-server rejects string values
             template_kwargs["enable_thinking"] = bool(enable_thinking)
+        if bool(enable_thinking) or request.resumes_thinking():
+            payload["reasoning_control"] = True
         # Sent whenever set, NOT gated on enable_thinking. The gate this
         # replaces assumed every template reads reasoning_effort inside a
         # thinking branch; gpt-oss/harmony refutes that -- its template reads
@@ -2219,6 +2233,24 @@ class LlamaServerProvider(BaseProvider):
         except Exception:
             return f"llama-server returned HTTP {e.code}"
 
+    def _control_reasoning_end(self, cmpl_id: str) -> bool:
+        """Ask llama-server to end the open reasoning block on task ``cmpl_id``."""
+        if self._base_url is None or not cmpl_id:
+            return False
+        body = json.dumps({"id": cmpl_id, "action": "reasoning_end"}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{self._base_url}/v1/chat/completions/control",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return resp.status == 200
+        except Exception as e:
+            logging.debug(f"[GGUF] reasoning_end control for '{self.model_id}' ({cmpl_id}) failed: {e}")
+            return False
+
     def _stream_chunks(self, fp, abort_event, echo_chars: int = 0,
                        echo_thinking_chars: int = 0) -> Generator:
         """Adapt llama-server SSE lines to GenerationChunk.
@@ -2239,6 +2271,7 @@ class LlamaServerProvider(BaseProvider):
         newline, so that case keeps it.
         """
         closed_thought = echo_thinking_chars > 0 and echo_chars > 0
+        control_bound = False
         for raw_line in fp:
             if abort_event is not None and abort_event.is_set():
                 logging.info(f"[GGUF] generation aborted for '{self.model_id}'")
@@ -2265,6 +2298,14 @@ class LlamaServerProvider(BaseProvider):
             # 2026-09-07: "Compute error." became an empty reply).
             if isinstance(frame, dict) and "error" in frame:
                 raise GenerationFailed(self._describe_engine_error(frame["error"]))
+            if (not control_bound and abort_event is not None
+                    and isinstance(frame, dict) and frame.get("id")
+                    and getattr(abort_event, "set_end_reasoning_callback", None) is not None):
+                cmpl_id = str(frame["id"])
+                abort_event.set_end_reasoning_callback(
+                    lambda cid=cmpl_id: self._control_reasoning_end(cid)
+                )
+                control_bound = True
             self._report_prefill_progress(frame.get("prompt_progress"), abort_event)
             chunk = self._frame_to_chunk(frame)
             if chunk is None:

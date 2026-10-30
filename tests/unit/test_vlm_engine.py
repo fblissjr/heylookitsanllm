@@ -241,3 +241,23 @@ def test_a_shared_snapshot_is_refreshed_while_its_prefix_is_in_use():
     refresh_snapshots(mgr, prompt, [120], 8)            # another salt: not this snapshot
     refresh_snapshots(mgr, prompt, [64], 7)             # not stored: left alone
     assert list(mgr._exact_cache) == ["later", shared]
+
+
+@pytest.mark.unit
+def test_abort_event_end_reasoning_signals_and_pops():
+    """AbortEvent.end_reasoning() triggers an attached callback or latches a
+    one-shot flag consumed by pop_end_reasoning() for the MLX decode loop."""
+    from heylook_llm.providers.abort import AbortEvent
+
+    abort = AbortEvent()
+    assert abort.pop_end_reasoning() is False
+    assert abort.end_reasoning() is True
+    assert abort.pop_end_reasoning() is True
+    assert abort.pop_end_reasoning() is False
+
+    called = []
+    abort.set_end_reasoning_callback(lambda: (called.append(True), True)[1])
+    assert abort.end_reasoning() is True
+    assert called == [True]
+    abort.clear()
+    assert abort.pop_end_reasoning() is False

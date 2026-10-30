@@ -1474,6 +1474,34 @@ class GGUFModelConfig(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _resolve_modalities_and_thinking(self):
+        """Derive modalities and supports_thinking from the GGUF header and sidecar
+        when omitted, matching MLXModelConfig's derive-at-load contract while keeping
+        __pydantic_fields_set__ limited to explicitly configured fields."""
+        provided = set(self.__pydantic_fields_set__)
+        try:
+            from pathlib import Path
+
+            from heylook_llm import gguf_metadata
+
+            primary = Path(self.model_path).expanduser()
+            mmproj = Path(self.mmproj_path).expanduser() if self.mmproj_path else None
+            if self.modalities is None:
+                if primary.is_file() or (mmproj is not None and mmproj.is_file()):
+                    self.modalities = gguf_metadata.detect_modalities(primary, mmproj)
+                else:
+                    self.modalities = ["text", "vision"] if mmproj is not None else ["text"]
+            if self.supports_thinking is None and primary.is_file():
+                self.supports_thinking = gguf_metadata.supports_thinking(primary)
+        except Exception:
+            if self.modalities is None:
+                self.modalities = ["text", "vision"] if self.mmproj_path else ["text"]
+        for derived in ("modalities", "supports_thinking"):
+            if derived not in provided:
+                self.__pydantic_fields_set__.discard(derived)
+        return self
+
 
 # Single source of truth for which providers exist and which config class
 # validates each one's `config` block. Adding a provider = add an entry here
@@ -1583,6 +1611,8 @@ class ModelConfig(BaseModel):
     tags: List[str] = Field(default_factory=list)
     # Model capabilities for discovery (e.g., ["chat", "thinking", "vision"])
     capabilities: List[str] = Field(default_factory=list)
+    # Explicit or derived model kind ("chat" | "embedding")
+    kind: Optional[Literal["chat", "embedding"]] = None
 
     @model_validator(mode='before')
     @classmethod
@@ -1596,6 +1626,24 @@ class ModelConfig(BaseModel):
                     raise ValueError(f"Unknown provider '{provider}' for model config validation")
                 data['config'] = config_cls(**v)
         return data
+
+    @model_validator(mode="after")
+    def _resolve_kind(self):
+        provided = set(self.__pydantic_fields_set__)
+        if self.kind is None:
+            try:
+                from heylook_llm.embedding_models import embedding_info
+
+                self.kind = (
+                    "embedding"
+                    if embedding_info(self.provider, self.config.model_dump()) is not None
+                    else "chat"
+                )
+            except Exception:
+                self.kind = "chat"
+        if "kind" not in provided:
+            self.__pydantic_fields_set__.discard("kind")
+        return self
 
 class ScanConfig(BaseModel):
     """Watch-folder config: what the model store contributes to the registry.

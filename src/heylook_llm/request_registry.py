@@ -147,6 +147,15 @@ class RequestRegistry:
             event.set()
         return len(events)
 
+    def end_reasoning(self, request_id: str) -> int:
+        """Signal every generation registered under ``request_id`` to close
+        its open thinking block and begin emitting content."""
+        with self._lock:
+            events = list(self._live.get(request_id, ()))
+        for event in events:
+            event.end_reasoning()
+        return len(events)
+
     def live_ids(self) -> list[str]:
         with self._lock:
             return sorted(self._live)

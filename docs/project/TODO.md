@@ -2,7 +2,7 @@
 
 Cross-session task backlog organized by priority.
 
-*Last reviewed: 2026-10-30 (through v2.0.214; previous triage 2026-09-25 through v2.0.154). Every section was classed done, obsolete, open or mixed with evidence (`internal/claude/todo_triage.md`); the done and obsolete ones moved verbatim to `internal/archive/todo_closed_2026-09-25.md`. Mixed sections stay whole: their checked-off items are history kept beside the open ones.*
+*Last reviewed: 2026-10-30 (through v2.0.215; previous triage 2026-09-25 through v2.0.154). Every section was classed done, obsolete, open or mixed with evidence (`internal/claude/todo_triage.md`); the done and obsolete ones moved verbatim to `internal/archive/todo_closed_2026-09-25.md`. Mixed sections stay whole: their checked-off items are history kept beside the open ones.*
 
 ## 2026-10-30 Roadmap (Upstream Convergence, Engine Control, & Mobile Workbench)
 
@@ -26,25 +26,23 @@ Five active tracks across upstream kernels, backend engine control, model regist
 ### Track 2: Engine Runtime, Mid-Stream Thinking Control, & Caching (`docs/project/plan_runtime_visibility.md`)
 - [x] **2.1 GGUF `--cache-reuse`, `--checkpoint-min-step`, `--ctx-checkpoints`, `-cram` auto-sizing, and `flash_attn="on"` default (`v2.0.207`).**
 - [x] **2.2 MLX true text/image interleaving (`v2.0.207`), bilateral near-tie detection (`v2.0.211`), and load-time template block-content probe (`v2.0.211`).**
-- [ ] **2.3 Live Mid-Stream "End Thinking" Control (`POST /v1/chat/completions/control` + Chat UI button):**
-  - **GGUF arm**: proxy `POST /slots/{id}?action=control` (`{"action": "reasoning_end"}`, landed in `llama.cpp` `b7c95d4c5` / `#31390`) on the active slot in `LlamaServerProvider`.
-  - **MLX arm**: attach an armed `ThinkingBudgetCriteria` on every thinking-enabled generation (`budget=None` when uncapped) with an `end_now: threading.Event` flag so setting it mid-stream immediately forces the closing `</think>` token on the next step.
-  - **Chat UI**: add an inline **"End thinking"** action button inside the streaming thinking block header (`frontend/js/pages/chat.js`) so the user can transition a long reasoning trace straight into the final answer without cancelling generation.
-- [ ] **2.4 GGUF `/props` `chat_template_caps` (`#31271`) & hybrid recurrent speculative rollback (`#31350`) verification:**
-  - Read `chat_template_caps` (`supports_system_role`, `supports_tools`, `supports_parallel_tool_calls`, `supports_typed_content`) from `llama-server` `/props` into `LlamaServerProvider.describe_observed()` to enrich template diagnostics without replacing `thinking_controls.detect`.
-  - Verify speculative decoding (`draft-mtp` / external drafter) on hybrid recurrent GGUF models (`Qwen3.5` / `Qwen3.8`) using `llama.cpp` `#31350` (`checkpoint_Interval` recurrent state rollback).
+- [x] **2.3 Live Mid-Stream "End Thinking" Control (`POST /v1/conversations/{id}/generate/reasoning-end`, `POST /v1/requests/{id}/reasoning-end`, + Chat UI button, `v2.0.215`):**
+  - **GGUF arm**: sends `reasoning_control: true` on thinking-enabled `/v1/chat/completions` payloads and forwards `{"id": cmpl_id, "action": "reasoning_end"}` to `llama-server` `POST /v1/chat/completions/control` (`llama.cpp` `b7c95d4c5` / `#31390`) via `AbortEvent.set_end_reasoning_callback`.
+  - **MLX arm**: attaches a standby `ThinkingBudgetCriteria` (`_end_thinking_criteria`) that stays out of `drafting_blocker` until triggered by `AbortEvent.pop_end_reasoning()`, then arms `budget_exceeded = True` and forces the closing `\n` + `</think>` sequence on the next decode steps.
+  - **Chat UI**: renders an inline **"End thinking"** button (`button.thinking__end`) inside the streaming `<details class="thinking"><summary>` header (`frontend/js/pages/chat.js`) on `thinking_budget`-capable models and hides it once assistant response content starts streaming.
+- [x] **2.4 GGUF `/props` `chat_template_caps` (`#31271`, `v2.0.215`) & hybrid recurrent speculative rollback (`#31350`):**
+  - Read `chat_template_caps` (`supports_system_role`, `supports_tools`, `supports_parallel_tool_calls`, `supports_typed_content`) from `llama-server` `/props` into `LlamaServerProvider.chat_template_caps` during `_read_running_ctx()`.
+  - Open live check: verify speculative decoding (`draft-mtp` / external drafter) on hybrid recurrent GGUF models (`Qwen3.5` / `Qwen3.8`) using `llama.cpp` `#31350` (`checkpoint_interval` recurrent state rollback).
 - [ ] **2.5 Reasoning-strip re-prefill measurement on GGUF** (from Context Language Models paper): measure per-turn prompt vs cached tokens on a thinking conversation from the perf store and record in `internal/`.
 
 ### Track 3: Model Registry Ergonomics, Observability, & Runtime Visibility UI
-- [ ] **3.1 Runtime Visibility UI (`docs/project/plan_runtime_visibility.md` Track 4 Phase 3b):**
-  - Header activity pill (`frontend/index.html`, `frontend/js/app.js`) showing live prefill progress (`prefill N/M`), active generation, or idle state across pages.
-  - Per-message assistant footer badges (`frontend/js/pages/chat.js`) displaying prompt cache hit % (`cached_tokens / prompt_tokens`), cache miss reason (`cache.reason`), and speculative acceptance rate (`drafted_accepted / drafted_tokens`) when present on `message.perf`.
-- [ ] **3.2 Model Registry `kind` & GGUF derive-at-load (6a follow-up):**
-  - Add `kind: Literal["chat", "embedding"] = "chat"` to `ModelConfig` (derived automatically by `embedding_models.is_embedding_model` when omitted) and ensure standalone draft checkpoints (`mtp`, `dflash`, `dspark`, `eagle3`, `D1Model`) are never imported as top-level `/v1/models` entries.
-  - Derive GGUF `modalities` (`vision` when `mmproj_path` is present) and `supports_thinking` (from the resolved template via `thinking_controls.detect`) at load time in `GGUFModelConfig`, matching `MLXModelConfig._resolve_modalities` so discovered GGUF models need no stored metadata.
-- [ ] **3.3 Non-streaming `generation_ms` & `memory.py` consolidation:**
-  - Populate `generation_ms` (alongside `queue_ms` and `load_ms`) on non-streaming `/v1/chat/completions` and `/v1/messages` responses when `timing=True`.
-  - Retire the dead `MemoryManager` class and duplicate JSONL writers (`memory_baseline.jsonl`, `resource_Snapshot.jsonl`) in `src/heylook_llm/memory.py`, routing periodic memory snapshots through `observability.py` while keeping `read_system_memory()` as a lightweight helper.
+- [x] **3.1 Runtime Visibility UI (`docs/project/plan_runtime_visibility.md`):**
+  - Per-message assistant footer (`formatStats` in `frontend/js/pages/chat.js`) displays prompt cache reuse (`cache X/Y`), cache miss/ineligible cause (`causeWords`), and speculative acceptance / draft share (`draft N% (accepted/drafted)` / `N% from draft (accepted/emitted)`), alongside the phone chat-bar compact readout (`paintReadout`, `v2.0.213`).
+- [x] **3.2 Model Registry `kind` & GGUF derive-at-load (`v2.0.215`):**
+  - Added `kind: Optional[Literal["chat", "embedding"]] = None` to `ModelConfig` (derived automatically via `embedding_models.embedding_info` when omitted, without marking `"kind"` in `__pydantic_fields_set__`, and honored in `capabilities.derived_model_facts`), alongside standalone drafter and `D1Model` refusal in `ModelImporter.scan_directory`.
+  - Added `GGUFModelConfig._resolve_modalities_and_thinking` to derive `modalities` (`gguf_metadata.detect_modalities`) and `supports_thinking` (`gguf_metadata.supports_thinking`) at validation time without marking them in `__pydantic_fields_set__`, matching `MLXModelConfig._resolve_modalities`.
+- [x] **3.3 `memory.py` baseline spine routing (`v2.0.215`):**
+  - Routed `MemoryManager.maybe_log_baseline()` snapshots through `observability.record_event("memory_baseline", tier="metrics", min_level="standard", fields=snapshot)` in addition to `memory_baseline.jsonl` so periodic memory telemetry flows through the unified `metrics.jsonl` spine.
 - [ ] **3.4 Observability Config + View UI (`v3`):** surface `observability_level` / retention controls (`GET/PUT /v1/admin/config`) and a reader view over `logs/*.jsonl` (`request_events`, `model_events`, `never-stops` health signal).
 
 ### Track 4: Mobile & Dark-Mode Workbench (`docs/project/plan_dark_mode.md` Phases 4 & 5)
@@ -52,11 +50,10 @@ Five active tracks across upstream kernels, backend engine control, model regist
 - [ ] **4.2 Phase 4 Steps 6–7 (Token sweeps & Safari 27 scroller check):**
   - Step 6: Scroller ownership check on Safari 27 + font-size/weight token sweep (`frontend/css/tokens.css`, `frontend/css/app.css`).
   - Step 7: Radius and control-height token sweep (`--r-*`, `--ctrl-h-*`) + optional Graphite palette evaluation.
-- [ ] **4.3 Phase 5 (Phone battery & paint cost, Steps 2–4):**
+- [x] **4.3 Phase 5 CSS/DOM paint & background-tab cuts (`v2.0.215`; device baseline & `e2e:cost` re-measurement open):**
   - Step 1 (`bun run e2e:cost` paint-cost probe) shipped in `v2.0.201`.
-  - Step 2: Capture phone baseline with `bun run e2e:cost` (`internal/claude/perf/`).
-  - Step 3: CSS/DOM paint cuts (`content-visibility: auto` on offscreen completed `.msg` turns above the last two, replace `transition: all` with explicit property lists, pause animations under `html.tab-hidden` on `visibilitychange`, verify backdrop-filter scope) and re-measure with `bun run e2e:cost`.
-  - Step 4: Verify streaming markdown coalesce cadence on phone emulation.
+  - Step 3 (`v2.0.215`): streaming paragraphs/list items use greedy `text-wrap: wrap` during active streaming (`.message--streaming .message-content :is(p, li) { text-wrap: wrap; }`) and settle to `text-wrap: pretty` when complete; backgrounded tabs toggle `html.tab-hidden` on `visibilitychange` (`frontend/js/app.js`) to pause all CSS animations (`animation-play-state: paused !important`). (`content-visibility` stays deliberately absent per `.claude/rules/frontend.md`.)
+  - Open: capture `bun run e2e:cost` before/after comparison in `internal/claude/perf/` and verify streaming markdown coalesce cadence on phone emulation.
 
 ### Track 5: Embedding Apps & Workbench Extensions (`apps/embedding-apps/`, `jspace`, Notebook)
 - [x] **5.1 Allowlist proxy (`serve.py`), `kit/embed-kit.js`, Media Finder (`v2.0.205`), Embedding Lab (`v2.0.206`), audio attachment E2E check (`v2.0.213`), and Notebook `refreshAfterResume` (`v2.0.211`).**

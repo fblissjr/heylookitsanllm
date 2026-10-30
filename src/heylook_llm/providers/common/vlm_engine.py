@@ -352,6 +352,7 @@ def generate(
     model_id: Optional[str] = None,
     reset_peak: bool = True,
     thinking_budget=None,
+    end_thinking_criteria=None,
     shared_prefixes: Iterable[list[int]] = (),
     draft=None,
     draft_block_size: Optional[int] = None,
@@ -497,8 +498,33 @@ def generate(
                         finish = "stop"
                     else:
                         toks.append(tok)
+                        if end_thinking_criteria is not None and end_thinking_criteria is not thinking_budget:
+                            if (not end_thinking_criteria.in_thinking
+                                    and getattr(end_thinking_criteria, "thinking_start_token_id", None) is not None
+                                    and tok == end_thinking_criteria.thinking_start_token_id):
+                                end_thinking_criteria.in_thinking = True
+                            elif (end_thinking_criteria.in_thinking
+                                    and tok == getattr(end_thinking_criteria, "thinking_end_token_id", None)):
+                                end_thinking_criteria.in_thinking = False
                 if r.finish_reason is not None and finish is None:
                     finish = "stop" if r.finish_reason == "stop" else "length"
+            pop_end_reasoning = getattr(abort_event, "pop_end_reasoning", None)
+            if pop_end_reasoning is not None and pop_end_reasoning():
+                crit = thinking_budget or end_thinking_criteria
+                if crit is not None and getattr(crit, "in_thinking", False) and not getattr(crit, "budget_exceeded", False):
+                    crit.thinking_budget = 0
+                    crit.budget_exceeded = True
+                    gen_batch = getattr(bg, "_generation_batch", None)
+                    if gen_batch is not None and getattr(gen_batch, "thinking_budget_criteria", None):
+                        gen_batch.thinking_budget_criteria[0] = crit
+                        seq = getattr(crit, "_forced_sequence", None) or []
+                        idx = int(getattr(crit, "_forced_index", 0) or 0)
+                        if idx < len(seq) and getattr(gen_batch, "_next_tokens", None) is not None:
+                            forced_tok = seq[idx]
+                            crit._forced_index = idx + 1
+                            gen_batch._next_tokens = mx.array(
+                                [forced_tok], dtype=gen_batch._next_tokens.dtype
+                            )
             if drafting and delivered:
                 # Every call after the first token's is one round: its drafts
                 # the target kept, plus the target's own token.

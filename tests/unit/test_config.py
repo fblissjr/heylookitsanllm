@@ -301,6 +301,28 @@ class TestModalitiesDeriveAtLoad:
         assert cfg.modalities == expected
         assert cfg.vision is ("vision" in expected)  # mirror syncs to detection
 
+    def test_gguf_modalities_and_model_kind_derive_without_marking_fields_set(self):
+        from heylook_llm.config import ModelConfig
+
+        gguf_cfg = GGUFModelConfig(model_path="/fake/w.gguf")
+        assert gguf_cfg.modalities == ["text"]
+        assert "modalities" not in gguf_cfg.__pydantic_fields_set__
+        assert "supports_thinking" not in gguf_cfg.__pydantic_fields_set__
+
+        gguf_vision = GGUFModelConfig(model_path="/fake/w.gguf", mmproj_path="/fake/mmproj.gguf")
+        assert gguf_vision.modalities == ["text", "vision"]
+        assert "modalities" not in gguf_vision.__pydantic_fields_set__
+
+        mc = ModelConfig(id="m1", provider="gguf", config={"model_path": "/fake/w.gguf"})
+        assert mc.kind == "chat"
+        assert "kind" not in mc.__pydantic_fields_set__
+
+        mc_explicit = ModelConfig(
+            id="m2", provider="gguf", kind="embedding", config={"model_path": "/fake/w.gguf"}
+        )
+        assert mc_explicit.kind == "embedding"
+        assert "kind" in mc_explicit.__pydantic_fields_set__
+
 
 @pytest.mark.unit
 class TestExampleConfigs:

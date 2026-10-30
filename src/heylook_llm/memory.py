@@ -305,6 +305,13 @@ class MemoryManager:
             logging.exception("MemoryManager: snapshot failed")
             return False
         self._append_jsonl(self.log_dir / BASELINE_FILE, snapshot)
+        try:
+            from heylook_llm import observability
+            observability.record_event(
+                "memory_baseline", tier="metrics", min_level="standard", fields=snapshot
+            )
+        except Exception:
+            pass
         self._last_baseline_ts = now
         return True
 

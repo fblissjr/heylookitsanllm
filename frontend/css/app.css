@@ -842,8 +842,12 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 
 .message-content { overflow-wrap: break-word; }
 /* Safari 26 and Chrome both wrap paragraphs without one-word last lines;
-   older engines ignore the property. Headings balance their lines. */
+   older engines ignore the property. Headings balance their lines.
+   While streaming, fall back to fast greedy wrap so multi-line reflow is not
+   re-run on every paint tick; once the row settles into a saved message,
+   pretty wrapping takes over. */
 .message-content :is(p, li) { text-wrap: pretty; }
+.message--streaming .message-content :is(p, li) { text-wrap: wrap; }
 h1, h2, h3 { text-wrap: balance; }
 .message-content > :first-child { margin-top: 0; }
 .message-content > :last-child { margin-bottom: 0; }
@@ -881,12 +885,31 @@ h1, h2, h3 { text-wrap: balance; }
   cursor: pointer;
   padding: 0.3rem 0.6rem;
   user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.thinking summary::-webkit-details-marker { display: none; }
+.thinking__end {
+  margin-left: auto;
+  padding: 0.1rem 0.45rem;
+  font-size: var(--text-xs);
 }
 .thinking__body {
   padding: 0.3rem 0.6rem var(--space-2);
   white-space: pre-wrap;
   overflow-wrap: break-word;
   border-top: 1px solid var(--line);
+}
+
+/* Background-tab animation pause (plan_dark_mode.md Phase 5): freeze CSS
+   animations while the document is hidden so backgrounded mobile tabs pay no
+   paint ticks for blinking cursors or spinners. */
+html.tab-hidden *,
+html.tab-hidden *::before,
+html.tab-hidden *::after {
+  animation-play-state: paused !important;
 }
 
 .message__actions {

@@ -237,7 +237,9 @@ partial result. Unknown model = 404; unsupported model/modality/dimensions/promp
 or invalid decoded input = 400; schema violation = 422; queue saturation = 503;
 cooperative cancellation = 409. Unexpected backend failures remain 500.
 
-`X-Request-ID` is echoed; `DELETE /v1/requests/{id}` requests cancellation.
+`X-Request-ID` is echoed; `DELETE /v1/requests/{id}` requests cancellation, and
+`POST /v1/requests/{id}/reasoning-end` (v2.0.215) requests closing an active
+thinking trace early so generation transitions straight to the final reply.
 Media and the GPU slot remain owned until the current operation actually ends.
 Embeddings use the existing load/eviction policy and global inference queue.
 Chat/notebook selectors exclude embedding models. The `#/embeddings` page uses
@@ -587,6 +589,18 @@ truncate→stream→persist sequences):**
   the Stop button's server-side spelling). 404 when none is active — on
   404 the v3 client aborts its fetch locally instead (covers the
   503-retry sleep and the pre-claim dispatch window).
+- `POST /{id}/generate/reasoning-end` (v2.0.215) → `{ended: 0|1, conversation_id}`
+  (404 when no generation is active for `{id}`). Closes the active thinking
+  block mid-stream without aborting the generation: on GGUF, forwards
+  `{"id": cmpl_id, "action": "reasoning_end"}` to `llama-server`'s
+  `POST /v1/chat/completions/control` (`#31390`, enabled by sending
+  `reasoning_control: true` on thinking-enabled requests); on MLX, arms a
+  standby `ThinkingBudgetCriteria` (`budget_exceeded = True`, `thinking_budget = 0`)
+  and injects the closing `</think>` sequence (`\n` then `</think>`) on the
+  next decode steps. v3 renders an inline **End thinking** button (`button.thinking__end`)
+  in the streaming `<details class="thinking"><summary>` header whenever the
+  model has the `thinking_budget` capability and hides it as soon as assistant
+  content begins streaming.
 
 **Notebooks** (prefix `/v1/notebooks`, no auth): `GET /` list **omits content**; `GET /{id}` full;
 `POST /` `{title,content,system_prompt?,model_id?,params?,applied_preset_id?}` (`applied_preset_id`

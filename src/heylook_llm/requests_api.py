@@ -98,3 +98,36 @@ async def cancel_request(request_id: str):
     # short or truncated answer, and this is the line that explains why.
     logging.info(f"[CANCEL] {request_id}: signalled {cancelled} generation(s)")
     return {"cancelled": cancelled, "request_id": request_id}
+
+
+@requests_router.post(
+    "/v1/requests/{request_id}/reasoning-end",
+    summary="End Reasoning on an In-Flight Request",
+    description="Signal an in-flight generation to close its open thinking "
+                "block at the next token boundary and begin generating content, "
+                "addressed by the `X-Request-ID` the client sent.",
+    response_description="How many in-flight generations were signalled",
+    responses={
+        404: {"description": "No in-flight request with that id"},
+        422: {"description": "Malformed id -- could never have been tracked"},
+    },
+)
+async def end_request_reasoning(request_id: str):
+    if not is_valid_request_id(request_id):
+        raise HTTPException(
+            status_code=422,
+            detail=(f"Malformed request id: must match {REQUEST_ID_PATTERN}. "
+                    f"An id of this shape is never tracked -- the server "
+                    f"replaces an unusable X-Request-ID with a generated one, "
+                    f"so no generation could be running under it."),
+        )
+    signalled = get_request_registry().end_reasoning(request_id)
+    if not signalled:
+        raise HTTPException(
+            status_code=404,
+            detail=(f"No in-flight request with id '{request_id}'. It may have "
+                    f"already finished, or it was sent without an X-Request-ID "
+                    f"header and is tracked under a server-generated id."),
+        )
+    logging.info(f"[REASONING-END] {request_id}: signalled {signalled} generation(s)")
+    return {"signalled": signalled, "request_id": request_id}

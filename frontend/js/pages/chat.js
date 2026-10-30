@@ -26,7 +26,7 @@
 import { createPage } from '../page.js';
 import { createEl, autoGrow, armedConfirm, causeWords, createUnloadGuard, formatTokens, setStatus, dismissPaneOnOutsideClick, lsRead, lsWrite } from '../utils.js';
 import { api } from '../api.js';
-import { streamGenerate, stopGenerate } from '../streaming.js';
+import { streamGenerate, stopGenerate, endReasoningGenerate } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
 import { MarkdownStream, appendPlainText } from '../markdown-stream.js';
 import { prepareImage, resizeImageTo, blobToBase64, MAX_EDGE_PX } from '../image-prep.js';
@@ -1699,9 +1699,23 @@ function renderMessages(ctx) {
   paintReadout(ctx);
 }
 
-function buildThinkingEl(thinking, open = false) {
+function buildThinkingEl(thinking, open = false, onEndThinking = null) {
+  const summaryChildren = ['Thinking'];
+  if (onEndThinking) {
+    const endBtn = createEl('button', {
+      type: 'button',
+      class: 'btn btn--sm btn--ghost thinking__end',
+      title: 'Close the thinking block and start the final response',
+    }, ['End thinking']);
+    endBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onEndThinking(endBtn);
+    });
+    summaryChildren.push(endBtn);
+  }
   const details = createEl('details', { class: 'thinking', open }, [
-    createEl('summary', {}, ['Thinking']),
+    createEl('summary', {}, summaryChildren),
     createEl('div', { class: 'thinking__body' }, [thinking ?? '']),
   ]);
   return details;
@@ -3336,8 +3350,19 @@ function startStream(ctx, opts = {}) {
   // blocks are already classified and committed before the first delta -- the
   // anchor's content is never re-parsed again for the life of the stream.
   if (baseContent) md.render(baseContent);
-  const thinkingEl = buildThinkingEl(continueMsg?.thinking ?? '', true);
+  const canEndThinking = currentCaps(ctx).includes('thinking_budget');
+  const thinkingEl = buildThinkingEl(
+    continueMsg?.thinking ?? '',
+    true,
+    canEndThinking ? (endBtn) => {
+      if (endBtn.disabled) return;
+      endBtn.disabled = true;
+      endBtn.textContent = 'Ending…';
+      endReasoningGenerate(s.activeId);
+    } : null,
+  );
   thinkingEl.hidden = !continueMsg?.thinking;
+  const endThinkingBtn = thinkingEl.querySelector('.thinking__end');
   const msgEl = createEl('div', { class: `message message--${role} message--streaming` }, [
     thinkingEl,
     createEl('div', { class: 'message-bubble' }, [contentEl]),
@@ -3358,7 +3383,7 @@ function startStream(ctx, opts = {}) {
     contentDirty: false,
     thinkingDirty: false,
     waiting: true, // no delta yet -- the wait status below is still on screen
-    els: { msgEl, contentEl, thinkingBody: thinkingEl.querySelector('.thinking__body'), thinkingEl },
+    els: { msgEl, contentEl, thinkingBody: thinkingEl.querySelector('.thinking__body'), thinkingEl, endThinkingBtn },
   };
   s.stream = stream;
   // List STRUCTURE goes through renderMessages only (it appends the stream
@@ -3474,6 +3499,9 @@ function paintStream(ctx) {
   const following = followingTail(ctx);
   if (stream.contentDirty) {
     stream.contentDirty = false;
+    if (stream.content && stream.els.endThinkingBtn) {
+      stream.els.endThinkingBtn.hidden = true;
+    }
     // Prefix + new text are still ONE markdown document -- constructs spanning
     // the seam were the reason the old painter re-rendered the whole thing
     // every frame. MarkdownStream keeps that guarantee by choosing a cut no

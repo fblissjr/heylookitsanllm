@@ -168,6 +168,33 @@ def _thinking_budget_criteria(request: ChatRequest, effective_request: dict,
             resumes_thinking=request.resumes_thinking()))
 
 
+def _end_thinking_criteria(request: ChatRequest, effective_request: dict,
+                           template_info, tokenizer):
+    """Standby ``ThinkingBudgetCriteria`` for mid-stream ``end_reasoning``
+    signals when no upfront ``thinking_budget_tokens`` was set.
+
+    Kept out of ``BatchGenerator`` until ``abort_event.pop_end_reasoning()``
+    fires so speculative decoding is not blocked unless the user ends thinking.
+    """
+    if effective_request.get("thinking_budget_tokens"):
+        return None
+    markers = thinking_budget_markers(template_info)
+    thinking = _resolve_enable_thinking(effective_request) or request.resumes_thinking()
+    if markers is None or not thinking:
+        return None
+    from mlx_vlm.utils import ThinkingBudgetCriteria
+    from ..reasoning_parser import starts_inside_thinking
+
+    opener, closer = markers
+    return ThinkingBudgetCriteria(
+        tokenizer, 0, thinking_end_token=closer, thinking_start_token=opener,
+        enable_thinking=True,
+        prompt_preopens_thinking=starts_inside_thinking(
+            template_info, thinking_enabled=True,
+            continuing=request.is_continuation(),
+            resumes_thinking=request.resumes_thinking()))
+
+
 def _structured_processors(request: ChatRequest, effective_request: dict,
                            template_info, tokenizer) -> list:
     """The logits processors that hold the REPLY to ``response_schema``, or []
@@ -528,6 +555,8 @@ class UnifiedTextStrategy:
                          if self.owner is not None else None),
             thinking_budget=_thinking_budget_criteria(
                 request, effective_request, self.template_info, tokenizer),
+            end_thinking_criteria=_end_thinking_criteria(
+                request, effective_request, self.template_info, tokenizer),
             draft=getattr(self.owner, "_draft", None),
             draft_block_size=effective_request.get('draft_block_size'),
         )
@@ -821,6 +850,9 @@ class VLMVisionStrategy:
             detokenizer=(self.owner.streaming_detokenizer(request.is_continuation())
                          if self.owner is not None else None),
             thinking_budget=_thinking_budget_criteria(
+                request, effective_request, self.template_info,
+                getattr(processor, "tokenizer", processor)),
+            end_thinking_criteria=_end_thinking_criteria(
                 request, effective_request, self.template_info,
                 getattr(processor, "tokenizer", processor)),
             draft=getattr(self.owner, "_draft", None),

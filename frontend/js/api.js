@@ -71,6 +71,8 @@ const ROUTES = {
   // Same mode/message_id/overrides vocabulary as generate; persists nothing;
   // 409 when the model is not resident (a preview never loads a model).
   previewPrompt:     ['POST', (id) => `/v1/conversations/${id}/prompt`, true],
+  endConversationReasoning: ['POST', (id) => `/v1/conversations/${id}/generate/reasoning-end`],
+  endRequestReasoning: ['POST', (id) => `/v1/requests/${encodeURIComponent(id)}/reasoning-end`],
   deleteMessage:     ['DELETE', (id, msgId) => `/v1/conversations/${id}/messages/${msgId}`],
 
   // presets (saved system prompt + sampler bundles)

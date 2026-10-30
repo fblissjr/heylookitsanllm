@@ -1637,3 +1637,72 @@ def test_gguf_metrics_report_what_is_known_and_null_the_rest(tmp_path, monkeypat
         assert row()["memory_mb"] is None
     finally:
         reset_process_gate()
+
+
+@pytest.mark.unit
+def test_reasoning_control_payload_and_end_reasoning_callback(monkeypatch):
+    """When thinking is enabled or resumed, _build_payload sets reasoning_control=True,
+    and _stream_chunks binds abort_event.set_end_reasoning_callback to POST
+    {"id": cmpl_id, "action": "reasoning_end"} to /v1/chat/completions/control."""
+    from heylook_llm.providers.abort import AbortEvent
+
+    p = make_provider()
+    p._base_url = "http://127.0.0.1:9999"
+
+    payload_on = p._build_payload(req(enable_thinking=True))
+    assert payload_on.get("reasoning_control") is True
+
+    payload_off = p._build_payload(req(enable_thinking=False))
+    assert "reasoning_control" not in payload_off
+
+    control_calls = []
+
+    def fake_urlopen(target, *a, **k):
+        url = target if isinstance(target, str) else target.full_url
+        if url.endswith("/v1/chat/completions/control"):
+            body = json.loads(target.data.decode("utf-8"))
+            control_calls.append(body)
+            return _stream_bytes(json.dumps({"ok": True}))
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr(llama_mod.urllib.request, "urlopen", fake_urlopen)
+    abort = AbortEvent()
+    resp = _stream_bytes(
+        'data: {"id":"cmpl-42","choices":[{"delta":{"reasoning_content":"step 1"}}]}',
+        'data: {"id":"cmpl-42","choices":[{"delta":{"content":"answer"},"finish_reason":"stop"}]}',
+        "data: [DONE]",
+    )
+    chunks = []
+    for chunk in p._stream_chunks(resp, abort_event=abort):
+        chunks.append(chunk)
+        if chunk.thinking:
+            assert abort.end_reasoning() is True
+
+    assert control_calls == [{"id": "cmpl-42", "action": "reasoning_end"}]
+    assert any(c.text == "answer" for c in chunks)
+
+
+@pytest.mark.unit
+def test_read_running_ctx_records_chat_template_caps(monkeypatch):
+    """_read_running_ctx parses chat_template_caps (#31271) alongside n_ctx."""
+    p = make_provider()
+    p._base_url = "http://127.0.0.1:9999"
+    props_payload = {
+        "default_generation_settings": {"n_ctx": 16384},
+        "chat_template_caps": {
+            "supports_tools": True,
+            "supports_parallel_tool_calls": False,
+            "supports_System_role": True,
+        },
+    }
+    monkeypatch.setattr(
+        llama_mod.urllib.request,
+        "urlopen",
+        lambda *a, **k: _stream_bytes(json.dumps(props_payload)),
+    )
+    assert p._read_running_ctx() == 16384
+    assert p.chat_template_caps == {
+        "supports_tools": True,
+        "supports_parallel_tool_calls": False,
+        "supports_System_role": True,
+    }

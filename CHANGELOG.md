@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.215]
+
+### Added
+
+- **Live mid-stream "End thinking" control across GGUF, MLX, API routes, and Chat UI (`src/heylook_llm/providers/abort.py`, `src/heylook_llm/request_registry.py`, `src/heylook_llm/requests_api.py`, `src/heylook_llm/conversation_generate_api.py`, `src/heylook_llm/providers/llama_server_provider.py`, `src/heylook_llm/providers/mlx_provider.py`, `src/heylook_llm/providers/common/vlm_engine.py`, `frontend/js/api.js`, `frontend/js/streaming.js`, `frontend/js/pages/chat.js`, `frontend/css/app.css`, `docs/frontend_v3_spec.md`).**
+  - Added `POST /v1/conversations/{conv_id}/generate/reasoning-end` and `POST /v1/requests/{request_id}/reasoning-end`, backed by `AbortEvent.end_reasoning()` / `pop_end_reasoning()` / `set_end_reasoning_callback()` and `RequestRegistry.end_reasoning()`.
+  - **GGUF arm**: `LlamaServerProvider._build_payload` sets `reasoning_control: True` when thinking is enabled or resumed, and `_stream_chunks` binds `abort_event.set_end_reasoning_callback` on the first SSE frame carrying `"id"` to POST `{"id": cmpl_id, "action": "reasoning_end"}` to `llama-server`'s `/v1/chat/completions/control` (`llama.cpp` `#31390`). `_read_running_ctx()` also parses `chat_template_caps` (`#31271`) from `/props`.
+  - **MLX arm**: `mlx_provider._end_thinking_criteria` constructs a standby `ThinkingBudgetCriteria` when `thinking_budget_tokens` is unset; `vlm_engine.generate` keeps it out of `drafting_blocker` so speculative decoding runs unimpeded until `abort_event.pop_end_reasoning()` fires, then arms `budget_exceeded = True` (`thinking_budget = 0`) and injects the closing `\n` + `</think>` sequence on the next two decode steps.
+  - **Chat UI**: streaming `<details class="thinking"><summary>` headers render an inline **End thinking** button (`button.thinking__end`) on `thinking_budget`-capable models and hide it once assistant response content starts streaming.
+- **Model Registry `kind` & GGUF derive-at-load (`src/heylook_llm/config.py`, `src/heylook_llm/capabilities.py`, `tests/unit/test_config.py`).**
+  - Added `kind: Optional[Literal["chat", "embedding"]] = None` to `ModelConfig` (derived automatically via `embedding_models.embedding_info` when omitted without marking `"kind"` in `__pydantic_fields_set__`, and honored in `capabilities.derived_model_facts`).
+  - Added `GGUFModelConfig._resolve_modalities_and_thinking` to derive `modalities` (`gguf_metadata.detect_modalities`) and `supports_thinking` (`gguf_metadata.supports_thinking`) at validation time without marking them in `__pydantic_fields_set__`, matching `MLXModelConfig._resolve_modalities`.
+
+### Changed
+
+- **Unified `memory_baseline` telemetry spine & Phase 5 streaming/background-tab paint cuts (`src/heylook_llm/memory.py`, `frontend/js/app.js`, `frontend/css/app.css`).**
+  - `MemoryManager.maybe_log_baseline()` forwards snapshots to `observability.record_event("memory_baseline", tier="metrics", min_level="standard")` alongside `memory_baseline.jsonl`.
+  - Active streaming messages use greedy `text-wrap: wrap` (`.message--streaming .message-content :is(p, li) { text-wrap: wrap; }`) and settle to `text-wrap: pretty` when complete; backgrounded tabs toggle `html.tab-hidden` on `visibilitychange` (`frontend/js/app.js`) to pause all CSS animations (`animation-play-state: paused !important`).
+- Verified: `tests/unit/` + `tests/contract/` (1614 passed), `bun run e2e:render` (106/106). NOT run: `tests/smoke/`, `tests/eval/`, live browser `e2e:chat` / `e2e:pages`.
+
 ## [2.0.214]
 
 ### Added

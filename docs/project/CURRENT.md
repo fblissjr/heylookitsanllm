@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-10-30, v2.0.214, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
+Last updated: 2026-10-30, v2.0.215, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md) (triaged 2026-09-25 and refreshed 2026-10-30;
@@ -16,6 +16,7 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
+| v2.0.215 Live mid-stream "End thinking" control (`POST /v1/conversations/{id}/generate/reasoning-end`, `POST /v1/requests/{id}/reasoning-end`, GGUF `reasoning_control` + `/v1/chat/completions/control`, MLX standby `ThinkingBudgetCriteria`, Chat UI `button.thinking__end`), GGUF `/props` `chat_template_caps` (`#31271`), `ModelConfig.kind` + `GGUFModelConfig` derive-at-load (`modalities` + `supports_thinking`), `MemoryManager` baseline spine forwarding, and Phase 5 streaming `text-wrap: wrap` + `html.tab-hidden` animation pause | unit + contract 1614 passed; `e2e:render` 106/106. NOT run: `tests/smoke/`, `tests/eval/`, live browser `e2e:chat` / `e2e:pages` | v2.0.215 |
 | v2.0.214 `mlx-vlm` `918763c6` & `llama.cpp` `a34de8618` (build 12015) convergence (`vlm_engine.capture_lengths` + `install_capture_policy` `extra_hash`/`stable_prefix_len`), bundled MLX MTP drafter auto-discovery (`loader_routing.has_bundled_mlx_mtp`, `model_importer._pick_mlx_drafter`, `mlx_describe._speculative`, `MLXProvider._spec_in_force`), `LiquidAI/d1` (`D1Model`) scan refusal (`_is_decision_checkpoint`), `pytest` 9.2.0 `starlette.datastructures.State` fixture teardown fix, and 2026-10-30 5-track roadmap refresh in `TODO.md` | unit + contract 1610 passed. NOT run: `tests/smoke/`, `tests/eval/`, live browser `e2e:chat` / `e2e:pages` | v2.0.214 |
 | v2.0.213 dark mode Phase 4 Step 5 (phone chat-bar compact readout line `button.chat__readout` showing runtime, context, cold state, cache reuse, tok/s, preset and system-prompt state without a tap, expanding `.chat__bar-detail` + `#chat-engine-panel` on tap) + audio attachment E2E check in `render.mjs` | unit + contract 1607 passed; `e2e:render` 106/106 in both light and dark. NOT run: live browser `e2e:chat` / `e2e:pages`, on-device iPhone check | v2.0.213 |
 | v2.0.212 dark mode Phase 4 Steps 3 & 4 (phone top-bar navigation `#phone-nav` with segmented control + trailing gear, `.chat__settings-btn` hidden on phone, two-row capsule composer `.chat__composer` with `360pt` field width at `402pt` and icon Send/Stop button) | unit + contract 1607 passed; `e2e:render` 105/105 in both light and dark; `.chat__messages` `clientHeight` rises `+11px` (`569px -> 580px` at `390x844`, `599px -> 610px` at `402x874`, clearing the `>= +5px` gate) and textarea width is `360pt` at `402pt` (clearing `>= 260pt`). NOT run: live browser `e2e:chat` / `e2e:pages`, on-device iPhone check | v2.0.212 |
@@ -62,9 +63,18 @@ Thinking DEPTH is covered by pinning depth-capable models:
 `--model mlx-text=gpt-oss-20b-MXFP4-Q8-mlx` and, since v2.0.151,
 `--model mlx-vision=mlx-community_Qwen3.8-27B-4bit` (39/39 on the vision arm).
 
-## Handoff -- start here (2026-10-30, v2.0.214)
+## Handoff -- start here (2026-10-30, v2.0.215)
 
-**Upstream Convergence (`mlx-vlm` `918763c6`, `llama.cpp` `a34de8618` build 12015), Bundled MLX MTP Auto-Discovery, & 5-Track Roadmap (`v2.0.214`).**
+**Live Mid-Stream "End Thinking" Control, Model Registry `kind` & GGUF Derive-at-Load, & Phase 5 Paint Cuts (`v2.0.215`), plus Upstream Convergence (`mlx-vlm` `918763c6`, `llama.cpp` `a34de8618` build 12015, `v2.0.214`).**
+- **Mid-Stream "End Thinking" Control & `/props` `chat_template_caps` (`v2.0.215`)**:
+  - Added `POST /v1/conversations/{conv_id}/generate/reasoning-end` and `POST /v1/requests/{request_id}/reasoning-end`, backed by `AbortEvent.end_reasoning()` / `RequestRegistry.end_reasoning()`.
+  - On GGUF, `LlamaServerProvider._build_payload` sets `reasoning_control: True` when thinking is enabled or resumed, and `_stream_chunks` binds `abort_event.set_end_reasoning_callback` on the first SSE frame carrying `"id"` to POST `{"id": cmpl_id, "action": "reasoning_end"}` to `llama-server`'s `/v1/chat/completions/control` (`#31390`). `_read_running_ctx()` also parses `chat_template_caps` (`#31271`) from `/props`.
+  - On MLX, `mlx_provider._end_thinking_criteria` constructs a standby `ThinkingBudgetCriteria` when `thinking_budget_tokens` is unset; `vlm_engine.generate` keeps it out of `drafting_blocker` so speculative decoding runs unimpeded until `abort_event.pop_end_reasoning()` fires, then arms `budget_exceeded = True` and injects the closing `\n` + `</think>` sequence on the next two decode steps.
+  - In the Chat UI (`frontend/js/pages/chat.js`, `frontend/js/streaming.js`, `frontend/js/api.js`, `frontend/css/app.css`), streaming `<details class="thinking"><summary>` headers render an inline **End thinking** button (`button.thinking__end`) on `thinking_budget`-capable models and hide it as soon as assistant response text starts arriving.
+- **Model Registry `kind`, GGUF Derive-at-Load, & Phase 5 Paint Cuts (`v2.0.215`)**:
+  - `ModelConfig.kind` (`"chat" | "embedding"`) derives automatically via `embedding_models.embedding_info` when omitted without polluting `__pydantic_fields_set__`, and `GGUFModelConfig._resolve_modalities_and_thinking` derives `modalities` and `supports_thinking` at validation time matching `MLXModelConfig._resolve_modalities`.
+  - `MemoryManager.maybe_log_baseline()` forwards snapshots to `observability.record_event("memory_baseline", tier="metrics", min_level="standard")`.
+  - Streaming messages use greedy `text-wrap: wrap` while `.message--streaming` is active and settle to `text-wrap: pretty` on completion; backgrounded tabs toggle `html.tab-hidden` on `visibilitychange` (`frontend/js/app.js`) to pause all CSS animations (`animation-play-state: paused !important`).
 - **Upstream `mlx-vlm` `918763c6` & `llama.cpp` `a34de8618` Convergence (`v2.0.214`)**:
   - Updated `vlm_engine.capture_lengths` and `install_capture_policy` to match `mlx-vlm` `f4064e95` (`APCCoordinator.checkpoint_lengths` signature `extra_hash` / `stable_prefix_len` and `mgr.checkpoint_prefix_length` boundary folding).
   - Added bundled MLX MTP drafter auto-discovery (`loader_routing.has_bundled_mlx_mtp` delegating to `mlx_vlm.speculative.drafters.mtp_split`, `mlx-vlm#2457`), so `ModelImporter` self-pairs `draft_model_path = str(path)` when an MLX checkpoint carries `mtp.*` weights in its own shards and `mlx_describe` / `MLXProvider.describe_observed()` report `"built-in MTP head"`.
