@@ -1,6 +1,6 @@
 # v3 user guide
 
-last updated: 2026-09-05
+last updated: 2026-10-30
 
 How the UI actually behaves, written for the person using it rather than
 the person maintaining it. Where behaviour is surprising, this says so rather
@@ -475,30 +475,49 @@ cost answer quality, which has not been measured. It shows only while the
 model will think, only for models whose thinking format the engine can close
 (not gpt-oss), and says when the engine may not enforce it (llama.cpp decides
 per request; the tooltip gives its reason) or when a value is small enough to
-end the thought at once. Empty means no cap.
+end the thought at once. Empty means no cap. While a reply is actively
+thinking on a model that supports this cap, the **Thought process** header also
+offers an inline **End thinking** button that forces the thinking block shut on
+the spot and transitions straight to the final answer without stopping the
+generation.
 
 ---
 
-## 7. The other pages
+## 7. The other pages & keyboard shortcuts
 
 - **Notebook** — a single free-form document instead of a thread. Shares the
   preset bar and system-prompt editor with chat, and behaves identically for
   both.
+- **Presets** — where stored presets are edited, renamed, duplicated and
+  deleted on their own cards without touching any open conversation or
+  notebook.
 - **Models** — what is installed, what is resident, and per-model configuration.
   The fields here come from the backend, so this page grows new options
   automatically. Each row's **Engine** panel says what runs the model and
   with what: the library, the context (the ceiling, and what a loaded model
-  actually got), the chat template in force, and every setting with its value,
+  actually got), the chat template in force (including its detected template
+  capabilities when loaded on GGUF), and every setting with its value,
   what auto would pick, and why. A value you set is marked "set"; a value
   reported by the running process is marked "live"; "unknown" and "n/a" say
   why. Tap a line for its reason.
 
 In chat, the chip at the end of the bar names the library running the
-selected model; tap it for its context and template, with a link to the full
-panel here.
-- **Perf** — timing and throughput for past generations, and a Cache table: per
-  model, how much of its prompts was reused and why the rest was not.
-- **Explore** — per-token inspection of a generation.
+selected model; tap it (or the mono readout line on a phone) for its context,
+load controls, and template, with a link to the full panel here. If you leave
+Chat while a reply is still streaming on the server, the **Chat** tab in the
+navigation bar shows an accent dot until the server finishes committing the
+turn.
+- **Perf** — three sections: **System** (RAM, CPU, and currently resident models
+  on both engines), **Profile** (timing and throughput across past generations,
+  plus a per-model **Cache** table showing how much of its prompts was reused
+  and why the rest was not), and **Observability** (live controls for
+  `observability_level` and `observability_retention_days`, plus an `events` /
+  `metrics` JSONL log viewer).
+- **Keyboard shortcuts** — press `?` anywhere outside a text field to open the
+  keyboard shortcuts dialog (`Escape` or clicking outside closes it). Across
+  pages, `Cmd/Ctrl + Enter` sends a message in Chat or starts **Generate** in
+  Notebook, and `Escape` stops an active stream or closes an open bar panel,
+  prompt preview, model config panel, or preset editor.
 
 Sampler settings are shared across pages. Display preferences (such as showing
 special tokens) are kept separately from sampler settings on purpose, so a

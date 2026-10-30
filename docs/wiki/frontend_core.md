@@ -40,19 +40,25 @@ flowchart TD
     App["app.js (Hash Router)"]
     App -->|"#chat"| Chat["pages/chat.js"]
     App -->|"#notebook"| NB["pages/notebook.js"]
+    App -->|"#presets"| Presets["pages/presets.js"]
     App -->|"#models"| Models["pages/models.js"]
     App -->|"#perf"| Perf["pages/perf.js"]
+    App --> Hotkeys["hotkeys.js (Shared Keyboard Shortcuts)"]
 
     Chat --> LoadPanel["load-panel.js (Load Settings)"]
     LoadPanel --> CtxSelect["context-select.js (GGUF Context Steps)"]
     Chat --> PresetBar["preset-bar.js (Shared Presets)"]
     Chat --> PromptSec["prompt-section.js (System Prompt Override)"]
     Chat --> MStream["markdown-stream.js (Incremental Renderer)"]
+    Chat --> Hotkeys
     
     NB --> PresetBar
     NB --> PromptSec
+    NB --> Hotkeys
     
+    Presets --> Hotkeys
     Models --> ModelConfig["model-config.js (Schema-Driven Editor)"]
+    Models --> Hotkeys
 ```
 
 ### 2.1. Store Mirroring & Dual Invalidation

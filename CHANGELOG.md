@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.220]
+
+### Documentation
+
+- **Updated `docs/frontend_v3_user_guide.md` and `docs/wiki/frontend_core.md` (`v2.0.214` - `v2.0.219`).**
+  - Documented the mid-stream **End thinking** button, the phone compact readout line, the cross-page **Chat** busy indicator, the `#/perf` **Observability** section, and shared **Keyboard shortcuts** (`?`, `Cmd/Ctrl + Enter`, `Escape`) in `docs/frontend_v3_user_guide.md`, and replaced the retired **Explore** bullet with **Presets**.
+  - Updated the module dependency diagram in `docs/wiki/frontend_core.md` to include `pages/presets.js` and `hotkeys.js`.
+
 ## [2.0.219]
 
 ### Changed
