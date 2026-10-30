@@ -13,11 +13,14 @@ from per-model settings (each model's model.heylook.toml) and from user
 presets (``/v1/presets``). Wire contract: docs/frontend_v3_spec.md §4.
 """
 
+from collections import deque
 import logging
 import os
 from pathlib import Path
+from typing import Literal
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+import orjson
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import ValidationError
 
 from heylook_llm.auth import require_admin_token
@@ -219,3 +222,41 @@ def reset_config(key: str, request: Request):
     apply_runtime_settings(request.app)
     _maybe_emit_startup_record(request, prev_level)
     return _snapshot(request.app)
+
+
+def _read_jsonl_tail(path: Path, limit: int) -> list[dict]:
+    """Read up to ``limit`` JSONL records from the tail of ``path``, newest first."""
+    if not path.is_file():
+        return []
+    try:
+        with open(path, "rb") as fh:
+            tail = deque((line for line in fh if line.strip()), maxlen=limit)
+    except OSError:
+        return []
+    records: list[dict] = []
+    for raw in reversed(tail):
+        try:
+            obj = orjson.loads(raw)
+        except Exception:  # noqa: BLE001
+            continue
+        if isinstance(obj, dict):
+            records.append(obj)
+    return records
+
+
+@config_router.get(
+    "/logs",
+    summary="Get Observability Logs",
+    description="Return the most recent records from an observability JSONL stream "
+                "(events or metrics), newest first.",
+)
+def get_observability_logs(
+    stream: Literal["events", "metrics"] = Query(default="events"),
+    limit: int = Query(default=50, ge=1, le=500),
+):
+    path = observability_log_dir() / f"{stream}.jsonl"
+    return {
+        "stream": stream,
+        "level": observability.current_level(),
+        "records": _read_jsonl_tail(path, limit),
+    }

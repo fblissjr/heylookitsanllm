@@ -726,7 +726,11 @@ cache, thinking, speculative, decoding, image, steering}`.
   `not_applicable` on MLX, which has no fixed allocation. `config.ctx_size` is what was
   ASKED; absent means llama-server chose, and `running` is what it chose.
 - `template` is the ladder rung, the file (basename; null when embedded), the sha256 of
-  the body the next load uses, and the sha256 of the body the running process loaded.
+  the body the next load uses, the sha256 of the body the running process loaded,
+  `prefix_stable`, and `caps` (v2.0.216: `observed` on a loaded gguf process from
+  llama-server's `/props` `chat_template_caps` — `{supports_system_role, supports_tools,
+  supports_parallel_tool_calls, supports_typed_content}`; `unknown` while unloaded;
+  `not_applicable` on MLX).
 - `settings` covers EVERY configurable field of the provider (derived from the config
   class, never listed) plus load decisions with no field: gguf `binary`,
   `image_max_tokens`, `metal_keep_alive`. `configured` is non-null
@@ -1008,6 +1012,11 @@ outcomes:{<outcome>:n},causes:{<cause>:n}}], resource_timeline, bottlenecks}`. T
 `draft_acceptance` = accepted/drafted (gguf only), `draft_share` = accepted/emitted (both). `cache`
 counts only requests whose engine sent a cache report (in-memory ring buffer, lost on restart; 503/empty if analytics extra not installed).
 **Clear** `POST /v1/data/clear` (admin) → `{conversations_deleted, notebooks_deleted}`.
+**Operational config & observability logs** (admin, `src/heylook_llm/config_api.py`):
+`GET /v1/admin/config` → `{effective, stored, memory_only?, error?}`,
+`PUT /v1/admin/config` body `{observability_level?, observability_retention_days?, mlx_cache_limit_gb?}` → snapshot,
+`DELETE /v1/admin/config/{key}` → snapshot, and (v2.0.216) `GET /v1/admin/config/logs?stream={events|metrics}&limit={1..500}` →
+`{stream, level, records:[...]}` returning the most recent JSONL telemetry records from `observability_log_dir()` newest first (consumed by the Observability section on `#/perf`).
 **Capabilities** `GET /v1/capabilities`. Carried a `samplers` block — the bundled
 named-sampler registry, for scripted clients — until v2.0.30 removed that system;
 `/v1/presets` (saved user prompt+sampler bundles) is the surviving named-bundle

@@ -74,7 +74,7 @@ const TYPES = {
 // or gets the fast default, and the hand-written "put it back for the next
 // check" lines that used to trail these checks are gone.
 const DRIP_DEFAULTS = {
-  text: '', chunkChars: 8, delayMs: 4, rowId: 'mdrip', position: 2,
+  text: '', thinking: '', chunkChars: 8, delayMs: 4, rowId: 'mdrip', position: 2,
   tailPauseMs: 0, omitSaved: false, progress: [], progressDelayMs: 0,
 };
 
@@ -122,10 +122,22 @@ async function streamDrip(req, res, drip) {
     ev('heylook_progress', { type: 'heylook_progress', prefill: { processed, total } });
     await sleep(drip.progressDelayMs);
   }
-  ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
+  if (drip.thinking) {
+    ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } });
+    for (let i = 0; i < drip.thinking.length; i += drip.chunkChars) {
+      ev('content_block_delta', {
+        type: 'content_block_delta', index: 0,
+        delta: { type: 'thinking_delta', text: drip.thinking.slice(i, i + drip.chunkChars) },
+      });
+      await sleep(drip.delayMs);
+    }
+    ev('content_block_stop', { type: 'content_block_stop', index: 0 });
+  }
+  const textIndex = drip.thinking ? 1 : 0;
+  ev('content_block_start', { type: 'content_block_start', index: textIndex, content_block: { type: 'text', text: '' } });
   for (let i = 0; i < drip.text.length; i += drip.chunkChars) {
     ev('content_block_delta', {
-      type: 'content_block_delta', index: 0,
+      type: 'content_block_delta', index: textIndex,
       delta: { type: 'text_delta', text: drip.text.slice(i, i + drip.chunkChars) },
     });
     await sleep(drip.delayMs);
@@ -135,13 +147,13 @@ async function streamDrip(req, res, drip) {
   // replaces the streaming node -- harmless in the app (the adopted row is
   // complete) but it makes "what was on screen" a moving target for a check.
   if (drip.tailPauseMs) await sleep(drip.tailPauseMs);
-  ev('content_block_stop', { type: 'content_block_stop', index: 0 });
+  ev('content_block_stop', { type: 'content_block_stop', index: textIndex });
   ev('message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { input_tokens: 1, output_tokens: 2 } });
   ev('message_stop', { type: 'message_stop', performance: {} });
   if (drip.omitSaved) { res.end(); return; }  // transport died before the last word
   ev('heylook_saved', {
     type: 'heylook_saved', conversation_id: 'c1', mode: 'append', end_reason: 'complete',
-    messages: [{ id: drip.rowId, role: 'assistant', content: drip.text, thinking: null,
+    messages: [{ id: drip.rowId, role: 'assistant', content: drip.text, thinking: drip.thinking || null,
       content_blocks: null, position: drip.position }],
     dropped_media: { images: 0, audio: 0 }, timing: {},
   });
@@ -421,6 +433,37 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
     if (url.endsWith('/v1/capabilities')) return { samplers: [], server_version: 'stub' };
     // The option schema's shape, reduced to gguf's load settings (plan W1):
     // the load panel renders from exactly these flags.
+    if (url.endsWith('/v1/admin/config') && method === 'GET') {
+      return {
+        effective: {
+          observability_level: remote.obsLevel ?? 'off',
+          observability_retention_days: remote.obsRetention ?? 30,
+          mlx_cache_limit_gb: null,
+        },
+        stored: {},
+      };
+    }
+    if (url.endsWith('/v1/admin/config') && method === 'PUT') {
+      if ('observability_level' in body) remote.obsLevel = body.observability_level;
+      if ('observability_retention_days' in body) remote.obsRetention = body.observability_retention_days;
+      return {
+        effective: {
+          observability_level: remote.obsLevel ?? 'off',
+          observability_retention_days: remote.obsRetention ?? 30,
+          mlx_cache_limit_gb: null,
+        },
+        stored: body,
+      };
+    }
+    if (url.includes('/v1/admin/config/logs')) {
+      return {
+        stream: url.includes('stream=metrics') ? 'metrics' : 'events',
+        level: remote.obsLevel ?? 'off',
+        records: remote.obsRecords ?? [
+          { ts: '2026-10-30T10:00:00Z', event_type: 'request_complete', model_id: 'test-model', tokens_per_second: 42.5, total_ms: 180 },
+        ],
+      };
+    }
     if (url.endsWith('/v1/admin/model-options')) {
       return { providers: { mlx: { fields: [] }, gguf: { fields: [
         { name: 'ctx_size', load_setting: true, type: 'integer' },
@@ -577,6 +620,11 @@ export async function openChat(browser, base, {
     // Conversation-scoped generation (Phase 2 wire): typed-event SSE. The
     // store mutation happens at RESPOND time so a delayed stream mutates
     // when the "server" answers, not when the request leaves.
+    if (url.includes('/generate/reasoning-end') && req.method() === 'POST') {
+      req.respond({ status: 200, contentType: 'application/json',
+        body: JSON.stringify({ status: 'signaled', conversation_id: 'c1' }) });
+      return;
+    }
     if (url.includes('/generate')) {
       // Let the real (drip-feeding) server answer -- see serveV3.
       if (dripGenerate && req.method() === 'POST') return req.continue();
@@ -4106,6 +4154,56 @@ async function main() {
       await closeDrawer(nd.page);
     });
     await nd.page.close();
+
+    // ---- mid-stream End thinking & Observability UI (2026-10-30) ------------
+    const et = await openChat(browser, base, {
+      caps: ['thinking', 'thinking_budget'],
+      dripGenerate: true,
+    });
+    await suite.check('End thinking button posts reasoning-end during streaming thinking and hides on content', async () => {
+      setDrip({
+        thinking: 'step '.repeat(80),
+        text: 'final answer text',
+        chunkChars: 10,
+        delayMs: 30,
+        rowId: 'mendthink',
+        position: 99,
+      });
+      await startSend(et.page, 'think then answer');
+      await waitFor(async () => {
+        return et.page.evaluate(() => {
+          const btn = document.querySelector('.message--streaming .thinking__end');
+          return Boolean(btn && !btn.hidden && !btn.disabled && !btn.closest('[hidden]'));
+        });
+      }, { message: 'End thinking button never appeared on streaming thinking block' });
+
+      await et.page.$eval('.message--streaming .thinking__end', (el) => el.click());
+      await waitFor(() => et.reqs.some((r) => r.method === 'POST' && r.url.endsWith('/v1/conversations/c1/generate/reasoning-end')),
+        { message: 'clicking End thinking never POSTed to /generate/reasoning-end' });
+
+      const disabledState = await et.page.$eval('.message--streaming .thinking__end', (el) => ({
+        disabled: el.disabled,
+        text: el.textContent,
+      }));
+      assert(disabledState.disabled && disabledState.text === 'Ending…',
+        `End thinking button did not enter Ending… state: ${JSON.stringify(disabledState)}`);
+
+      await waitStreamEnd(et.page);
+    });
+    await suite.check('Perf page renders Observability controls and updates level via /v1/admin/config', async () => {
+      await et.page.evaluate(() => { location.hash = '#/perf'; });
+      await et.page.waitForSelector('.perf__obs-select');
+      const initialRows = await et.page.$$eval('.perf__obs-logs tbody tr', (trs) => trs.length);
+      assert(initialRows === 1, `expected 1 stub log row on #/perf, got ${initialRows}`);
+
+      await et.page.select('.perf__obs-select', 'standard');
+      await waitFor(() => et.reqs.some((r) => r.method === 'PUT' && r.url.endsWith('/v1/admin/config')),
+        { message: 'changing Observability level never PUT to /v1/admin/config' });
+      const putBody = JSON.parse(et.reqs.find((r) => r.method === 'PUT' && r.url.endsWith('/v1/admin/config')).postData);
+      assert(putBody.observability_level === 'standard',
+        `expected observability_level: "standard", got ${JSON.stringify(putBody)}`);
+    });
+    await et.page.close();
 
   } catch (err) {
     fatal = err;

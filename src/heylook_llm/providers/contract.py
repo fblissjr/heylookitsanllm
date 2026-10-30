@@ -73,6 +73,11 @@ class TemplateFacts(BaseModel):
                     "which a prompt cache needs (plan W3's lint, "
                     "chat_template_files.prefix_stability). false = every "
                     "turn re-processes history; the source says where.")
+    caps: Fact[Dict[str, bool]] = Field(
+        default_factory=lambda: Fact(provenance="unknown", source="not loaded"),
+        description="Template capabilities reported by the running engine "
+                    "(llama-server's /props chat_template_caps on gguf; "
+                    "not applicable on MLX).")
 
 
 def prefix_stable_fact(body: Optional[str]) -> "Fact[bool]":
@@ -146,6 +151,7 @@ class Observed:
     """What a loaded provider reports about itself (its describe_observed())."""
     context_running: Optional[Fact] = None
     loaded_template: Optional[str] = None
+    template_caps: Optional[Dict[str, bool]] = None
     settings: Dict[str, Setting] = field(default_factory=dict)
     cache: Dict[str, Fact] = field(default_factory=dict)
     speculative: Dict[str, Fact] = field(default_factory=dict)
@@ -287,6 +293,11 @@ def with_observed(static: EngineDescription, observed: Observed) -> EngineDescri
         provenance="observed" if observed.loaded_template else "unknown",
         source="the template body read when this process loaded"
         if observed.loaded_template else "the running process recorded no template body")
+    if observed.template_caps is not None:
+        desc.template.caps = Fact(
+            value=observed.template_caps,
+            provenance="observed",
+            source="llama-server's /props chat_template_caps at ready")
     desc.settings.update(observed.settings)
     if observed.cache:
         desc.cache = {**(desc.cache or {}), **observed.cache}
@@ -384,7 +395,7 @@ def describe(model_config: Any, router: Any = None) -> EngineDescription:
                          provenance="derived", source="provider"),
             context=ContextFacts(length=Fact(value=context, provenance="derived", source="embedding context limit"),
                                  running=Fact(value=getattr(live, "running_ctx", None), provenance="observed" if live else "unknown")),
-            template=TemplateFacts(origin=na, path=na, sha256=na, running_sha256=na),
+            template=TemplateFacts(origin=na, path=na, sha256=na, running_sha256=na, caps=na),
             settings={}, embedding=embedding,
         )
     written, derived = _provenance_inputs(model_config.id, router)

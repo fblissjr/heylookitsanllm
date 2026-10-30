@@ -22,7 +22,8 @@ from heylook_llm.providers.contract import EngineDescription
 
 FACT_LEAVES = (("runtime",), ("context", "length"), ("context", "running"),
                ("template", "origin"), ("template", "path"),
-               ("template", "sha256"), ("template", "running_sha256"))
+               ("template", "sha256"), ("template", "running_sha256"),
+               ("template", "caps"))
 FUTURE_SLOTS = ("thinking", "image", "steering")
 
 

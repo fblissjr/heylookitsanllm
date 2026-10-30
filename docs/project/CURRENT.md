@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-10-30, v2.0.215, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
+Last updated: 2026-10-30, v2.0.216, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md) (triaged 2026-09-25 and refreshed 2026-10-30;
@@ -16,6 +16,7 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
+| v2.0.216 `engine.template.caps` (`TemplateFacts.caps`) for GGUF `/props` `chat_template_caps`, `GET /v1/admin/config/logs` + `#/perf` Observability config/log reader UI, cross-page nav busy indicator (`.nav-item--busy`), `--text-xs` / `--ctrl-h-*` tokens in `:root`, and `render.mjs` E2E checks for `button.thinking__end` and `#/perf` Observability | unit + contract 1615 passed; `e2e:render` 108/108; `e2e:cost` control pair run (`internal/claude/perf/paint_cost_20261030-200825.json`, contaminated under active session load, no verdict). NOT run: `tests/smoke/`, `tests/eval/`, live browser `e2e:chat` / `e2e:pages` | v2.0.216 |
 | v2.0.215 Live mid-stream "End thinking" control (`POST /v1/conversations/{id}/generate/reasoning-end`, `POST /v1/requests/{id}/reasoning-end`, GGUF `reasoning_control` + `/v1/chat/completions/control`, MLX standby `ThinkingBudgetCriteria`, Chat UI `button.thinking__end`), GGUF `/props` `chat_template_caps` (`#31271`), `ModelConfig.kind` + `GGUFModelConfig` derive-at-load (`modalities` + `supports_thinking`), `MemoryManager` baseline spine forwarding, and Phase 5 streaming `text-wrap: wrap` + `html.tab-hidden` animation pause | unit + contract 1614 passed; `e2e:render` 106/106. NOT run: `tests/smoke/`, `tests/eval/`, live browser `e2e:chat` / `e2e:pages` | v2.0.215 |
 | v2.0.214 `mlx-vlm` `918763c6` & `llama.cpp` `a34de8618` (build 12015) convergence (`vlm_engine.capture_lengths` + `install_capture_policy` `extra_hash`/`stable_prefix_len`), bundled MLX MTP drafter auto-discovery (`loader_routing.has_bundled_mlx_mtp`, `model_importer._pick_mlx_drafter`, `mlx_describe._speculative`, `MLXProvider._spec_in_force`), `LiquidAI/d1` (`D1Model`) scan refusal (`_is_decision_checkpoint`), `pytest` 9.2.0 `starlette.datastructures.State` fixture teardown fix, and 2026-10-30 5-track roadmap refresh in `TODO.md` | unit + contract 1610 passed. NOT run: `tests/smoke/`, `tests/eval/`, live browser `e2e:chat` / `e2e:pages` | v2.0.214 |
 | v2.0.213 dark mode Phase 4 Step 5 (phone chat-bar compact readout line `button.chat__readout` showing runtime, context, cold state, cache reuse, tok/s, preset and system-prompt state without a tap, expanding `.chat__bar-detail` + `#chat-engine-panel` on tap) + audio attachment E2E check in `render.mjs` | unit + contract 1607 passed; `e2e:render` 106/106 in both light and dark. NOT run: live browser `e2e:chat` / `e2e:pages`, on-device iPhone check | v2.0.213 |

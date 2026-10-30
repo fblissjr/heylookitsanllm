@@ -142,6 +142,13 @@ const ROUTES = {
   // engine resizes it to where the engine says (plan W4). 409 when the model
   // is not loaded: planning never loads one.
   imagePlan: ['POST', (id) => `/v1/models/${encodeURIComponent(id)}/image-plan`, true],
+
+  // operational settings + observability logs (/v1/admin/config)
+  adminGetConfig:      ['GET', () => '/v1/admin/config'],
+  adminSetConfig:      ['PUT', () => '/v1/admin/config', true],
+  adminResetConfigKey: ['DELETE', (key) => `/v1/admin/config/${encodeURIComponent(key)}`],
+  adminGetLogs:        ['GET', (stream = 'events', limit = 50) =>
+    `/v1/admin/config/logs?stream=${encodeURIComponent(stream)}&limit=${encodeURIComponent(limit)}`],
 };
 
 function makeCall(method, buildPath, hasBody) {

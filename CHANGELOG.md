@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.216]
+
+### Added
+
+- **Engine contract `template.caps`, Observability Log API + `#/perf` UI, Cross-Page Nav Activity Indicator, and E2E checks (`src/heylook_llm/providers/contract.py`, `src/heylook_llm/providers/mlx_describe.py`, `src/heylook_llm/providers/llama_server_provider.py`, `src/heylook_llm/config_api.py`, `frontend/js/api.js`, `frontend/js/app.js`, `frontend/js/pages/chat.js`, `frontend/js/pages/perf.js`, `frontend/css/app.css`, `tests/contract/test_engine_contract.py`, `tests/unit/test_config_api.py`, `tests/e2e/render.mjs`, `docs/frontend_v3_spec.md`).**
+  - Surfaced `llama-server`'s `/props` `chat_template_caps` (`#31271`) on `EngineDescription.template.caps` (`Fact[Dict[str, bool]]`: `observed` when loaded on GGUF, `unknown` when unloaded, `not_applicable` on MLX) and added `("template", "caps")` to `FACT_LEAVES` in `tests/contract/test_engine_contract.py`.
+  - Added `GET /v1/admin/config/logs?stream={events|metrics}&limit={1..500}` in `src/heylook_llm/config_api.py` to return recent JSONL telemetry records from `observability_log_dir()` newest first.
+  - Added an **Observability** section on `#/perf` (`frontend/js/pages/perf.js`) with live controls for `observability_level` (`off` / `minimal` / `standard` / `debug`) and `observability_retention_days` (`GET/PUT /v1/admin/config`) plus a stream switcher (`events` / `metrics`) and recent JSONL records table.
+  - Added a cross-page background generation indicator (`heylook:chat-activity` custom event in `frontend/js/pages/chat.js` + `.nav-item--busy` badge in `frontend/js/app.js` and `frontend/css/app.css`) so the `Chat` nav tab shows an accent indicator when a generation continues on the server while viewing another page.
+  - Defined `--text-xs: 0.75rem`, `--ctrl-h-sm: 28px`, `--ctrl-h: 36px`, and `--ctrl-h-touch: 44px` in `:root` (`frontend/css/app.css`), fixing the undefined `--text-xs` reference on `.thinking__end`.
+  - Added E2E checks in `tests/e2e/render.mjs` covering mid-stream **End thinking** (`button.thinking__end` posting to `/v1/conversations/c1/generate/reasoning-end` and entering `Ending…`) and the `#/perf` **Observability** controls and log viewer (`108/108 passed`).
+
+### Changed
+
+- Verified: `tests/unit/` + `tests/contract/` (1615 passed), `bun run e2e:render` (108/108). NOT run: `tests/smoke/`, `tests/eval/`, live browser `e2e:chat` / `e2e:pages`.
+
 ## [2.0.215]
 
 ### Added

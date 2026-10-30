@@ -109,6 +109,14 @@ function writeDraftPrompt(value) { lsWrite(DRAFT_PROMPT_KEY, value); }
 // degrade path is the COMMON one on a phone, not an edge case.
 const LAST_CONV_KEY = 'chat.last-conversation';
 
+function notifyChatActivity(ctx) {
+  const s = ctx.state;
+  const busy = Boolean(
+    s.stream || s.remoteGenerating || s.conversations?.some((c) => c.generating),
+  );
+  window.dispatchEvent(new CustomEvent('heylook:chat-activity', { detail: { busy } }));
+}
+
 export default createPage({
   async setup(ctx) {
     const s = ctx.state;
@@ -227,6 +235,7 @@ export default createPage({
     refreshThinkBtn(ctx);
     refreshAttachBtn(ctx);
     renderConvList(ctx);
+    notifyChatActivity(ctx);
     // Residency is a load-cost signal, not a gate -- fetched non-fatally and
     // AFTER first paint. Until it arrives the select shows plain ids and the
     // not-loaded warning stays silent (an honest "don't know", never a guess).
@@ -2450,6 +2459,7 @@ function setRemoteGenerating(ctx, on) {
   if (s.stream && s.stream.targetConvId === s.activeId) return;
   if (s.remoteGenerating === on) return;
   s.remoteGenerating = on;
+  notifyChatActivity(ctx);
   setSendButton(s, on);
   if (on) {
     // NOT "started elsewhere": since abandoning a run is routine and now
@@ -2611,6 +2621,7 @@ async function refreshAfterResume(ctx) {
           (c.id === convId && !adopted && held) ? { ...c, updated_at: held } : c);
         if (convListFingerprint(s.conversations) !== before) renderConvList(ctx);
       }
+      notifyChatActivity(ctx);
     }
     if (presetsChanged || docChanged) {
       s.presetBar.syncIndicator(); // repaints both chips via onIndicator
@@ -3394,6 +3405,7 @@ function startStream(ctx, opts = {}) {
   renderMessages(ctx);
   scrollMessages(ctx, true);
   s.remoteGenerating = false;  // the local stream owns the button now
+  notifyChatActivity(ctx);
   paintSendBtn(s.sendBtn, true, 'Stop this run and keep what has been generated so far');
   s.setUnloadGuard(true);
 
@@ -3656,7 +3668,13 @@ function releaseStream(ctx, stream) {
   if (s.stream !== stream) return;
   s.stream = null;
   s.setUnloadGuard(false);
-  if (!ctx.alive) return;
+  if (!ctx.alive) {
+    if (stream.abandonReason === ABANDON.TEARDOWN) {
+      window.dispatchEvent(new CustomEvent('heylook:chat-activity', { detail: { busy: true } }));
+    }
+    return;
+  }
+  notifyChatActivity(ctx);
   // Restore from the CONVERSATION's state, not from a literal. This stream is
   // over, but the document on screen may be one the server is still generating
   // for -- switch away from a live run into another live run and the abandoned

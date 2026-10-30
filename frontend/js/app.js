@@ -108,6 +108,16 @@ async function navigate() {
 }
 
 window.addEventListener('hashchange', navigate);
+window.addEventListener('heylook:chat-activity', (e) => {
+  const busy = Boolean(e.detail?.busy);
+  for (const link of navLinks) {
+    if (link.dataset.route === 'chat') {
+      link.classList.toggle('nav-item--busy', busy);
+      if (busy) link.title = 'Chat · generation running on server';
+      else link.removeAttribute('title');
+    }
+  }
+});
 document.addEventListener('visibilitychange', () => {
   document.documentElement.classList.toggle('tab-hidden', document.visibilityState === 'hidden');
 });

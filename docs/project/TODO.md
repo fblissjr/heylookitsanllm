@@ -2,7 +2,7 @@
 
 Cross-session task backlog organized by priority.
 
-*Last reviewed: 2026-10-30 (through v2.0.215; previous triage 2026-09-25 through v2.0.154). Every section was classed done, obsolete, open or mixed with evidence (`internal/claude/todo_triage.md`); the done and obsolete ones moved verbatim to `internal/archive/todo_closed_2026-09-25.md`. Mixed sections stay whole: their checked-off items are history kept beside the open ones.*
+*Last reviewed: 2026-10-30 (through v2.0.216; previous triage 2026-09-25 through v2.0.154). Every section was classed done, obsolete, open or mixed with evidence (`internal/claude/todo_triage.md`); the done and obsolete ones moved verbatim to `internal/archive/todo_closed_2026-09-25.md`. Mixed sections stay whole: their checked-off items are history kept beside the open ones.*
 
 ## 2026-10-30 Roadmap (Upstream Convergence, Engine Control, & Mobile Workbench)
 
@@ -30,26 +30,29 @@ Five active tracks across upstream kernels, backend engine control, model regist
   - **GGUF arm**: sends `reasoning_control: true` on thinking-enabled `/v1/chat/completions` payloads and forwards `{"id": cmpl_id, "action": "reasoning_end"}` to `llama-server` `POST /v1/chat/completions/control` (`llama.cpp` `b7c95d4c5` / `#31390`) via `AbortEvent.set_end_reasoning_callback`.
   - **MLX arm**: attaches a standby `ThinkingBudgetCriteria` (`_end_thinking_criteria`) that stays out of `drafting_blocker` until triggered by `AbortEvent.pop_end_reasoning()`, then arms `budget_exceeded = True` and forces the closing `\n` + `</think>` sequence on the next decode steps.
   - **Chat UI**: renders an inline **"End thinking"** button (`button.thinking__end`) inside the streaming `<details class="thinking"><summary>` header (`frontend/js/pages/chat.js`) on `thinking_budget`-capable models and hides it once assistant response content starts streaming.
-- [x] **2.4 GGUF `/props` `chat_template_caps` (`#31271`, `v2.0.215`) & hybrid recurrent speculative rollback (`#31350`):**
-  - Read `chat_template_caps` (`supports_system_role`, `supports_tools`, `supports_parallel_tool_calls`, `supports_typed_content`) from `llama-server` `/props` into `LlamaServerProvider.chat_template_caps` during `_read_running_ctx()`.
+- [x] **2.4 GGUF `/props` `chat_template_caps` (`#31271`, `v2.0.215` - `v2.0.216`) & hybrid recurrent speculative rollback (`#31350`):**
+  - Read `chat_template_caps` (`supports_system_role`, `supports_tools`, `supports_parallel_tool_calls`, `supports_typed_content`) from `llama-server` `/props` into `LlamaServerProvider.chat_template_caps` during `_read_running_ctx()` and surfaced it as `engine.template.caps` (`TemplateFacts.caps` in `providers/contract.py`, `v2.0.216`).
   - Open live check: verify speculative decoding (`draft-mtp` / external drafter) on hybrid recurrent GGUF models (`Qwen3.5` / `Qwen3.8`) using `llama.cpp` `#31350` (`checkpoint_interval` recurrent state rollback).
 - [ ] **2.5 Reasoning-strip re-prefill measurement on GGUF** (from Context Language Models paper): measure per-turn prompt vs cached tokens on a thinking conversation from the perf store and record in `internal/`.
 
 ### Track 3: Model Registry Ergonomics, Observability, & Runtime Visibility UI
-- [x] **3.1 Runtime Visibility UI (`docs/project/plan_runtime_visibility.md`):**
+- [x] **3.1 Runtime Visibility UI (`docs/project/plan_runtime_visibility.md`, `v2.0.213`, `v2.0.216`):**
   - Per-message assistant footer (`formatStats` in `frontend/js/pages/chat.js`) displays prompt cache reuse (`cache X/Y`), cache miss/ineligible cause (`causeWords`), and speculative acceptance / draft share (`draft N% (accepted/drafted)` / `N% from draft (accepted/emitted)`), alongside the phone chat-bar compact readout (`paintReadout`, `v2.0.213`).
+  - Cross-page nav activity indicator (`heylook:chat-activity` in `frontend/js/app.js` + `frontend/js/pages/chat.js` + `.nav-item--busy` in `frontend/css/app.css`, `v2.0.216`) keeps the `Chat` nav tab marked while a generation continues on the server in the background.
 - [x] **3.2 Model Registry `kind` & GGUF derive-at-load (`v2.0.215`):**
   - Added `kind: Optional[Literal["chat", "embedding"]] = None` to `ModelConfig` (derived automatically via `embedding_models.embedding_info` when omitted, without marking `"kind"` in `__pydantic_fields_set__`, and honored in `capabilities.derived_model_facts`), alongside standalone drafter and `D1Model` refusal in `ModelImporter.scan_directory`.
   - Added `GGUFModelConfig._resolve_modalities_and_thinking` to derive `modalities` (`gguf_metadata.detect_modalities`) and `supports_thinking` (`gguf_metadata.supports_thinking`) at validation time without marking them in `__pydantic_fields_set__`, matching `MLXModelConfig._resolve_modalities`.
 - [x] **3.3 `memory.py` baseline spine routing (`v2.0.215`):**
   - Routed `MemoryManager.maybe_log_baseline()` snapshots through `observability.record_event("memory_baseline", tier="metrics", min_level="standard", fields=snapshot)` in addition to `memory_baseline.jsonl` so periodic memory telemetry flows through the unified `metrics.jsonl` spine.
-- [ ] **3.4 Observability Config + View UI (`v3`):** surface `observability_level` / retention controls (`GET/PUT /v1/admin/config`) and a reader view over `logs/*.jsonl` (`request_events`, `model_events`, `never-stops` health signal).
+- [x] **3.4 Observability Config + View UI (`v2.0.216`):**
+  - Added `GET /v1/admin/config/logs?stream={events|metrics}&limit={1..500}` (`src/heylook_llm/config_api.py`) reading the tail of `events.jsonl` or `metrics.jsonl` from `observability_log_dir()`, newest first.
+  - Added the **Observability** section on `#/perf` (`frontend/js/pages/perf.js`, `frontend/js/api.js`, `frontend/css/app.css`) with live `observability_level` (`off` / `minimal` / `standard` / `debug`) and `observability_retention_days` controls plus an `events` / `metrics` JSONL log reader table.
 
 ### Track 4: Mobile & Dark-Mode Workbench (`docs/project/plan_dark_mode.md` Phases 4 & 5)
 - [x] **4.1 Phase 1–3b + Phase 4 Steps 1–5 (`v2.0.191` - `v2.0.204`, `v2.0.212` - `v2.0.213`).** Lamplight tokens, Safari fixes, Home Screen manifest, Preset manager (`#/presets`), spacing tokens, iOS Text Size support (`-apple-system-body` on touch, verified on iPhone 17 Pro), phone top-bar navigation (`#phone-nav` segmented control + single gear, `+11px` message viewport), two-row capsule composer (`360pt` field width at `402pt`, icon Send/Stop button), and phone chat-bar compact readout line (`button.chat__readout` showing runtime, context, cold state, cache reuse, tok/s, preset and system-prompt state without a tap, expanding `.chat__bar-detail` + `#chat-engine-panel` on tap).
 - [ ] **4.2 Phase 4 Steps 6–7 (Token sweeps & Safari 27 scroller check):**
-  - Step 6: Scroller ownership check on Safari 27 + font-size/weight token sweep (`frontend/css/tokens.css`, `frontend/css/app.css`).
-  - Step 7: Radius and control-height token sweep (`--r-*`, `--ctrl-h-*`) + optional Graphite palette evaluation.
+  - Defined `--text-xs: 0.75rem`, `--ctrl-h-sm: 28px`, `--ctrl-h: 36px`, and `--ctrl-h-touch: 44px` in `:root` (`frontend/css/app.css`, `v2.0.216`).
+  - Remaining: Scroller ownership check on Safari 27 + full literal sweep across `frontend/css/app.css` + optional Graphite palette evaluation.
 - [x] **4.3 Phase 5 CSS/DOM paint & background-tab cuts (`v2.0.215`; device baseline & `e2e:cost` re-measurement open):**
   - Step 1 (`bun run e2e:cost` paint-cost probe) shipped in `v2.0.201`.
   - Step 3 (`v2.0.215`): streaming paragraphs/list items use greedy `text-wrap: wrap` during active streaming (`.message--streaming .message-content :is(p, li) { text-wrap: wrap; }`) and settle to `text-wrap: pretty` when complete; backgrounded tabs toggle `html.tab-hidden` on `visibilitychange` (`frontend/js/app.js`) to pause all CSS animations (`animation-play-state: paused !important`). (`content-visibility` stays deliberately absent per `.claude/rules/frontend.md`.)

@@ -1281,6 +1281,7 @@ class LlamaServerProvider(BaseProvider):
                 source="llama-server's /props at ready" if ctx
                 else "llama-server's /props did not report a context size"),
             loaded_template=self.loaded_chat_template,
+            template_caps=getattr(self, "chat_template_caps", None),
             settings={**(getattr(self, "_load_report", None) or {}),
                       "flash_attn": flash_attn_setting(
                           self.config,

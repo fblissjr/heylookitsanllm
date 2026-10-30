@@ -144,6 +144,8 @@ def _template(model_id: str, cfg: dict) -> TemplateFacts:
                     source=path or "no template body resolved"),
         running_sha256=Fact(provenance="unknown", source="not loaded"),
         prefix_stable=prefix_stable_fact(view.template),
+        caps=Fact(provenance="not_applicable",
+                  source="MLX evaluates Jinja templates in Python; chat_template_caps is a llama-server /props report"),
     )
 
 

@@ -173,3 +173,31 @@ class TestTheFileHoldsTheSettings:
         assert config_file.read_text() == before
         assert observability.current_level() == "debug"
         await client.put("/v1/admin/config", json={"observability_level": "off"})
+
+
+@pytest.mark.unit
+class TestObservabilityLogsEndpoint:
+    @pytest.mark.asyncio
+    async def test_logs_returns_newest_first_and_handles_missing_file(
+        self, client, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("HEYLOOK_LOGS_DIR", str(tmp_path))
+        res_empty = await client.get("/v1/admin/config/logs")
+        assert res_empty.status_code == 200
+        assert res_empty.json()["stream"] == "events"
+        assert res_empty.json()["records"] == []
+
+        events_file = tmp_path / "events.jsonl"
+        events_file.write_text(
+            '{"event_type":"request_start","request_id":"r1","ts":"2026-10-30T10:00:00Z"}\n'
+            '{"event_type":"request_complete","request_id":"r1","ts":"2026-10-30T10:00:01Z"}\n'
+            '{"event_type":"model_load","model_id":"m1","ts":"2026-10-30T10:00:02Z"}\n'
+        )
+        res = await client.get("/v1/admin/config/logs?stream=events&limit=2")
+        assert res.status_code == 200
+        body = res.json()
+        assert body["stream"] == "events"
+        assert [r["event_type"] for r in body["records"]] == ["model_load", "request_complete"]
+
+        res_bad = await client.get("/v1/admin/config/logs?stream=invalid")
+        assert res_bad.status_code == 422
