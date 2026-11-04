@@ -39,9 +39,11 @@ it holds to: [VISION.md](VISION.md).
 - **Thinking blocks**: format-aware reasoning parsing driven by the model's
   own chat template (Qwen `<think>` styles, gemma channel format), with
   round-trip editing, streaming, and a per-request toggle
-- **Vision and audio input**: images on both APIs and in the chat UI; audio
+- **Vision and audio input**: images on both engines and in the chat UI; audio
   clips (WAV/MP3/FLAC) on GGUF models -- MLX models reject audio with a
   clear 400
+- **Embeddings**: `/v1/embeddings` on embedding models of either engine,
+  one vector per ordered text/image/audio/video item
 - **Model management**: watch folders, configure, load/unload from the web UI
   or API
 - **Local-only logging**: opt-in JSONL metrics/events under `logs/`
@@ -133,7 +135,8 @@ After hand-editing `heylook.toml` on a running server:
 
 Interactive docs at `http://localhost:8000/docs`; live schema at
 `/openapi.json`. Key endpoints: `/v1/messages` (inference),
-`/v1/conversations/{id}/generate` (server-owned chat), `/v1/models`.
+`/v1/conversations/{id}/generate` (server-owned chat), `/v1/models`,
+`/v1/embeddings`.
 
 A first call, streaming off:
 
@@ -161,12 +164,15 @@ the SSE grammar and the error taxonomy -- the parts a schema cannot express.
   image directories with VLMs. **Needs a port**: it still posts to
   `/v1/chat/completions`, removed in v1.79.66, so it 404s against a current
   server.
+- [`apps/embedding-apps/`](apps/embedding-apps/) -- self-contained apps on
+  `POST /v1/embeddings` (an embedding lab and a media finder)
 - [`apps/optloop-lib/`](apps/optloop-lib/) -- library-level benchmark harness
   for mlx-lm/mlx-vlm fork experiments ([guide](docs/optloop_guide.md))
 
 ## Monitoring
 
-With `observability_level` raised, `tail -f logs/metrics.jsonl` (per-request
+The `#/perf` page sets `observability_level` and shows recent records
+(`GET /v1/admin/config/logs`). With the level raised, `tail -f logs/metrics.jsonl` (per-request
 metrics) or `logs/events.jsonl` (errors + model lifecycle), or point DuckDB at
 the files for aggregates:
 `duckdb -c "SELECT model, quantile_cont(generation_tps,0.95) FROM read_json_auto('logs/metrics.jsonl') GROUP BY model"`.

@@ -42,7 +42,7 @@ themselves.)
   "engine": { "runtime": {...}, "context": {...}, "template": {...},
               "settings": {...}, "cache": {...}, "thinking": {...},
               "decoding": {...}, "speculative": {...},
-              "image": null, "steering": null } }
+              "image": null, "steering": null, "embedding": null } }
 ```
 
 `engine` (v2.0.73) is the same object on every engine: which library runs the
@@ -62,8 +62,17 @@ Two slots a client reads directly:
   masked-diffusion checkpoint) and `request_fields`, the sampler fields that
   engine path reads (null = all of them). Hide a control whose field is not
   listed.
+- `engine.embedding`: null on a chat model; on an embedding model, its
+  dimensions, prompt names and input modalities (see [§10](#10-embeddings)).
+  An embedding model's `capabilities` lists `embedding` and its input
+  modalities and **no `chat`**, so a chat selector filters on `chat`.
+  Generation sent to one is a 400 (`Embedding models accept /v1/embeddings,
+  not generation`), after the model loads.
 
-The full shape is `docs/frontend_v3_spec.md` §4.
+`engine.template.caps` (v2.0.216) is llama-server's own report of what the
+template accepts (`/props` `chat_template_caps`): observed on a loaded gguf
+model, `unknown` while unloaded, `not_applicable` on MLX. The full shape is
+`docs/frontend_v3_spec.md` §4.
 
 `modalities` is the checkpoint author's description of the weights.
 `capabilities` is what this server will actually **serve** them as, which is
@@ -620,7 +629,7 @@ and null as one condition.
 | Condition | Shape |
 |---|---|
 | Unknown `model`, or no `model` at all (there is no default, v2.0.150) | **400** with the reason and the available ids in `detail` |
-| Input the model cannot take: an image or audio it does not serve, a prompt longer than its context, a `reasoning_effort` it does not offer, `thinking.budget_tokens` on a harmony MLX model, a `response_format` it cannot honour (on gguf, in llama-server's words), an unreadable image, a local file path as an MLX image source | **400**, or in-band `invalid_request_error` once streaming |
+| Input the model cannot take: an image or audio it does not serve, a prompt longer than its context, a `reasoning_effort` it does not offer, `thinking.budget_tokens` on a harmony MLX model, a `response_format` it cannot honour (on gguf, in llama-server's words), an unreadable image, a local file path as an MLX image source, generation sent to an embedding model | **400**, or in-band `invalid_request_error` once streaming |
 | Model load failed (corrupt weights, unsupported architecture) | **500** (also on `/load` since v2.0.178, which answered some of these 400) |
 | Cannot make room — another model is resident and generating | **503**, same envelope as a full queue (v1.79.53+; a **500** carrying `MODEL_BUSY` before that) |
 | Generation queue full | **503**, body `{error:{code:"model_overloaded"}}`, plus `Retry-After` and `X-RateLimit-*` headers |
@@ -742,6 +751,28 @@ cancellation there is a dropped connection rather than an end state. So a
 cancelled run is indistinguishable on the wire from a budget exhaustion:
 track your own cancel, do not infer it from the response.
 
+### Ending thinking early
+
+`POST /v1/requests/{request_id}/reasoning-end` (v2.0.215) closes a run's open
+thinking block at the next token boundary and lets it go on to the answer.
+The run is not stopped: the stream closes its `thinking` block, opens a
+`text` block, and ends as it would have. Same id, same rules as cancel: the
+`X-Request-ID` you sent, every request sharing it is signalled, and the
+responses are `200 {"signalled": N, "request_id"}`, `404` (nothing running,
+usually too late) and `422` (malformed id).
+
+It acts only where the engine can close the model's thinking format, which
+is what the `thinking_budget` capability says; offer it there. Elsewhere,
+and on a run whose thinking is off or already closed, it is still a 200:
+MLX then does nothing, and gguf leaves it to llama-server. So a 200 means
+*signalled*, not *closed*: watch the stream for the block change. It does not raise `max_tokens`; the answer gets what the
+thought left. On MLX the engine forces the format's closing tokens; on gguf
+the signal is forwarded to llama-server's reasoning control.
+
+A conversation generate takes `POST /v1/conversations/{id}/generate/reasoning-end`
+instead, answering `{"status": "ending_reasoning", "conversation_id"}` or a
+404 when nothing is generating there.
+
 ---
 
 ## 7. Coming from Gemini
@@ -785,6 +816,8 @@ with its anchor still resolving because only the target's CONTENT moved. An
 anchor checker reports that green. Link, and state the rule where it is
 stated; do not restate it here.
 
+- Offer chat models by the `chat` capability; embedding models have none
+  ([§1](#1-discovery-three-surfaces-and-what-each-one-can-tell-you)).
 - Resolve model ids at runtime, and gate features on `capabilities` **and**
   handle the refusal anyway — gating alone is correct only on MLX, only on
   new servers, and only where no `capabilities` override was hand-written.
@@ -826,6 +859,8 @@ sets no token); everything else is open.
 | `POST /v1/models/{id}/load[?warm=true]` | Pay a model load up front (§3) |
 | `POST /v1/models/{id}/image-plan` | Tokens and resize target per image size, resident models only (§3, spec §4 "Image plan") |
 | `DELETE /v1/requests/{request_id}` | Cancel by `X-Request-ID` (§6) |
+| `POST /v1/requests/{request_id}/reasoning-end` | Close the open thinking block early, by `X-Request-ID` (§6) |
+| `POST /v1/embeddings` | One pooled vector per input item, embedding models only (§10) |
 
 **Server-side conversation store** (spec §4, conversations; DuckDB-backed,
 what this repo's chat page uses). An alternative to keeping history
@@ -840,6 +875,9 @@ request itself.
 | `PUT/DELETE /v1/conversations/{id}/messages/{msg_id}` | Edit or delete one message |
 | `POST /v1/conversations/{id}/generate` | Generate into the conversation (`mode`: append, regenerate, continue). Same SSE grammar as `/v1/messages`, plus a final `heylook_saved` event carrying the stored rows; an `error` event may precede it (a partial still persists) |
 | `DELETE /v1/conversations/{id}/generate` | Stop the active generation; the partial persists |
+| `POST /v1/conversations/{id}/generate/reasoning-end` | Close the active generation's open thinking block early (§6) |
+| `POST /v1/conversations/{id}/prompt` | The exact prompt string the model would see, rendered by the model's own template (resident models only) |
+| `GET /v1/conversations/{id}/media/{media_id}` | A stored image or audio blob; stored messages reference media by this URL |
 
 One generation per conversation: a second generate, and any message write
 (append, edit, delete, truncate, conversation delete) while one runs, is a
@@ -854,8 +892,6 @@ is a key the model lacks the capability for, silently. A preset's `params`
 use the same names, so expanding one onto `/v1/messages` means renaming
 `enable_thinking` to `thinking` and `thinking_budget_tokens` to
 `thinking.budget_tokens`; every other key carries over as is.
-| `POST /v1/conversations/{id}/prompt` | The exact prompt string the model would see, rendered by the model's own template (resident models only) |
-| `GET /v1/conversations/{id}/media/{media_id}` | A stored image or audio blob; stored messages reference media by this URL |
 
 **Notebooks and presets** (spec §4): `GET/POST /v1/notebooks`,
 `GET/PUT/DELETE /v1/notebooks/{id}` store plain-text notebooks (the list
@@ -877,6 +913,7 @@ fields itself (the server never applies a preset to a request).
 | `POST /v1/admin/models/{id}/reload` | Unload then load(+warm) as one operation; JSON body `{ctx_size, flash_attn}` |
 | `GET/PUT/DELETE /v1/admin/models/{id}/chat-template` | Read, override or reset the chat template in force |
 | `GET/PUT /v1/admin/config`, `DELETE /v1/admin/config/{key}` | Server operational settings |
+| `GET /v1/admin/config/logs?stream={events\|metrics}&limit=` | Recent observability JSONL records, newest first, with the current `observability_level` (`limit` 1-500) |
 | `POST /v1/admin/reload` | Re-read config and clear loaded models without a restart |
 
 **Maintenance and observability**:
@@ -888,6 +925,43 @@ fields itself (the server never applies a preset to a request).
 | `GET /v1/system/metrics` | RAM, loaded models, per-model memory (unknown readings are null) |
 | `GET /v1/performance/profile/{1h\|6h\|24h\|7d}` | Aggregated timing by phase (§3 says what it cannot tell you) |
 | `POST /v1/telemetry/events` | Ingest this repo's frontend events; not for integrations |
+
+## 10. Embeddings
+
+`POST /v1/embeddings` is the separate, non-streaming embedding operation.
+Discover models with `engine.embedding` in `GET /v1/models` (§1); do not offer
+those models in a chat selector, which filters on the `chat` capability. Both `mlx` and `gguf` use the same request schema.
+
+```json
+{
+  "model": "<discovered embedding model id>",
+  "dimensions": 256,
+  "input": [
+    {"prompt_name": "SearchQuery", "content": [{"type": "text", "text": "a dog on a beach"}]},
+    {"content": [{"type": "image", "source": {"type": "url", "media_type": "image/jpeg", "url": "https://example.org/dog.jpg"}}]}
+  ]
+}
+```
+
+Choose prompt names and dimensions from `engine.embedding`, not this example.
+The body is strict where `/v1/messages` is lenient: any field beyond `model`,
+`input` and `dimensions` is a 422 (a sampler knob included), and an unknown
+model is a **404**, not the 400 the generation route answers.
+Omit `prompt_name` for no prefix. `input` also accepts a string or list of strings.
+Each item produces one vector, including when it combines multiple ordered text,
+image, audio and video blocks. A list of items is a batch of independent vectors.
+Media sources are HTTP(S) URLs or base64 (`data` instead of `url`). Video embeds
+visual frames; include a separate audio block for its soundtrack.
+
+Read `data[].embedding` in `index` order. Vectors are L2-normalized after optional
+supported dimension truncation. Scores from their dot product are cosine
+similarities, not probabilities. Store the model identity, engine, prompt choice
+and dimensions with an index; matching widths do not imply different checkpoints
+or engines are interchangeable. The API stores neither media nor vectors.
+
+Use `X-Request-ID` and `DELETE /v1/requests/{id}` for cooperative cancellation.
+A running forward can finish before cancellation takes effect. The detailed
+limits, response and error contract are in [spec §4](frontend_v3_spec.md#4-backend-api-contract-integration-surface--verified-against-source).
 
 ## Where this still differs from Anthropic's Messages API
 
@@ -976,37 +1050,3 @@ here — a streamed refusal arrives in-band, not as the 400 this document
 named. Neither review found it alone; the same author had read past it in
 both files. Diffing one against the code, rather than reading either on its
 own, is what produced it.
-
-## Embeddings
-
-`POST /v1/embeddings` is the separate, non-streaming embedding operation.
-Discover models with `engine.embedding` in `GET /v1/models`; do not offer those
-models in a chat selector. Both `mlx` and `gguf` use the same request schema.
-
-```json
-{
-  "model": "<discovered embedding model id>",
-  "dimensions": 256,
-  "input": [
-    {"prompt_name": "SearchQuery", "content": [{"type": "text", "text": "a dog on a beach"}]},
-    {"content": [{"type": "image", "source": {"type": "url", "media_type": "image/jpeg", "url": "https://example.org/dog.jpg"}}]}
-  ]
-}
-```
-
-Choose prompt names and dimensions from `engine.embedding`, not this example.
-Omit `prompt_name` for no prefix. `input` also accepts a string or list of strings.
-Each item produces one vector, including when it combines multiple ordered text,
-image, audio and video blocks. A list of items is a batch of independent vectors.
-Media sources are HTTP(S) URLs or base64 (`data` instead of `url`). Video embeds
-visual frames; include a separate audio block for its soundtrack.
-
-Read `data[].embedding` in `index` order. Vectors are L2-normalized after optional
-supported dimension truncation. Scores from their dot product are cosine
-similarities, not probabilities. Store the model identity, engine, prompt choice
-and dimensions with an index; matching widths do not imply different checkpoints
-or engines are interchangeable. The API stores neither media nor vectors.
-
-Use `X-Request-ID` and `DELETE /v1/requests/{id}` for cooperative cancellation.
-A running forward can finish before cancellation takes effect. The detailed
-limits, response and error contract are in [spec §4](frontend_v3_spec.md#4-backend-api-contract-integration-surface--verified-against-source).

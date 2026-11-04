@@ -112,14 +112,20 @@ response = client.messages.create(
 
 ## Errors
 
-- **400** -- unknown or disabled `model`, or none given with no server
-  default. The reason and the available ids are in `detail`. Pick another
-  model.
+- **400** -- unknown or disabled `model`, or none given (there is no default
+  model). The reason and the available ids are in `detail`. Also the model
+  refusing the input: media it does not serve, a prompt over its context, a
+  `reasoning_effort` it does not offer, generation sent to an embedding
+  model. Pick another model or input.
+- **403** -- the `Host` header names a host the server does not recognise
+  (DNS-rebinding guard). `detail` names the fix; an IP address always works.
 - **500** -- the model exists but failed to load. That model is broken.
-- **422** -- the request body failed validation. The offending field and
-  reason are in `detail`.
-- **503** -- generation queue full: `{{"error":{{"code":"model_overloaded"}}}}`
-  plus `Retry-After`. Back off and retry; the server serialises generation.
+- **422** -- the request body failed validation, including a removed,
+  misspelt or unbuilt field (`tools`). The offending field and reason are
+  in `detail`. Any other unknown field is ignored, not refused.
+- **503** -- generation queue full, or no room to load another model while
+  one is generating: `{{"error":{{"code":"model_overloaded"}}}}` plus
+  `Retry-After`. Back off and retry; the server serialises generation.
 - **In-band SSE `error`** -- a failure after the response headers flushed,
   so the status is already 200. Treat `invalid_request_error` as a 400 and
   `api_error` as a 500, and never render its message as model output.
@@ -142,7 +148,13 @@ response = client.messages.create(
 - Send `X-Request-ID`. Every response echoes a valid one (the busy 503 included), it correlates the
   server-side logs, and it is the handle `DELETE /v1/requests/{{id}}` cancels
   by -- the only way to stop a NON-streaming run, which writes nothing until
-  it finishes and so never notices an abandoned client.
+  it finishes and so never notices an abandoned client. Make it unique per
+  request: a cancel reaches every request sharing the id. The same id closes
+  an open thinking block early without stopping the run:
+  `POST /v1/requests/{{id}}/reasoning-end`.
+- Embedding models are served on `POST /v1/embeddings`, not `/v1/messages`.
+  Their `/v1/models` rows carry `engine.embedding` and no `chat` capability;
+  offer chat models by `chat`.
 - Models are configured in `heylook.toml`, but entries are overrides only --
   a new download needs no edit.
         """,

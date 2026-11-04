@@ -240,6 +240,9 @@ cooperative cancellation = 409. Unexpected backend failures remain 500.
 `X-Request-ID` is echoed; `DELETE /v1/requests/{id}` requests cancellation, and
 `POST /v1/requests/{id}/reasoning-end` (v2.0.215) requests closing an active
 thinking trace early so generation transitions straight to the final reply.
+It answers `{signalled: N, request_id}`, 404 when nothing runs under the id,
+422 for a malformed id; a 200 means signalled, not closed (MLX ignores it on a
+run whose thinking is off or already closed; gguf leaves that to llama-server).
 Media and the GPU slot remain owned until the current operation actually ends.
 Embeddings use the existing load/eviction policy and global inference queue.
 Chat/notebook selectors exclude embedding models. The `#/embeddings` page uses
@@ -589,7 +592,7 @@ truncate→stream→persist sequences):**
   the Stop button's server-side spelling). 404 when none is active — on
   404 the v3 client aborts its fetch locally instead (covers the
   503-retry sleep and the pre-claim dispatch window).
-- `POST /{id}/generate/reasoning-end` (v2.0.215) → `{ended: 0|1, conversation_id}`
+- `POST /{id}/generate/reasoning-end` (v2.0.215) → `{status: "ending_reasoning", conversation_id}`
   (404 when no generation is active for `{id}`). Closes the active thinking
   block mid-stream without aborting the generation: on GGUF, forwards
   `{"id": cmpl_id, "action": "reasoning_end"}` to `llama-server`'s

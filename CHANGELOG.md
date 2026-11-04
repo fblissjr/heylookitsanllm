@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.222]
+
+### Documentation
+
+- **Integration docs caught up with v2.0.204-v2.0.221 (`docs/api_integration.md`, `src/heylook_llm/openapi_doc.py`, `docs/frontend_v3_spec.md`, `README.md`).** Checked against a running 2.0.221 server.
+  - `docs/api_integration.md`: §1 adds `engine.embedding` and `engine.template.caps`, and says a chat selector filters on the `chat` capability (embedding rows have none; generation sent to one is a 400). §6 gains "Ending thinking early" for `POST /v1/requests/{id}/reasoning-end` and the conversation route: a 200 means signalled, not closed. §9's conversation table was split by two paragraphs, which left its last two rows outside any table; it is one table again, and the route tables gain the two reasoning-end routes, `POST /v1/embeddings` and `GET /v1/admin/config/logs`. The Embeddings section moves up to §10 and says its body is strict (any extra field is a 422) and that an unknown model is a 404 there.
+  - The OpenAPI narrative (`/docs`, linked from the startup line) no longer says a request can omit `model` and fall back to a server default; that default was removed in v2.0.150. It adds the 403 Host check, model refusals on the 400 line, the no-room 503, the unique-id rule, `reasoning-end` and the embeddings route.
+  - Spec §4: the conversation `reasoning-end` route answers `{status: "ending_reasoning", conversation_id}`, not the `{ended: 0|1, ...}` it listed, and the request route's responses are stated.
+  - README: embeddings in Features and Key endpoints, `apps/embedding-apps/`, and the `#/perf` log viewer.
+  - Verified live: `reasoning-end` on `Qwen3.5-0.8B-MLX-8bit` (thinking block closed and the reply followed, 404 after the run, 422 on a malformed id); `/v1/embeddings` on the MLX EmbeddingGemma 2 (two unit vectors at `dimensions: 256`, 404 unknown model, 422 extra field); `/v1/messages` to an embedding model answers 400. The gguf `reasoning-end` arm was read from source and not run. `tests/unit/` + `tests/contract/`: 1613 passed, 2 failed in `tests/contract/test_mlxvlm_surface.py` (`TestSpeculativeSurface::test_the_drafter_surface_we_call`, `TestCarriedPatches::test_2356_upstream_restore_path_still_merges_a_lone_row`), against the uncommitted mlx-vlm pin move to `003311ec` in the working tree, which this change does not touch.
+
 ## [2.0.221]
 
 ### Documentation
