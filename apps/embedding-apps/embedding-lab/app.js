@@ -61,7 +61,7 @@ async function loadFolder(fileList) {
     const rel = (f.webkitRelativePath || f.name).split('/').slice(1).join('/') || f.name;
     files.set(rel, f);
   }
-  state.plan = null; state.files = files;
+  state.plan = null; state.files = files; blocks.clear();
   try {
     const setFile = files.get('set.json');
     if (!setFile) throw new Error('No set.json at the top of that folder.');

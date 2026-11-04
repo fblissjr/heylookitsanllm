@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.232]
+
+### Changed
+
+- **Unified Compare, Media Finder and Embedding Lab inside `#/embeddings`, plus standalone embedding-app fixes.** `frontend/js/pages/embeddings.js` (backed by `frontend/js/embed-kit.js`) now serves all three embedding tools directly on `:8000/#/embeddings` without running `apps/embedding-apps/serve.py`: **Compare** (multimodal items with inline image/video thumbnails, cosine similarity matrix, query and video-window ranking, vector JSON export), **Media Finder** (resumable IndexedDB folder/file indexing keyed by `model|dimensions|prompt`, text + example-file search, and `<dialog>` preview seeking to `row.windows` `start` timestamps), and **Embedding Lab** (multi-configuration retrieval benchmark computing `Recall@1`, `Recall@3`, `MRR` and cosine margins on a built-in 8-case multimodal sample set or a local `set.json` folder). In `apps/embedding-apps/`, `kit/embed-kit.js` gains extension-based MIME fallback for folder uploads where `file.type` is empty, `embedding-lab/app.js` clears cached base64 media blocks when loading a new folder, and `media-finder/app.js` indexes `row.windows` spans and seeks `<video>` previews to `record.start`. Extended `tests/e2e/embeddings.mjs` to cover Media Finder windowed video indexing/search and Embedding Lab sample benchmarking at `1280px` and `390px`.
+
 ## [2.0.231]
 
 ### Changed

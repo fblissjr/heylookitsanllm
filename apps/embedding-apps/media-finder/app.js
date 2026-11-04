@@ -117,11 +117,27 @@ async function embedBatch(batch, sp) {
     state.requestId = newRequestId();
     return embedWithRetry({ ...args, items, requestId: state.requestId });
   };
-  const build = async (entries, result) => Promise.all(entries.map(async (e, i) => ({
-    id: e.id, space: sp, path: e.path, kind: e.kind, size: e.file.size,
-    vec: Float32Array.from(result.data[i].embedding),
-    thumb: await thumbnail(e.file, e.kind),
-  })));
+  const build = async (entries, result) => {
+    const out = [];
+    for (const [i, e] of entries.entries()) {
+      const row = result.data[i];
+      const thumb = await thumbnail(e.file, e.kind);
+      out.push({
+        id: e.id, fileId: e.id, space: sp, path: e.path, kind: e.kind, size: e.file.size,
+        vec: Float32Array.from(row.embedding), thumb,
+      });
+      if (Array.isArray(row.windows) && row.windows.length > 1) {
+        for (const w of row.windows) {
+          out.push({
+            id: `${e.id}#t=${w.start}-${w.end}`, fileId: e.id, space: sp, path: e.path,
+            kind: e.kind, size: e.file.size, start: w.start, end: w.end,
+            vec: Float32Array.from(w.embedding), thumb,
+          });
+        }
+      }
+    }
+    return out;
+  };
   try {
     return await build(batch, await run(batch));
   } catch (error) {
@@ -164,6 +180,9 @@ async function search(event) {
   } catch (error) { say(`Search failed: ${error.message}`); }
 }
 
+const fmtSec = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+const fmtSpan = (r) => (r.start != null && r.end != null ? ` [${fmtSec(r.start)}–${fmtSec(r.end)}]` : '');
+
 function render(hits) {
   ui.results.replaceChildren(...hits.map(({ record, score }) => {
     const li = document.createElement('li');
@@ -177,7 +196,7 @@ function render(hits) {
     thumb.classList.add('thumb');
     const meta = document.createElement('div');
     meta.className = 'meta';
-    const name = document.createElement('div'); name.textContent = record.path;
+    const name = document.createElement('div'); name.textContent = `${record.path}${fmtSpan(record)}`;
     const sc = document.createElement('div'); sc.className = 'score'; sc.textContent = `${record.kind} · ${score.toFixed(3)}`;
     meta.append(name, sc);
     button.append(thumb, meta);
@@ -188,13 +207,16 @@ function render(hits) {
 
 /** Files are only playable while this tab still holds them; a reloaded index shows thumbnails and paths. */
 function preview(record) {
-  const file = state.files.get(record.id);
+  const file = state.files.get(record.fileId || record.id);
   if (!file) { say(`${record.path}: re-choose its folder to open the original (the index keeps vectors and thumbnails only).`); return; }
   const url = URL.createObjectURL(file);
   const dialog = document.createElement('dialog');
   const media = document.createElement(record.kind === 'image' ? 'img' : record.kind);
   media.src = url;
   if (record.kind !== 'image') media.controls = true;
+  if (record.kind === 'video' && record.start != null) {
+    media.addEventListener('loadedmetadata', () => { media.currentTime = record.start; }, { once: true });
+  }
   if (record.kind === 'image') media.alt = record.path;
   const close = document.createElement('button');
   close.type = 'button'; close.textContent = 'Close';

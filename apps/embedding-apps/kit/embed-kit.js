@@ -7,8 +7,22 @@ export const MAX_BATCH_BYTES = 48 * 2 ** 20; // under the server's 64 MB request
 export const MAX_FILE_BYTES = 32 * 2 ** 20;  // server: bytes per media block
 export const KINDS = ['image', 'audio', 'video'];
 
+const EXT_MIME = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
+  gif: 'image/gif', bmp: 'image/bmp', avif: 'image/avif',
+  mp3: 'audio/mpeg', wav: 'audio/wav', flac: 'audio/flac', ogg: 'audio/ogg',
+  m4a: 'audio/mp4', aac: 'audio/aac', opus: 'audio/opus',
+  mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', mkv: 'video/x-matroska',
+};
+
+export const mimeOf = (file) => {
+  if (file?.type) return file.type;
+  const ext = (file?.name || '').split('.').pop()?.toLowerCase();
+  return EXT_MIME[ext] || '';
+};
+
 export const kindOf = (file) => {
-  const k = (file.type || '').split('/')[0];
+  const k = mimeOf(file).split('/')[0];
   return KINDS.includes(k) ? k : null;
 };
 
@@ -50,7 +64,7 @@ export function fileToBase64(file) {
 export async function mediaBlock(file) {
   const type = kindOf(file);
   if (!type) throw new Error(`Unsupported file type: ${file.name}`);
-  return { type, source: { type: 'base64', media_type: file.type, data: await fileToBase64(file) } };
+  return { type, source: { type: 'base64', media_type: mimeOf(file), data: await fileToBase64(file) } };
 }
 
 export const textBlock = (text) => ({ type: 'text', text });

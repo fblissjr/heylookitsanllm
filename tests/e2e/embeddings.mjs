@@ -29,7 +29,13 @@ try {
         payload = JSON.parse(request.postData());
         if (hold) { pending = request; return; }
         body = { model: 'embed', dimensions: payload.dimensions, elapsed_ms: 12, input_tokens: 9,
-          data: payload.input.map((_, i) => ({ index: i, embedding: i === 2 ? [0,1] : [1,0] })) };
+          data: payload.input.map((item, i) => ({
+            index: i,
+            embedding: i === 2 ? [0,1] : [1,0],
+            ...(item.content?.some(b => b.type === 'video') ? {
+              windows: [{ start: 0, end: 32, embedding: [0, 1] }, { start: 32, end: 64, embedding: [1, 0] }],
+            } : {}),
+          })) };
       }
       if (url.pathname.startsWith('/v1/requests/') && request.method() === 'DELETE') {
         cancelled = true;
@@ -73,6 +79,25 @@ try {
     await page.waitForFunction(() => !document.querySelector('fieldset').disabled);
     assert(cancelled && await page.$('.embeddings__matrix') === null, 'cancel did not reach the server or retained results');
     hold = false;
+    // Mode 2: Media Finder (in-app IndexedDB indexing + windowed video search)
+    await page.evaluate(() => [...document.querySelectorAll('button')].find(e => e.textContent === 'Media Finder').click());
+    await (await page.$('input[aria-label="Index media files"]')).uploadFile(video);
+    await page.waitForFunction(() => {
+      const t = document.querySelector('[role="status"]').textContent;
+      return t.includes('Indexed 1 file') || t.includes('already indexed');
+    });
+    await page.$eval('input[type="search"]', e => { e.value = 'collision'; });
+    await page.evaluate(() => [...document.querySelectorAll('button')].find(e => e.textContent === 'Search index').click());
+    await page.waitForSelector('.embeddings__card-name');
+    assert(await page.evaluate(() => [...document.querySelectorAll('.embeddings__card-name')].some(e => e.textContent.includes('[0:32–1:04]'))), 'video window span missing in Media Finder');
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'horizontal overflow in Media Finder');
+    // Mode 3: Embedding Lab (in-app retrieval benchmark on built-in 8-case sample set)
+    await page.evaluate(() => [...document.querySelectorAll('button')].find(e => e.textContent === 'Embedding Lab').click());
+    await page.evaluate(() => [...document.querySelectorAll('button')].find(e => e.textContent === 'Load sample set (8 cases)').click());
+    await page.waitForFunction(() => document.querySelectorAll('.embeddings__lab-config-item').length >= 1);
+    await page.evaluate(() => [...document.querySelectorAll('button')].find(e => e.textContent === 'Run benchmark').click());
+    await page.waitForFunction(() => document.querySelectorAll('.embeddings__lab-results .embeddings__matrix').length === 2);
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'horizontal overflow in Embedding Lab');
     assert(!errors.length, errors.join('\n'));
     await page.close();
     console.log(`PASS embedding composition, ranking, invalidation and layout at ${width}px`);
