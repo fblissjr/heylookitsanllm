@@ -31,8 +31,9 @@ import os
 # _is_single_row_batch_cache(fa_cache) block runs on every decode token and
 # evaluates cache_left_padding.max().item() and query_left_padding.max().item()
 # synchronously on the CPU, so a restored request still decodes slower than a
-# cold one without this patch (re-verified on 918763c6; record in
-# internal/claude/perf/mlx_vlm_patches_ab_2026-10-30.md). The PR routes that
+# cold one without this patch (re-verified on 918763c6, record in
+# internal/claude/perf/mlx_vlm_patches_ab_2026-10-30.md; and on 003311ec,
+# internal/claude/perf/ab_Qwen3.5-0.8B-MLX-8bit_20261104-112909.json). The PR routes that
 # row at the restore site in generate/ar.py; this carry reaches the same
 # outcome at the one coordinator call the restore site makes, gated per
 # generator by the same rule. That call is RESTORE_MERGE: upstream #2646

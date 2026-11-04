@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.226]
+
+### Documentation
+
+- **Status and wiki caught up with v2.0.222-v2.0.225.** `docs/project/CURRENT.md` gains the verification row and a new date. `docs/project/TODO.md`'s #2356 item said a red `TestCarriedPatches` after a pin move means "delete the carry"; at `003311ec` it meant upstream had moved the call the carry wraps, and the carry was still needed, so the item now says when deletion is right and records that the chain probe ran. `docs/wiki/providers_architecture.md` says gguf binds the end-reasoning callback only with `reasoning_control`; `scripts/README.md` names `followup_decode_tps`; the #2356 comment in `mlx_vlm_patches.py` cites the `003311ec` record.
+
 ## [2.0.225]
 
 ### Fixed

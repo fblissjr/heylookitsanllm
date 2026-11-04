@@ -170,9 +170,13 @@ Record: `internal/claude/improve/archive/runs-2026-09-24/` (report.html has the 
   `heylook_top1_top2_margin` alongside `upstream_top1_top2_margin` and reports
   `NEAR-TIE` when either side has top-1/top-2 within `NEAR_TIE_MARGIN` (`0.125`).
 - [ ] **Move the pin again past Blaizzy/mlx-vlm#2356** once it merges (restored
-  qwen3_5 decode). Carried locally since v2.0.185 (`mlx_vlm_patches.py`); the
-  pin move turns `TestCarriedPatches` red, and the fix is deleting the carry.
-  Usual suite, chain probe and smoke. Chain probe on the carry itself not yet run.
+  qwen3_5 decode). Carried locally since v2.0.185 (`mlx_vlm_patches.py`), still
+  needed at `003311ec` (v2.0.223-225: `perf_ab` `followup_decode_tps` better
+  with it, chain probe green). A red `TestCarriedPatches` does not by itself
+  mean "delete the carry": at `003311ec` it meant upstream had moved the call
+  the carry wraps (`test_2356_restore_site_calls_the_method_the_carry_binds`
+  now says which). Delete it only when the retirement test fails cleanly and a
+  `perf_ab --workloads followup` run shows no difference. Smoke not yet run.
 - [x] **Security: CORS, admin argv, RLM** (v2.0.123, owner call): the CORS
   wildcard is gone, admin writes refuse `config.FILE_ONLY_FIELDS` (422), and
   RLM (with its `sandbox: false` request field) is removed.
