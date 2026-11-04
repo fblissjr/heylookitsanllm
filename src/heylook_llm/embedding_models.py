@@ -7,6 +7,8 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
+from .schema.embeddings import request_limits
+
 EMBEDDING_GEMMA2 = {"mlx": "embedding_gemma2", "gguf": "gemma-embedding2"}
 # Published Matryoshka training contract, not inferred from the hidden width.
 GEMMA2_DIMENSIONS = (128, 256, 512, 768)
@@ -61,6 +63,7 @@ def embedding_info(provider, config):
         "prompts": {k: v for k, v in prompts.items() if isinstance(v, str)},
         "normalization": "l2", "video_audio": "separate_audio_block",
         "video_windows": _video_windows(provider, root, modalities),
+        "limits": request_limits(),
         "provenance": "model_files_and_architecture_contract",
     }
 

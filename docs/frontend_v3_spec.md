@@ -229,7 +229,10 @@ that video block (422 otherwise); windows on a non-video block is a 422.
 
 Discover support in `engine.embedding`: `modalities`, `dimensions`,
 `native_dimensions`, `max_input_tokens`, `prompts`, `normalization`, `video_audio`,
-`video_windows` (`{max_seconds, sampling, default_sampling}` or null) and `provenance`. GGUF also reports its `load_profile`. These are checkpoint and
+`video_windows` (`{max_seconds, sampling, default_sampling}` or null), `limits`
+(`{items, blocks_per_item, text_chars, media_bytes: {image, audio, video},
+request_media_bytes}`, the limits below, built from the schema the server enforces;
+clients read caps from here rather than copying them) and `provenance`. GGUF also reports its `load_profile`. These are checkpoint and
 architecture facts; codecs must be installed for media decoding. The prompt map
 comes from the checkpoint's `config_sentence_transformers.json`. An omitted
 `prompt_name` adds no prefix. A selected prompt is applied once before content.

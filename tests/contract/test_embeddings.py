@@ -91,3 +91,13 @@ def test_media_cap_depends_on_block_type():
     with pytest.raises(ValueError, match="image data exceeds"):
         EmbeddingRequest(model="m", input=[{"content": [block("image", "image/png")]}])
     EmbeddingRequest(model="m", input=[{"content": [block("video", "video/mp4")]}])   # within the video cap
+
+
+def test_limits_reported_to_clients_are_the_ones_the_schema_enforces(tmp_path):
+    from heylook_llm.embedding_models import embedding_info
+    from heylook_llm.schema import embeddings as schema
+    (tmp_path / "config.json").write_text(json.dumps({"model_type": "embedding_gemma2", "vision_config": {}}))
+    limits = embedding_info("mlx", {"model_path": str(tmp_path)})["limits"]
+    assert limits["media_bytes"] == schema.MEDIA_BYTES_BY_TYPE and limits["request_media_bytes"] == schema.MAX_REQUEST_MEDIA_BYTES
+    assert limits["items"] == schema.EmbeddingRequest.model_fields["input"].metadata[1].max_length
+    assert limits["blocks_per_item"] == schema.EmbeddingItem.model_fields["content"].metadata[1].max_length

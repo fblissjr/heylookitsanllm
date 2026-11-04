@@ -10,9 +10,19 @@ MAX_REQUEST_MEDIA_BYTES = 256 * 1024 * 1024
 MEDIA_BYTES_BY_TYPE = {"image": MAX_MEDIA_BYTES, "audio": MAX_MEDIA_BYTES, "video": MAX_VIDEO_BYTES}
 
 
+MAX_TEXT_CHARS = 131072
+MAX_BLOCKS_PER_ITEM = 32
+
+
 def base64_chars(n_bytes):
     return (n_bytes + 2) // 3 * 4
-MAX_TEXT_CHARS = 131072
+
+
+def request_limits():
+    """The request limits, as engine.embedding.limits reports them to clients.
+    Built from the constants the validators use, so a client never copies them."""
+    return {"items": MAX_ITEMS, "blocks_per_item": MAX_BLOCKS_PER_ITEM, "text_chars": MAX_TEXT_CHARS,
+            "media_bytes": dict(MEDIA_BYTES_BY_TYPE), "request_media_bytes": MAX_REQUEST_MEDIA_BYTES}
 
 
 class EmbeddingSource(BaseModel):
@@ -76,7 +86,7 @@ EmbeddingBlock = Annotated[EmbeddingText | EmbeddingMedia, Field(discriminator="
 
 class EmbeddingItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    content: list[EmbeddingBlock] = Field(min_length=1, max_length=32)
+    content: list[EmbeddingBlock] = Field(min_length=1, max_length=MAX_BLOCKS_PER_ITEM)
     prompt_name: str | None = Field(default=None, max_length=128)
 
     @model_validator(mode="after")

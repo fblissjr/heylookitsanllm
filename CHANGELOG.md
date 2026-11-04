@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.238]
+
+### Added
+
+- **`engine.embedding.limits` reports the request limits.** `{items, blocks_per_item, text_chars, media_bytes: {image, audio, video}, request_media_bytes}`, built by `schema.embeddings.request_limits()` from the same constants the validators use (the 32-blocks-per-item limit is now the named `MAX_BLOCKS_PER_ITEM`). Clients can read caps from `/v1/models` instead of hand-copying them, which v2.0.237's `embed-kit.js` copies did. `tests/contract/test_embeddings.py::test_limits_reported_to_clients_are_the_ones_the_schema_enforces` ties the report to the schema's field bounds. Spec §4 lists the field.
+
 ## [2.0.237]
 
 ### Changed
