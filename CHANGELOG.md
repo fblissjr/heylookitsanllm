@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.227]
+
+### Documentation
+
+- **VISION.md principle 5 says what "first class" means.** It read "one set of controls", which a planning session took to mean every feature must work on both engines. The owner's reading (2026-11-04): heylook supports both engines, not the lowest common feature set. A control one engine cannot honor is refused on that engine, and the engine report says so. "One set of controls" became "one API".
+
 ## [2.0.226]
 
 ### Documentation

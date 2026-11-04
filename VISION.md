@@ -35,9 +35,11 @@ driver and a workbench at the same time.
    measurement without its conditions is an anecdote.
 4. **Enforce, don't remind.** A rule that matters is a check that runs.
    Anything else is a hope.
-5. **Both engines are first class.** MLX and llama.cpp each do something the
-   other does not. The user sees one server, one set of controls and one
-   report, whichever engine is behind a model.
+5. **Both engines are first class.** heylook supports MLX and llama.cpp, and
+   each does something the other does not. The user sees one server, one API
+   and one report, whichever engine is behind a model. First class does not
+   mean lowest common denominator: a control one engine cannot honor is
+   refused on that engine, and the report says so.
 6. **Build on upstream, don't clone it.** mlx-vlm and llama.cpp own the
    models and their kernels. heylook pins exact versions, sends fixes back,
    and carries a fix only until upstream has it; each carried fix has a test
