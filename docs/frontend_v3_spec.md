@@ -770,8 +770,8 @@ cache, thinking, speculative, decoding, image, steering}`.
   MLX (v2.0.187): `drafter` (the drafter folder's basename, or null with the reason), `type`
   (the drafter's config.json `model_type`), `in_force` (`unknown` until load; then `observed`:
   true, or false with why -- the drafter would not load or did not fit, or none is set). A
-  request with a penalty, logit bias, structured output or thinking budget runs undrafted and
-  carries no `performance.speculative`.
+  request with a penalty, logit bias or structured output runs undrafted and carries no
+  `performance.speculative` (a thinking budget drafts since v2.0.223).
 - `decoding` (v2.0.147), Facts: `mode` (`autoregressive`, or `diffusion` for a
   masked-diffusion checkpoint) and `request_fields` (the request fields that engine path
   reads; null = every sampler field). gguf: autoregressive, null, `derived`. MLX: `unknown`

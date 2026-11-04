@@ -311,19 +311,17 @@ def release_prefill(bg) -> None:
         logging.debug(f"APC block release skipped: {e}")
 
 
-def drafting_blocker(processors: list, thinking_budget) -> Optional[str]:
+def drafting_blocker(processors: list) -> Optional[str]:
     """Why this request cannot draft, or None when it can.
 
-    mlx-vlm's speculative loop (``SpeculativeGenerationBatch``) takes a
-    sampler only: no logits processors and no thinking budget. A request
-    carrying either (a penalty, a logit bias, structured output, a budget)
-    runs without its drafter rather than silently losing them. Sampling is
-    not a blocker: every emitted token is the target's own sample, and a
-    draft is kept only where it equals it."""
+    mlx-vlm's speculative loop (``SpeculativeGenerationBatch``) takes no
+    logits processors, so a request carrying one (a penalty, a logit bias,
+    structured output) runs without its drafter rather than silently losing
+    it. A thinking budget is not a blocker: the speculative loop applies it
+    (mlx-vlm#2641). Neither is sampling: every emitted token is the target's
+    own sample, and a draft is kept only where it equals it."""
     if processors:
         return "a logits processor (penalty, logit bias or structured output)"
-    if thinking_budget is not None:
-        return "a thinking budget"
     return None
 
 
@@ -412,7 +410,7 @@ def generate(
     active = generated_only(processors) or []
     drafting = False
     if draft is not None:
-        blocker = drafting_blocker(active, thinking_budget)
+        blocker = drafting_blocker(active)
         if blocker is None:
             drafting = True
             bg_kwargs.update(draft_model=draft[0], draft_kind=draft[1],

@@ -497,9 +497,9 @@ class MLXModelConfig(BaseModel):
             "(owner decision 2026-09-24): discovery pairs a neighbouring drafter "
             "folder whose name, less its last `-segment`, begins this model's "
             "name. To keep it off, unset this field in the model's "
-            "model.heylook.toml. A request carrying a penalty, a logit bias, "
-            "structured output or a thinking budget runs without drafting, "
-            "because mlx-vlm's speculative loop applies none of them."),
+            "model.heylook.toml. A request carrying a penalty, a logit bias or "
+            "structured output runs without drafting, because mlx-vlm's "
+            "speculative loop applies none of them; a thinking budget drafts."),
         json_schema_extra={"effect": EFFECT_REQUIRES_RELOAD},
     )
     draft_block_size: Optional[int] = Field(

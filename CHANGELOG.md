@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.223]
+
+### Changed
+
+- **mlx-vlm pin `918763c6` -> `003311ec`, with a `uv lock` upgrade (`pyproject.toml`, `uv.lock`, `apps/batch-labeler/uv.lock`).** The lock also moves transformers 5.21.0 -> 5.22.1, torch 2.14.1 -> 2.15.0, mlx-audio 0.6.2 -> 0.6.4 and huggingface-hub 2.3.0 -> 2.4.0, among smaller packages.
+- **An MLX request with a thinking budget now drafts (`providers/common/vlm_engine.py`).** Upstream mlx-vlm#2641 taught `SpeculativeGenerationBatch` thinking budgets, so `drafting_blocker` keeps only its logits-processor rule (penalties, logit bias and structured output still run undrafted). `TestSpeculativeSurface` now fails in both directions: if the batch starts taking logits processors, or stops taking thinking budgets. The `engine.speculative.in_force` text, the `draft_model_path` field description, the wiki and spec §4 say the same.
+
+### Fixed
+
+- **The mlx-vlm#2356 carry was installed and never ran at the new pin (`providers/common/mlx_vlm_patches.py`).** Upstream #2646 moved the restore site from `APCCoordinator.merge_rows` to `_merge_and_release_cache_rows`, which still builds `BatchKVCache` for a lone restored row, so restored qwen3_5 requests were back on the slow decode path with no warning. The carry now binds `RESTORE_MERGE` (the method the site calls), and `test_2356_restore_site_calls_the_method_the_carry_binds` reads the site's source for that call, so the next move fails with an instruction to move the carry rather than to delete it. The retirement test follows the new call and confirms upstream still merges a lone row. Rule in `.claude/rules/mlx.md`, history in `sharp_edges.md`.
+
+### Verified
+
+- `tests/unit/` + `tests/contract/`: 1616 passed. The new site check was confirmed red with `RESTORE_MERGE` pointed back at `merge_rows`.
+- Live, isolated server, `ukisai_Swift-1.5-Qwen3.8-27b-mlx` with its MTP drafter: a `budget_tokens: 64` request drafted (`performance.speculative` present) and closed thinking near the cap before the answer; `reasoning-end` at the twentieth thinking delta closed the block while drafting. Record: the run's output in `internal/log/log_2026-11-04.md`.
+- `scripts/chain_probe.py --model Qwen3.5-0.8B-MLX-8bit` (in-process): every hop matched and restored (`internal/claude/chain_probe/chain_Qwen3.5-0.8B-MLX-8bit_20261104-110249.json`).
+- NOT run: `scripts/perf_ab.py` on restored decode speed (the daily server on :1234 would contaminate it), `tests/smoke/` on any arm, `tests/eval/`. `scripts/vendor_frontend.py --check`: behind (marked, dompurify), not updated here.
+
 ## [2.0.222]
 
 ### Documentation

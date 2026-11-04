@@ -1162,8 +1162,8 @@ class MLXProvider(BaseProvider):
                      if draft_path == model_path
                      else f"{kind} drafter {draft_path.name}")
             return Fact(value=True, provenance="observed", source=(
-                f"{where} loaded; a request with a penalty, logit bias, structured output "
-                f"or thinking budget runs without it"))
+                f"{where} loaded; a request with a penalty, logit bias or structured "
+                f"output runs without it"))
         return Fact(value=False, provenance="observed",
                     source=self.drafter_skipped or "loaded without a drafter")
 

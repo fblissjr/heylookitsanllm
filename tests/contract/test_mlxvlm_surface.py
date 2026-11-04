@@ -423,13 +423,17 @@ class TestSpeculativeSurface:
             assert callable(getattr(mtp_split, name)), name
         assert isinstance(mtp_split.MTP_SPLITTERS, dict)
         # vlm_engine.drafting_blocker keeps a request with logits processors
-        # or a thinking budget off the drafter because this batch takes
-        # neither. When it does, the blocker's rule for it is dead weight.
+        # off the drafter because this batch takes none. When it does, the
+        # blocker is dead weight. A thinking budget drafts because the batch
+        # takes one (mlx-vlm#2641); if that goes, the blocker needs its rule
+        # back or a budget is dropped without a word.
         spec = inspect.signature(SpeculativeGenerationBatch.__init__).parameters
-        for name in ("logits_processors", "thinking_budget_criteria"):
-            assert name not in spec, (
-                f"mlx-vlm's speculative batch now takes {name}: drop that rule "
-                f"from vlm_engine.drafting_blocker")
+        assert "logits_processors" not in spec, (
+            "mlx-vlm's speculative batch now takes logits_processors: drop "
+            "that rule from vlm_engine.drafting_blocker")
+        assert "thinking_budget_criteria" in spec, (
+            "mlx-vlm's speculative batch no longer takes thinking_budget_criteria: "
+            "restore the thinking-budget rule in vlm_engine.drafting_blocker")
 
 class TestCarriedPatches:
     """providers/common/mlx_vlm_patches.py carries heylook's own open
@@ -457,7 +461,8 @@ class TestCarriedPatches:
         tokens = list(range(32))
         assert manager.store_exact_cache(tokens, filled())
         model = SimpleNamespace(make_cache=lambda: [ArraysCache(2), KVCache()])
-        class_method = APCCoordinator.__dict__["merge_rows"]
+        name = mlx_vlm_patches.RESTORE_MERGE
+        class_method = APCCoordinator.__dict__[name]
 
         def generator(**over):
             fields = dict(apc=manager.coordinator(model), model=model, kv_bits=None,
@@ -476,33 +481,51 @@ class TestCarriedPatches:
             bg = generator(**over)
             assert not mlx_vlm_patches.apply_to(bg), over
             if bg.apc is not None:
-                assert not hasattr(bg.apc.merge_rows, "_heylook_patch"), over
+                assert not hasattr(getattr(bg.apc, name), "_heylook_patch"), over
 
         bg = generator()
         assert mlx_vlm_patches.apply_to(bg) and mlx_vlm_patches.apply_to(bg)
         runner = bg.apc
-        assert runner.merge_rows._heylook_patch == mlx_vlm_patches.PATCH_2356
-        assert not hasattr(runner.merge_rows._heylook_upstream, "_heylook_patch")
-        assert APCCoordinator.__dict__["merge_rows"] is class_method, (
+        merge = getattr(runner, name)
+        assert merge._heylook_patch == mlx_vlm_patches.PATCH_2356
+        assert not hasattr(merge._heylook_upstream, "_heylook_patch")
+        assert APCCoordinator.__dict__[name] is class_method, (
             "the carry must bind to one generator, never to the class")
 
         one = hit(runner)
         before = manager.stats_snapshot()["restored_tokens"]
-        caches, prefix = runner.merge_rows([one], [one["prefix_len"]])
+        caches, prefix = merge([one], [one["prefix_len"]])
         assert caches is one["warm_cache"] and prefix == one["prefix_len"]
         assert manager.stats_snapshot()["restored_tokens"] == before + prefix
         runner.release_hit(one)
 
         two = hit(runner)
-        caches, _ = runner.merge_rows([two, None], [two["prefix_len"], 0])
+        caches, _ = merge([two, None], [two["prefix_len"], 0])
         assert caches is not two["warm_cache"]
         runner.release_hit(two)
+
+    def test_2356_restore_site_calls_the_method_the_carry_binds(self):
+        """The carry wraps one coordinator method. If the restore site stops
+        calling it, the carry installs cleanly and never runs: upstream #2646
+        moved the site from merge_rows to _merge_and_release_cache_rows and
+        nothing noticed until this retirement test errored on the mock."""
+        import inspect
+
+        from mlx_vlm.generate.ar import BatchGenerator
+        from heylook_llm.providers.common import mlx_vlm_patches
+
+        site = inspect.getsource(BatchGenerator._build_mixed_prompt_batch)
+        assert f"coordinator.{mlx_vlm_patches.RESTORE_MERGE}(" in site, (
+            "mlx-vlm's restore site no longer calls APCCoordinator."
+            f"{mlx_vlm_patches.RESTORE_MERGE}: move the #2356 carry "
+            "(mlx_vlm_patches.RESTORE_MERGE) to the call it makes now")
 
     def test_2356_upstream_restore_path_still_merges_a_lone_row(self):
         """Retirement: runs mlx-vlm's UNPATCHED restore site. When it stops
         sending a lone checkpoint hit on a plain-eligible generator through
-        merge_rows (the PR's own fix, or any equivalent), the carry is dead
-        weight."""
+        the coordinator's row merge (the PR's own fix, or any equivalent),
+        the carry is dead weight."""
+        from heylook_llm.providers.common import mlx_vlm_patches
         import sys
         from types import SimpleNamespace
         from unittest.mock import MagicMock, patch
@@ -517,7 +540,8 @@ class TestCarriedPatches:
         bg.kv_bits, bg.kv_group_size, bg.kv_quant_scheme = None, 64, "uniform"
         bg._wire_stack = None
         bg.apc = MagicMock()
-        bg.apc.merge_rows.return_value = (["merged"], 4)
+        merge = getattr(bg.apc, mlx_vlm_patches.RESTORE_MERGE)
+        merge.return_value = (["merged"], 4)
         bg.apc.materialize_single.return_value = ["plain"]
         pick = {"warm_cache": ["warm"], "matched_blocks": [], "prefix_len": 4,
                 "extra_hash": 7, "full_input_ids": list(range(8))}
@@ -527,7 +551,7 @@ class TestCarriedPatches:
               patch.object(sys.modules["mlx_vlm.generate"], "PromptProcessingBatch",
                            lambda **kw: captured.update(kw) or SimpleNamespace(**kw))):
             assert bg._build_mixed_prompt_batch([sequence]) is not None
-        assert bg.apc.merge_rows.called and captured["warm_cache"] == ["merged"], (
+        assert merge.called and captured["warm_cache"] == ["merged"], (
             "upstream no longer merges a lone restored row: Blaizzy/mlx-vlm#2356 "
             "(or its equivalent) is in the pin. Delete providers/common/"
             "mlx_vlm_patches.py's #2356 carry, its apply_to call in "

@@ -146,8 +146,8 @@ def test_a_drafting_round_ends_at_a_stop_and_counts_its_kept_drafts(monkeypatch)
     """With a drafter, next() delivers a whole round. Reply text ends at the
     first stop, one only heylook's set holds included, and the report counts
     each round's kept drafts (its tokens less the target's own). A request
-    carrying a logits processor or a thinking budget never drafts: mlx-vlm's
-    speculative loop would drop both."""
+    carrying a logits processor never drafts: mlx-vlm's speculative loop
+    would drop it. A thinking budget drafts: that loop applies it."""
     from heylook_llm.providers.common.vlm_engine import drafting_blocker
 
     resp = lambda tok, fin=None: SimpleNamespace(uid=0, token=tok, finish_reason=fin)
@@ -162,7 +162,7 @@ def test_a_drafting_round_ends_at_a_stop_and_counts_its_kept_drafts(monkeypatch)
     _, bg = _run(monkeypatch, [([], [resp(5, "stop")])], draft=("drafter", "mtp"),
                  processors=[lambda tokens, logits: logits])
     assert "draft_model" not in bg.kwargs
-    assert drafting_blocker([], object()) and drafting_blocker([], None) is None
+    assert drafting_blocker([lambda tokens, logits: logits]) and drafting_blocker([]) is None
 
 
 @pytest.mark.unit

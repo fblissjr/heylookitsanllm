@@ -25,7 +25,7 @@ import os
 # Blaizzy/mlx-vlm#2356: a restored single row gets the cache a cold row would.
 # mlx-vlm gives a cold single row the model's own caches (PromptProcessingBatch)
 # unless it drafts, quantizes KV or the model has no make_cache, but sends a
-# restored one through APCCoordinator.merge_rows, which builds BatchKVCache
+# restored one through the coordinator's row merge, which builds BatchKVCache
 # even for one row. Even after upstream 99b7f7c9 restricted the first
 # _extract_row_cache + merge block to h.shape[1] > 1, qwen3_5's second
 # _is_single_row_batch_cache(fa_cache) block runs on every decode token and
@@ -34,9 +34,14 @@ import os
 # cold one without this patch (re-verified on 918763c6; record in
 # internal/claude/perf/mlx_vlm_patches_ab_2026-10-30.md). The PR routes that
 # row at the restore site in generate/ar.py; this carry reaches the same
-# outcome at merge_rows, the one call the restore site makes, gated per
-# generator by the same rule.
+# outcome at the one coordinator call the restore site makes, gated per
+# generator by the same rule. That call is RESTORE_MERGE: upstream #2646
+# (fb3b4623) moved the site from merge_rows to _merge_and_release_cache_rows,
+# which still builds BatchKVCache for one row, and a carry left on merge_rows
+# installed cleanly and never ran. TestCarriedPatches reads the site's source
+# for this name so a move cannot go quiet again.
 PATCH_2356 = "mlx-vlm#2356"
+RESTORE_MERGE = "_merge_and_release_cache_rows"
 MERGE_ROWS_PARAMS = ("picks", "prefix_lens", "kv_quant_config")  # bound method
 
 # Carry of mlx-lm's 8-row packed Gated DeltaNet Metal kernel
@@ -242,14 +247,15 @@ def single_restored_row(picks, kv_quant_config) -> bool:
 
 
 def _patch_merge_rows(coord) -> bool:
-    upstream = coord.merge_rows
+    upstream = getattr(coord, RESTORE_MERGE, None)
     if getattr(upstream, "_heylook_patch", None) == PATCH_2356:
         return True
-    if tuple(inspect.signature(upstream).parameters) != MERGE_ROWS_PARAMS:
+    if (upstream is None
+            or tuple(inspect.signature(upstream).parameters) != MERGE_ROWS_PARAMS):
         logging.warning(
-            "mlx-vlm#2356 carry not applied: APCCoordinator.merge_rows "
+            "mlx-vlm#2356 carry not applied: APCCoordinator.%s is gone or its "
             "signature changed; restored qwen3_5 requests may decode slower "
-            "than cold ones")
+            "than cold ones", RESTORE_MERGE)
         return False
 
     def merge_rows(picks, prefix_lens, *, kv_quant_config=None):
@@ -268,7 +274,7 @@ def _patch_merge_rows(coord) -> bool:
     merge_rows.__doc__ = upstream.__doc__
     setattr(merge_rows, "_heylook_patch", PATCH_2356)
     setattr(merge_rows, "_heylook_upstream", upstream)
-    coord.merge_rows = merge_rows
+    setattr(coord, RESTORE_MERGE, merge_rows)
     return True
 
 

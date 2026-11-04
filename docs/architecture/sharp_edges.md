@@ -1953,6 +1953,19 @@ unpatched restore site (`_build_mixed_prompt_batch`) and was confirmed red on
 the PR's own code, because the reworked PR fixes the restore site and leaves
 `merge_rows` untouched, so the old check would never have fired.
 
+A carry on a method nobody calls (2026-11-04, v2.0.223). Upstream #2646
+(`fb3b4623`, in the `003311ec` pin) moved the restore site from
+`coordinator.merge_rows` to `coordinator._merge_and_release_cache_rows`. The
+carry still wrapped `merge_rows`, whose signature had not changed, so it
+installed, logged nothing and never ran, while the new call still built
+`BatchKVCache` for a lone row. The binding test kept passing, because it
+called the wrapped method directly. Only the retirement test went red, and its
+message said to delete the carry, which would have been wrong. The carry now
+binds `mlx_vlm_patches.RESTORE_MERGE`, and a new check reads the restore
+site's source for a call to that name, so a move fails with the right
+instruction. The rule it adds: a carry needs a check that the upstream site
+still calls what the carry wraps.
+
 MLX speculative decoding (2026-09-28, v2.0.187). Plan W10 stage 3 retired the
 MLX drafter fields because mlx-lm's speculative path went with mlx-lm and no
 served MLX model had a drafter; it was a fact about the population, not a
@@ -1962,7 +1975,10 @@ sanitize always drops `mtp.*`; `--mtp` writes the head to a separate folder).
 Three traps found on the way in. mlx-vlm's `SpeculativeGenerationBatch` takes
 a sampler only, so wiring the drafter unconditionally would have dropped every
 penalty, logit bias, structured-output constraint and thinking budget without
-a word; `drafting_blocker` runs those requests undrafted. A round delivers
+a word; `drafting_blocker` runs those requests undrafted. (mlx-vlm#2641 later
+taught the batch thinking budgets, so the budget rule was dropped at the
+003311ec pin and `TestSpeculativeSurface` now fails if the batch loses them
+again.) A round delivers
 several tokens per `next()`, which let a stop only heylook's set holds leak the
 rest of its round as text, and put several tokens' text under one chunk's
 single `token` id, which chain_probe's token alignment reads. And `laguna` is
