@@ -82,3 +82,12 @@ def test_bad_requests_never_execute(embedding_client, change, status):
     with patch("heylook_llm.providers.mlx_embeddings.embed", side_effect=AssertionError("must not execute")):
         response = client.post("/v1/embeddings", json={"model": "embed", "input": "x", **change})
     assert response.status_code == status, response.text
+
+
+def test_media_cap_depends_on_block_type():
+    from heylook_llm.schema.embeddings import EmbeddingRequest, MAX_MEDIA_BYTES, base64_chars
+    over_image_cap = "A" * (base64_chars(MAX_MEDIA_BYTES) + 4)
+    block = lambda kind, mime: {"type": kind, "source": {"type": "base64", "media_type": mime, "data": over_image_cap}}
+    with pytest.raises(ValueError, match="image data exceeds"):
+        EmbeddingRequest(model="m", input=[{"content": [block("image", "image/png")]}])
+    EmbeddingRequest(model="m", input=[{"content": [block("video", "video/mp4")]}])   # within the video cap

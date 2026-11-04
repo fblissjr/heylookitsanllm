@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from heylook_llm.schema.embeddings import (
-    EmbeddingResult, EmbeddingVector, EmbeddingWindow, MAX_MEDIA_BYTES, MAX_REQUEST_MEDIA_BYTES,
+    EmbeddingResult, EmbeddingVector, EmbeddingWindow, MEDIA_BYTES_BY_TYPE, MAX_REQUEST_MEDIA_BYTES,
 )
 from heylook_llm.providers.base import InvalidGenerationRequest
 from .generation_gate import GenerationCancelled
@@ -39,6 +39,7 @@ def resolved_items(request, info, abort):
                     parts.append({"type": "text", "text": block.text})
                     continue
                 source = block.source
+                cap = MEDIA_BYTES_BY_TYPE[block.type]
                 try:
                     if source.type == "base64":
                         data = base64.b64decode(source.data, validate=True)
@@ -46,11 +47,11 @@ def resolved_items(request, info, abort):
                         with urllib.request.urlopen(source.url, timeout=30) as response:
                             if response.url.split(":", 1)[0] not in ("http", "https"):
                                 raise ValueError("media redirect must use HTTP(S)")
-                            data = response.read(MAX_MEDIA_BYTES + 1)
+                            data = response.read(cap + 1)
                 except (ValueError, OSError, binascii.Error) as exc:
                     raise InvalidGenerationRequest(f"input[{index}]: cannot read {block.type}: {exc}") from exc
                 total += len(data)
-                if not data or len(data) > MAX_MEDIA_BYTES or total > MAX_REQUEST_MEDIA_BYTES:
+                if not data or len(data) > cap or total > MAX_REQUEST_MEDIA_BYTES:
                     raise InvalidGenerationRequest(f"input[{index}]: empty media or media byte limit exceeded")
                 # Known MIME suffixes help the upstream decoder choose a container;
                 # never use a caller-controlled path or arbitrary extension.

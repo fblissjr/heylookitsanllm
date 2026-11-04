@@ -964,8 +964,9 @@ of at most 32 s for EmbeddingGemma 2. Rank windows against a query to find the
 moment, and seek to its `start`. Frames inside a window are chosen by content by
 default, which catches brief moments a fixed 1 fps grid steps over; pass
 `"sampling": "fps"` for the fixed rate, which decodes about a quarter as many frames.
-A windowed item holds only that video. Each media block is capped at 32 MiB, so a
-long or high-bitrate video may need re-encoding before upload.
+A windowed item holds only that video. A video block is capped at 256 MiB (image
+and audio blocks at 32 MiB; 256 MiB of media per request), so a very long or
+high-bitrate video may need re-encoding before upload.
 
 Read `data[].embedding` in `index` order. Vectors are L2-normalized after optional
 supported dimension truncation. Scores from their dot product are cosine

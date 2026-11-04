@@ -4,8 +4,14 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 MAX_ITEMS = 16
-MAX_MEDIA_BYTES = 32 * 1024 * 1024
-MAX_REQUEST_MEDIA_BYTES = 64 * 1024 * 1024
+MAX_MEDIA_BYTES = 32 * 1024 * 1024            # image and audio blocks
+MAX_VIDEO_BYTES = 256 * 1024 * 1024           # video blocks: windowing decodes one window at a time (v2.0.235)
+MAX_REQUEST_MEDIA_BYTES = 256 * 1024 * 1024
+MEDIA_BYTES_BY_TYPE = {"image": MAX_MEDIA_BYTES, "audio": MAX_MEDIA_BYTES, "video": MAX_VIDEO_BYTES}
+
+
+def base64_chars(n_bytes):
+    return (n_bytes + 2) // 3 * 4
 MAX_TEXT_CHARS = 131072
 
 
@@ -13,7 +19,7 @@ class EmbeddingSource(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["base64", "url"]
     media_type: str
-    data: str | None = Field(default=None, max_length=(MAX_MEDIA_BYTES + 2) // 3 * 4)
+    data: str | None = Field(default=None, max_length=base64_chars(max(MEDIA_BYTES_BY_TYPE.values())))
     url: str | None = Field(default=None, max_length=8192)
 
     @model_validator(mode="after")
@@ -59,6 +65,9 @@ class EmbeddingMedia(BaseModel):
             raise ValueError("media_type must match the content block type")
         if self.windows is not None and self.type != "video":
             raise ValueError("windows applies to video blocks only")
+        cap = MEDIA_BYTES_BY_TYPE[self.type]
+        if self.source.data is not None and len(self.source.data) > base64_chars(cap):
+            raise ValueError(f"{self.type} data exceeds {cap // (1024 * 1024)} MiB")
         return self
 
 

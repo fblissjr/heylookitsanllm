@@ -235,7 +235,7 @@ comes from the checkpoint's `config_sentence_transformers.json`. An omitted
 `prompt_name` adds no prefix. A selected prompt is applied once before content.
 
 Limits: 16 items, 32 blocks/item, 131072 characters/text block, 32 MiB decoded
-bytes/media block and 64 MiB total media. Expanded input must fit model context;
+bytes per image or audio block, 256 MiB per video block and 256 MiB total media. Expanded input must fit model context;
 there is no automatic truncation. EmbeddingGemma 2 supports 128/256/512/768 output
 dimensions (default 768). Final vectors are truncated then L2-normalized.
 Response: `{model, dimensions, data: [{index, embedding: number[], prompt_name, windows}],

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.236]
+
+### Changed
+
+- **`/v1/embeddings` takes video blocks up to 256 MiB.** Image and audio blocks stay at 32 MiB; total media per request rises from 64 to 256 MiB. The cap is per block type in one table (`schema/embeddings.MEDIA_BYTES_BY_TYPE`), checked on the base64 length at validation and on decoded bytes (and URL reads) in `resolved_items`. Owner decision 2026-11-04, after v2.0.235 bounded windowed decoding to one window. Checked live: the 76 MiB 300 s synthetic clips that v2.0.233 refused now run through the windows option, and their short-event margins equal the in-process probe exactly (`internal/claude/embeddinggemma2_probes/video_events/results_http_synthetic.txt`). Spec §4 and `docs/api_integration.md` §10 carry the new limits.
+
 ## [2.0.235]
 
 ### Fixed
