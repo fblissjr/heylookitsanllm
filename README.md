@@ -161,9 +161,7 @@ the SSE grammar and the error taxonomy -- the parts a schema cannot express.
 ## Related apps
 
 - [`apps/batch-labeler/`](apps/batch-labeler/) -- standalone CLI for labeling
-  image directories with VLMs. **Needs a port**: it still posts to
-  `/v1/chat/completions`, removed in v1.79.66, so it 404s against a current
-  server.
+  image directories with VLMs, on `/v1/messages`.
 - [`apps/embedding-apps/`](apps/embedding-apps/) -- self-contained apps on
   `POST /v1/embeddings` (an embedding lab and a media finder)
 - [`apps/optloop-lib/`](apps/optloop-lib/) -- library-level benchmark harness

@@ -23,6 +23,7 @@ an ``AbortEvent`` under that name, and renaming it would touch all of them
 to say the same thing.
 """
 
+import logging
 import threading
 
 
@@ -69,8 +70,8 @@ class AbortEvent:
         if cb is not None:
             try:
                 cb()
-            except Exception:
-                pass
+            except Exception as e:
+                logging.warning("end-reasoning callback failed, thinking continues: %r", e)
         return True
 
     def pop_end_reasoning(self) -> bool:
@@ -87,8 +88,8 @@ class AbortEvent:
             self._end_reasoning.clear()
             try:
                 cb()
-            except Exception:
-                pass
+            except Exception as e:
+                logging.warning("end-reasoning callback failed, thinking continues: %r", e)
 
     def set_prefill_progress(self, processed: int, total: int) -> None:
         """Report prefill progress: ``processed`` of ``total`` prompt tokens.

@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.224]
+
+### Fixed
+
+- **`/v1/capabilities` named every Mac's GPU `Unknown` (`monitoring_api.py`).** It read `device_info["name"]`; MLX's key is `device_name` (`ram_fit.py` already read it). `test_capabilities_answers_with_the_server_version` now compares it with `mx.device_info()` and fails on the old key.
+- **gguf bound the end-reasoning callback on every stream (`llama_server_provider._stream_chunks`).** It now binds only when the payload sent `reasoning_control`, so a reasoning-end signal on a run with thinking off makes no control call that could only fail. A failed control call, and a callback error in `AbortEvent`, are now warnings naming that thinking continues; both were silent (`logging.debug`, `except: pass`).
+- **The conversation reasoning-end route answers `{signalled: 1, conversation_id}`**, the same shape as `POST /v1/requests/{id}/reasoning-end`, instead of `{status: "ending_reasoning", ...}`. The frontend reads only the status; the `e2e:render` stub had a third spelling and now matches. New route test: 404 with no run, 200 and the signal latched with one.
+- **README** no longer says batch-labeler posts to the removed `/v1/chat/completions`; it has spoken `/v1/messages` since v2.0.154.
+
+### Added
+
+- **`TestVlmEngineSurface::test_the_end_thinking_fields_still_exist`.** The MLX arming of a mid-stream end of thinking reads mlx-vlm's private `_generation_batch`, `_next_tokens`, `thinking_budget_criteria` and the criteria's forced-sequence fields through `getattr` defaults, so a rename would have made it a silent no-op. The test pins each name and the criteria behaviour the arming relies on.
+
+### Documentation
+
+- `docs/api_integration.md` §3/§4: the "omitted, never null" rule for streamed telemetry covers `performance`'s own keys; nested `cache` and `speculative` carry `null` for a field that does not apply (seen live: `speculative.drafted` on MLX).
+- Verified: `tests/unit/` + `tests/contract/` (1618 passed), `bun run e2e:render` (109/109). NOT run: live gguf reasoning-end, `tests/smoke/`, `tests/eval/`.
+
 ## [2.0.223]
 
 ### Changed

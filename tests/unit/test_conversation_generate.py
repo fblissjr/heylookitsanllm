@@ -396,6 +396,23 @@ class TestArbitration:
             _ACTIVE.pop(conv["id"], None)
 
     @pytest.mark.asyncio
+    async def test_reasoning_end_signals_the_active_run_only(self, ctx):
+        """Answers like the request route ({signalled}), 404 when nothing runs."""
+        client, store, _ = ctx
+        conv, _ = await make_conv(store)
+        url = f"/v1/conversations/{conv['id']}/generate/reasoning-end"
+        assert (await client.post(url)).status_code == 404
+        ev = AbortEvent()
+        _ACTIVE[conv["id"]] = _Run(ev)
+        try:
+            res = await client.post(url)
+            assert res.status_code == 200
+            assert res.json() == {"signalled": 1, "conversation_id": conv["id"]}
+            assert ev.pop_end_reasoning() and not ev.is_set()
+        finally:
+            _ACTIVE.pop(conv["id"], None)
+
+    @pytest.mark.asyncio
     async def test_the_conversation_list_names_an_active_run(self, ctx):
         """A run nobody is subscribed to must still be visible and stoppable.
 

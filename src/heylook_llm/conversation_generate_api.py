@@ -862,7 +862,10 @@ async def end_conversation_reasoning(conv_id: str):
     if run is None:
         raise HTTPException(status_code=404, detail="No active generation for this conversation")
     run.abort_event.end_reasoning()
-    return {"status": "ending_reasoning", "conversation_id": conv_id}
+    # Same shape as POST /v1/requests/{id}/reasoning-end: a count of runs
+    # signalled (one generation per conversation, so 1), not a claim that the
+    # thinking block closed.
+    return {"signalled": 1, "conversation_id": conv_id}
 
 
 # ---------------------------------------------------------------------------

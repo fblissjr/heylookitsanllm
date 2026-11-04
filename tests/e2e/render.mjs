@@ -622,7 +622,7 @@ export async function openChat(browser, base, {
     // when the "server" answers, not when the request leaves.
     if (url.includes('/generate/reasoning-end') && req.method() === 'POST') {
       req.respond({ status: 200, contentType: 'application/json',
-        body: JSON.stringify({ status: 'signaled', conversation_id: 'c1' }) });
+        body: JSON.stringify({ signalled: 1, conversation_id: 'c1' }) });
       return;
     }
     if (url.includes('/generate')) {

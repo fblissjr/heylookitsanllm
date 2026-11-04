@@ -317,6 +317,37 @@ class TestVlmEngineSurface:
                       "_cached_tokens_per_row", "def _release_apc_meta_blocks", "self._apc_meta"):
             assert field in src, field
 
+    def test_the_end_thinking_fields_still_exist(self):
+        """vlm_engine.generate arms a mid-stream end of thinking (the
+        reasoning-end routes) through private fields, read with getattr
+        defaults: a rename upstream makes it do nothing, silently, the way a
+        moved restore site left the #2356 carry installed and idle. Pin each
+        name, and the criteria behaviour the arming relies on: with the budget
+        exceeded and the first forced token already injected, the next call
+        returns the rest of the closing sequence."""
+        import importlib
+        from types import SimpleNamespace
+
+        from mlx_vlm.utils import ThinkingBudgetCriteria
+
+        src = inspect.getsource(importlib.import_module("mlx_vlm.generate.ar"))
+        for field in ("self._generation_batch", "self._next_tokens",
+                      "self.thinking_budget_criteria"):
+            assert field in src, field
+
+        ids = {"<think>": [7], "</think>": [8], "\n": [9]}
+        tok = SimpleNamespace(encode=lambda s, add_special_tokens=False: ids.get(s, [1]))
+        crit = ThinkingBudgetCriteria(tok, 0, thinking_end_token="</think>",
+                                      thinking_start_token="<think>", enable_thinking=True,
+                                      prompt_preopens_thinking=True)
+        for name in ("in_thinking", "budget_exceeded", "thinking_budget",
+                     "thinking_start_token_id", "thinking_end_token_id"):
+            assert hasattr(crit, name), name
+        assert crit.in_thinking and crit._forced_sequence == [9, 8]
+        crit.thinking_budget, crit.budget_exceeded = 0, True
+        crit._forced_index = 1          # vlm_engine injected the newline itself
+        assert crit(5) == 8, "the criteria no longer finishes a closing sequence it was armed into"
+
     def test_the_memory_pressure_signals_still_exist(self):
         """vlm_engine.apc_memory_pressure reads these to say a miss was APC
         holding back for memory rather than an ordinary miss."""

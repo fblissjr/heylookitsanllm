@@ -592,7 +592,7 @@ truncate→stream→persist sequences):**
   the Stop button's server-side spelling). 404 when none is active — on
   404 the v3 client aborts its fetch locally instead (covers the
   503-retry sleep and the pre-claim dispatch window).
-- `POST /{id}/generate/reasoning-end` (v2.0.215) → `{status: "ending_reasoning", conversation_id}`
+- `POST /{id}/generate/reasoning-end` (v2.0.215) → `{signalled: 1, conversation_id}`
   (404 when no generation is active for `{id}`). Closes the active thinking
   block mid-stream without aborting the generation: on GGUF, forwards
   `{"id": cmpl_id, "action": "reasoning_end"}` to `llama-server`'s

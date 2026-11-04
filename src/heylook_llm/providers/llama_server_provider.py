@@ -2187,7 +2187,8 @@ class LlamaServerProvider(BaseProvider):
                 raise
             inner = self._explained(self._stream_chunks(
                 response, abort_event,
-                echo_chars=echo_chars, echo_thinking_chars=echo_thinking_chars),
+                echo_chars=echo_chars, echo_thinking_chars=echo_thinking_chars,
+                reasoning_control=bool(payload.get("reasoning_control"))),
                 payload)
             try:
                 # The gate wait rides the first chunk, as on MLX, so
@@ -2249,11 +2250,13 @@ class LlamaServerProvider(BaseProvider):
             with urllib.request.urlopen(req, timeout=5) as resp:
                 return resp.status == 200
         except Exception as e:
-            logging.debug(f"[GGUF] reasoning_end control for '{self.model_id}' ({cmpl_id}) failed: {e}")
+            logging.warning(f"[GGUF] reasoning_end control for '{self.model_id}' ({cmpl_id}) "
+                            f"failed, thinking continues: {e}")
             return False
 
     def _stream_chunks(self, fp, abort_event, echo_chars: int = 0,
-                       echo_thinking_chars: int = 0) -> Generator:
+                       echo_thinking_chars: int = 0,
+                       reasoning_control: bool = False) -> Generator:
         """Adapt llama-server SSE lines to GenerationChunk.
 
         Split out from create_chat_completion so it is unit-testable with a
@@ -2270,6 +2273,12 @@ class LlamaServerProvider(BaseProvider):
         template framing and is dropped. With no content prefill the thought
         is still open and resumes, and a resumed thought may begin with a
         newline, so that case keeps it.
+
+        ``reasoning_control``: the payload asked llama-server for reasoning
+        control (thinking on or resumed). Only then is the end-reasoning
+        callback bound; without it llama-server has no open block to end, and
+        a bound callback would answer a reasoning-end signal with a control
+        call that can only fail.
         """
         closed_thought = echo_thinking_chars > 0 and echo_chars > 0
         control_bound = False
@@ -2299,7 +2308,7 @@ class LlamaServerProvider(BaseProvider):
             # 2026-09-07: "Compute error." became an empty reply).
             if isinstance(frame, dict) and "error" in frame:
                 raise GenerationFailed(self._describe_engine_error(frame["error"]))
-            if (not control_bound and abort_event is not None
+            if (reasoning_control and not control_bound and abort_event is not None
                     and isinstance(frame, dict) and frame.get("id")
                     and getattr(abort_event, "set_end_reasoning_callback", None) is not None):
                 cmpl_id = str(frame["id"])

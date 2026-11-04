@@ -1672,14 +1672,27 @@ def test_reasoning_control_payload_and_end_reasoning_callback(monkeypatch):
         'data: {"id":"cmpl-42","choices":[{"delta":{"content":"answer"},"finish_reason":"stop"}]}',
         "data: [DONE]",
     )
+    frames = (
+        'data: {"id":"cmpl-42","choices":[{"delta":{"reasoning_content":"step 1"}}]}',
+        'data: {"id":"cmpl-42","choices":[{"delta":{"content":"answer"},"finish_reason":"stop"}]}',
+        "data: [DONE]",
+    )
     chunks = []
-    for chunk in p._stream_chunks(resp, abort_event=abort):
+    for chunk in p._stream_chunks(resp, abort_event=abort, reasoning_control=True):
         chunks.append(chunk)
         if chunk.thinking:
             assert abort.end_reasoning() is True
 
     assert control_calls == [{"id": "cmpl-42", "action": "reasoning_end"}]
     assert any(c.text == "answer" for c in chunks)
+
+    # A request that did not ask for reasoning control binds nothing, so a
+    # signal makes no control call (llama-server would have no block to end).
+    control_calls.clear()
+    abort = AbortEvent()
+    for chunk in p._stream_chunks(_stream_bytes(*frames), abort_event=abort):
+        abort.end_reasoning()
+    assert control_calls == []
 
 
 @pytest.mark.unit

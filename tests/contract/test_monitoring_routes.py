@@ -21,6 +21,10 @@ class TestMonitoringRoutesAnswer:
         body = res.json()
         assert body["server_version"] and "messages" in body["endpoints"]
         assert "standard_vision" not in body["endpoints"]  # the OpenAI wire's entry is gone
+        if body["metal"].get("available"):
+            # It read a key MLX does not have and answered "Unknown" on every Mac.
+            import mlx.core as mx
+            assert body["metal"]["device_name"] == mx.device_info()["device_name"]
 
     def test_performance_profile_answers(self, client):
         assert client.get("/v1/performance/profile/1h").status_code == 200

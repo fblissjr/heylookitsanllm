@@ -128,7 +128,7 @@ async def get_capabilities(request: Request):
             device_info = mx.device_info()
             metal_info = {
                 "available": True,
-                "device_name": device_info.get("name", "Unknown"),
+                "device_name": device_info.get("device_name", "Unknown"),
                 "max_recommended_working_set_size": device_info.get("max_recommended_working_set_size", 0)
             }
         else:

@@ -253,6 +253,9 @@ section used to carry:**
 Two spellings of absent, same meaning: streaming omits the key, non-streaming
 returns explicit `null` (its response goes through `PerformanceInfo`, which
 materialises every declared field). Null-check either way and you are correct.
+The omission covers `performance`'s own keys only: inside a nested object
+(`cache`, `speculative`) a field that does not apply is an explicit `null` in
+both modes, e.g. `speculative.drafted` and `acceptance_rate` on MLX.
 
 **The two spans, which is the part to read if you read nothing else.**
 `total_duration_ms` is GONE. It meant request-arrival in one mode and
@@ -618,7 +621,8 @@ Besides `heylook_progress`, one heylook extension rides the same stream: extra
 telemetry merged into `message_stop.performance` — `prompt_tps`,
 `generation_tps` (both since v1.79.54), `peak_memory_gb`,
 `queue_wait_ms`, `cache`, `speculative`. Absent telemetry is **omitted, never
-null** here; the non-streaming response spells the same absence as an
+null** here at the top level of `performance` (a nested `cache` or
+`speculative` object can still carry `null` fields); the non-streaming response spells the same absence as an
 explicit `null`, because its fields are declared on a model. Treat missing
 and null as one condition.
 
@@ -770,7 +774,7 @@ thought left. On MLX the engine forces the format's closing tokens; on gguf
 the signal is forwarded to llama-server's reasoning control.
 
 A conversation generate takes `POST /v1/conversations/{id}/generate/reasoning-end`
-instead, answering `{"status": "ending_reasoning", "conversation_id"}` or a
+instead, answering `{"signalled": 1, "conversation_id"}` or a
 404 when nothing is generating there.
 
 ---
