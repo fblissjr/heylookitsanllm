@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.242]
+
+### Changed
+
+- **Updated vendored frontend libraries (`scripts/vendor_frontend.py --update`).** `marked` `18.0.14` -> `18.1.3` (`frontend/js/vendor/marked.esm.js`) and `dompurify` `3.4.16` -> `3.4.17` (`frontend/js/vendor/purify.es.mjs`, `frontend/js/vendor/vendor.json`).
+
 ## [2.0.241]
 
 ### Changed
