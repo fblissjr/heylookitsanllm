@@ -21,7 +21,44 @@ def _load(provider):
     with mx.stream(generation_stream):
         provider.model, provider.processor = load_model(provider.config["model_path"])
         materialize_state(provider.model)
+    bind_position_gather(provider.model)
     provider.context_length = provider.embedding["max_input_tokens"]
+
+
+def gathered_position_embeddings(self, patch_positions, padding_positions):
+    """Gemma 4 vision position lookup as a row gather.
+
+    Upstream (mlx-vlm gemma4/vision.py ``_position_embeddings``) builds a
+    float32 one-hot over the 10240-row table and multiplies it in; a 32-frame
+    window peaks several GB above resident for that alone. The gather gives
+    bit-identical rows (internal/claude/embeddinggemma2_probes/posemb.py,
+    posemb_memory.py). heylook-owned (VISION principle 6, owner 2026-11-04):
+    no upstream PR; test_mlxvlm_surface pins it against the upstream method.
+    """
+    import mlx.core as mx
+    pos = mx.maximum(patch_positions, 0)          # padding rows carry -1; masked below
+    table = self.position_embedding_table
+    rows = table[0][pos[..., 0]] + table[1][pos[..., 1]]
+    return mx.where(mx.expand_dims(padding_positions, -1), 0.0, rows)
+
+
+def bind_position_gather(model):
+    """Bind the gather onto this model's patch embedder instance, never the class.
+
+    Stands down (and says so) when the instance does not have the shape it was
+    written against: a two-axis table and a ``_position_embeddings`` method.
+    """
+    import logging
+    import types
+    embedder = getattr(getattr(model, "vision_tower", None), "patch_embedder", None)
+    if embedder is None:
+        return False
+    table = getattr(embedder, "position_embedding_table", None)
+    if table is None or table.ndim != 3 or table.shape[0] != 2 or not hasattr(embedder, "_position_embeddings"):
+        logging.warning("vision position gather stood down: patch embedder is not the shape it was written for")
+        return False
+    embedder._position_embeddings = types.MethodType(gathered_position_embeddings, embedder)
+    return True
 
 
 def materialize_state(model):

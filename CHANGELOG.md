@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.231]
+
+### Changed
+
+- **heylook owns the Gemma 4 vision position lookup for MLX embeddings.** mlx-vlm's `VisionPatchEmbedder._position_embeddings` builds a float32 one-hot over the 10240-row table and multiplies it in. `mlx_embeddings.bind_position_gather` binds a row gather onto the loaded model's patch embedder instance (never the class) at load, standing down with a warning if the instance is not the shape it was written for. Owner decision 2026-11-04 under VISION principle 6: no upstream PR. Bit-identical: max abs diff 0.0 on all 17 parity vectors through the server vs before; parity vs the sentence-transformers reference unchanged. One 32-frame video forward peaked 6.39 GB above resident with the one-hot and 1.64 GB with the gather (`internal/claude/embeddinggemma2_probes/posemb_memory.py`); the latency probe shows images and video a few percent faster (not a perf_ab run). `tests/contract/test_mlxvlm_surface.py::TestOwnedVisionPositionGather` checks the gather equals the upstream method exactly on padded and unpadded positions (CPU stream), and fails if the upstream signature changes.
+
 ## [2.0.230]
 
 ### Changed

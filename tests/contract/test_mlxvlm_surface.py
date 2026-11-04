@@ -616,3 +616,31 @@ class TestCarriedPatches:
         finally:
             gd.gated_delta_kernel = orig
 
+
+
+class TestOwnedVisionPositionGather:
+    """heylook binds its own row gather over Gemma 4's one-hot position lookup
+    (providers/mlx_embeddings.bind_position_gather). It must equal the upstream
+    method exactly, on the CPU stream, for padded and unpadded positions."""
+
+    def test_gather_equals_upstream_one_hot_lookup(self):
+        import mlx.core as mx
+        from mlx_vlm.models.gemma4 import vision as gemma4_vision
+        from mlx_vlm.models.gemma4.config import VisionConfig
+        from heylook_llm.providers.mlx_embeddings import bind_position_gather
+        params = list(inspect.signature(gemma4_vision.VisionPatchEmbedder._position_embeddings).parameters)
+        assert params == ["self", "patch_positions", "padding_positions"]
+        with mx.stream(mx.cpu):
+            mx.random.seed(0)
+            upstream = gemma4_vision.VisionPatchEmbedder(VisionConfig(hidden_size=8, position_embedding_size=16))
+            upstream.position_embedding_table = mx.random.normal((2, 16, 8))
+            positions = mx.random.randint(0, 16, (2, 6, 2))
+            positions = mx.where(mx.arange(6)[None, :, None] >= mx.array([[[6]], [[4]]]), -1, positions)
+            padding = mx.all(positions == -1, axis=-1)
+            expected = upstream._position_embeddings(positions, padding)
+            model = type("M", (), {})()
+            model.vision_tower = type("V", (), {})()
+            model.vision_tower.patch_embedder = upstream
+            assert bind_position_gather(model)
+            got = upstream._position_embeddings(positions, padding)
+            assert mx.array_equal(expected, got).item()

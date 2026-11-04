@@ -42,7 +42,9 @@ and run as padded forwards, chunked so rows times the longest row stays within
 one context; each row's own length comes from its attention mask, so token
 counts and the context refusal match a single-item request. Items with media
 run one forward each, after trailing patch slots that no image or frame uses are
-cut from the processor's padded grid (the tower masks them anyway). GGUF launches its existing llama-server process
+cut from the processor's padded grid (the tower masks them anyway). At load, heylook binds its
+own row gather in place of the Gemma 4 vision tower's one-hot position lookup on
+that model instance (bit-identical; a contract test pins it to the upstream method). GGUF launches its existing llama-server process
 in embedding mode with mean pooling and a non-causal batch covering the context;
 its adapter translates ordered content to llama-server's multimodal endpoint.
 Neither path passes embedding inputs through generation, chat samplers or APC.
