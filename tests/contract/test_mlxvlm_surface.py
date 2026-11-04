@@ -644,3 +644,15 @@ class TestOwnedVisionPositionGather:
             assert bind_position_gather(model)
             got = upstream._position_embeddings(positions, padding)
             assert mx.array_equal(expected, got).item()
+
+
+class TestVideoWindowHooks:
+    """providers/video_windows.py calls two EmbeddingGemma 2 video processor internals:
+    the decoder with a caller sampler, and the pre-decoded frames path."""
+
+    def test_decoder_takes_a_sampler_and_preprocess_takes_decoded_frames(self):
+        from mlx_vlm.models.embedding_gemma2.video_processing_embedding_gemma2 import EmbeddingGemma2VideoProcessor as P
+        assert list(inspect.signature(P._decode_video).parameters)[-2:] == ["path", "sampler"]
+        assert "video_metadata" in inspect.signature(P.preprocess).parameters
+        source = inspect.getsource(P.preprocess)
+        assert "do_sample_frames" in source and "Set `do_sample_frames=False`" in source

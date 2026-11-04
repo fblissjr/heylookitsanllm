@@ -71,6 +71,11 @@ def test_endpoint_preserves_joint_items_and_returns_normalized_vectors(embedding
     ({"model": "unknown"}, 404), ({"dimensions": 64}, 400),
     ({"input": []}, 422), ({"temperature": 0.1}, 422),
     ({"input": [{"prompt_name": "unknown", "content": [{"type": "text", "text": "x"}]}]}, 400),
+    # windows: video only (422), a windowed video stands alone (422), and a model
+    # without the capability refuses before anything runs (400).
+    ({"input": [{"content": [{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "eA=="}, "windows": {}}]}]}, 422),
+    ({"input": [{"content": [{"type": "text", "text": "x"}, {"type": "video", "source": {"type": "base64", "media_type": "video/mp4", "data": "eA=="}, "windows": {}}]}]}, 422),
+    ({"input": [{"content": [{"type": "video", "source": {"type": "base64", "media_type": "video/mp4", "data": "eA=="}, "windows": {}}]}]}, 400),
 ])
 def test_bad_requests_never_execute(embedding_client, change, status):
     client, _ = embedding_client

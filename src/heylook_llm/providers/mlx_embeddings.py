@@ -129,6 +129,31 @@ def _embed_one(provider, index, item, vectors):
     return length
 
 
+def _embed_video_windows(provider, index, prompt, part, vectors, abort):
+    """Add per-window vectors beside the item's whole-video vector.
+
+    The whole-video vector stays mlx-vlm's own sampling (the path the
+    reference parity probe certifies); windows are extra vectors. A clip that
+    fits one window still gets its own window forward: the window picker can
+    land one frame away from upstream's sampler on fractional frame rates.
+    """
+    import mlx.core as mx
+    from .video_windows import embed_windows
+
+    def forward(inputs):
+        out = provider.model(**trim_visual_padding(inputs)).text_embeds
+        mx.eval(out)
+        return out[0].tolist()
+    try:
+        windows, tokens = embed_windows(
+            provider, prompt, part, lambda: check_cancel(abort),
+            lambda length: _too_long(provider, index, length), forward)
+    except (ValueError, TypeError) as exc:
+        raise InvalidGenerationRequest(f"input[{index}]: {exc}") from exc
+    vectors[index] = {"embedding": vectors[index], "windows": windows}
+    return tokens
+
+
 def _embed_text_rows(provider, rows, items, vectors, abort):
     """All text-only items in one render, then padded forwards in chunks.
 
@@ -182,5 +207,8 @@ def embed(provider, items, abort):
                 continue
             check_cancel(abort)
             tokens += _embed_one(provider, index, item, vectors)
+            windowed = [p for p in item[1] if p.get("windows") is not None]
+            if windowed:
+                tokens += _embed_video_windows(provider, index, item[0], windowed[0], vectors, abort)
             check_cancel(abort)
     return vectors, tokens

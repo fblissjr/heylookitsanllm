@@ -183,3 +183,26 @@ def test_mlx_load_materializes_private_buffers_across_workers():
     finally:
         _executor_pool.release(first)
         _executor_pool.release(second)
+
+
+def test_window_vectors_are_truncated_and_normalized_like_item_vectors(info):
+    request = EmbeddingRequest(model="embed", dimensions=128, input=["x"])
+    out = finish(request, info, [{"embedding": [1.0] * 768, "windows": [
+        {"start": 0.0, "end": 32.0, "frame_times": [0.0, 1.0], "embedding": [2.0, *([0.0] * 767)]}]}], 5)
+    window = out.data[0].windows[0]
+    assert len(window.embedding) == 128 and window.embedding[0] == 1.0 and window.frame_times == [0.0, 1.0]
+    assert finish(request, info, [[1.0] * 768], 1).data[0].windows is None
+
+
+def test_content_picker_keeps_anchors_and_finds_a_brief_event():
+    import numpy as np
+    from heylook_llm.providers.video_windows import plan
+    times = np.arange(0, 64, 0.25)                                  # 4 fps candidates over 64 s
+    frames = np.zeros((len(times), 16, 16, 3), dtype=np.uint8)
+    frames[(times >= 37.3) & (times < 37.8)] = 255                  # 0.5 s event between whole seconds
+    windows = plan(times, 64.0, 32.0, "content", 1.0, 32, frames)
+    assert [(w[0], w[1]) for w in windows] == [(0.0, 32.0), (32.0, 64.0)]
+    assert all(len(w[2]) <= 32 for w in windows)
+    assert any(37.3 <= times[s] < 37.8 for s in windows[1][2])     # content sampling sees it
+    fps = plan(times, 64.0, 32.0, "fps", 1.0, 32)
+    assert not any(37.3 <= times[s] < 37.8 for s in fps[1][2])      # a 1 fps grid steps over it

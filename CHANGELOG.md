@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.233]
+
+### Added
+
+- **Windowed video embeddings on MLX.** A video block in `/v1/embeddings` may add `windows: {seconds?, sampling?}`; its row then also carries `windows: [{start, end, frame_times, embedding}]`, one vector per consecutive window of at most `seconds` (default and maximum `engine.embedding.video_windows.max_seconds`, the checkpoint's `max_frames / fps`: 32 s for EmbeddingGemma 2). mlx-vlm's own sampler spreads 32 frames over a whole clip, so a long video's brief moments fall between frames; windows keep each vector inside the regime the model trained on. `sampling: "content"` (default) decodes 4 fps candidates per window and keeps evenly spaced anchors plus the frames farthest from their per-pixel median; `"fps"` takes the model's own rate. The row's whole-video `embedding` is unchanged (checked live: identical with and without windows). heylook passes its own sampler to mlx-vlm's decoder and feeds the decoded frames back with upstream sampling off (`providers/video_windows.py`); `tests/contract/test_mlxvlm_surface.py::TestVideoWindowHooks` pins both internals. gguf refuses windows (llama-server samples video itself). A windowed item holds only that video block; windows on a non-video block is a 422.
+- Evidence (`internal/claude/embeddinggemma2_probes/video_events/`): on synthetic clips, spliced real footage and a 17.5 s screen recording, content sampling ranked every brief event's window first, including 0.5 s events a 1 fps grid misses; through the server it reproduces the in-process probe exactly (`results_http.txt`). Content sampling decodes about 4x the frames of 1 fps. A 300 s synthetic noise clip exceeded the 32 MiB per-block media cap (422), so long videos may need re-encoding.
+
 ## [2.0.232]
 
 ### Changed

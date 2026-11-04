@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from heylook_llm.schema.embeddings import (
-    EmbeddingResult, EmbeddingVector, MAX_MEDIA_BYTES, MAX_REQUEST_MEDIA_BYTES,
+    EmbeddingResult, EmbeddingVector, EmbeddingWindow, MAX_MEDIA_BYTES, MAX_REQUEST_MEDIA_BYTES,
 )
 from heylook_llm.providers.base import InvalidGenerationRequest
 from .generation_gate import GenerationCancelled
@@ -58,7 +58,10 @@ def resolved_items(request, info, abort):
                 suffix = mimetypes.guess_extension(source.media_type) or ".bin"
                 path = Path(folder) / f"{index}-{len(parts)}{suffix}"
                 path.write_bytes(data)
-                parts.append({"type": block.type, "path": str(path), "media_type": source.media_type})
+                part = {"type": block.type, "path": str(path), "media_type": source.media_type}
+                if getattr(block, "windows", None) is not None:
+                    part["windows"] = block.windows.model_dump()
+                parts.append(part)
             items.append((prompt, parts))
         yield items
 
@@ -69,14 +72,22 @@ def finish(request, info, vectors, tokens):
         raise InvalidGenerationRequest(f"Unsupported dimensions: {dimensions}; choose {info['dimensions']}")
     if len(vectors) != len(request.input):
         raise RuntimeError("Embedding engine returned the wrong number of vectors")
-    data = []
-    for index, vector in enumerate(vectors):
+    def final(index, vector):
         if len(vector) != info["native_dimensions"] or not all(math.isfinite(v) for v in vector):
             raise RuntimeError(f"input[{index}]: engine returned an invalid embedding")
         vector = vector[:dimensions]
         norm = math.sqrt(math.fsum(v * v for v in vector))
         if not norm:
             raise RuntimeError(f"input[{index}]: engine returned a zero embedding")
-        data.append(EmbeddingVector(index=index, embedding=[v / norm for v in vector],
-                                    prompt_name=request.input[index].prompt_name))
+        return [v / norm for v in vector]
+
+    data = []
+    for index, out in enumerate(vectors):
+        # An item whose video asked for windows comes back as {"embedding", "windows"}.
+        vector, windows = (out["embedding"], out["windows"]) if isinstance(out, dict) else (out, None)
+        data.append(EmbeddingVector(
+            index=index, embedding=final(index, vector), prompt_name=request.input[index].prompt_name,
+            windows=None if windows is None else [
+                EmbeddingWindow(start=w["start"], end=w["end"], frame_times=w["frame_times"],
+                                embedding=final(index, w["embedding"])) for w in windows]))
     return EmbeddingResult(model=request.model, dimensions=dimensions, data=data, input_tokens=tokens)

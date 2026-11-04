@@ -957,6 +957,16 @@ image, audio and video blocks. A list of items is a batch of independent vectors
 Media sources are HTTP(S) URLs or base64 (`data` instead of `url`). Video embeds
 visual frames; include a separate audio block for its soundtrack.
 
+To search inside a long video, add `"windows": {}` to its block (MLX models only;
+check `engine.embedding.video_windows`). The row keeps its whole-video `embedding`
+and adds `windows: [{start, end, frame_times, embedding}]`, one vector per window
+of at most 32 s for EmbeddingGemma 2. Rank windows against a query to find the
+moment, and seek to its `start`. Frames inside a window are chosen by content by
+default, which catches brief moments a fixed 1 fps grid steps over; pass
+`"sampling": "fps"` for the fixed rate, which decodes about a quarter as many frames.
+A windowed item holds only that video. Each media block is capped at 32 MiB, so a
+long or high-bitrate video may need re-encoding before upload.
+
 Read `data[].embedding` in `index` order. Vectors are L2-normalized after optional
 supported dimension truncation. Scores from their dot product are cosine
 similarities, not probabilities. Store the model identity, engine, prompt choice

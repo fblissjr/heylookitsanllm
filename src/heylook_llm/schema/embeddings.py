@@ -33,15 +33,32 @@ class EmbeddingText(BaseModel):
     text: str = Field(max_length=MAX_TEXT_CHARS)
 
 
+class VideoWindows(BaseModel):
+    """Opt-in: also embed a video as consecutive windows, one vector each.
+
+    ``seconds`` omitted means the longest window the model trained on (the
+    engine reports it as ``engine.embedding.video_windows.max_seconds``).
+    ``sampling`` picks frames inside a window: ``content`` (the default) keeps
+    evenly spaced anchors plus the frames that differ most from them; ``fps``
+    takes frames at the model's own rate.
+    """
+    model_config = ConfigDict(extra="forbid")
+    seconds: float | None = Field(default=None, gt=0)
+    sampling: Literal["content", "fps"] = "content"
+
+
 class EmbeddingMedia(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: Literal["image", "audio", "video"]
     source: EmbeddingSource
+    windows: VideoWindows | None = None
 
     @model_validator(mode="after")
     def mime_matches(self):
         if not self.source.media_type.startswith(self.type + "/"):
             raise ValueError("media_type must match the content block type")
+        if self.windows is not None and self.type != "video":
+            raise ValueError("windows applies to video blocks only")
         return self
 
 
@@ -52,6 +69,13 @@ class EmbeddingItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     content: list[EmbeddingBlock] = Field(min_length=1, max_length=32)
     prompt_name: str | None = Field(default=None, max_length=128)
+
+    @model_validator(mode="after")
+    def windowed_video_stands_alone(self):
+        # Window times belong to one video; another block would make them ambiguous.
+        if any(getattr(b, "windows", None) is not None for b in self.content) and len(self.content) != 1:
+            raise ValueError("an item with video windows must contain only that video block")
+        return self
 
 
 class EmbeddingRequest(BaseModel):
@@ -76,10 +100,18 @@ class EmbeddingRequest(BaseModel):
         return value
 
 
+class EmbeddingWindow(BaseModel):
+    start: float
+    end: float
+    frame_times: list[float]        # seconds of the frames this window's vector saw
+    embedding: list[float]
+
+
 class EmbeddingVector(BaseModel):
     index: int
     embedding: list[float]
     prompt_name: str | None = None
+    windows: list[EmbeddingWindow] | None = None   # only when the item's video asked for windows
 
 
 class EmbeddingResult(BaseModel):

@@ -13,6 +13,9 @@ def embed(provider, items, abort):
     vectors, tokens = [], 0
     for index, (prompt, parts) in enumerate(items):
         check_cancel(abort)
+        if any(p.get("windows") is not None for p in parts):
+            # llama-server samples video frames itself; heylook cannot choose them (VISION 5: refuse).
+            raise InvalidGenerationRequest(f"input[{index}]: video windows run on MLX embedding models only")
         content = [{"type": "text", "text": prompt}] if prompt else []
         for part in parts:
             kind = part["type"]

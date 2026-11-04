@@ -60,8 +60,22 @@ def embedding_info(provider, config):
         "native_dimensions": GEMMA2_DIMENSIONS[-1], "max_input_tokens": GEMMA2_CONTEXT,
         "prompts": {k: v for k, v in prompts.items() if isinstance(v, str)},
         "normalization": "l2", "video_audio": "separate_audio_block",
+        "video_windows": _video_windows(provider, root, modalities),
         "provenance": "model_files_and_architecture_contract",
     }
+
+
+def _video_windows(provider, root, modalities):
+    """Windowed video embedding is MLX-only: it steers mlx-vlm's frame sampler,
+    which llama-server does not expose. The longest window is the checkpoint's
+    own frame budget at its own rate (processor_config.json video_processor)."""
+    if provider != "mlx" or "video" not in modalities:
+        return None
+    video = read_json(root / "processor_config.json").get("video_processor") or {}
+    fps, max_frames = video.get("fps"), video.get("max_frames")
+    if not fps or not max_frames:
+        return None
+    return {"max_seconds": max_frames / fps, "sampling": ["content", "fps"], "default_sampling": "content"}
 
 
 def gguf_embedding_profile(config):

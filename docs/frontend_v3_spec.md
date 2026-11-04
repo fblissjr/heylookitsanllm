@@ -218,11 +218,18 @@ An item's ordered content contains `{type: "text", text}` or
 HTTP(S) media uses `source: {type: "url", media_type, url}`. Each item yields one
 joint vector. Multiple items stay independent and ordered. No role/chat template
 or generation parameters are accepted. Video uses visual frames; its soundtrack
-requires a separate audio block.
+requires a separate audio block. A video block may add `windows: {seconds?, sampling?}`
+(MLX only; gguf answers 400): the row then also carries `windows: [{start, end,
+frame_times, embedding}]`, one vector per consecutive window of at most `seconds`
+(default and maximum `engine.embedding.video_windows.max_seconds`, the checkpoint's
+`max_frames / fps`). `sampling` is `content` (default: evenly spaced anchors plus the
+frames least like them, from 4 fps candidates) or `fps` (the model's own rate). The
+row's own `embedding` is unchanged by windows. An item with windows must hold only
+that video block (422 otherwise); windows on a non-video block is a 422.
 
 Discover support in `engine.embedding`: `modalities`, `dimensions`,
-`native_dimensions`, `max_input_tokens`, `prompts`, `normalization`, `video_audio`
-and `provenance`. GGUF also reports its `load_profile`. These are checkpoint and
+`native_dimensions`, `max_input_tokens`, `prompts`, `normalization`, `video_audio`,
+`video_windows` (`{max_seconds, sampling, default_sampling}` or null) and `provenance`. GGUF also reports its `load_profile`. These are checkpoint and
 architecture facts; codecs must be installed for media decoding. The prompt map
 comes from the checkpoint's `config_sentence_transformers.json`. An omitted
 `prompt_name` adds no prefix. A selected prompt is applied once before content.
@@ -231,7 +238,7 @@ Limits: 16 items, 32 blocks/item, 131072 characters/text block, 32 MiB decoded
 bytes/media block and 64 MiB total media. Expanded input must fit model context;
 there is no automatic truncation. EmbeddingGemma 2 supports 128/256/512/768 output
 dimensions (default 768). Final vectors are truncated then L2-normalized.
-Response: `{model, dimensions, data: [{index, embedding: number[], prompt_name}],
+Response: `{model, dimensions, data: [{index, embedding: number[], prompt_name, windows}],
 input_tokens: number|null, request_id, elapsed_ms}`. Failure is atomic, never a
 partial result. Unknown model = 404; unsupported model/modality/dimensions/prompt
 or invalid decoded input = 400; schema violation = 422; queue saturation = 503;

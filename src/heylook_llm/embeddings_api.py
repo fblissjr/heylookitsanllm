@@ -32,6 +32,13 @@ async def create_embeddings(body: EmbeddingRequest, request: Request, response: 
             raise HTTPException(status_code=400, detail=f"input[{index}]: unknown prompt_name")
         if any(block.type not in info["modalities"] for block in item.content):
             raise HTTPException(status_code=400, detail=f"input[{index}]: unsupported modality")
+        windows = [w for b in item.content if (w := getattr(b, "windows", None)) is not None]
+        if windows:
+            offered = info.get("video_windows")
+            if not offered:
+                raise HTTPException(status_code=400, detail=f"input[{index}]: video windows run on MLX embedding models only")
+            if windows[0].seconds is not None and windows[0].seconds > offered["max_seconds"]:
+                raise HTTPException(status_code=400, detail=f"input[{index}]: windows.seconds exceeds {offered['max_seconds']}")
 
     request_id = resolve_request_id(request.headers.get("X-Request-ID"), prefix="emb")
     response.headers["X-Request-ID"] = request_id
