@@ -4,9 +4,12 @@
 
 import { httpError, requestId } from './api.js';
 
-export const MAX_ITEMS = 16;                  // server: items per request
-export const MAX_BATCH_BYTES = 48 * 2 ** 20;  // under the server's 64 MB request media cap
-export const MAX_FILE_BYTES = 32 * 2 ** 20;   // server: bytes per media block
+export const MAX_ITEMS = 16;                   // server: items per request
+export const MAX_FILE_BYTES = 32 * 2 ** 20;    // server: bytes per image/audio block
+export const MAX_VIDEO_BYTES = 256 * 2 ** 20;  // server: bytes per video block
+export const MAX_REQUEST_MEDIA_BYTES = 256 * 2 ** 20;
+export const MAX_BATCH_BYTES = 192 * 2 ** 20;  // under the server's 256 MiB request media cap
+export const maxBytesFor = (kind) => (kind === 'video' ? MAX_VIDEO_BYTES : MAX_FILE_BYTES);
 export const KINDS = ['image', 'audio', 'video'];
 
 const EXT_MIME = {

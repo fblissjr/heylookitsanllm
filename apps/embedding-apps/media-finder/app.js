@@ -1,5 +1,5 @@
 import {
-  MAX_FILE_BYTES, cancel, embedWithRetry, kindOf, listEmbeddingModels, mediaBlock, newRequestId,
+  cancel, embedWithRetry, kindOf, listEmbeddingModels, maxBytesFor, mediaBlock, newRequestId,
   openStore, planBatches, spaceId, textBlock, thumbnail, topK,
 } from '../kit/embed-kit.js';
 
@@ -92,7 +92,8 @@ async function indexFiles(fileList) {
     const kind = kindOf(file);
     if (!kind) continue; // folders hold plenty of non-media files; not worth listing
     if (!info.modalities.includes(kind)) { problem(path, `this model does not take ${kind}`); continue; }
-    if (file.size > MAX_FILE_BYTES) { problem(path, 'larger than 32 MB'); continue; }
+    const cap = maxBytesFor(kind);
+    if (file.size > cap) { problem(path, `larger than ${cap >> 20} MB`); continue; }
     const id = `${sp}|${path}|${file.size}|${file.lastModified}`;
     state.files.set(id, file);
     if (!done.has(id)) entries.push({ id, path, kind, file, bytes: file.size });
@@ -180,7 +181,8 @@ async function search(event) {
   if (text) content.push(textBlock(text));
   try {
     if (example) {
-      if (!kindOf(example) || example.size > MAX_FILE_BYTES) throw new Error('The example must be an image, audio or video file under 32 MB.');
+      const k = kindOf(example);
+      if (!k || example.size > maxBytesFor(k)) throw new Error('The example must be an image/audio file under 32 MB or video under 256 MB.');
       content.push(await mediaBlock(example));
     }
     say('Searching…');

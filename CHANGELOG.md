@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.237]
+
+### Changed
+
+- **Client-side media caps match the 256 MiB video limit.** `frontend/js/embed-kit.js`, `frontend/js/pages/embeddings.js`, and `apps/embedding-apps/` (`kit/embed-kit.js`, `media-finder/app.js`, `embedding-lab/app.js`) now use `maxBytesFor(kind)` (`256 MiB` for `video`, `32 MiB` for `image` and `audio`) and `MAX_REQUEST_MEDIA_BYTES = 256 MiB` (`MAX_BATCH_BYTES = 192 MiB`), matching `schema/embeddings.MEDIA_BYTES_BY_TYPE` from v2.0.236.
+
 ## [2.0.236]
 
 ### Changed

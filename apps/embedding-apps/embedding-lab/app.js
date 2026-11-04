@@ -1,5 +1,5 @@
 import {
-  MAX_FILE_BYTES, cancel, embedWithRetry, kindOf, listEmbeddingModels, mediaBlock, newRequestId,
+  cancel, embedWithRetry, kindOf, listEmbeddingModels, maxBytesFor, mediaBlock, newRequestId,
   planBatches, textBlock,
 } from '../kit/embed-kit.js';
 import { buildPlan, evaluateCase, summarize } from './metrics.js';
@@ -68,7 +68,8 @@ async function loadFolder(fileList) {
     const set = JSON.parse(await setFile.text());
     const plan = buildPlan(set, (path) => {
       const f = files.get(path);
-      return f && kindOf(f) && f.size <= MAX_FILE_BYTES;
+      const k = f && kindOf(f);
+      return k && f.size <= maxBytesFor(k);
     });
     state.plan = plan; state.setName = set.name || 'test set';
     const media = plan.pool.filter((p) => p.file).length + plan.queries.filter((q) => q.file).length;

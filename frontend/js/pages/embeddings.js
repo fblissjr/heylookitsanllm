@@ -4,8 +4,8 @@ import { armedConfirm, createEl as el, formatBytes } from "../utils.js";
 import { api, requestId, httpError } from "../api.js";
 import * as drawer from "../settings-drawer.js";
 import {
-  MAX_FILE_BYTES, buildPlan, buildSampleDataset, cosine, embedWithRetry,
-  evaluateCase, fileToBase64, kindOf, mediaBlock, mimeOf, openStore,
+  MAX_REQUEST_MEDIA_BYTES, buildPlan, buildSampleDataset, cosine, embedWithRetry,
+  evaluateCase, fileToBase64, kindOf, maxBytesFor, mediaBlock, mimeOf, openStore,
   planBatches, spaceId, summarize, textBlock, thumbnail, topK,
 } from "../embed-kit.js";
 
@@ -201,8 +201,9 @@ export default createPage({
       const f = e.target.files?.[0];
       e.target.value = "";
       if (!f) return;
-      if (!kindOf(f) || f.size > MAX_FILE_BYTES) {
-        status.textContent = "Choose an image, audio, or video file under 32 MB.";
+      const k = kindOf(f);
+      if (!k || f.size > maxBytesFor(k)) {
+        status.textContent = "Choose an image/audio file under 32 MB or video under 256 MB.";
         return;
       }
       s.finderExample = f;
@@ -225,7 +226,8 @@ export default createPage({
         const kind = kindOf(file);
         if (!kind) { skipped.push(`${path}: unsupported format`); continue; }
         if (!info.modalities.includes(kind)) { skipped.push(`${path}: model does not support ${kind}`); continue; }
-        if (file.size > MAX_FILE_BYTES) { skipped.push(`${path}: over 32 MB (${formatBytes(file.size)})`); continue; }
+        const cap = maxBytesFor(kind);
+        if (file.size > cap) { skipped.push(`${path}: over ${cap >> 20} MB (${formatBytes(file.size)})`); continue; }
         s.finderHandles.set(path, file);
         if (existing.has(`${sp}|${path}`)) continue;
         todo.push({ file, path, kind, bytes: file.size });
@@ -444,7 +446,8 @@ export default createPage({
         const set = JSON.parse(await setFile.text());
         const plan = buildPlan(set, (path) => {
           const f = files.get(path);
-          return f && kindOf(f) && f.size <= MAX_FILE_BYTES;
+          const k = f && kindOf(f);
+          return k && f.size <= maxBytesFor(k);
         });
         s.labPlan = plan; s.labSetName = set.name || "test set";
         const media = plan.pool.filter((p) => p.file).length + plan.queries.filter((q) => q.file).length;
@@ -679,7 +682,7 @@ export default createPage({
         for (const file of chosen) {
           const kind = kindOf(file);
           if (!kind) { status.textContent = `Unsupported file type: ${file.name}`; continue; }
-          if (file.size > 32 * 1024 * 1024) { status.textContent = `${file.name} exceeds the media size limit.`; continue; }
+          if (file.size > maxBytesFor(kind)) { status.textContent = `${file.name} exceeds the media size limit.`; continue; }
           if (item.blocks.length >= 32) { status.textContent = "An item can contain at most 32 blocks."; break; }
           const thumb = await thumbnail(file, kind);
           item.blocks.push({ kind, file, thumb });
@@ -712,7 +715,7 @@ export default createPage({
             if (!info.modalities.includes(block.kind)) throw new Error(`This model does not support ${block.kind}.`);
             if (!block.file) { if (block.text.trim()) content.push({ type: "text", text: block.text }); continue; }
             bytes += block.file.size;
-            if (bytes > 64 * 1024 * 1024) throw new Error("Combined media exceeds the request size limit.");
+            if (bytes > MAX_REQUEST_MEDIA_BYTES) throw new Error("Combined media exceeds the request size limit.");
             const data = await fileToBase64(block.file);
             if (!ctx.alive) return;
             const win = block.kind === "video" && block.windows && info.video_windows ? { sampling: block.windows } : null;
