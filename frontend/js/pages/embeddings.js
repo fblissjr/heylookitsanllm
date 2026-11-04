@@ -134,7 +134,7 @@ export default createPage({
     const finderDocPrompt = el("select", { "aria-label": "Finder document prompt" });
     const finderQueryPrompt = el("select", { "aria-label": "Finder query prompt" });
     const finderWindows = el("select", { "aria-label": "Finder video windows" });
-    const finderFolderInput = el("input", { type: "file", webkitdirectory: "", multiple: true, hidden: true, "aria-label": "Index media folder" });
+    const finderFolderInput = el("input", { type: "file", webkitdirectory: true, multiple: true, hidden: true, "aria-label": "Index media folder" });
     const finderFilesInput = el("input", { type: "file", accept: "image/*,audio/*,video/*", multiple: true, hidden: true, "aria-label": "Index media files" });
     const finderFolderBtn = button("Index folder", () => finderFolderInput.click());
     const finderFilesBtn = button("Index files", () => finderFilesInput.click());
@@ -169,8 +169,10 @@ export default createPage({
     );
 
     const finderSpace = () => spaceId({
-      model: model.value, dimensions: Number(dimensions.value), prompt: finderDocPrompt.value,
+      model: model.value, dimensions: Number(dimensions.value),
+      prompt: finderDocPrompt.value, windows: finderWindows.value,
     });
+    const fileCount = (records) => new Set(records.map((r) => r.fileId || r.id.split("#t=")[0])).size;
     async function ensureStore() {
       if (!s.store) s.store = await openStore("media-finder");
       return s.store;
@@ -180,21 +182,27 @@ export default createPage({
       try {
         const store = await ensureStore();
         const records = await store.all(finderSpace());
-        finderSpaceNote.textContent = `${records.length} file(s) indexed under ${model.value} · ${dimensions.value}d · doc prompt: ${finderDocPrompt.value || "none"}.`;
+        const files = fileCount(records);
+        finderSpaceNote.textContent = `${files} file(s) indexed under ${model.value} · ${dimensions.value}d · doc prompt: ${finderDocPrompt.value || "none"} · windows: ${finderWindows.value || "none"}.`;
       } catch (err) { status.textContent = err.message; }
     }
 
     finderDocPrompt.addEventListener("change", () => { finderGrid.replaceChildren(); refreshFinderStatus(); });
+    finderWindows.addEventListener("change", () => { finderGrid.replaceChildren(); refreshFinderStatus(); });
     finderFolderInput.addEventListener("change", (e) => { indexFinderFiles([...(e.target.files || [])]); e.target.value = ""; });
     finderFilesInput.addEventListener("change", (e) => { indexFinderFiles([...(e.target.files || [])]); e.target.value = ""; });
     finderQueryInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); runFinderSearch(); } });
 
     armedConfirm(finderClearBtn, async () => {
-      const store = await ensureStore();
-      await store.clear(finderSpace());
-      finderGrid.replaceChildren();
-      await refreshFinderStatus();
-      status.textContent = "Cleared index for current configuration.";
+      try {
+        const store = await ensureStore();
+        await store.clear(finderSpace());
+        finderGrid.replaceChildren();
+        await refreshFinderStatus();
+        status.textContent = "Cleared index for current configuration.";
+      } catch (err) {
+        if (ctx.alive) status.textContent = err.message;
+      }
     }, "Clear index?", null, () => finderSpace());
 
     finderExInput.addEventListener("change", (e) => {
@@ -203,9 +211,18 @@ export default createPage({
       if (!f) return;
       const info = selected()?.engine.embedding;
       const k = kindOf(f);
-      const cap = maxBytesFor(info, k);
-      if (!k || (cap && f.size > cap)) {
-        status.textContent = `Choose an image, audio, or video file within the model limit (${formatBytes(cap)}).`;
+      if (!k) {
+        status.textContent = "Choose an image, audio, or video file.";
+        return;
+      }
+      try {
+        const cap = maxBytesFor(info, k);
+        if (f.size > cap) {
+          status.textContent = `Choose an image, audio, or video file within the model limit (${formatBytes(cap)}).`;
+          return;
+        }
+      } catch (err) {
+        status.textContent = err.message;
         return;
       }
       s.finderExample = f;
@@ -216,24 +233,7 @@ export default createPage({
       );
     });
 
-    async function indexFinderFiles(fileList) {
-      const info = selected()?.engine.embedding;
-      if (!info) return;
-      const sp = finderSpace();
-      const store = await ensureStore();
-      const existing = await store.ids(sp);
-      const todo = [], skipped = [];
-      for (const file of fileList || []) {
-        const path = file.webkitRelativePath || file.name;
-        const kind = kindOf(file);
-        if (!kind) { skipped.push(`${path}: unsupported format`); continue; }
-        if (!info.modalities.includes(kind)) { skipped.push(`${path}: model does not support ${kind}`); continue; }
-        const cap = maxBytesFor(info, kind);
-        if (cap && file.size > cap) { skipped.push(`${path}: over ${formatBytes(cap)} (${formatBytes(file.size)})`); continue; }
-        s.finderHandles.set(path, file);
-        if (existing.has(`${sp}|${path}`)) continue;
-        todo.push({ file, path, kind, bytes: file.size });
-      }
+    function paintSkipped(skipped) {
       finderSkipped.hidden = !skipped.length;
       if (skipped.length) {
         finderSkipped.replaceChildren(
@@ -241,28 +241,49 @@ export default createPage({
           el("ul", {}, skipped.slice(0, 40).map((msg) => el("li", {}, [msg]))),
         );
       }
-      if (!todo.length) {
-        await refreshFinderStatus();
-        status.textContent = "All supported files in that selection are already indexed.";
-        return;
-      }
-      const batches = planBatches(todo, info.limits);
-      let done = 0;
-      controls.disabled = true;
-      stop.hidden = false;
-      finderProgress.hidden = false;
-      finderProgress.value = 0;
-      finderProgress.max = todo.length;
-      s.abort = new AbortController();
+    }
+
+    async function indexFinderFiles(fileList) {
+      const info = selected()?.engine.embedding;
+      if (!info) return;
+      let done = 0, todo = [];
       try {
+        const sp = finderSpace();
+        const store = await ensureStore();
+        const existing = await store.ids(sp);
+        const skipped = [];
+        for (const file of fileList || []) {
+          const path = file.webkitRelativePath || file.name;
+          const kind = kindOf(file);
+          if (!kind) { skipped.push(`${path}: unsupported format`); continue; }
+          if (!info.modalities.includes(kind)) { skipped.push(`${path}: model does not support ${kind}`); continue; }
+          const cap = maxBytesFor(info, kind);
+          if (file.size > cap) { skipped.push(`${path}: over ${formatBytes(cap)} (${formatBytes(file.size)})`); continue; }
+          const id = `${sp}|${path}|${file.size}|${file.lastModified}`;
+          s.finderHandles.set(id, file);
+          if (existing.has(id)) continue;
+          todo.push({ id, file, path, kind, bytes: file.size });
+        }
+        paintSkipped(skipped);
+        if (!todo.length) {
+          await refreshFinderStatus();
+          status.textContent = "All supported files in that selection are already indexed.";
+          return;
+        }
+        const batches = planBatches(todo, info.limits);
+        controls.disabled = true;
+        stop.hidden = false;
+        finderProgress.hidden = false;
+        finderProgress.value = 0;
+        finderProgress.max = todo.length;
+        s.abort = new AbortController();
         const winOpt = finderWindows.value ? { sampling: finderWindows.value } : null;
-        for (const batch of batches) {
-          status.textContent = `Indexing ${done + 1}–${done + batch.length} of ${todo.length}…`;
-          const items = await Promise.all(batch.map(async (b) => ({
+        const embedEntries = async (entries) => {
+          const items = await Promise.all(entries.map(async (b) => ({
             content: [await mediaBlock(b.file, b.kind === "video" ? winOpt : null)],
             ...(finderDocPrompt.value ? { prompt_name: finderDocPrompt.value } : {}),
           })));
-          const thumbs = await Promise.all(batch.map((b) => thumbnail(b.file, b.kind)));
+          const thumbs = await Promise.all(entries.map((b) => thumbnail(b.file, b.kind)));
           s.runId = requestId();
           const result = await embedWithRetry({
             model: model.value, dimensions: Number(dimensions.value), items,
@@ -270,9 +291,10 @@ export default createPage({
           });
           const out = [];
           result.data.forEach((row, i) => {
+            const b = entries[i];
             const base = {
-              id: `${sp}|${batch[i].path}`, space: sp, path: batch[i].path, name: batch[i].file.name,
-              kind: batch[i].kind, size: batch[i].bytes, mtime: batch[i].file.lastModified,
+              id: b.id, fileId: b.id, space: sp, path: b.path, name: b.file.name,
+              kind: b.kind, size: b.bytes, mtime: b.file.lastModified,
               thumb: thumbs[i], vec: new Float32Array(row.embedding),
             };
             out.push(base);
@@ -280,14 +302,34 @@ export default createPage({
               for (const w of row.windows) {
                 out.push({
                   ...base,
-                  id: `${sp}|${batch[i].path}#t=${w.start}-${w.end}`,
+                  id: `${b.id}#t=${w.start}-${w.end}`, fileId: b.id,
                   start: w.start, end: w.end,
                   vec: new Float32Array(w.embedding),
                 });
               }
             }
           });
-          await store.put(out);
+          return out;
+        };
+        for (const batch of batches) {
+          status.textContent = `Indexing ${done + 1}–${done + batch.length} of ${todo.length}…`;
+          let out;
+          try {
+            out = await embedEntries(batch);
+          } catch (err) {
+            if (batch.length === 1 || s.abort.signal.aborted || err.status !== 400) throw err;
+            out = [];
+            for (const b of batch) {
+              try {
+                out.push(...await embedEntries([b]));
+              } catch (single) {
+                if (single.status !== 400) throw single;
+                skipped.push(`${b.path}: ${single.message}`);
+                paintSkipped(skipped);
+              }
+            }
+          }
+          if (out.length) await store.put(out);
           done += batch.length;
           finderProgress.value = done;
         }
@@ -301,10 +343,24 @@ export default createPage({
       }
     }
 
+    function closePreview() {
+      for (const m of previewDialog.querySelectorAll("video, audio")) {
+        m.pause();
+        m.removeAttribute("src");
+        m.load();
+      }
+      previewDialog.replaceChildren();
+      if (s.finderPreviewUrl) { URL.revokeObjectURL(s.finderPreviewUrl); s.finderPreviewUrl = null; }
+    }
+    previewDialog.onclose = closePreview;
+
     function openPreview(record) {
-      const file = s.finderHandles.get(record.path);
-      if (!file) return;
-      if (s.finderPreviewUrl) URL.revokeObjectURL(s.finderPreviewUrl);
+      const file = s.finderHandles.get(record.fileId || record.id);
+      if (!file) {
+        status.textContent = `${record.path}: re-choose its folder or files to open the original (the index keeps vectors and thumbnails only).`;
+        return;
+      }
+      closePreview();
       const url = URL.createObjectURL(file);
       s.finderPreviewUrl = url;
       const mediaEl = el(record.kind === "image" ? "img" : record.kind, {
@@ -320,9 +376,6 @@ export default createPage({
         ]),
         mediaEl,
       );
-      previewDialog.onclose = () => {
-        if (s.finderPreviewUrl) { URL.revokeObjectURL(s.finderPreviewUrl); s.finderPreviewUrl = null; }
-      };
       previewDialog.showModal();
     }
 
@@ -332,18 +385,19 @@ export default createPage({
         status.textContent = "Enter search words, attach an example file, or both.";
         return;
       }
-      const store = await ensureStore();
-      const records = await store.all(finderSpace());
-      if (!records.length) {
-        status.textContent = "Index a folder or files in this configuration before searching.";
-        return;
-      }
-      controls.disabled = true;
-      stop.hidden = false;
-      s.abort = new AbortController();
-      s.runId = requestId();
-      status.textContent = `Searching ${records.length} indexed file(s)…`;
       try {
+        const store = await ensureStore();
+        const records = await store.all(finderSpace());
+        if (!records.length) {
+          status.textContent = "Index a folder or files in this configuration before searching.";
+          return;
+        }
+        const files = fileCount(records);
+        controls.disabled = true;
+        stop.hidden = false;
+        s.abort = new AbortController();
+        s.runId = requestId();
+        status.textContent = `Searching ${files} indexed file(s)…`;
         const content = [];
         if (text) content.push(textBlock(text));
         if (s.finderExample) content.push(await mediaBlock(s.finderExample));
@@ -358,10 +412,11 @@ export default createPage({
           const thumbEl = record.thumb
             ? el("img", { class: "embeddings__card-thumb", src: record.thumb, alt: record.name })
             : el("div", { class: "embeddings__card-placeholder" }, [record.kind]);
-          const hasHandle = s.finderHandles.has(record.path);
-          const card = el("article", {
-            class: `embeddings__card${hasHandle ? " embeddings__card--clickable" : ""}`,
+          return el("button", {
+            type: "button",
+            class: "embeddings__card embeddings__card--clickable",
             title: `${record.path}${fmtSpan(record)}`,
+            onclick: () => openPreview(record),
           }, [
             thumbEl,
             el("div", { class: "embeddings__card-meta" }, [
@@ -369,10 +424,8 @@ export default createPage({
               el("span", { class: "embeddings__card-name" }, [`${record.name}${fmtSpan(record)}`]),
             ]),
           ]);
-          if (hasHandle) card.addEventListener("click", () => openPreview(record));
-          return card;
         }));
-        status.textContent = `Showing top ${hits.length} match(es) of ${records.length} indexed.`;
+        status.textContent = `Showing top ${hits.length} match(es) across ${files} indexed file(s).`;
       } catch (err) {
         if (ctx.alive) status.textContent = err.name === "AbortError" ? "Search cancelled." : err.message;
       } finally {
@@ -385,7 +438,7 @@ export default createPage({
 
     const labQueryPrompt = el("select", { "aria-label": "Lab query prompt" });
     const labDocPrompt = el("select", { "aria-label": "Lab document prompt" });
-    const labFolderInput = el("input", { type: "file", webkitdirectory: "", multiple: true, hidden: true });
+    const labFolderInput = el("input", { type: "file", webkitdirectory: true, multiple: true, hidden: true, "aria-label": "Choose benchmark folder" });
     const labSetInfo = el("p", { class: "muted small" }, ["Load the built-in 8-case multimodal sample set or choose a folder with set.json."]);
     const labConfigList = el("ol", { class: "embeddings__lab-configs" });
     const labProgress = el("progress", { class: "embeddings__progress", value: 0, max: 1, hidden: true });
@@ -395,10 +448,17 @@ export default createPage({
     const labLabel = (c) => `${c.model} · ${c.dimensions}d · query: ${c.queryPrompt || "none"} · doc: ${c.docPrompt || "none"}`;
     const labRunBtn = button("Run benchmark", () => runLabBenchmark());
     const labDownloadBtn = button("Download benchmark JSON", () => {
+      if (!s.labPlan || !s.labResults.length) return;
       download({ set: s.labSetName, cases: s.labPlan.cases.map((c) => c.id), results: s.labResults }, "embedding-lab-results.json");
     });
     labRunBtn.disabled = true;
     labDownloadBtn.disabled = true;
+
+    function resetLabResults() {
+      s.labResults = [];
+      labResultsBox.replaceChildren();
+      labDownloadBtn.disabled = true;
+    }
 
     function renderLabConfigs() {
       labConfigList.replaceChildren(...s.labConfigs.map((c, i) =>
@@ -417,13 +477,18 @@ export default createPage({
     }
 
     const labSampleBtn = button("Load sample set (8 cases)", async () => {
-      labBlocks.clear();
-      const { setName, files, plan } = await buildSampleDataset();
-      s.labSetName = setName; s.labFiles = files; s.labPlan = plan;
-      const media = plan.pool.filter((p) => p.file).length + plan.queries.filter((q) => q.file).length;
-      labSetInfo.textContent = `${setName}: ${plan.cases.length} cases, ${plan.pool.length} documents, ${media} generated shape PNGs.`;
-      if (!s.labConfigs.length && model.value) addLabAblation();
-      else renderLabConfigs();
+      try {
+        labBlocks.clear();
+        resetLabResults();
+        const { setName, files, plan } = await buildSampleDataset();
+        s.labSetName = setName; s.labFiles = files; s.labPlan = plan;
+        const media = plan.pool.filter((p) => p.file).length + plan.queries.filter((q) => q.file).length;
+        labSetInfo.textContent = `${setName}: ${plan.cases.length} cases, ${plan.pool.length} documents, ${media} generated shape PNGs.`;
+        if (!s.labConfigs.length && model.value) addLabAblation();
+        else renderLabConfigs();
+      } catch (err) {
+        if (ctx.alive) status.textContent = err.message;
+      }
     });
 
     function addLabAblation() {
@@ -442,6 +507,7 @@ export default createPage({
       }
       e.target.value = "";
       s.labPlan = null; s.labFiles = files; labBlocks.clear();
+      resetLabResults();
       try {
         const setFile = files.get("set.json");
         if (!setFile) throw new Error("No set.json at the top of that folder.");
@@ -450,8 +516,9 @@ export default createPage({
         const plan = buildPlan(set, (path) => {
           const f = files.get(path);
           const k = f && kindOf(f);
+          if (!k) return false;
           const cap = maxBytesFor(info, k);
-          return k && (!cap || f.size <= cap);
+          return f.size <= cap;
         });
         s.labPlan = plan; s.labSetName = set.name || "test set";
         const media = plan.pool.filter((p) => p.file).length + plan.queries.filter((q) => q.file).length;
@@ -506,6 +573,7 @@ export default createPage({
           model: cfg.model, dimensions: cfg.dimensions, items: input,
           reqId: s.runId, signal: s.abort.signal,
         });
+        if (res.data.length !== batch.length) throw new Error("The server returned the wrong number of vectors.");
         for (const row of res.data) vectors.push(row.embedding);
       }
       return vectors;
@@ -637,13 +705,22 @@ export default createPage({
       prompts(labQueryPrompt, "query");
       prompts(labDocPrompt, "document");
       run.disabled = !info;
+      add.disabled = !info || s.items.length >= requireLimits().items;
       invalidate();
       if (s.mode === "finder") refreshFinderStatus();
     }
 
+    function requireLimits() {
+      const lim = selected()?.engine?.embedding?.limits;
+      if (!lim || !Number.isInteger(lim.items) || !Number.isInteger(lim.blocks_per_item) || !Number.isInteger(lim.request_media_bytes)) {
+        throw new Error("Missing engine.embedding.limits on selected model.");
+      }
+      return lim;
+    }
+
     function addItem(text = "") {
-      const maxItems = () => selected()?.engine.embedding.limits?.items ?? 16;
-      const maxBlocks = () => selected()?.engine.embedding.limits?.blocks_per_item ?? 32;
+      const maxItems = () => requireLimits().items;
+      const maxBlocks = () => requireLimits().blocks_per_item;
       if (s.items.length >= maxItems()) return;
       const item = { blocks: [] };
       item.name = el("input", { type: "text", class: "input", value: `Item ${s.items.length + 1}`, maxLength: 80, "aria-label": "Item label", oninput: invalidate });
@@ -686,16 +763,20 @@ export default createPage({
         const chosen = [...(files.files || [])];
         files.value = "";
         const info = selected()?.engine.embedding;
-        for (const file of chosen) {
-          const kind = kindOf(file);
-          if (!kind) { status.textContent = `Unsupported file type: ${file.name}`; continue; }
-          const cap = maxBytesFor(info, kind);
-          if (cap && file.size > cap) { status.textContent = `${file.name} exceeds the media size limit.`; continue; }
-          if (item.blocks.length >= maxBlocks()) { status.textContent = `An item can contain at most ${maxBlocks()} blocks.`; break; }
-          const thumb = await thumbnail(file, kind);
-          item.blocks.push({ kind, file, thumb });
+        try {
+          for (const file of chosen) {
+            const kind = kindOf(file);
+            if (!kind) { status.textContent = `Unsupported file type: ${file.name}`; continue; }
+            const cap = maxBytesFor(info, kind);
+            if (file.size > cap) { status.textContent = `${file.name} exceeds the media size limit.`; continue; }
+            if (item.blocks.length >= maxBlocks()) { status.textContent = `An item can contain at most ${maxBlocks()} blocks.`; break; }
+            const thumb = await thumbnail(file, kind);
+            item.blocks.push({ kind, file, thumb });
+          }
+          paintBlocks(); invalidate();
+        } catch (err) {
+          if (ctx.alive) status.textContent = err.message;
         }
-        paintBlocks(); invalidate();
       });
       item.card = el("section", { class: "embeddings__item" }, [
         el("div", { class: "embeddings__toolbar" }, [field("Label", item.name), field("Task", item.prompt),
@@ -714,6 +795,7 @@ export default createPage({
       try {
         if (!s.items.length) throw new Error("Add at least one item.");
         const info = selected().engine.embedding;
+        const reqCap = requireLimits().request_media_bytes;
         let bytes = 0;
         const input = [];
         const labels = s.items.map((item, i) => item.name.value.trim() || `Item ${i + 1}`);
@@ -723,7 +805,7 @@ export default createPage({
             if (!info.modalities.includes(block.kind)) throw new Error(`This model does not support ${block.kind}.`);
             if (!block.file) { if (block.text.trim()) content.push({ type: "text", text: block.text }); continue; }
             bytes += block.file.size;
-            if (info.limits?.request_media_bytes && bytes > info.limits.request_media_bytes) throw new Error("Combined media exceeds the request size limit.");
+            if (bytes > reqCap) throw new Error("Combined media exceeds the request size limit.");
             const data = await fileToBase64(block.file);
             if (!ctx.alive) return;
             const win = block.kind === "video" && block.windows && info.video_windows ? { sampling: block.windows } : null;
@@ -789,7 +871,7 @@ export default createPage({
     });
     ctx.onTeardown(() => {
       s.abort?.abort();
-      if (s.finderPreviewUrl) { URL.revokeObjectURL(s.finderPreviewUrl); s.finderPreviewUrl = null; }
+      closePreview();
       if (s.runId) fetch(`/v1/requests/${encodeURIComponent(s.runId)}`, { method: "DELETE", keepalive: true }).catch(() => {});
     });
     try {
@@ -798,7 +880,9 @@ export default createPage({
       s.models = (data.data ?? []).filter((m) => m.engine?.embedding);
       model.replaceChildren(...s.models.map((m) => el("option", { value: m.id }, [m.id])));
       refreshModel();
-      addItem("A dog playing on a beach."); addItem("A puppy running beside the ocean."); addItem("A database query joining two tables.");
+      if (s.models.length) {
+        addItem("A dog playing on a beach."); addItem("A puppy running beside the ocean."); addItem("A database query joining two tables.");
+      }
       status.textContent = s.models.length ? "Ready. Edit the examples or attach your own media." : "No embedding models found. Add a supported checkpoint to a scanned model folder and rescan on Models.";
     } catch (error) { if (ctx.alive) { status.textContent = error.message; run.disabled = true; } }
   },

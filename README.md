@@ -162,8 +162,6 @@ the SSE grammar and the error taxonomy -- the parts a schema cannot express.
 
 - [`apps/batch-labeler/`](apps/batch-labeler/) -- standalone CLI for labeling
   image directories with VLMs, on `/v1/messages`.
-- [`apps/embedding-apps/`](apps/embedding-apps/) -- self-contained apps on
-  `POST /v1/embeddings` (an embedding lab and a media finder)
 - [`apps/optloop-lib/`](apps/optloop-lib/) -- library-level benchmark harness
   for mlx-lm/mlx-vlm fork experiments ([guide](docs/optloop_guide.md))
 

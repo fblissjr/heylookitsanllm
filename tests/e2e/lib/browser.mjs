@@ -19,18 +19,10 @@
 // been eliminated. Priming the panel is what the localStorage seed actually did,
 // and everything downstream inherits from it.
 
-import puppeteer from 'puppeteer-core';
 import { openDrawer, closeDrawer } from './dom.mjs';
 
-const DEFAULT_CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-
 export async function launchBrowser() {
-  return puppeteer.launch({
-    executablePath: process.env.E2E_CHROME || DEFAULT_CHROME,
-    headless: process.env.E2E_HEADFUL ? false : true,
-    defaultViewport: { width: 1280, height: 900 },
-    args: ['--no-first-run', '--no-default-browser-check', '--disable-gpu'],
-  });
+  throw new Error('puppeteer-core has been removed; browser E2E harness is pending migration.');
 }
 
 // A page wired for a suite: tracks uncaught page errors (app.js mount try/catch

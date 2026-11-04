@@ -3,8 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Browser E2E harness for the frontend (puppeteer-core + system Chrome).",
+  "description": "Frontend E2E and JS unit test harness.",
   "scripts": {
+    "test:unit": "node --test embed-kit.test.mjs",
     "e2e": "node run.mjs",
     "e2e:chat": "node run.mjs chat",
     "e2e:pages": "node run.mjs pages",
@@ -12,8 +13,5 @@
     "e2e:embeddings": "node embeddings.mjs",
     "e2e:cost": "node paint_cost.mjs run",
     "e2e:ios": "node ios-sim.mjs"
-  },
-  "dependencies": {
-    "puppeteer-core": "25.10.0"
   }
 }

@@ -255,8 +255,12 @@ It answers `{signalled: N, request_id}`, 404 when nothing runs under the id,
 run whose thinking is off or already closed; gguf leaves that to llama-server).
 Media and the GPU slot remain owned until the current operation actually ends.
 Embeddings use the existing load/eviction policy and global inference queue.
-Chat/notebook selectors exclude embedding models. The `#/embeddings` page uses
-this operation for comparison and export, without storing inputs or vectors.
+Chat/notebook selectors exclude embedding models. On `#/embeddings`, the
+**Compare** and **Embedding Lab** modes store nothing (inputs and results live
+only in memory and are exported as JSON on demand), while **Media Finder**
+persists its per-configuration vector index, thumbnails, and file metadata in the
+browser's IndexedDB (`media-finder`, cleared via **Clear index**; nothing is
+stored on the server).
 
 **Chat completions** `POST /v1/chat/completions` and **Batch** `POST /v1/batch/chat/completions`:
 REMOVED in v1.79.66, together with the OpenAI SSE grammar (`choices[].delta` chunks, `data: [DONE]`,

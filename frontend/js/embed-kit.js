@@ -5,7 +5,12 @@
 import { httpError, requestId } from './api.js';
 
 export const KINDS = ['image', 'audio', 'video'];
-export const maxBytesFor = (info, kind) => info?.limits?.media_bytes?.[kind] ?? 0;
+
+export function maxBytesFor(info, kind) {
+  const cap = info?.limits?.media_bytes?.[kind];
+  if (!Number.isInteger(cap) || cap <= 0) throw new Error(`Missing media_bytes limit for ${kind}`);
+  return cap;
+}
 
 const EXT_MIME = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
@@ -72,12 +77,17 @@ export async function embedWithRetry(args, tries = 4) {
 }
 
 export function planBatches(entries, limits) {
-  const maxItems = limits?.items ?? 1;
-  const maxBytes = Math.floor((limits?.request_media_bytes ?? 0) * 0.75);
+  const maxItems = limits?.items;
+  const reqBytes = limits?.request_media_bytes;
+  if (!Number.isInteger(maxItems) || maxItems <= 0 || !Number.isInteger(reqBytes) || reqBytes <= 0) {
+    throw new Error('Missing embedding request limits');
+  }
+  // 0.75 leaves headroom for 4/3 base64 expansion plus JSON framing under request_media_bytes.
+  const maxBytes = Math.floor(reqBytes * 0.75);
   const batches = [];
   let current = [], bytes = 0;
   for (const entry of entries) {
-    if (current.length && (current.length >= maxItems || (maxBytes && bytes + entry.bytes > maxBytes))) {
+    if (current.length && (current.length >= maxItems || bytes + entry.bytes > maxBytes)) {
       batches.push(current); current = []; bytes = 0;
     }
     current.push(entry); bytes += entry.bytes;
@@ -88,7 +98,8 @@ export function planBatches(entries, limits) {
 
 // ---- IndexedDB vector store & top-K search ---------------------------------
 
-export const spaceId = ({ model, dimensions, prompt }) => `${model}|${dimensions}|${prompt || '-'}`;
+export const spaceId = ({ model, dimensions, prompt, windows }) =>
+  `${model}|${dimensions}|${prompt || '-'}|${windows || '-'}`;
 
 function idbReq(r) {
   return new Promise((resolve, reject) => { r.onsuccess = () => resolve(r.result); r.onerror = () => reject(r.error); });
@@ -109,7 +120,7 @@ export async function openStore(name) {
     async put(records) {
       const t = db.transaction('vectors', 'readwrite');
       for (const r of records) t.objectStore('vectors').put(r);
-      await new Promise((res, rej) => { t.oncomplete = res; t.onerror = () => rej(t.error); });
+      await new Promise((res, rej) => { t.oncomplete = res; t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); });
     },
     ids: async (space) => new Set(await idbReq(tx('readonly').index('space').getAllKeys(space))),
     all: (space) => idbReq(tx('readonly').index('space').getAll(space)),
@@ -118,7 +129,7 @@ export async function openStore(name) {
       const keys = await idbReq(tx('readonly').index('space').getAllKeys(space));
       const t = db.transaction('vectors', 'readwrite');
       keys.forEach((k) => t.objectStore('vectors').delete(k));
-      await new Promise((res, rej) => { t.oncomplete = res; t.onerror = () => rej(t.error); });
+      await new Promise((res, rej) => { t.oncomplete = res; t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); });
     },
   };
 }
@@ -173,7 +184,7 @@ export async function thumbnail(file, kind) {
   return null;
 }
 
-// ---- Retrieval evaluation metrics (shared with embedding-lab/metrics.js) ---
+// ---- Retrieval evaluation metrics ------------------------------------------
 
 export function cosine(a, b) {
   let dot = 0, na = 0, nb = 0;

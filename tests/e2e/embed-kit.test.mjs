@@ -1,7 +1,9 @@
-// Run: node --test apps/embedding-apps/embedding-lab/metrics.test.mjs
+// Run: node --test tests/e2e/embed-kit.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPlan, cosine, evaluateCase, summarize } from './metrics.js';
+import {
+  buildPlan, cosine, evaluateCase, maxBytesFor, planBatches, spaceId, summarize,
+} from '../../frontend/js/embed-kit.js';
 
 test('cosine of parallel, orthogonal and zero vectors', () => {
   assert.equal(cosine([1, 0], [2, 0]), 1);
@@ -79,4 +81,15 @@ test('buildPlan rejects malformed sets with a message naming the place', () => {
   assert.throws(() => buildPlan({ cases: [{ id: 'x', query: { file: 'a.png' }, positives: ['p'] }] }, () => false), /not in the chosen folder/);
   assert.throws(() => buildPlan({ cases: [{ id: 'x', query: '  ', positives: ['p'] }] }, has), /needs text or a file/);
   assert.throws(() => buildPlan({ cases: [{ id: 'x', query: 'q', positives: ['p'] }, { id: 'x', query: 'q', positives: ['p'] }] }, has), /Duplicate case id/);
+});
+
+test('spaceId includes model, dimensions, prompt, and windows', () => {
+  assert.equal(spaceId({ model: 'm1', dimensions: 256, prompt: 'document', windows: 'content' }), 'm1|256|document|content');
+  assert.equal(spaceId({ model: 'm1', dimensions: 256, prompt: '', windows: '' }), 'm1|256|-|-');
+});
+
+test('maxBytesFor and planBatches fail closed when limits are missing', () => {
+  assert.throws(() => maxBytesFor({}, 'image'), /Missing media_bytes limit/);
+  assert.throws(() => planBatches([{ bytes: 10 }], {}), /Missing embedding request limits/);
+  assert.equal(maxBytesFor({ limits: { media_bytes: { image: 1024 } } }, 'image'), 1024);
 });

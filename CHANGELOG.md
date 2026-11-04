@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.240]
+
+### Changed
+
+- **Retired standalone `apps/embedding-apps/`, hardened `#/embeddings`, and removed `puppeteer-core` from `tests/e2e/`.**
+  - Retired `apps/embedding-apps/` and `tests/unit/test_embedding_apps_proxy.py` now that Compare, Media Finder, and Embedding Lab live in `#/embeddings` (`frontend/js/pages/embeddings.js`, `frontend/js/embed-kit.js`). Moved the retrieval metric and batch/limit unit tests to `tests/e2e/embed-kit.test.mjs` (`node --test tests/e2e/embed-kit.test.mjs`, 10/10).
+  - Hardened `#/embeddings` (`frontend/js/pages/embeddings.js`, `frontend/js/embed-kit.js`, `frontend/css/app.css`): fixed `webkitdirectory: true` on folder pickers; keyed Media Finder records by `${sp}|${path}|${size}|${lastModified}` (`fileId`) and included `windows` in `spaceId` while counting distinct files; restored per-file fallback on `400` during batch indexing; stopped media playback on preview close and made hit cards keyboard-reachable `<button>` elements; removed fail-open limit fallbacks so missing `limits` throws; cleared stale Embedding Lab results on set reload and checked returned vector counts; added `onabort` handlers to IndexedDB transactions and wrapped IndexedDB awaits in `try/catch`.
+  - Updated `docs/frontend_v3_user_guide.md`, `docs/frontend_v3_spec.md`, `README.md`, `docs/project/CURRENT.md`, and `docs/project/TODO.md` to document Compare, Media Finder (browser IndexedDB persistence), Embedding Lab, and video windows.
+  - Removed `puppeteer-core` from `tests/e2e/package.json`, `tests/e2e/bun.lock`, and `tests/e2e/lib/browser.mjs`.
+
 ## [2.0.239]
 
 ### Changed
