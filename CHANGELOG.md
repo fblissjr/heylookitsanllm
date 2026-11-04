@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.234]
+
+### Changed
+
+- **Video windowing controls in `#/embeddings` and standalone Media Finder.** When the selected model exposes `engine.embedding.video_windows` (MLX), Media Finder (`frontend/js/pages/embeddings.js` and `apps/embedding-apps/media-finder/`) offers a **Video windows** selector (`Content-aware (32s)` default, `Fixed rate (32s)`, `Whole video only`) and sends `windows: {sampling}` on indexed video blocks, storing every returned window vector alongside the whole-video vector; Compare mode offers an inline `Video windows` selector on attached video blocks. Updated `tests/e2e/embeddings.mjs` (`1280px` and `390px`) to verify `windows.sampling` on the wire and the Compare block selector.
+
 ## [2.0.233]
 
 ### Added

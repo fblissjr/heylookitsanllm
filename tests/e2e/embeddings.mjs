@@ -12,7 +12,8 @@ const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'heylook-embedding-ui-'));
 let payload;
 let pending, cancelled, hold = false;
 const info = { modalities: ['text','image','audio','video'], dimensions: [128,768], native_dimensions: 768,
-  max_input_tokens: 8192, prompts: { SearchQuery: 'query: ' } };
+  max_input_tokens: 8192, prompts: { SearchQuery: 'query: ' },
+  video_windows: { max_seconds: 32, sampling: ['content', 'fps'], default_sampling: 'content' } };
 try {
   for (const width of [1280, 390]) {
     const page = await browser.newPage();
@@ -32,8 +33,8 @@ try {
           data: payload.input.map((item, i) => ({
             index: i,
             embedding: i === 2 ? [0,1] : [1,0],
-            ...(item.content?.some(b => b.type === 'video') ? {
-              windows: [{ start: 0, end: 32, embedding: [0, 1] }, { start: 32, end: 64, embedding: [1, 0] }],
+            ...(item.content?.some(b => b.type === 'video' && b.windows) ? {
+              windows: [{ start: 0, end: 32, frame_times: [0, 8, 16, 24], embedding: [0, 1] }, { start: 32, end: 64, frame_times: [32, 40, 48, 56], embedding: [1, 0] }],
             } : {}),
           })) };
       }
@@ -48,9 +49,10 @@ try {
     assert(await page.$eval('select[aria-label="Embedding model"]', e => e.options.length) === 1, 'chat model leaked into embedding selector');
     const filename = path.join(temp, 'scene.png');
     await fs.writeFile(filename, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a8l8AAAAASUVORK5CYII=', 'base64'));
-    const audio = path.join(temp, 'sound.wav'), video = path.join(temp, 'clip.mp4');
+    const audio = path.join(temp, 'sound.wav'), video = path.join(temp, `clip-${width}.mp4`);
     await fs.writeFile(audio, 'audio fixture'); await fs.writeFile(video, 'video fixture');
     await (await page.$('input[type=file]')).uploadFile(filename, audio, video);
+    await page.waitForSelector('select[aria-label="Video windows"]');
     await page.select('select[aria-label="Task prompt"]', 'SearchQuery');
     await page.select('select[aria-label="Embedding dimensions"]', '128');
     await page.evaluate(() => [...document.querySelectorAll('button')].find(e => e.textContent === 'Embed & compare').click());
@@ -86,6 +88,7 @@ try {
       const t = document.querySelector('[role="status"]').textContent;
       return t.includes('Indexed 1 file') || t.includes('already indexed');
     });
+    assert(payload.input[0].content[0].windows?.sampling === 'content', 'video windows sampling not sent in Media Finder');
     await page.$eval('input[type="search"]', e => { e.value = 'collision'; });
     await page.evaluate(() => [...document.querySelectorAll('button')].find(e => e.textContent === 'Search index').click());
     await page.waitForSelector('.embeddings__card-name');

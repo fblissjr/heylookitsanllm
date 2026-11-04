@@ -37,10 +37,14 @@ export function fileToBase64(file) {
   });
 }
 
-export async function mediaBlock(file) {
+export async function mediaBlock(file, windows = null) {
   const type = kindOf(file);
   if (!type) throw new Error(`Unsupported file type: ${file.name}`);
-  return { type, source: { type: 'base64', media_type: mimeOf(file), data: await fileToBase64(file) } };
+  return {
+    type,
+    source: { type: 'base64', media_type: mimeOf(file), data: await fileToBase64(file) },
+    ...(type === 'video' && windows ? { windows } : {}),
+  };
 }
 
 export const textBlock = (text) => ({ type: 'text', text });

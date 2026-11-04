@@ -133,6 +133,7 @@ export default createPage({
 
     const finderDocPrompt = el("select", { "aria-label": "Finder document prompt" });
     const finderQueryPrompt = el("select", { "aria-label": "Finder query prompt" });
+    const finderWindows = el("select", { "aria-label": "Finder video windows" });
     const finderFolderInput = el("input", { type: "file", webkitdirectory: "", multiple: true, hidden: true, "aria-label": "Index media folder" });
     const finderFilesInput = el("input", { type: "file", accept: "image/*,audio/*,video/*", multiple: true, hidden: true, "aria-label": "Index media files" });
     const finderFolderBtn = button("Index folder", () => finderFolderInput.click());
@@ -155,6 +156,7 @@ export default createPage({
       el("div", { class: "embeddings__toolbar" }, [
         field("Document task", finderDocPrompt),
         field("Query task", finderQueryPrompt),
+        field("Video windows", finderWindows),
         finderFolderInput, finderFilesInput, finderFolderBtn, finderFilesBtn, finderClearBtn,
       ]),
       finderSpaceNote,
@@ -249,10 +251,11 @@ export default createPage({
       finderProgress.max = todo.length;
       s.abort = new AbortController();
       try {
+        const winOpt = finderWindows.value ? { sampling: finderWindows.value } : null;
         for (const batch of batches) {
           status.textContent = `Indexing ${done + 1}–${done + batch.length} of ${todo.length}…`;
           const items = await Promise.all(batch.map(async (b) => ({
-            content: [await mediaBlock(b.file)],
+            content: [await mediaBlock(b.file, b.kind === "video" ? winOpt : null)],
             ...(finderDocPrompt.value ? { prompt_name: finderDocPrompt.value } : {}),
           })));
           const thumbs = await Promise.all(batch.map((b) => thumbnail(b.file, b.kind)));
@@ -269,7 +272,7 @@ export default createPage({
               thumb: thumbs[i], vec: new Float32Array(row.embedding),
             };
             out.push(base);
-            if (Array.isArray(row.windows) && row.windows.length > 1) {
+            if (Array.isArray(row.windows) && row.windows.length) {
               for (const w of row.windows) {
                 out.push({
                   ...base,
@@ -607,7 +610,21 @@ export default createPage({
       dimensions.replaceChildren(...(info?.dimensions ?? []).map((n) => el("option", { value: n }, [String(n)])));
       if (info) dimensions.value = info.native_dimensions;
       note.textContent = info ? `Inputs: ${info.modalities.join(", ")}. Each item must fit ${info.max_input_tokens.toLocaleString()} tokens including media. ${Object.keys(info.prompts).length ? "Task prompts come from the checkpoint." : "This checkpoint has no named prompt catalog; task instructions can be entered as text."}` : "";
-      for (const item of s.items) prompts(item.prompt, item.prompt.value);
+      const vw = info?.video_windows;
+      if (vw) {
+        finderWindows.replaceChildren(
+          el("option", { value: "content" }, [`Content-aware (${vw.max_seconds}s)`]),
+          el("option", { value: "fps" }, [`Fixed rate (${vw.max_seconds}s)`]),
+          el("option", { value: "" }, ["Whole video only"]),
+        );
+        finderWindows.value = vw.default_sampling || "content";
+        finderWindows.disabled = false;
+      } else {
+        finderWindows.replaceChildren(el("option", { value: "" }, ["Whole video only"]));
+        finderWindows.value = "";
+        finderWindows.disabled = true;
+      }
+      for (const item of s.items) { prompts(item.prompt, item.prompt.value); item.paint?.(); }
       prompts(finderDocPrompt, "document");
       prompts(finderQueryPrompt, "query");
       prompts(labQueryPrompt, "query");
@@ -625,11 +642,25 @@ export default createPage({
       prompts(item.prompt);
       const blocks = el("div", { class: "embeddings__blocks" });
       const paintBlocks = () => {
+        const vw = selected()?.engine.embedding?.video_windows;
         blocks.replaceChildren(...item.blocks.map((block, index) => {
+          let winSelect = null;
+          if (block.kind === "video" && vw) {
+            winSelect = el("select", {
+              "aria-label": "Video windows",
+              onchange: (e) => { block.windows = e.target.value; invalidate(); },
+            }, [
+              el("option", { value: "" }, ["Whole video only"]),
+              el("option", { value: "content" }, [`Windows: content (${vw.max_seconds}s)`]),
+              el("option", { value: "fps" }, [`Windows: fixed rate (${vw.max_seconds}s)`]),
+            ]);
+            winSelect.value = block.windows || "";
+          }
           const content = block.file
             ? el("div", { class: "embeddings__media-row" }, [
               block.thumb ? el("img", { class: "embeddings__inline-thumb", src: block.thumb, alt: block.file.name }) : null,
               el("span", {}, [`${block.kind}: ${block.file.name}`]),
+              winSelect,
             ])
             : el("textarea", { value: block.text, rows: 3, "aria-label": "Text content", placeholder: "Text, code, query or label description",
               oninput: (event) => { block.text = event.target.value; invalidate(); } });
@@ -639,6 +670,7 @@ export default createPage({
           ])]);
         }));
       };
+      item.paint = paintBlocks;
       item.blocks.push({ kind: "text", text });
       const files = el("input", { type: "file", class: "input", multiple: true, accept: "image/*,audio/*,video/*", "aria-label": "Add images, audio or video" });
       files.addEventListener("change", async () => {
@@ -683,9 +715,17 @@ export default createPage({
             if (bytes > 64 * 1024 * 1024) throw new Error("Combined media exceeds the request size limit.");
             const data = await fileToBase64(block.file);
             if (!ctx.alive) return;
-            content.push({ type: block.kind, source: { type: "base64", media_type: mimeOf(block.file), data } });
+            const win = block.kind === "video" && block.windows && info.video_windows ? { sampling: block.windows } : null;
+            content.push({
+              type: block.kind,
+              source: { type: "base64", media_type: mimeOf(block.file), data },
+              ...(win ? { windows: win } : {}),
+            });
           }
           if (!content.length) throw new Error(`${labels[index]} is empty.`);
+          if (content.some((b) => b.windows) && content.length > 1) {
+            throw new Error(`${labels[index]}: an item with video windows must contain only that video block.`);
+          }
           input.push({ content, ...(item.prompt.value ? { prompt_name: item.prompt.value } : {}) });
         }
         if (!ctx.alive) return;

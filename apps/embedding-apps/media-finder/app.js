@@ -6,6 +6,7 @@ import {
 const $ = (id) => document.getElementById(id);
 const ui = {
   model: $('model'), dims: $('dims'), docPrompt: $('docPrompt'), queryPrompt: $('queryPrompt'),
+  videoWindows: $('videoWindows'),
   status: $('status'), progress: $('progress'), stop: $('stop'), clear: $('clear'),
   problems: $('problems'), problemList: $('problemList'),
   query: $('query'), example: $('example'), exampleName: $('exampleName'), go: $('go'),
@@ -39,6 +40,20 @@ function refreshModel() {
   ui.dims.replaceChildren(...info.dimensions.map((n) => option(String(n))));
   const preferred = info.dimensions.includes(512) ? 512 : info.native_dimensions;
   ui.dims.value = String(preferred);
+  const vw = info.video_windows;
+  if (vw) {
+    ui.videoWindows.replaceChildren(
+      option('content', `Content-aware (${vw.max_seconds}s)`),
+      option('fps', `Fixed rate (${vw.max_seconds}s)`),
+      option('', 'Whole video only'),
+    );
+    ui.videoWindows.value = vw.default_sampling || 'content';
+    ui.videoWindows.disabled = false;
+  } else {
+    ui.videoWindows.replaceChildren(option('', 'Whole video only'));
+    ui.videoWindows.value = '';
+    ui.videoWindows.disabled = true;
+  }
   fillPrompts(ui.docPrompt, 'document');
   fillPrompts(ui.queryPrompt, 'query');
   refreshCount();
@@ -111,9 +126,10 @@ async function indexFiles(fileList) {
 async function embedBatch(batch, sp) {
   const args = { model: ui.model.value, dimensions: Number(ui.dims.value), signal: state.abort.signal };
   const prompt = ui.docPrompt.value ? { prompt_name: ui.docPrompt.value } : {};
+  const winOpt = ui.videoWindows?.value ? { sampling: ui.videoWindows.value } : null;
   const run = async (entries) => {
     const items = [];
-    for (const e of entries) items.push({ content: [await mediaBlock(e.file)], ...prompt });
+    for (const e of entries) items.push({ content: [await mediaBlock(e.file, e.kind === 'video' ? winOpt : null)], ...prompt });
     state.requestId = newRequestId();
     return embedWithRetry({ ...args, items, requestId: state.requestId });
   };
@@ -126,7 +142,7 @@ async function embedBatch(batch, sp) {
         id: e.id, fileId: e.id, space: sp, path: e.path, kind: e.kind, size: e.file.size,
         vec: Float32Array.from(row.embedding), thumb,
       });
-      if (Array.isArray(row.windows) && row.windows.length > 1) {
+      if (Array.isArray(row.windows) && row.windows.length) {
         for (const w of row.windows) {
           out.push({
             id: `${e.id}#t=${w.start}-${w.end}`, fileId: e.id, space: sp, path: e.path,
