@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.235]
+
+### Fixed
+
+- **Windowed video embeddings decode one window at a time.** v2.0.233's `providers/video_windows.embed_windows` decoded every candidate frame of the whole video before windowing, so memory grew with video length (a 30-minute 1080p video at 4 fps candidates would be thousands of full-resolution frames at once). It now reads the video's metadata from a one-frame decode, then decodes each window's candidates (content sampling) or only its chosen frames (fps sampling) through the same mlx-vlm decoder hook, so memory is bounded by one window. Results are unchanged: through the server the short-event margins on the real-footage and screen-recording sets equal v2.0.233's exactly (`internal/claude/embeddinggemma2_probes/video_events/results_http_perwindow.txt`).
+
 ## [2.0.234]
 
 ### Changed

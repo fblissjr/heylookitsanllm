@@ -72,26 +72,41 @@ def embed_windows(provider, prompt, part, check_cancel, too_long, forward):
     sampling = options.get("sampling") or "content"
     rate = CONTENT_CANDIDATE_FPS if sampling == "content" else fps
 
-    def sampler(metadata, **_):
-        return np.arange(0, metadata.total_num_frames, max(1, int(round(metadata.fps / rate))))
+    def decode(indices):
+        return vp._decode_video(part["path"], lambda metadata, **_: np.asarray(indices))
 
-    frames, metadata = vp._decode_video(part["path"], sampler)
-    source = np.asarray(metadata.frames_indices)
-    times = source / metadata.fps
+    # Metadata first (one frame), then one window's frames at a time: memory is
+    # bounded by a window's candidates, never by the length of the video.
+    _, metadata = decode([0])
+    step = max(1, int(round(metadata.fps / rate)))
+    candidates = np.arange(0, metadata.total_num_frames, step)
+    candidate_times = candidates / metadata.fps
     messages = ([{"role": "system", "content": prompt}] if prompt else []) + [
         {"role": "user", "content": [{"type": "video"}]}]
     text = proc.apply_chat_template(messages, tokenize=False)      # the template's own rendering
     windows, tokens = [], 0
-    for start, end, sel in plan(times, metadata.duration, seconds, sampling, fps, max_frames, frames):
+    for lo in np.arange(0.0, metadata.duration, seconds):
         check_cancel()
-        md = copy.copy(metadata)
-        md.frames_indices = source[sel]
-        inputs = proc(text=[text], videos=[frames[sel]], video_metadata=[md],
+        hi = min(lo + seconds, metadata.duration)
+        in_window = candidates[(candidate_times >= lo) & (candidate_times < hi)]
+        if not len(in_window):
+            continue
+        times = in_window / metadata.fps
+        if sampling == "content":
+            frames, md = decode(in_window)
+            sel = pick_content(frames, times, lo, hi, max_frames)
+            frames = frames[sel]
+        else:
+            sel = pick_fps(times, lo, hi, fps, max_frames)
+            frames, md = decode(in_window[sel])
+        md = copy.copy(md)
+        md.frames_indices = in_window[sel]
+        inputs = proc(text=[text], videos=[frames], video_metadata=[md],
                       do_sample_frames=False, return_tensors="mlx")
         length = int(inputs["input_ids"].shape[-1])
         if length > provider.context_length:
             raise too_long(length)
-        windows.append({"start": round(start, 3), "end": round(end, 3),
+        windows.append({"start": round(float(lo), 3), "end": round(float(hi), 3),
                         "frame_times": [round(float(t), 3) for t in times[sel]],
                         "embedding": forward(dict(inputs))})
         tokens += length
