@@ -4,7 +4,7 @@ import { armedConfirm, createEl as el, formatBytes } from "../utils.js";
 import { api, requestId, httpError } from "../api.js";
 import * as drawer from "../settings-drawer.js";
 import {
-  MAX_REQUEST_MEDIA_BYTES, buildPlan, buildSampleDataset, cosine, embedWithRetry,
+  buildPlan, buildSampleDataset, cosine, embedWithRetry,
   evaluateCase, fileToBase64, kindOf, maxBytesFor, mediaBlock, mimeOf, openStore,
   planBatches, spaceId, summarize, textBlock, thumbnail, topK,
 } from "../embed-kit.js";
@@ -201,9 +201,11 @@ export default createPage({
       const f = e.target.files?.[0];
       e.target.value = "";
       if (!f) return;
+      const info = selected()?.engine.embedding;
       const k = kindOf(f);
-      if (!k || f.size > maxBytesFor(k)) {
-        status.textContent = "Choose an image/audio file under 32 MB or video under 256 MB.";
+      const cap = maxBytesFor(info, k);
+      if (!k || (cap && f.size > cap)) {
+        status.textContent = `Choose an image, audio, or video file within the model limit (${formatBytes(cap)}).`;
         return;
       }
       s.finderExample = f;
@@ -226,8 +228,8 @@ export default createPage({
         const kind = kindOf(file);
         if (!kind) { skipped.push(`${path}: unsupported format`); continue; }
         if (!info.modalities.includes(kind)) { skipped.push(`${path}: model does not support ${kind}`); continue; }
-        const cap = maxBytesFor(kind);
-        if (file.size > cap) { skipped.push(`${path}: over ${cap >> 20} MB (${formatBytes(file.size)})`); continue; }
+        const cap = maxBytesFor(info, kind);
+        if (cap && file.size > cap) { skipped.push(`${path}: over ${formatBytes(cap)} (${formatBytes(file.size)})`); continue; }
         s.finderHandles.set(path, file);
         if (existing.has(`${sp}|${path}`)) continue;
         todo.push({ file, path, kind, bytes: file.size });
@@ -244,7 +246,7 @@ export default createPage({
         status.textContent = "All supported files in that selection are already indexed.";
         return;
       }
-      const batches = planBatches(todo);
+      const batches = planBatches(todo, info.limits);
       let done = 0;
       controls.disabled = true;
       stop.hidden = false;
@@ -444,10 +446,12 @@ export default createPage({
         const setFile = files.get("set.json");
         if (!setFile) throw new Error("No set.json at the top of that folder.");
         const set = JSON.parse(await setFile.text());
+        const info = selected()?.engine.embedding;
         const plan = buildPlan(set, (path) => {
           const f = files.get(path);
           const k = f && kindOf(f);
-          return k && f.size <= maxBytesFor(k);
+          const cap = maxBytesFor(info, k);
+          return k && (!cap || f.size <= cap);
         });
         s.labPlan = plan; s.labSetName = set.name || "test set";
         const media = plan.pool.filter((p) => p.file).length + plan.queries.filter((q) => q.file).length;
@@ -486,7 +490,7 @@ export default createPage({
       }
       const entries = items.map((item) => ({ item, bytes: item.file ? s.labFiles.get(item.file).size : 1 }));
       const vectors = [];
-      for (const batch of planBatches(entries)) {
+      for (const batch of planBatches(entries, info.limits)) {
         const input = [];
         for (const e of batch) {
           const content = [];
@@ -638,7 +642,9 @@ export default createPage({
     }
 
     function addItem(text = "") {
-      if (s.items.length >= 16) return;
+      const maxItems = () => selected()?.engine.embedding.limits?.items ?? 16;
+      const maxBlocks = () => selected()?.engine.embedding.limits?.blocks_per_item ?? 32;
+      if (s.items.length >= maxItems()) return;
       const item = { blocks: [] };
       item.name = el("input", { type: "text", class: "input", value: `Item ${s.items.length + 1}`, maxLength: 80, "aria-label": "Item label", oninput: invalidate });
       item.prompt = el("select", { "aria-label": "Task prompt", onchange: invalidate });
@@ -679,11 +685,13 @@ export default createPage({
       files.addEventListener("change", async () => {
         const chosen = [...(files.files || [])];
         files.value = "";
+        const info = selected()?.engine.embedding;
         for (const file of chosen) {
           const kind = kindOf(file);
           if (!kind) { status.textContent = `Unsupported file type: ${file.name}`; continue; }
-          if (file.size > maxBytesFor(kind)) { status.textContent = `${file.name} exceeds the media size limit.`; continue; }
-          if (item.blocks.length >= 32) { status.textContent = "An item can contain at most 32 blocks."; break; }
+          const cap = maxBytesFor(info, kind);
+          if (cap && file.size > cap) { status.textContent = `${file.name} exceeds the media size limit.`; continue; }
+          if (item.blocks.length >= maxBlocks()) { status.textContent = `An item can contain at most ${maxBlocks()} blocks.`; break; }
           const thumb = await thumbnail(file, kind);
           item.blocks.push({ kind, file, thumb });
         }
@@ -693,11 +701,11 @@ export default createPage({
         el("div", { class: "embeddings__toolbar" }, [field("Label", item.name), field("Task", item.prompt),
           button("Remove item", () => { s.items.splice(s.items.indexOf(item), 1); item.card.remove(); add.disabled = false; invalidate(); })]),
         blocks, el("div", { class: "embeddings__toolbar" }, [button("Add text", () => {
-          if (item.blocks.length < 32) { item.blocks.push({ kind: "text", text: "" }); paintBlocks(); invalidate(); }
+          if (item.blocks.length < maxBlocks()) { item.blocks.push({ kind: "text", text: "" }); paintBlocks(); invalidate(); }
         }), field("Attach media", files)]),
       ]);
       s.items.push(item); cards.append(item.card); paintBlocks();
-      add.disabled = s.items.length >= 16;
+      add.disabled = s.items.length >= maxItems();
     }
 
     async function execute() {
@@ -715,7 +723,7 @@ export default createPage({
             if (!info.modalities.includes(block.kind)) throw new Error(`This model does not support ${block.kind}.`);
             if (!block.file) { if (block.text.trim()) content.push({ type: "text", text: block.text }); continue; }
             bytes += block.file.size;
-            if (bytes > MAX_REQUEST_MEDIA_BYTES) throw new Error("Combined media exceeds the request size limit.");
+            if (info.limits?.request_media_bytes && bytes > info.limits.request_media_bytes) throw new Error("Combined media exceeds the request size limit.");
             const data = await fileToBase64(block.file);
             if (!ctx.alive) return;
             const win = block.kind === "video" && block.windows && info.video_windows ? { sampling: block.windows } : null;

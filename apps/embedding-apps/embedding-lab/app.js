@@ -66,10 +66,12 @@ async function loadFolder(fileList) {
     const setFile = files.get('set.json');
     if (!setFile) throw new Error('No set.json at the top of that folder.');
     const set = JSON.parse(await setFile.text());
+    const info = model()?.engine.embedding;
     const plan = buildPlan(set, (path) => {
       const f = files.get(path);
       const k = f && kindOf(f);
-      return k && f.size <= maxBytesFor(k);
+      const cap = maxBytesFor(info, k);
+      return k && (!cap || f.size <= cap);
     });
     state.plan = plan; state.setName = set.name || 'test set';
     const media = plan.pool.filter((p) => p.file).length + plan.queries.filter((q) => q.file).length;
@@ -101,7 +103,7 @@ async function embedAll(items, prompt, cfg) {
   }
   const entries = items.map((item) => ({ item, bytes: item.file ? state.files.get(item.file).size : 1 }));
   const vectors = [];
-  for (const batch of planBatches(entries)) {
+  for (const batch of planBatches(entries, info.limits)) {
     if (state.abort.signal.aborted) throw new DOMException('stopped', 'AbortError');
     const input = [];
     for (const e of batch) input.push({ content: await contentFor(e.item), ...(prompt ? { prompt_name: prompt } : {}) });

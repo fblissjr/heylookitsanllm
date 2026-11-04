@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.239]
+
+### Changed
+
+- **Embedding clients derive all request limits from `engine.embedding.limits`.** Removed the hand-copied `MAX_ITEMS`, `MAX_FILE_BYTES`, `MAX_VIDEO_BYTES`, `MAX_REQUEST_MEDIA_BYTES`, and `MAX_BATCH_BYTES` constants from `frontend/js/embed-kit.js` and `apps/embedding-apps/kit/embed-kit.js`. `#/embeddings` (`frontend/js/pages/embeddings.js`), standalone Media Finder (`apps/embedding-apps/media-finder/app.js`), and standalone Embedding Lab (`apps/embedding-apps/embedding-lab/app.js`) now read `items`, `blocks_per_item`, `media_bytes[kind]`, and `request_media_bytes` directly from `engine.embedding.limits` reported by `/v1/models` (v2.0.238). Updated `tests/e2e/embeddings.mjs` (`1280px` and `390px`) to include `limits` on the mocked model metadata.
+
 ## [2.0.238]
 
 ### Added

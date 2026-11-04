@@ -4,13 +4,8 @@
 
 import { httpError, requestId } from './api.js';
 
-export const MAX_ITEMS = 16;                   // server: items per request
-export const MAX_FILE_BYTES = 32 * 2 ** 20;    // server: bytes per image/audio block
-export const MAX_VIDEO_BYTES = 256 * 2 ** 20;  // server: bytes per video block
-export const MAX_REQUEST_MEDIA_BYTES = 256 * 2 ** 20;
-export const MAX_BATCH_BYTES = 192 * 2 ** 20;  // under the server's 256 MiB request media cap
-export const maxBytesFor = (kind) => (kind === 'video' ? MAX_VIDEO_BYTES : MAX_FILE_BYTES);
 export const KINDS = ['image', 'audio', 'video'];
+export const maxBytesFor = (info, kind) => info?.limits?.media_bytes?.[kind] ?? 0;
 
 const EXT_MIME = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
@@ -76,11 +71,13 @@ export async function embedWithRetry(args, tries = 4) {
   }
 }
 
-export function planBatches(entries, maxItems = MAX_ITEMS, maxBytes = MAX_BATCH_BYTES) {
+export function planBatches(entries, limits) {
+  const maxItems = limits?.items ?? 1;
+  const maxBytes = Math.floor((limits?.request_media_bytes ?? 0) * 0.75);
   const batches = [];
   let current = [], bytes = 0;
   for (const entry of entries) {
-    if (current.length && (current.length >= maxItems || bytes + entry.bytes > maxBytes)) {
+    if (current.length && (current.length >= maxItems || (maxBytes && bytes + entry.bytes > maxBytes))) {
       batches.push(current); current = []; bytes = 0;
     }
     current.push(entry); bytes += entry.bytes;

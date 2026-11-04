@@ -13,7 +13,10 @@ let payload;
 let pending, cancelled, hold = false;
 const info = { modalities: ['text','image','audio','video'], dimensions: [128,768], native_dimensions: 768,
   max_input_tokens: 8192, prompts: { SearchQuery: 'query: ' },
-  video_windows: { max_seconds: 32, sampling: ['content', 'fps'], default_sampling: 'content' } };
+  video_windows: { max_seconds: 32, sampling: ['content', 'fps'], default_sampling: 'content' },
+  limits: { items: 16, blocks_per_item: 32, text_chars: 131072,
+    media_bytes: { image: 32 * 2 ** 20, audio: 32 * 2 ** 20, video: 256 * 2 ** 20 },
+    request_media_bytes: 256 * 2 ** 20 } };
 try {
   for (const width of [1280, 390]) {
     const page = await browser.newPage();

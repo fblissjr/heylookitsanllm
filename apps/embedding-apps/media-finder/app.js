@@ -92,8 +92,8 @@ async function indexFiles(fileList) {
     const kind = kindOf(file);
     if (!kind) continue; // folders hold plenty of non-media files; not worth listing
     if (!info.modalities.includes(kind)) { problem(path, `this model does not take ${kind}`); continue; }
-    const cap = maxBytesFor(kind);
-    if (file.size > cap) { problem(path, `larger than ${cap >> 20} MB`); continue; }
+    const cap = maxBytesFor(info, kind);
+    if (cap && file.size > cap) { problem(path, `larger than ${cap >> 20} MB`); continue; }
     const id = `${sp}|${path}|${file.size}|${file.lastModified}`;
     state.files.set(id, file);
     if (!done.has(id)) entries.push({ id, path, kind, file, bytes: file.size });
@@ -102,7 +102,7 @@ async function indexFiles(fileList) {
 
   setBusy(true);
   state.abort = new AbortController();
-  const batches = planBatches(entries);
+  const batches = planBatches(entries, info.limits);
   let processed = 0;
   ui.progress.max = entries.length; ui.progress.value = 0;
   try {
@@ -181,8 +181,10 @@ async function search(event) {
   if (text) content.push(textBlock(text));
   try {
     if (example) {
+      const info = model().engine.embedding;
       const k = kindOf(example);
-      if (!k || example.size > maxBytesFor(k)) throw new Error('The example must be an image/audio file under 32 MB or video under 256 MB.');
+      const cap = maxBytesFor(info, k);
+      if (!k || (cap && example.size > cap)) throw new Error(`The example must be an image, audio or video file under ${cap >> 20} MB.`);
       content.push(await mediaBlock(example));
     }
     say('Searching…');
