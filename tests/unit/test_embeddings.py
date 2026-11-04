@@ -117,6 +117,37 @@ def test_gguf_wire_preserves_mixed_content_and_batch_indices(info):
     assert tokens == 4 and len(vectors) == 1
 
 
+def test_mlx_text_batches_keep_order_lengths_and_the_failing_index():
+    # Fake processor/model: the "vector" of a row is its unpadded token sum, so a
+    # padding leak, a row mix-up or a wrong chunk slice changes the value.
+    mx = pytest.importorskip("mlx.core")
+    from types import SimpleNamespace
+    from heylook_llm.providers import mlx_embeddings
+    forwards = []
+    class Processor:
+        tokenizer = SimpleNamespace(padding_side="right")
+        def apply_chat_template(self, conversations, **kw):
+            single = isinstance(conversations[0], dict)
+            rows = [[len(m["content"][0]["text"]) for m in c if m["role"] == "user"] for c in
+                    ([conversations] if single else conversations)]
+            width = max(r[0] for r in rows)
+            ids = [[1] * r[0] + [7] * (width - r[0]) for r in rows]       # pad id 7: a leak shows
+            mask = [[1] * r[0] + [0] * (width - r[0]) for r in rows]
+            return {"input_ids": mx.array(ids), "attention_mask": mx.array(mask)}
+    class Model:
+        def __call__(self, input_ids, attention_mask, **kw):
+            forwards.append(tuple(input_ids.shape))
+            return SimpleNamespace(text_embeds=mx.stack([mx.sum(input_ids * attention_mask, axis=-1)] * 2, axis=-1))
+    provider = SimpleNamespace(processor=Processor(), model=Model(), context_length=12)
+    text = lambda n: ("", [{"type": "text", "text": "x" * n}])
+    media = ("", [{"type": "text", "text": "xx"}, {"type": "image", "path": "/f.png"}])
+    vectors, tokens = mlx_embeddings.embed(provider, [text(5), media, text(3), text(6), text(2)], None)
+    assert [v[0] for v in vectors] == [5, 2, 3, 6, 2] and tokens == 18
+    assert forwards[:2] == [(2, 5), (2, 6)]   # budget 12: [5,3] then [6,2], each cut to its longest row
+    with pytest.raises(mlx_embeddings.InvalidGenerationRequest, match=r"input\[1\]"):
+        mlx_embeddings.embed(provider, [text(2), text(13)], None)
+
+
 def test_mlx_load_materializes_private_buffers_across_workers():
     mx = pytest.importorskip('mlx.core')
     if not mx.metal.is_available():

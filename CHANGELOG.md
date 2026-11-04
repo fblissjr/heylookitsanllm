@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.229]
+
+### Changed
+
+- **MLX embeds the text items of a request as one batch.** `providers/mlx_embeddings.py` ran one forward per item; text-only items now share one render and run as padded forwards in chunks of at most one context of padded tokens, with cancellation between chunks. Per-row lengths come from the attention mask, so `input_tokens` and the over-context refusal (which names the item's index) equal the single-item path. Items with media still run one forward each. Checked live on the MLX EmbeddingGemma 2 against an isolated server: 16 texts batched vs singly, min cosine 0.999941, equal token totals and order; the reference parity probe (sentence-transformers float32, 17 items) unchanged, identical token IDs; latency probe record in `internal/claude/embeddinggemma2_probes/parity/` (not a perf_ab run). `tests/unit/test_embeddings.py` pins order, per-row lengths, chunk shapes and the failing index with a fake processor and model.
+
 ## [2.0.228]
 
 ### Documentation

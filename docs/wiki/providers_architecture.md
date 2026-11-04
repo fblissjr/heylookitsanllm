@@ -37,7 +37,11 @@ gate. Cancellation and failures retain ownership until work and cleanup finish.
 MLX loads the full upstream mlx-vlm embedding model and processor, including
 image and audio towers, and consumes its pooled `text_embeds`. All model state,
 including private lazy buffers, is materialized on the loading worker before it
-can move to an inference worker. GGUF launches its existing llama-server process
+can move to an inference worker. Text-only items in a request share one render
+and run as padded forwards, chunked so rows times the longest row stays within
+one context; each row's own length comes from its attention mask, so token
+counts and the context refusal match a single-item request. Items with media
+run one forward each. GGUF launches its existing llama-server process
 in embedding mode with mean pooling and a non-causal batch covering the context;
 its adapter translates ordered content to llama-server's multimodal endpoint.
 Neither path passes embedding inputs through generation, chat samplers or APC.
