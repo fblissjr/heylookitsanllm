@@ -80,9 +80,16 @@ WORKLOADS = {
     "vision_followup": {"words": 40, "gen": 64, "image": "fresh", "followup": 60},
 }
 
-# metric -> True when higher is better
+# metric -> True when higher is better. Per-request metrics are read off each
+# request row; the rest are per run. `followup_decode_tps` is the second turn's
+# decode, the only number a change to the prefix-cache restore path moves
+# (`decode_tps` is the first, cold turn's).
+REQUEST_METRICS = {
+    "ttft_s": False, "decode_tps": True,
+    "followup_ttft_s": False, "followup_decode_tps": True,
+}
 METRICS = {
-    "ttft_s": False, "decode_tps": True, "followup_ttft_s": False,
+    **REQUEST_METRICS,
     "peak_footprint_gb": False, "peak_mlx_gb": False, "load_s": False,
 }
 
@@ -344,7 +351,8 @@ def worker(args) -> None:
                              {"role": "user", "content": _prompt(0, spec["followup"])}]
                 sampler.phase = f"{name}:{rep}:followup"
                 fu = on_worker(lambda: _timed(provider, _request(args.model, messages, spec["gen"], nonce)))
-                row.update(followup_ttft_s=fu["ttft_s"], followup_cached=fu["cached_tokens"],
+                row.update(followup_ttft_s=fu["ttft_s"], followup_decode_tps=fu["decode_tps"],
+                           followup_cached=fu["cached_tokens"],
                            followup_prompt_tokens=fu["prompt_tokens"])
             row.pop("reply", None)
             row.update(workload=name, rep=rep, warmup=rep == 0)
@@ -531,7 +539,7 @@ def arm_values(arm: dict) -> dict:
         for r in run["requests"]:
             if r["warmup"]:
                 continue
-            for m in ("ttft_s", "decode_tps", "followup_ttft_s"):
+            for m in REQUEST_METRICS:
                 if r.get(m) is not None:
                     out.setdefault((r["workload"], m), []).append(r[m])
         out.setdefault(("*", "load_s"), []).append(run["load_s"])

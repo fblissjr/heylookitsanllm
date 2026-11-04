@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.225]
+
+### Fixed
+
+- **`scripts/perf_ab.py` measured the wrong turn for prefix-cache work.** The `followup` workload's `decode_tps` was the first, cold turn's; the second turn, the one that restores the cache, recorded only its time to first token. A change to the restore path therefore showed no decode change whatever it did: the first A/B of the v2.0.223 #2356 rebind read "no change beyond noise" (`internal/claude/perf/ab_Qwen3.5-0.8B-MLX-8bit_20261104-112302.json`). The second turn's rate is now `followup_decode_tps`, and the per-request metrics `arm_values` reads come from one table, `REQUEST_METRICS`, instead of a hand-copied tuple.
+
+### Verified
+
+- **The v2.0.223 #2356 rebind restores restored-turn decode on qwen3_5.** `scripts/perf_ab.py run --model Qwen3.5-0.8B-MLX-8bit --arm before=36ad5191 --arm fixed=12d4d1e8 --workloads followup`: `followup_decode_tps` is better with the rebind, rep ranges separated; the cold first turn is unchanged; no contamination. Record: `internal/claude/perf/ab_Qwen3.5-0.8B-MLX-8bit_20261104-112909.json`. So the carry left bypassed by upstream #2646 had put restored requests back on the slow path at the `003311ec` pin.
+
 ## [2.0.224]
 
 ### Fixed
