@@ -53,6 +53,30 @@ def _too_long(provider, index, length):
         f"input[{index}]: expanded input has {length} tokens; limit is {provider.context_length}")
 
 
+VISUAL_PATCH_KEYS = (("pixel_values", "image_position_ids"),
+                     ("pixel_values_videos", "video_position_ids"))
+
+
+def trim_visual_padding(inputs):
+    """Drop trailing patch slots that no image or frame uses.
+
+    The processor pads every grid to the largest budget (position id -1); the
+    vision tower masks those slots, so cutting them changes no valid patch and
+    shortens attention. Rows keep their own padding up to the longest one.
+    Measured: internal/claude/embeddinggemma2_probes/vision_candidates.txt (C4).
+    """
+    import mlx.core as mx
+    for values, positions in VISUAL_PATCH_KEYS:
+        ids = inputs.get(positions)
+        if ids is None or ids.ndim != 3:
+            continue
+        n = int(mx.sum(mx.all(ids != -1, axis=-1), axis=-1).max().item())
+        if 0 < n < ids.shape[1]:
+            inputs[values] = inputs[values][:, :n]
+            inputs[positions] = ids[:, :n]
+    return inputs
+
+
 def _embed_one(provider, index, item, vectors):
     import mlx.core as mx
     try:
@@ -60,7 +84,7 @@ def _embed_one(provider, index, item, vectors):
         length = int(inputs["input_ids"].shape[-1])
         if length > provider.context_length:
             raise _too_long(provider, index, length)
-        output = provider.model(**inputs).text_embeds
+        output = provider.model(**trim_visual_padding(dict(inputs))).text_embeds
         mx.eval(output)
     except (ValueError, TypeError) as exc:
         raise InvalidGenerationRequest(f"input[{index}]: {exc}") from exc

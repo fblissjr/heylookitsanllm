@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.230]
+
+### Changed
+
+- **MLX embeddings cut unused vision patch slots before the vision tower.** mlx-vlm's EmbeddingGemma 2 processor pads every image and video frame to the full 2520-patch grid (position id -1) and the tower masks the padding; `mlx_embeddings.trim_visual_padding` now slices the trailing slots no row uses, so attention runs over the real patches only. Checked against the sentence-transformers float32 reference on the 17-item parity set (`internal/claude/embeddinggemma2_probes/parity/`): identical token IDs, cosine unchanged within bf16 rounding (0.99985-0.99999); in-process probe `vision_candidates.txt` (C4) and the latency probe show images and video a few percent to about 10% faster (not a perf_ab run). `tests/unit/test_embeddings.py` pins the slice and the untouched full grid.
+
 ## [2.0.229]
 
 ### Changed

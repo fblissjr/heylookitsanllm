@@ -148,6 +148,16 @@ def test_mlx_text_batches_keep_order_lengths_and_the_failing_index():
         mlx_embeddings.embed(provider, [text(2), text(13)], None)
 
 
+def test_visual_padding_trims_to_the_longest_row_and_leaves_full_grids():
+    mx = pytest.importorskip("mlx.core")
+    from heylook_llm.providers.mlx_embeddings import trim_visual_padding
+    pos = mx.array([[[0, 0], [1, 0], [-1, -1], [-1, -1]], [[0, 0], [1, 0], [2, 0], [-1, -1]]])
+    out = trim_visual_padding({"pixel_values": mx.arange(8).reshape(2, 4, 1), "image_position_ids": pos})
+    assert out["pixel_values"].shape == (2, 3, 1) and out["image_position_ids"][0, 2].tolist() == [-1, -1]
+    full = {"pixel_values_videos": mx.zeros((1, 2, 1)), "video_position_ids": mx.zeros((1, 2, 2), dtype=mx.int32)}
+    assert trim_visual_padding(full)["pixel_values_videos"].shape == (1, 2, 1)
+
+
 def test_mlx_load_materializes_private_buffers_across_workers():
     mx = pytest.importorskip('mlx.core')
     if not mx.metal.is_available():
