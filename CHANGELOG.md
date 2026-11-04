@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.228]
+
+### Documentation
+
+- **VISION.md principle 6 lets heylook own what it chooses to specialize.** It read "Build on upstream, don't clone it ... It never re-implements an architecture", and "What it is not" said "Model code belongs upstream". The owner's direction (2026-11-04): upstream stays the default home for models and kernels, but heylook may own any piece it chooses to specialize and tune, up to loading, quantization and model code; the owner chooses when, knowing the cost. Owned code is measured against the upstream reference before it replaces it. heylook takes the best tool or artifact from any source rather than one dependency's defaults, looking first to Apple's ml-explore repos (mlx, mlx-lm and the rest of that org). `.claude/rules/mlx.md` now says the same: depending on mlx-vlm's model code is the default, and owning loading, quantization or model code is proposed with its cost, never started unasked.
+
 ## [2.0.227]
 
 ### Documentation

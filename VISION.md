@@ -17,7 +17,8 @@ driver and a workbench at the same time.
 ## What it is not
 
 - A multi-user or hosted service.
-- A model zoo that implements architectures. Model code belongs upstream.
+- A model zoo. heylook does not re-implement architectures for coverage.
+  Model code it owns is code it chose to specialize and tune.
 - A compatibility layer for every client protocol. One wire, done well.
 - A place to preserve old behaviour or old data for its own sake.
 
@@ -40,14 +41,21 @@ driver and a workbench at the same time.
    and one report, whichever engine is behind a model. First class does not
    mean lowest common denominator: a control one engine cannot honor is
    refused on that engine, and the report says so.
-6. **Build on upstream, don't clone it.** mlx-vlm and llama.cpp own the
-   models and their kernels. heylook pins exact versions, sends fixes back,
-   and carries a fix only until upstream has it; each carried fix has a test
-   that says when to delete it. On MLX, heylook owns the runtime around
-   mlx-vlm's models wherever that serves the owner's evolving use: scheduling,
-   cache policy, sampling and drafting policy, tuned for the models in daily
-   use on this machine. It never re-implements an architecture, and it does
-   not optimize for users it does not have.
+6. **Build on upstream; own what you specialize.** mlx-vlm and llama.cpp are
+   the default home for models and kernels. heylook pins exact versions,
+   sends fixes back, and carries a fix only until upstream has it; each
+   carried fix has a test that says when to delete it. heylook owns outright
+   any piece it chooses to specialize and tune for the models in daily use on
+   this machine: on MLX that starts with the runtime around mlx-vlm's models
+   (scheduling, cache policy, sampling and drafting policy) and can reach
+   loading, quantization and model code. The owner chooses when to
+   specialize, knowing the cost of owning it. Owned code is measured against
+   the upstream reference before it replaces it, and it is kept only while it
+   earns its place. heylook takes the best tool or artifact for a job from any
+   source rather than one dependency's defaults. The trusted places to look
+   first, and to port from, are Apple's own repos in the ml-explore
+   organization (mlx, mlx-lm and the rest of that org). It does not optimize
+   for users it does not have.
 7. **Simple where it can be, with judgment.** Remove what is dead or
    duplicated. Keep what earns its place, even when removing it would be
    tidier.
