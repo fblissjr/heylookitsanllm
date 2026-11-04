@@ -24,7 +24,8 @@
 //   controller.abort() -- the server's disconnect path persists instead.
 
 import { createPage } from '../page.js';
-import { createEl, autoGrow, armedConfirm, causeWords, createUnloadGuard, formatTokens, setStatus, dismissPaneOnOutsideClick, lsRead, lsWrite } from '../utils.js';
+import { createEl, autoGrow, armedConfirm, causeWords, createUnloadGuard, formatTokens, setStatus, dismissPaneOnOutsideClick } from '../utils.js';
+import { STORAGE_KEYS, lsRead, lsWrite } from '../storage.js';
 import { api } from '../api.js';
 import { streamGenerate, stopGenerate, endReasoningGenerate } from '../streaming.js';
 import { renderMarkdown } from '../markdown.js';
@@ -50,7 +51,7 @@ import { registerPageHotkeys } from '../hotkeys.js';
 // re-typable numbers with a visible default, which is the whole difference. The follow-on this prevents is the worse half: with the
 // box silently blank, a Save onto an existing preset name stored null over a
 // good prompt.
-const DRAFT_PROMPT_KEY = 'chat.draft-prompt';
+const DRAFT_PROMPT_KEY = STORAGE_KEYS.CHAT_DRAFT_PROMPT;
 
 // How often a streaming message repaints. One paint per animation frame is up
 // to 120/s on a ProMotion phone; nobody reads at that rate, and every paint
@@ -108,7 +109,7 @@ function writeDraftPrompt(value) { lsWrite(DRAFT_PROMPT_KEY, value); }
 // the id is missing, unreadable, or names a conversation that is gone. iOS
 // evicts script-writable storage for a site left alone long enough, so the
 // degrade path is the COMMON one on a phone, not an edge case.
-const LAST_CONV_KEY = 'chat.last-conversation';
+const LAST_CONV_KEY = STORAGE_KEYS.CHAT_LAST_CONVERSATION;
 
 function notifyChatActivity(ctx) {
   const s = ctx.state;

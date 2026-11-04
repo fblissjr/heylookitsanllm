@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.241]
+
+### Changed
+
+- **Unified frontend browser storage (`frontend/js/storage.js`) and Media Finder cross-setting status & clear.**
+  - Unified all frontend `localStorage` and `IndexedDB` access in `frontend/js/storage.js` (`STORAGE_REGISTRY`, `STORAGE_KEYS`, `IDB_STORES`, `RETIRED_KEYS`, `RETIRED_DATABASES` sweeping `embed-kit:media-finder`, and `openVectorStore` on the single `heylook` database), enforced by `tests/unit/test_frontend_storage_guard.py` and `tests/e2e/embed-kit.test.mjs` (`11/11`).
+  - Media Finder (`frontend/js/pages/embeddings.js`) now shows distinct file counts for the active setting and across other settings (`N file(s) here · M under K other setting(s)`) and arms `"Clear this setting"` vs `"Clear all Media Finder data"` on `"Clear index"` without touching chat's `localStorage` keys.
+  - Updated `.claude/rules/frontend.md`, `docs/architecture/sharp_edges.md`, `docs/wiki/frontend_core.md`, `docs/frontend_v3_user_guide.md`, and `docs/frontend_v3_spec.md`.
+
 ## [2.0.240]
 
 ### Changed

@@ -2,7 +2,8 @@
 // without a bundler). Nav (desktop sidebar + phone top segmented bar) is
 // generated from ROUTES, so nav-active bookkeeping lives here, not in pages.
 
-import { createEl, sweepRetiredStorage } from './utils.js';
+import { createEl } from './utils.js';
+import { sweepRetiredStorage } from './storage.js';
 import { mountSettingsDrawer } from './settings-drawer.js';
 import { mountHotkeysModal } from './hotkeys.js';
 

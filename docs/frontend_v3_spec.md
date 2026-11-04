@@ -258,9 +258,11 @@ Embeddings use the existing load/eviction policy and global inference queue.
 Chat/notebook selectors exclude embedding models. On `#/embeddings`, the
 **Compare** and **Embedding Lab** modes store nothing (inputs and results live
 only in memory and are exported as JSON on demand), while **Media Finder**
-persists its per-configuration vector index, thumbnails, and file metadata in the
-browser's IndexedDB (`media-finder`, cleared via **Clear index**; nothing is
-stored on the server).
+keeps its vector index, thumbnails, and file metadata in this browser, at this
+address (`heylook` IndexedDB `media-finder` object store via `storage.js`,
+cleared for the active setting or all Media Finder data via **Clear index**;
+iOS can evict browser storage if the site is not visited recently, and nothing
+is stored on the server).
 
 **Chat completions** `POST /v1/chat/completions` and **Batch** `POST /v1/batch/chat/completions`:
 REMOVED in v1.79.66, together with the OpenAI SSE grammar (`choices[].delta` chunks, `data: [DONE]`,

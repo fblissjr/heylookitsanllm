@@ -1,8 +1,9 @@
 // Shared client primitives for #/embeddings (Compare, Media Finder, Embedding Lab):
-// MIME/kind resolution, base64 encoding, bounded batch planning, IndexedDB vector
-// store, flat cosine top-K search, thumbnails, and retrieval benchmark metrics.
+// MIME/kind resolution, base64 encoding, bounded batch planning, vector-store
+// space keys, flat cosine top-K search, thumbnails, and retrieval benchmark metrics.
 
 import { httpError, requestId } from './api.js';
+export { openVectorStore as openStore } from './storage.js';
 
 export const KINDS = ['image', 'audio', 'video'];
 
@@ -96,43 +97,10 @@ export function planBatches(entries, limits) {
   return batches;
 }
 
-// ---- IndexedDB vector store & top-K search ---------------------------------
+// ---- Vector space key & top-K search ---------------------------------------
 
 export const spaceId = ({ model, dimensions, prompt, windows }) =>
   `${model}|${dimensions}|${prompt || '-'}|${windows || '-'}`;
-
-function idbReq(r) {
-  return new Promise((resolve, reject) => { r.onsuccess = () => resolve(r.result); r.onerror = () => reject(r.error); });
-}
-
-export async function openStore(name) {
-  const db = await new Promise((resolve, reject) => {
-    const open = indexedDB.open(`embed-kit:${name}`, 1);
-    open.onupgradeneeded = () => {
-      const store = open.result.createObjectStore('vectors', { keyPath: 'id' });
-      store.createIndex('space', 'space');
-    };
-    open.onsuccess = () => resolve(open.result);
-    open.onerror = () => reject(open.error);
-  });
-  const tx = (mode) => db.transaction('vectors', mode).objectStore('vectors');
-  return {
-    async put(records) {
-      const t = db.transaction('vectors', 'readwrite');
-      for (const r of records) t.objectStore('vectors').put(r);
-      await new Promise((res, rej) => { t.oncomplete = res; t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); });
-    },
-    ids: async (space) => new Set(await idbReq(tx('readonly').index('space').getAllKeys(space))),
-    all: (space) => idbReq(tx('readonly').index('space').getAll(space)),
-    spaces: async () => [...new Set((await idbReq(tx('readonly').getAll())).map((r) => r.space))],
-    async clear(space) {
-      const keys = await idbReq(tx('readonly').index('space').getAllKeys(space));
-      const t = db.transaction('vectors', 'readwrite');
-      keys.forEach((k) => t.objectStore('vectors').delete(k));
-      await new Promise((res, rej) => { t.oncomplete = res; t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); });
-    },
-  };
-}
 
 export function topK(query, records, k = 24) {
   const q = Float32Array.from(query);

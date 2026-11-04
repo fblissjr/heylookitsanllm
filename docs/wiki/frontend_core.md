@@ -31,7 +31,7 @@ The application is structured around pages created via [`createPage`](../../fron
 | :--- | :--- | :--- |
 | **Chat** | [`chat.js`](../../frontend/js/pages/chat.js) | Full multi-turn conversation UI, system prompt editor, preset bar, attachments, thinking toggle (plus mid-stream **End thinking** control on `thinking_budget`-capable models), and model selection. Beside the model picker, [`load-panel.js`](../../frontend/js/load-panel.js) renders one control per `load_setting` field (`ctx_size` via [`context-select.js`](../../frontend/js/context-select.js), and a default-first select per other field labelled `default (${setting.auto})` from `engine.settings`, e.g. `flash attn: default (on)`), staging choices for `POST /v1/admin/models/{id}/reload`. An engine chip in the bar names the selected model's runtime and opens a compact panel (runtime, context, template); on phone (`<=767px`) `button.chat__readout` shows runtime, context, cold state, cache reuse, tok/s, preset and system-prompt state in one mono line. Dispatches `heylook:chat-activity` so `app.js` keeps `.nav-item--busy` on the `Chat` nav tab when navigating away during an active generation. Drives `POST /v1/conversations/{id}/generate`. |
 | **Notebook** | [`notebook.js`](../../frontend/js/pages/notebook.js) | A single continuous text document per notebook -- one textarea, a Generate button that **continues writing** into it, its own system prompt and model select, and a notebook list. Stopping keeps the partial text. Drives stateless `POST /v1/messages`. There is no branching or side-by-side comparison. |
-| **Embeddings** | [`embeddings.js`](../../frontend/js/pages/embeddings.js) | Three-mode multimodal studio backed by [`embed-kit.js`](../../frontend/js/embed-kit.js) and `POST /v1/embeddings`: **Compare** (multimodal items with inline thumbnails, task prompts, dimensions, cosine matrix, query and video-window ranking, vector JSON export), **Media Finder** (resumable IndexedDB folder/file indexing keyed by `model\|dimensions\|prompt`, text + example-file search, and `<dialog>` preview seeking to `row.windows` timestamps), and **Embedding Lab** (multi-configuration retrieval benchmark computing `Recall@1`, `Recall@3`, `MRR` and cosine margins on a built-in 8-case multimodal set or a local `set.json` folder). |
+| **Embeddings** | [`embeddings.js`](../../frontend/js/pages/embeddings.js) | Three-mode multimodal studio backed by [`embed-kit.js`](../../frontend/js/embed-kit.js), [`storage.js`](../../frontend/js/storage.js), and `POST /v1/embeddings`: **Compare** (multimodal items with inline thumbnails, task prompts, dimensions, cosine matrix, query and video-window ranking, vector JSON export), **Media Finder** (resumable browser-indexed folder/file search in the unified `heylook` IndexedDB `media-finder` store keyed by `model\|dimensions\|prompt\|windows`, cross-setting file counts, armed `Clear this setting` vs `Clear all Media Finder data`, text + example-file search, and `<dialog>` preview seeking to `row.windows` timestamps), and **Embedding Lab** (multi-configuration retrieval benchmark computing `Recall@1`, `Recall@3`, `MRR` and cosine margins on a built-in 8-case multimodal set or a local `set.json` folder). |
 | **Models** | [`models.js`](../../frontend/js/pages/models.js) | Registry browser with residency ("Loaded") state, watch-folder settings (everything under a watch folder is served; a model's own settings live in its folder's `model.heylook.toml`), per-model **Configure** via the schema-driven editor, a per-row **Engine** panel rendering the engine contract through [`engine.js`](../../frontend/js/engine.js) (every setting with provenance, grouped by effect), and a danger zone. |
 | **Perf** | [`perf.js`](../../frontend/js/pages/perf.js) | Titled "Performance", with **three** sections: **System** (RAM, CPU, currently loaded models on both engines; a reading the server does not know shows as "--", never 0, and a model's memory is labelled with what it measures, which differs by engine), **Profile** (a timing breakdown by operation, a per-model **Cache** table -- share of prompt tokens reused, outcomes, and the causes the server reported -- and recent trends by hour, with token-weighted cache share and the two draft rates as columns that appear only when the range reported them), and **Observability** (live `observability_level` and `observability_retention_days` controls backed by `/v1/admin/config` plus an `events` / `metrics` JSONL log reader backed by `GET /v1/admin/config/logs`). A Refresh control and a set of time ranges sit alongside. |
 
@@ -40,10 +40,12 @@ flowchart TD
     App["app.js (Hash Router)"]
     App -->|"#chat"| Chat["pages/chat.js"]
     App -->|"#notebook"| NB["pages/notebook.js"]
+    App -->|"#embeddings"| Embed["pages/embeddings.js"]
     App -->|"#presets"| Presets["pages/presets.js"]
     App -->|"#models"| Models["pages/models.js"]
     App -->|"#perf"| Perf["pages/perf.js"]
     App --> Hotkeys["hotkeys.js (Shared Keyboard Shortcuts)"]
+    App --> Storage["storage.js (Unified Browser Storage)"]
 
     Chat --> LoadPanel["load-panel.js (Load Settings)"]
     LoadPanel --> CtxSelect["context-select.js (GGUF Context Steps)"]
@@ -51,6 +53,10 @@ flowchart TD
     Chat --> PromptSec["prompt-section.js (System Prompt Override)"]
     Chat --> MStream["markdown-stream.js (Incremental Renderer)"]
     Chat --> Hotkeys
+    Chat --> Storage
+
+    Embed --> EmbedKit["embed-kit.js (Batching, Top-K & Metrics)"]
+    Embed --> Storage
     
     NB --> PresetBar
     NB --> PromptSec
@@ -74,6 +80,12 @@ iOS Safari brings a backgrounded tab back with the heap it had, and every write 
 - **A debounced write carries its target and its payload from the moment it was scheduled.** `bindDocumentParams` records the document id and the settings bag when a setting changes and writes exactly those when its timer fires; a change on a different document flushes the write still owed first. Reading the open document and the panel at fire time sent a change to whichever document had become active inside the debounce window. The panel's typed fields commit on every `input` event (`commitAsTyped`), because `change` waits for a blur that WebKit does not produce when a button is tapped.
 - Hide flushes send with `keepalive` **and are dispatched ahead of the PUT chain** -- a request queued behind an in-flight PUT is never sent if the page unloads.
 - Resume fetches the conversation body **only when the list's `updated_at` moved**, and commits the new stamp only *after* everything it covers is adopted; otherwise one failed fetch becomes a permanent "unchanged", since nothing else ever refetches the active conversation. It never touches a live stream's rows, the prompt while its box is being typed in, or the sidebar during a rename.
+
+### 2.3. Unified Browser Storage (`storage.js`)
+All browser-local persistence in `frontend/js/` goes through [`storage.js`](../../frontend/js/storage.js) (enforced by `tests/unit/test_frontend_storage_guard.py`):
+- **One registry (`STORAGE_REGISTRY`):** declares every `localStorage` key (`heylook.chat.draft-prompt`, `heylook.chat.last-conversation`) and every `IndexedDB` object store (`media-finder` inside the single `heylook` database), along with which feature owns it and what it holds.
+- **Startup sweep (`sweepRetiredStorage`):** moves renamed `localStorage` keys (`MOVED_KEYS`), removes retired `localStorage` keys (`RETIRED_KEYS`), and deletes retired `IndexedDB` databases (`RETIRED_DATABASES`, including `embed-kit:media-finder`).
+- **Scoped clearing:** Media Finder's armed **Clear index** offers **Clear this setting** (deletes records in the active configuration `space`) and **Clear all Media Finder data** (clears the `media-finder` object store and reopens a fresh connection), leaving chat's `localStorage` keys untouched.
 
 ---
 

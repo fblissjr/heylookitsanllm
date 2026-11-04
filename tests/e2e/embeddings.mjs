@@ -115,8 +115,12 @@ try {
     assert(cancelled && await page.$('.embeddings__matrix') === null, 'cancel did not reach the server or retained results');
     hold = false;
 
-    // Mode 2: Media Finder (in-app IndexedDB indexing + windowed video search)
-    await page.evaluate(() => [...document.querySelectorAll('button')].find(e => e.textContent === 'Media Finder').click());
+    // Mode 2: Media Finder (in-app IndexedDB indexing + windowed video search + Clear this setting vs Clear all)
+    await page.evaluate(async () => {
+      const { STORAGE_KEYS, lsWrite } = await import('/js/storage.js');
+      lsWrite(STORAGE_KEYS.CHAT_DRAFT_PROMPT, 'keep-my-draft');
+      [...document.querySelectorAll('button')].find(e => e.textContent === 'Media Finder').click();
+    });
     await (await page.$('input[aria-label="Index media files"]')).uploadFile(video);
     await page.waitForFunction(() => {
       const t = document.querySelector('[role="status"]').textContent;
@@ -133,6 +137,22 @@ try {
     await page.waitForSelector('button.embeddings__card .embeddings__card-name');
     assert(await page.evaluate(() => [...document.querySelectorAll('button.embeddings__card .embeddings__card-name')].some(e => e.textContent.includes('[0:32–1:04]'))), 'video window span missing in Media Finder');
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'horizontal overflow in Media Finder');
+
+    // Index under a second dimension setting (768), verify status names both, Clear this setting leaves 128, Clear all leaves 0 with chat draft intact
+    await page.select('select[aria-label="Embedding dimensions"]', '768');
+    await (await page.$('input[aria-label="Index media files"]')).uploadFile(video);
+    await page.waitForFunction(() => document.body.textContent.includes('1 file here') && document.body.textContent.includes('1 under 1 other setting'));
+    await page.evaluate(() => [...document.querySelectorAll('button')].find(e => e.textContent === 'Clear index').click());
+    await page.evaluate(() => [...document.querySelectorAll('button')].find(e => e.textContent === 'Clear this setting').click());
+    await page.waitForFunction(() => document.body.textContent.includes('0 files here') && document.body.textContent.includes('1 under 1 other setting'));
+    await page.evaluate(() => [...document.querySelectorAll('button')].find(e => e.textContent === 'Clear index').click());
+    await page.evaluate(() => [...document.querySelectorAll('button')].find(e => e.textContent === 'Clear all Media Finder data').click());
+    await page.waitForFunction(() => document.body.textContent.includes('0 files here') && document.body.textContent.includes('0 under other settings'));
+    const draftSurvived = await page.evaluate(async () => {
+      const { STORAGE_KEYS, lsRead } = await import('/js/storage.js');
+      return lsRead(STORAGE_KEYS.CHAT_DRAFT_PROMPT);
+    });
+    assert(draftSurvived === 'keep-my-draft', 'clearing Media Finder wiped chat draft prompt');
 
     // Mode 3: Embedding Lab (folder input + built-in 8-case sample set)
     await page.evaluate(() => [...document.querySelectorAll('button')].find(e => e.textContent === 'Embedding Lab').click());

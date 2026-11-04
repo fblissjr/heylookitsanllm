@@ -4,6 +4,10 @@ import assert from 'node:assert/strict';
 import {
   buildPlan, cosine, evaluateCase, maxBytesFor, planBatches, spaceId, summarize,
 } from '../../frontend/js/embed-kit.js';
+import {
+  IDB_NAME, IDB_STORES, RETIRED_DATABASES, STORAGE_KEYS, STORAGE_REGISTRY,
+  lsRead, lsWrite, openVectorStore, sweepRetiredStorage,
+} from '../../frontend/js/storage.js';
 
 test('cosine of parallel, orthogonal and zero vectors', () => {
   assert.equal(cosine([1, 0], [2, 0]), 1);
@@ -92,4 +96,40 @@ test('maxBytesFor and planBatches fail closed when limits are missing', () => {
   assert.throws(() => maxBytesFor({}, 'image'), /Missing media_bytes limit/);
   assert.throws(() => planBatches([{ bytes: 10 }], {}), /Missing embedding request limits/);
   assert.equal(maxBytesFor({ limits: { media_bytes: { image: 1024 } } }, 'image'), 1024);
+});
+
+test('storage registry enforces registered keys and sweeps retired databases', async () => {
+  assert.equal(IDB_NAME, 'heylook');
+  assert.ok(RETIRED_DATABASES.includes('embed-kit:media-finder'));
+  assert.equal(STORAGE_REGISTRY.length, 3);
+  assert.throws(() => lsRead('unregistered.key'), /Unregistered browser storage key/);
+  assert.throws(() => lsWrite('unregistered.key', 'v'), /Unregistered browser storage key/);
+  await assert.rejects(() => openVectorStore('unregistered-store'), /Unregistered IndexedDB store/);
+
+  const deletedDbs = [];
+  const bag = new Map([
+    ['heylook.v3.chat.draft-prompt', 'migrated draft'],
+    ['heylook-v3-settings', 'stale'],
+  ]);
+  globalThis.localStorage = {
+    getItem: (k) => (bag.has(k) ? bag.get(k) : null),
+    setItem: (k, v) => bag.set(k, String(v)),
+    removeItem: (k) => bag.delete(k),
+  };
+  globalThis.indexedDB = {
+    deleteDatabase: (name) => { deletedDbs.push(name); },
+  };
+  try {
+    sweepRetiredStorage();
+    assert.equal(lsRead(STORAGE_KEYS.CHAT_DRAFT_PROMPT), 'migrated draft');
+    assert.equal(bag.has('heylook-v3-settings'), false);
+    assert.deepEqual(deletedDbs, ['embed-kit:media-finder']);
+    lsWrite(STORAGE_KEYS.CHAT_LAST_CONVERSATION, 'conv-1');
+    assert.equal(lsRead(STORAGE_KEYS.CHAT_LAST_CONVERSATION), 'conv-1');
+    lsWrite(STORAGE_KEYS.CHAT_LAST_CONVERSATION, '');
+    assert.equal(lsRead(STORAGE_KEYS.CHAT_LAST_CONVERSATION), null);
+  } finally {
+    delete globalThis.localStorage;
+    delete globalThis.indexedDB;
+  }
 });

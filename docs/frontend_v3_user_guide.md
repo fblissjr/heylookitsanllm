@@ -43,13 +43,18 @@ choose one of three tools:
 
 **Storage & lifecycle:** **Compare** and **Embedding Lab** store nothing; their
 inputs and results exist only in memory and are discarded when leaving the page.
-**Media Finder** stores vectors, thumbnails, and file paths/metadata in this
-browser's IndexedDB (`media-finder` database, keyed by model, dimensions,
-document prompt, and video-window mode); original media files are not copied into
-IndexedDB, and **Clear index** deletes the stored vectors for the active
-configuration. **Stop** requests cancellation; an active forward may finish
-before it can stop. Loading or switching models uses the normal model residency
-policy, so it can unload a chat model.
+**Media Finder** keeps its vectors, thumbnails, and file paths/metadata in this
+browser, at this address (`heylook` IndexedDB `media-finder` object store,
+keyed by model, dimensions, document prompt, and video-window mode); original
+media files are not copied into IndexedDB, and iOS can evict browser-stored data
+if you have not visited the site recently. The status line reports both the
+files indexed under the current setting and any files stored under other
+settings (`N files here · M under K other settings`). Clicking **Clear index**
+arms a choice between **Clear this setting** and **Clear all Media Finder data**
+without touching chat's saved draft prompt or last-open conversation. **Stop**
+requests cancellation; an active forward may finish before it can stop. Loading
+or switching models uses the normal model residency policy, so it can unload a
+chat model.
 
 ## 1. The one thing to understand first
 

@@ -257,7 +257,7 @@ const gib = (v) => `${v.toFixed(1)} GiB`;
 // `beforeunload` reliably. That asymmetry is the reason to read this before
 // "improving" either half.
 // The tempting precedent is chat.js parking its system prompt in
-// localStorage, and it does NOT transfer. That draft is typed before a
+// browser storage, and it does NOT transfer. That draft is typed before a
 // conversation exists, so the parking is a bridge to adoption, not a
 // durability feature; a template body has a home from the first keystroke,
 // one enabled button away. Storing it would also go STALE: `load()` refetches

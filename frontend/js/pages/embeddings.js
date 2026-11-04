@@ -1,11 +1,12 @@
-// Embeddings studio: Compare workbench, Media Finder (IndexedDB search), and Embedding Lab (retrieval benchmark).
+// Embeddings studio: Compare workbench, Media Finder (browser vector search), and Embedding Lab (retrieval benchmark).
 import { createPage } from "../page.js";
-import { armedConfirm, createEl as el, formatBytes } from "../utils.js";
+import { createEl as el, formatBytes } from "../utils.js";
 import { api, requestId, httpError } from "../api.js";
+import { IDB_STORES, openVectorStore } from "../storage.js";
 import * as drawer from "../settings-drawer.js";
 import {
   buildPlan, buildSampleDataset, cosine, embedWithRetry,
-  evaluateCase, fileToBase64, kindOf, maxBytesFor, mediaBlock, mimeOf, openStore,
+  evaluateCase, fileToBase64, kindOf, maxBytesFor, mediaBlock, mimeOf,
   planBatches, spaceId, summarize, textBlock, thumbnail, topK,
 } from "../embed-kit.js";
 
@@ -114,7 +115,7 @@ export default createPage({
       el("h1", {}, ["Embeddings"]),
       el("p", { class: "muted" }, ["Compare meaning across text, images, audio and video, index local media folders, or benchmark retrieval configurations."]),
       el("details", {}, [el("summary", {}, ["Ways to use this"]), el("p", {}, [
-        "Compare: put a query first and candidates after it, or combine text + media inside one item. Media Finder: index a folder of images, audio, and video in your browser (IndexedDB) and search by words or an example file. Embedding Lab: evaluate Recall@1, MRR, and cosine margins across models, dimensions, and task prompts.",
+        "Compare: put a query first and candidates after it, or combine text + media inside one item. Media Finder: index a folder of images, audio, and video in your browser and search by words or an example file. Embedding Lab: evaluate Recall@1, MRR, and cosine margins across models, dimensions, and task prompts.",
       ])]),
       controls, stop, status, results, previewDialog,
     ]));
@@ -139,7 +140,8 @@ export default createPage({
     const finderFolderBtn = button("Index folder", () => finderFolderInput.click());
     const finderFilesBtn = button("Index files", () => finderFilesInput.click());
     const finderClearBtn = el("button", { type: "button", class: "btn btn--sm" }, ["Clear index"]);
-    const finderSpaceNote = el("p", { class: "muted small" }, ["0 files indexed in this configuration."]);
+    const finderClearArm = el("span", { class: "embeddings__toolbar", role: "group", "aria-label": "Confirm clear index", hidden: true });
+    const finderSpaceNote = el("p", { class: "muted small" }, ["0 files here · 0 under other settings."]);
     const finderProgress = el("progress", { class: "embeddings__progress", value: 0, max: 1, hidden: true });
     const finderSkipped = el("details", { class: "small", hidden: true });
     const finderQueryInput = el("input", {
@@ -157,7 +159,7 @@ export default createPage({
         field("Document task", finderDocPrompt),
         field("Query task", finderQueryPrompt),
         field("Video windows", finderWindows),
-        finderFolderInput, finderFilesInput, finderFolderBtn, finderFilesBtn, finderClearBtn,
+        finderFolderInput, finderFilesInput, finderFolderBtn, finderFilesBtn, finderClearBtn, finderClearArm,
       ]),
       finderSpaceNote,
       finderProgress,
@@ -174,36 +176,76 @@ export default createPage({
     });
     const fileCount = (records) => new Set(records.map((r) => r.fileId || r.id.split("#t=")[0])).size;
     async function ensureStore() {
-      if (!s.store) s.store = await openStore("media-finder");
+      if (!s.store) s.store = await openVectorStore(IDB_STORES.MEDIA_FINDER);
       return s.store;
     }
     async function refreshFinderStatus() {
       if (!model.value) return;
       try {
         const store = await ensureStore();
-        const records = await store.all(finderSpace());
-        const files = fileCount(records);
-        finderSpaceNote.textContent = `${files} file(s) indexed under ${model.value} · ${dimensions.value}d · doc prompt: ${finderDocPrompt.value || "none"} · windows: ${finderWindows.value || "none"}.`;
+        const bySpace = await store.spaceFileCounts();
+        const sp = finderSpace();
+        const here = bySpace.get(sp) ?? 0;
+        let otherFiles = 0, otherSettings = 0;
+        for (const [k, count] of bySpace.entries()) {
+          if (k !== sp && count > 0) { otherFiles += count; otherSettings += 1; }
+        }
+        const otherPart = otherSettings
+          ? ` · ${otherFiles} under ${otherSettings} other ${otherSettings === 1 ? "setting" : "settings"}`
+          : " · 0 under other settings";
+        finderSpaceNote.textContent = `${here} ${here === 1 ? "file" : "files"} here (${model.value} · ${dimensions.value}d · doc prompt: ${finderDocPrompt.value || "none"} · windows: ${finderWindows.value || "none"})${otherPart}.`;
       } catch (err) { status.textContent = err.message; }
     }
 
-    finderDocPrompt.addEventListener("change", () => { finderGrid.replaceChildren(); refreshFinderStatus(); });
-    finderWindows.addEventListener("change", () => { finderGrid.replaceChildren(); refreshFinderStatus(); });
-    finderFolderInput.addEventListener("change", (e) => { indexFinderFiles([...(e.target.files || [])]); e.target.value = ""; });
-    finderFilesInput.addEventListener("change", (e) => { indexFinderFiles([...(e.target.files || [])]); e.target.value = ""; });
-    finderQueryInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); runFinderSearch(); } });
+    let clearTimer = null;
+    function disarmClear() {
+      if (clearTimer) { clearTimeout(clearTimer); clearTimer = null; }
+      finderClearArm.hidden = true;
+      finderClearBtn.hidden = false;
+    }
+    finderClearArm.append(
+      el("span", { class: "small muted" }, ["Clear index?"]),
+      button("Clear this setting", async () => {
+        const sp = finderSpace();
+        disarmClear();
+        try {
+          const store = await ensureStore();
+          await store.clear(sp);
+          finderGrid.replaceChildren();
+          await refreshFinderStatus();
+          status.textContent = "Cleared index for current configuration.";
+        } catch (err) {
+          if (ctx.alive) status.textContent = err.message;
+        }
+      }, "btn btn--sm btn--armed"),
+      button("Clear all Media Finder data", async () => {
+        disarmClear();
+        try {
+          const store = await ensureStore();
+          await store.clearAll();
+          s.store = null;
+          await ensureStore();
+          finderGrid.replaceChildren();
+          await refreshFinderStatus();
+          status.textContent = "Cleared all Media Finder data.";
+        } catch (err) {
+          if (ctx.alive) status.textContent = err.message;
+        }
+      }, "btn btn--sm btn--armed"),
+      button("Cancel", disarmClear),
+    );
+    finderClearBtn.addEventListener("click", () => {
+      finderClearBtn.hidden = true;
+      finderClearArm.hidden = false;
+      if (clearTimer) clearTimeout(clearTimer);
+      clearTimer = setTimeout(disarmClear, 6000);
+    });
 
-    armedConfirm(finderClearBtn, async () => {
-      try {
-        const store = await ensureStore();
-        await store.clear(finderSpace());
-        finderGrid.replaceChildren();
-        await refreshFinderStatus();
-        status.textContent = "Cleared index for current configuration.";
-      } catch (err) {
-        if (ctx.alive) status.textContent = err.message;
-      }
-    }, "Clear index?", null, () => finderSpace());
+    finderDocPrompt.addEventListener("change", () => { disarmClear(); finderGrid.replaceChildren(); refreshFinderStatus(); });
+    finderWindows.addEventListener("change", () => { disarmClear(); finderGrid.replaceChildren(); refreshFinderStatus(); });
+    finderFolderInput.addEventListener("change", (e) => { disarmClear(); indexFinderFiles([...(e.target.files || [])]); e.target.value = ""; });
+    finderFilesInput.addEventListener("change", (e) => { disarmClear(); indexFinderFiles([...(e.target.files || [])]); e.target.value = ""; });
+    finderQueryInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); runFinderSearch(); } });
 
     finderExInput.addEventListener("change", (e) => {
       const f = e.target.files?.[0];
@@ -864,13 +906,16 @@ export default createPage({
       finally { s.runId = null; if (ctx.alive) { controls.disabled = false; stop.hidden = true; } }
     }
 
-    model.addEventListener("change", refreshModel);
+    model.addEventListener("change", () => { disarmClear(); refreshModel(); });
     dimensions.addEventListener("change", () => {
+      disarmClear();
       invalidate();
       if (s.mode === "finder") refreshFinderStatus();
     });
     ctx.onTeardown(() => {
+      disarmClear();
       s.abort?.abort();
+      s.store?.close();
       closePreview();
       if (s.runId) fetch(`/v1/requests/${encodeURIComponent(s.runId)}`, { method: "DELETE", keepalive: true }).catch(() => {});
     });
