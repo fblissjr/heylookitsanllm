@@ -1,13 +1,12 @@
-// Embeddings studio: Compare workbench, Media Finder (browser vector search), and Embedding Lab (retrieval benchmark).
+// Embeddings studio: Compare workbench and Embedding Lab (retrieval benchmark).
 import { createPage } from "../page.js";
-import { createEl as el, formatBytes } from "../utils.js";
+import { createEl as el } from "../utils.js";
 import { api, requestId, httpError } from "../api.js";
-import { IDB_STORES, openVectorStore } from "../storage.js";
 import * as drawer from "../settings-drawer.js";
 import {
-  buildPlan, buildSampleDataset, cosine, embedWithRetry,
+  buildPlan, buildSampleDataset, embedWithRetry,
   evaluateCase, fileToBase64, kindOf, maxBytesFor, mediaBlock, mimeOf,
-  planBatches, spaceId, summarize, textBlock, thumbnail, topK,
+  planBatches, summarize, textBlock, thumbnail,
 } from "../embed-kit.js";
 
 function button(text, action, cls = "btn btn--sm") {
@@ -26,6 +25,7 @@ function download(value, filename = "embeddings.json") {
 const signed = (n) => (n == null ? "–" : `${n < 0 ? "−" : "+"}${Math.abs(n).toFixed(3)}`);
 const fmtSec = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 const fmtSpan = (r) => (r.start != null && r.end != null ? ` [${fmtSec(r.start)}–${fmtSec(r.end)}]` : "");
+const isMlx = (m) => m.engine?.runtime?.value === "mlx-vlm" || m.provider === "mlx" || Boolean(m.engine?.embedding?.video_windows);
 
 export default createPage({
   async setup(ctx) {
@@ -36,11 +36,6 @@ export default createPage({
     s.models = [];
     s.runId = null;
     s.abort = null;
-    // Media Finder state
-    s.store = null;
-    s.finderHandles = new Map();
-    s.finderExample = null;
-    s.finderPreviewUrl = null;
     // Embedding Lab state
     s.labSetName = "";
     s.labFiles = new Map();
@@ -70,34 +65,28 @@ export default createPage({
     stop.hidden = true;
     const add = button("Add item", () => { addItem(); invalidate(); });
 
-    // Mode tabs: Compare (default) | Media Finder | Embedding Lab
+    // Mode tabs: Compare (default) | Embedding Lab
     const tabCompare = el("button", { type: "button", class: "btn btn--sm embeddings__tab", "aria-pressed": "true" }, ["Compare"]);
-    const tabFinder = el("button", { type: "button", class: "btn btn--sm embeddings__tab", "aria-pressed": "false" }, ["Media Finder"]);
     const tabLab = el("button", { type: "button", class: "btn btn--sm embeddings__tab", "aria-pressed": "false" }, ["Embedding Lab"]);
     const modeBar = el("div", { class: "embeddings__modes", role: "group", "aria-label": "Embedding tools" }, [
-      tabCompare, tabFinder, tabLab,
+      tabCompare, tabLab,
     ]);
 
     const comparePane = el("div", { class: "embeddings__pane" }, [
       cards,
       el("div", { class: "embeddings__toolbar" }, [add, run]),
     ]);
-    const finderPane = el("div", { class: "embeddings__pane", hidden: true });
     const labPane = el("div", { class: "embeddings__pane", hidden: true });
 
     function switchMode(mode) {
       s.mode = mode;
       tabCompare.setAttribute("aria-pressed", String(mode === "compare"));
-      tabFinder.setAttribute("aria-pressed", String(mode === "finder"));
       tabLab.setAttribute("aria-pressed", String(mode === "lab"));
       comparePane.hidden = mode !== "compare";
       results.hidden = mode !== "compare";
-      finderPane.hidden = mode !== "finder";
       labPane.hidden = mode !== "lab";
-      if (mode === "finder") refreshFinderStatus();
     }
     tabCompare.addEventListener("click", () => switchMode("compare"));
-    tabFinder.addEventListener("click", () => switchMode("finder"));
     tabLab.addEventListener("click", () => switchMode("lab"));
 
     controls.append(
@@ -105,19 +94,16 @@ export default createPage({
       note,
       modeBar,
       comparePane,
-      finderPane,
       labPane,
     );
 
-    const previewDialog = el("dialog", { class: "embeddings__dialog" });
-
     ctx.el.append(el("div", { class: "embeddings" }, [
       el("h1", {}, ["Embeddings"]),
-      el("p", { class: "muted" }, ["Compare meaning across text, images, audio and video, index local media folders, or benchmark retrieval configurations."]),
+      el("p", { class: "muted" }, ["Compare meaning across text, images, audio and video, or benchmark retrieval configurations."]),
       el("details", {}, [el("summary", {}, ["Ways to use this"]), el("p", {}, [
-        "Compare: put a query first and candidates after it, or combine text + media inside one item. Media Finder: index a folder of images, audio, and video in your browser and search by words or an example file. Embedding Lab: evaluate Recall@1, MRR, and cosine margins across models, dimensions, and task prompts.",
+        "Compare: put a query first and candidates after it, or combine text + media inside one item. Embedding Lab: evaluate Recall@1, MRR, and cosine margins across models, dimensions, and task prompts.",
       ])]),
-      controls, stop, status, results, previewDialog,
+      controls, stop, status, results,
     ]));
 
     const selected = () => s.models.find((m) => m.id === model.value);
@@ -130,353 +116,7 @@ export default createPage({
       if ([...select.options].some((o) => o.value === previous)) select.value = previous;
     }
 
-    // ---- Mode 2: Media Finder ----------------------------------------------
-
-    const finderDocPrompt = el("select", { "aria-label": "Finder document prompt" });
-    const finderQueryPrompt = el("select", { "aria-label": "Finder query prompt" });
-    const finderWindows = el("select", { "aria-label": "Finder video windows" });
-    const finderFolderInput = el("input", { type: "file", webkitdirectory: true, multiple: true, hidden: true, "aria-label": "Index media folder" });
-    const finderFilesInput = el("input", { type: "file", accept: "image/*,audio/*,video/*", multiple: true, hidden: true, "aria-label": "Index media files" });
-    const finderFolderBtn = button("Index folder", () => finderFolderInput.click());
-    const finderFilesBtn = button("Index files", () => finderFilesInput.click());
-    const finderClearBtn = el("button", { type: "button", class: "btn btn--sm" }, ["Clear index"]);
-    const finderClearArm = el("span", { class: "embeddings__toolbar", role: "group", "aria-label": "Confirm clear index", hidden: true });
-    const finderSpaceNote = el("p", { class: "muted small" }, ["0 files here · 0 under other settings."]);
-    const finderProgress = el("progress", { class: "embeddings__progress", value: 0, max: 1, hidden: true });
-    const finderSkipped = el("details", { class: "small", hidden: true });
-    const finderQueryInput = el("input", {
-      type: "search", class: "input", placeholder: "Describe an image, sound, or clip…",
-      "aria-label": "Search indexed media by words",
-    });
-    const finderExInput = el("input", { type: "file", accept: "image/*,audio/*,video/*", hidden: true });
-    const finderExBtn = button("Attach example", () => finderExInput.click());
-    const finderExChip = el("span", { class: "embeddings__chip", hidden: true });
-    const finderSearchBtn = button("Search index", () => runFinderSearch());
-    const finderGrid = el("div", { class: "embeddings__grid" });
-
-    finderPane.append(
-      el("div", { class: "embeddings__toolbar" }, [
-        field("Document task", finderDocPrompt),
-        field("Query task", finderQueryPrompt),
-        field("Video windows", finderWindows),
-        finderFolderInput, finderFilesInput, finderFolderBtn, finderFilesBtn, finderClearBtn, finderClearArm,
-      ]),
-      finderSpaceNote,
-      finderProgress,
-      finderSkipped,
-      el("div", { class: "embeddings__finder-search" }, [
-        finderQueryInput, finderExInput, finderExBtn, finderExChip, finderSearchBtn,
-      ]),
-      finderGrid,
-    );
-
-    const finderSpace = () => spaceId({
-      model: model.value, dimensions: Number(dimensions.value),
-      prompt: finderDocPrompt.value, windows: finderWindows.value,
-    });
-    const fileCount = (records) => new Set(records.map((r) => r.fileId || r.id.split("#t=")[0])).size;
-    async function ensureStore() {
-      if (!s.store) s.store = await openVectorStore(IDB_STORES.MEDIA_FINDER);
-      return s.store;
-    }
-    async function refreshFinderStatus() {
-      if (!model.value) return;
-      try {
-        const store = await ensureStore();
-        const bySpace = await store.spaceFileCounts();
-        const sp = finderSpace();
-        const here = bySpace.get(sp) ?? 0;
-        let otherFiles = 0, otherSettings = 0;
-        for (const [k, count] of bySpace.entries()) {
-          if (k !== sp && count > 0) { otherFiles += count; otherSettings += 1; }
-        }
-        const otherPart = otherSettings
-          ? ` · ${otherFiles} under ${otherSettings} other ${otherSettings === 1 ? "setting" : "settings"}`
-          : " · 0 under other settings";
-        finderSpaceNote.textContent = `${here} ${here === 1 ? "file" : "files"} here (${model.value} · ${dimensions.value}d · doc prompt: ${finderDocPrompt.value || "none"} · windows: ${finderWindows.value || "none"})${otherPart}.`;
-      } catch (err) { status.textContent = err.message; }
-    }
-
-    let clearTimer = null;
-    function disarmClear() {
-      if (clearTimer) { clearTimeout(clearTimer); clearTimer = null; }
-      finderClearArm.hidden = true;
-      finderClearBtn.hidden = false;
-    }
-    finderClearArm.append(
-      el("span", { class: "small muted" }, ["Clear index?"]),
-      button("Clear this setting", async () => {
-        const sp = finderSpace();
-        disarmClear();
-        try {
-          const store = await ensureStore();
-          await store.clear(sp);
-          finderGrid.replaceChildren();
-          await refreshFinderStatus();
-          status.textContent = "Cleared index for current configuration.";
-        } catch (err) {
-          if (ctx.alive) status.textContent = err.message;
-        }
-      }, "btn btn--sm btn--armed"),
-      button("Clear all Media Finder data", async () => {
-        disarmClear();
-        try {
-          const store = await ensureStore();
-          await store.clearAll();
-          s.store = null;
-          await ensureStore();
-          finderGrid.replaceChildren();
-          await refreshFinderStatus();
-          status.textContent = "Cleared all Media Finder data.";
-        } catch (err) {
-          if (ctx.alive) status.textContent = err.message;
-        }
-      }, "btn btn--sm btn--armed"),
-      button("Cancel", disarmClear),
-    );
-    finderClearBtn.addEventListener("click", () => {
-      finderClearBtn.hidden = true;
-      finderClearArm.hidden = false;
-      if (clearTimer) clearTimeout(clearTimer);
-      clearTimer = setTimeout(disarmClear, 6000);
-    });
-
-    finderDocPrompt.addEventListener("change", () => { disarmClear(); finderGrid.replaceChildren(); refreshFinderStatus(); });
-    finderWindows.addEventListener("change", () => { disarmClear(); finderGrid.replaceChildren(); refreshFinderStatus(); });
-    finderFolderInput.addEventListener("change", (e) => { disarmClear(); indexFinderFiles([...(e.target.files || [])]); e.target.value = ""; });
-    finderFilesInput.addEventListener("change", (e) => { disarmClear(); indexFinderFiles([...(e.target.files || [])]); e.target.value = ""; });
-    finderQueryInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); runFinderSearch(); } });
-
-    finderExInput.addEventListener("change", (e) => {
-      const f = e.target.files?.[0];
-      e.target.value = "";
-      if (!f) return;
-      const info = selected()?.engine.embedding;
-      const k = kindOf(f);
-      if (!k) {
-        status.textContent = "Choose an image, audio, or video file.";
-        return;
-      }
-      try {
-        const cap = maxBytesFor(info, k);
-        if (f.size > cap) {
-          status.textContent = `Choose an image, audio, or video file within the model limit (${formatBytes(cap)}).`;
-          return;
-        }
-      } catch (err) {
-        status.textContent = err.message;
-        return;
-      }
-      s.finderExample = f;
-      finderExChip.hidden = false;
-      finderExChip.replaceChildren(
-        document.createTextNode(`${f.name} `),
-        button("×", () => { s.finderExample = null; finderExChip.hidden = true; finderExChip.replaceChildren(); }),
-      );
-    });
-
-    function paintSkipped(skipped) {
-      finderSkipped.hidden = !skipped.length;
-      if (skipped.length) {
-        finderSkipped.replaceChildren(
-          el("summary", {}, [`${skipped.length} file(s) skipped`]),
-          el("ul", {}, skipped.slice(0, 40).map((msg) => el("li", {}, [msg]))),
-        );
-      }
-    }
-
-    async function indexFinderFiles(fileList) {
-      const info = selected()?.engine.embedding;
-      if (!info) return;
-      let done = 0, todo = [];
-      try {
-        const sp = finderSpace();
-        const store = await ensureStore();
-        const existing = await store.ids(sp);
-        const skipped = [];
-        for (const file of fileList || []) {
-          const path = file.webkitRelativePath || file.name;
-          const kind = kindOf(file);
-          if (!kind) { skipped.push(`${path}: unsupported format`); continue; }
-          if (!info.modalities.includes(kind)) { skipped.push(`${path}: model does not support ${kind}`); continue; }
-          const cap = maxBytesFor(info, kind);
-          if (file.size > cap) { skipped.push(`${path}: over ${formatBytes(cap)} (${formatBytes(file.size)})`); continue; }
-          const id = `${sp}|${path}|${file.size}|${file.lastModified}`;
-          s.finderHandles.set(id, file);
-          if (existing.has(id)) continue;
-          todo.push({ id, file, path, kind, bytes: file.size });
-        }
-        paintSkipped(skipped);
-        if (!todo.length) {
-          await refreshFinderStatus();
-          status.textContent = "All supported files in that selection are already indexed.";
-          return;
-        }
-        const batches = planBatches(todo, info.limits);
-        controls.disabled = true;
-        stop.hidden = false;
-        finderProgress.hidden = false;
-        finderProgress.value = 0;
-        finderProgress.max = todo.length;
-        s.abort = new AbortController();
-        const winOpt = finderWindows.value ? { sampling: finderWindows.value } : null;
-        const embedEntries = async (entries) => {
-          const items = await Promise.all(entries.map(async (b) => ({
-            content: [await mediaBlock(b.file, b.kind === "video" ? winOpt : null)],
-            ...(finderDocPrompt.value ? { prompt_name: finderDocPrompt.value } : {}),
-          })));
-          const thumbs = await Promise.all(entries.map((b) => thumbnail(b.file, b.kind)));
-          s.runId = requestId();
-          const result = await embedWithRetry({
-            model: model.value, dimensions: Number(dimensions.value), items,
-            reqId: s.runId, signal: s.abort.signal,
-          });
-          const out = [];
-          result.data.forEach((row, i) => {
-            const b = entries[i];
-            const base = {
-              id: b.id, fileId: b.id, space: sp, path: b.path, name: b.file.name,
-              kind: b.kind, size: b.bytes, mtime: b.file.lastModified,
-              thumb: thumbs[i], vec: new Float32Array(row.embedding),
-            };
-            out.push(base);
-            if (Array.isArray(row.windows) && row.windows.length) {
-              for (const w of row.windows) {
-                out.push({
-                  ...base,
-                  id: `${b.id}#t=${w.start}-${w.end}`, fileId: b.id,
-                  start: w.start, end: w.end,
-                  vec: new Float32Array(w.embedding),
-                });
-              }
-            }
-          });
-          return out;
-        };
-        for (const batch of batches) {
-          status.textContent = `Indexing ${done + 1}–${done + batch.length} of ${todo.length}…`;
-          let out;
-          try {
-            out = await embedEntries(batch);
-          } catch (err) {
-            if (batch.length === 1 || s.abort.signal.aborted || err.status !== 400) throw err;
-            out = [];
-            for (const b of batch) {
-              try {
-                out.push(...await embedEntries([b]));
-              } catch (single) {
-                if (single.status !== 400) throw single;
-                skipped.push(`${b.path}: ${single.message}`);
-                paintSkipped(skipped);
-              }
-            }
-          }
-          if (out.length) await store.put(out);
-          done += batch.length;
-          finderProgress.value = done;
-        }
-        await refreshFinderStatus();
-        status.textContent = `Indexed ${done} file(s). Ready to search.`;
-      } catch (err) {
-        if (ctx.alive) status.textContent = err.name === "AbortError" ? `Stopped at ${done}/${todo.length}. Progress saved.` : err.message;
-      } finally {
-        s.runId = null; s.abort = null; finderProgress.hidden = true;
-        if (ctx.alive) { controls.disabled = false; stop.hidden = true; }
-      }
-    }
-
-    function closePreview() {
-      for (const m of previewDialog.querySelectorAll("video, audio")) {
-        m.pause();
-        m.removeAttribute("src");
-        m.load();
-      }
-      previewDialog.replaceChildren();
-      if (s.finderPreviewUrl) { URL.revokeObjectURL(s.finderPreviewUrl); s.finderPreviewUrl = null; }
-    }
-    previewDialog.onclose = closePreview;
-
-    function openPreview(record) {
-      const file = s.finderHandles.get(record.fileId || record.id);
-      if (!file) {
-        status.textContent = `${record.path}: re-choose its folder or files to open the original (the index keeps vectors and thumbnails only).`;
-        return;
-      }
-      closePreview();
-      const url = URL.createObjectURL(file);
-      s.finderPreviewUrl = url;
-      const mediaEl = el(record.kind === "image" ? "img" : record.kind, {
-        class: "embeddings__preview-media", src: url, controls: record.kind !== "image",
-      });
-      if (record.kind === "video" && record.start != null) {
-        mediaEl.addEventListener("loadedmetadata", () => { mediaEl.currentTime = record.start; }, { once: true });
-      }
-      previewDialog.replaceChildren(
-        el("div", { class: "embeddings__dialog-head" }, [
-          el("strong", {}, [`${record.path}${fmtSpan(record)}`]),
-          button("Close", () => previewDialog.close()),
-        ]),
-        mediaEl,
-      );
-      previewDialog.showModal();
-    }
-
-    async function runFinderSearch() {
-      const text = finderQueryInput.value.trim();
-      if (!text && !s.finderExample) {
-        status.textContent = "Enter search words, attach an example file, or both.";
-        return;
-      }
-      try {
-        const store = await ensureStore();
-        const records = await store.all(finderSpace());
-        if (!records.length) {
-          status.textContent = "Index a folder or files in this configuration before searching.";
-          return;
-        }
-        const files = fileCount(records);
-        controls.disabled = true;
-        stop.hidden = false;
-        s.abort = new AbortController();
-        s.runId = requestId();
-        status.textContent = `Searching ${files} indexed file(s)…`;
-        const content = [];
-        if (text) content.push(textBlock(text));
-        if (s.finderExample) content.push(await mediaBlock(s.finderExample));
-        const res = await embedWithRetry({
-          model: model.value, dimensions: Number(dimensions.value),
-          items: [{ content, ...(finderQueryPrompt.value ? { prompt_name: finderQueryPrompt.value } : {}) }],
-          reqId: s.runId, signal: s.abort.signal,
-        });
-        if (!ctx.alive) return;
-        const hits = topK(res.data[0].embedding, records, 24);
-        finderGrid.replaceChildren(...hits.map(({ record, score }) => {
-          const thumbEl = record.thumb
-            ? el("img", { class: "embeddings__card-thumb", src: record.thumb, alt: record.name })
-            : el("div", { class: "embeddings__card-placeholder" }, [record.kind]);
-          return el("button", {
-            type: "button",
-            class: "embeddings__card embeddings__card--clickable",
-            title: `${record.path}${fmtSpan(record)}`,
-            onclick: () => openPreview(record),
-          }, [
-            thumbEl,
-            el("div", { class: "embeddings__card-meta" }, [
-              el("strong", { class: "embeddings__score-pill" }, [score.toFixed(3)]),
-              el("span", { class: "embeddings__card-name" }, [`${record.name}${fmtSpan(record)}`]),
-            ]),
-          ]);
-        }));
-        status.textContent = `Showing top ${hits.length} match(es) across ${files} indexed file(s).`;
-      } catch (err) {
-        if (ctx.alive) status.textContent = err.name === "AbortError" ? "Search cancelled." : err.message;
-      } finally {
-        s.runId = null; s.abort = null;
-        if (ctx.alive) { controls.disabled = false; stop.hidden = true; }
-      }
-    }
-
-    // ---- Mode 3: Embedding Lab (Retrieval Benchmark) -----------------------
+    // ---- Mode 2: Embedding Lab (Retrieval Benchmark) -----------------------
 
     const labQueryPrompt = el("select", { "aria-label": "Lab query prompt" });
     const labDocPrompt = el("select", { "aria-label": "Lab document prompt" });
@@ -727,29 +367,12 @@ export default createPage({
       dimensions.replaceChildren(...(info?.dimensions ?? []).map((n) => el("option", { value: n }, [String(n)])));
       if (info) dimensions.value = info.native_dimensions;
       note.textContent = info ? `Inputs: ${info.modalities.join(", ")}. Each item must fit ${info.max_input_tokens.toLocaleString()} tokens including media. ${Object.keys(info.prompts).length ? "Task prompts come from the checkpoint." : "This checkpoint has no named prompt catalog; task instructions can be entered as text."}` : "";
-      const vw = info?.video_windows;
-      if (vw) {
-        finderWindows.replaceChildren(
-          el("option", { value: "content" }, [`Content-aware (${vw.max_seconds}s)`]),
-          el("option", { value: "fps" }, [`Fixed rate (${vw.max_seconds}s)`]),
-          el("option", { value: "" }, ["Whole video only"]),
-        );
-        finderWindows.value = vw.default_sampling || "content";
-        finderWindows.disabled = false;
-      } else {
-        finderWindows.replaceChildren(el("option", { value: "" }, ["Whole video only"]));
-        finderWindows.value = "";
-        finderWindows.disabled = true;
-      }
       for (const item of s.items) { prompts(item.prompt, item.prompt.value); item.paint?.(); }
-      prompts(finderDocPrompt, "document");
-      prompts(finderQueryPrompt, "query");
       prompts(labQueryPrompt, "query");
       prompts(labDocPrompt, "document");
       run.disabled = !info;
       add.disabled = !info || s.items.length >= requireLimits().items;
       invalidate();
-      if (s.mode === "finder") refreshFinderStatus();
     }
 
     function requireLimits() {
@@ -760,14 +383,14 @@ export default createPage({
       return lim;
     }
 
-    function addItem(text = "") {
+    function addItem(text = "", defaultPrompt = "") {
       const maxItems = () => requireLimits().items;
       const maxBlocks = () => requireLimits().blocks_per_item;
       if (s.items.length >= maxItems()) return;
       const item = { blocks: [] };
       item.name = el("input", { type: "text", class: "input", value: `Item ${s.items.length + 1}`, maxLength: 80, "aria-label": "Item label", oninput: invalidate });
       item.prompt = el("select", { "aria-label": "Task prompt", onchange: invalidate });
-      prompts(item.prompt);
+      prompts(item.prompt, defaultPrompt);
       const blocks = el("div", { class: "embeddings__blocks" });
       const paintBlocks = () => {
         const vw = selected()?.engine.embedding?.video_windows;
@@ -779,8 +402,8 @@ export default createPage({
               onchange: (e) => { block.windows = e.target.value; invalidate(); },
             }, [
               el("option", { value: "" }, ["Whole video only"]),
-              el("option", { value: "content" }, [`Windows: content (${vw.max_seconds}s)`]),
               el("option", { value: "fps" }, [`Windows: fixed rate (${vw.max_seconds}s)`]),
+              el("option", { value: "content" }, [`Windows: content (${vw.max_seconds}s)`]),
             ]);
             winSelect.value = block.windows || "";
           }
@@ -906,27 +529,25 @@ export default createPage({
       finally { s.runId = null; if (ctx.alive) { controls.disabled = false; stop.hidden = true; } }
     }
 
-    model.addEventListener("change", () => { disarmClear(); refreshModel(); });
-    dimensions.addEventListener("change", () => {
-      disarmClear();
-      invalidate();
-      if (s.mode === "finder") refreshFinderStatus();
-    });
+    model.addEventListener("change", () => refreshModel());
+    dimensions.addEventListener("change", () => invalidate());
     ctx.onTeardown(() => {
-      disarmClear();
       s.abort?.abort();
-      s.store?.close();
-      closePreview();
       if (s.runId) fetch(`/v1/requests/${encodeURIComponent(s.runId)}`, { method: "DELETE", keepalive: true }).catch(() => {});
     });
     try {
       const data = await api.listModels();
       if (!ctx.alive) return;
-      s.models = (data.data ?? []).filter((m) => m.engine?.embedding);
+      s.models = (data.data ?? []).filter((m) => m.engine?.embedding).sort((a, b) => Number(isMlx(b)) - Number(isMlx(a)));
       model.replaceChildren(...s.models.map((m) => el("option", { value: m.id }, [m.id])));
       refreshModel();
       if (s.models.length) {
-        addItem("A dog playing on a beach."); addItem("A puppy running beside the ocean."); addItem("A database query joining two tables.");
+        const names = Object.keys(selected()?.engine.embedding.prompts ?? {});
+        const q = names.includes("query") ? "query" : "";
+        const d = names.includes("document") ? "document" : "";
+        addItem("A dog playing on a beach.", q);
+        addItem("A puppy running beside the ocean.", d);
+        addItem("A database query joining two tables.", d);
       }
       status.textContent = s.models.length ? "Ready. Edit the examples or attach your own media." : "No embedding models found. Add a supported checkpoint to a scanned model folder and rescan on Models.";
     } catch (error) { if (ctx.alive) { status.textContent = error.message; run.disabled = true; } }

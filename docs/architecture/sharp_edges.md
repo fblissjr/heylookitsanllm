@@ -2206,3 +2206,20 @@ lazy graph. The embedding loader now materializes all arrays in `model.state` on
 the loading worker. This is an ownership boundary, not a replacement architecture
 or an upstream model patch. A real-Metal cross-worker check uses a private lazy
 buffer so a parameters-only implementation fails.
+
+## Windowed video embeddings: short-clip frame budgets at 4 fps
+
+`providers/video_windows.py` decodes a video once at `4 * fps` (`4 fps` for
+EmbeddingGemma 2, whose `video_processor` specifies `fps = 1` and
+`max_frames = 32`) when `sampling="content"` is requested, so outlier selection
+has sub-second candidates between 1 fps anchors. Before `v2.0.243`,
+`pick_content` began with `if len(idx) <= max_frames: return idx` using the full
+`32`-frame ceiling regardless of window duration. Any clip or trailing window up
+to `8` seconds (`<= 32` decoded frames at `4 fps`) bypassed content selection
+entirely and fed all `4 fps` frames into a processor calibrated for `1 fps`
+(`4x` temporal density, `4x` vision soft tokens, and shifted window vectors vs.
+whole-video embeddings). `pick_content` now scales the per-window budget to the
+window's duration (`min(max_frames, max(2, ceil((hi - lo) * fps)))`), falls back
+to all candidate frames in the window when a short window has `< 3` anchors, and
+`VideoWindows.sampling` defaults to `"fps"` so window vectors match the model's
+training frame rate unless `"content"` outlier selection is explicitly chosen.

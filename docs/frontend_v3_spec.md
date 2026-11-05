@@ -222,8 +222,9 @@ requires a separate audio block. A video block may add `windows: {seconds?, samp
 (MLX only; gguf answers 400): the row then also carries `windows: [{start, end,
 frame_times, embedding}]`, one vector per consecutive window of at most `seconds`
 (default and maximum `engine.embedding.video_windows.max_seconds`, the checkpoint's
-`max_frames / fps`). `sampling` is `content` (default: evenly spaced anchors plus the
-frames least like them, from 4 fps candidates) or `fps` (the model's own rate). The
+`max_frames / fps`). `sampling` is `fps` (default: the model's own rate) or
+`content` (evenly spaced anchors plus the frames least like them, from 4 fps
+candidates, scaled to the window's frame budget). The
 row's own `embedding` is unchanged by windows. An item with windows must hold only
 that video block (422 otherwise); windows on a non-video block is a 422.
 
@@ -257,12 +258,8 @@ Media and the GPU slot remain owned until the current operation actually ends.
 Embeddings use the existing load/eviction policy and global inference queue.
 Chat/notebook selectors exclude embedding models. On `#/embeddings`, the
 **Compare** and **Embedding Lab** modes store nothing (inputs and results live
-only in memory and are exported as JSON on demand), while **Media Finder**
-keeps its vector index, thumbnails, and file metadata in this browser, at this
-address (`heylook` IndexedDB `media-finder` object store via `storage.js`,
-cleared for the active setting or all Media Finder data via **Clear index**;
-iOS can evict browser storage if the site is not visited recently, and nothing
-is stored on the server).
+only in memory and are exported as JSON on demand); the browser Media Finder tab
+was removed in v2.0.243.
 
 **Chat completions** `POST /v1/chat/completions` and **Batch** `POST /v1/batch/chat/completions`:
 REMOVED in v1.79.66, together with the OpenAI SSE grammar (`choices[].delta` chunks, `data: [DONE]`,

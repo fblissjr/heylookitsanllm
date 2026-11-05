@@ -47,8 +47,9 @@ own row gather in place of the Gemma 4 vision tower's one-hot position lookup on
 that model instance (bit-identical; a contract test pins it to the upstream method). A video block that asks for
 `windows` also gets one vector per consecutive window (`providers/video_windows.py`):
 heylook passes its own frame sampler to mlx-vlm's decoder, picks frames per window
-(anchors plus the frames least like their median, or the model's own rate), and
-feeds the decoded frames back with upstream sampling off; the whole-video vector
+(the model's own fixed `fps` rate by default, or `"content"` mode's 1 fps anchors
+plus outlier frames up to a duration-scaled `min(max_frames, max(2, ceil((hi - lo) * fps)))`
+budget), and feeds the decoded frames back with upstream sampling off; the whole-video vector
 stays upstream's. llama-server samples video itself, so gguf refuses windows. GGUF launches its existing llama-server process
 in embedding mode with mean pooling and a non-causal batch covering the context;
 its adapter translates ordered content to llama-server's multimodal endpoint.

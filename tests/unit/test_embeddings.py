@@ -197,6 +197,8 @@ def test_window_vectors_are_truncated_and_normalized_like_item_vectors(info):
 def test_content_picker_keeps_anchors_and_finds_a_brief_event():
     import numpy as np
     from heylook_llm.providers.video_windows import plan
+    from heylook_llm.schema.embeddings import VideoWindows
+    assert VideoWindows().sampling == "fps"
     times = np.arange(0, 64, 0.25)                                  # 4 fps candidates over 64 s
     frames = np.zeros((len(times), 16, 16, 3), dtype=np.uint8)
     frames[(times >= 37.3) & (times < 37.8)] = 255                  # 0.5 s event between whole seconds
@@ -206,3 +208,11 @@ def test_content_picker_keeps_anchors_and_finds_a_brief_event():
     assert any(37.3 <= times[s] < 37.8 for s in windows[1][2])     # content sampling sees it
     fps = plan(times, 64.0, 32.0, "fps", 1.0, 32)
     assert not any(37.3 <= times[s] < 37.8 for s in fps[1][2])      # a 1 fps grid steps over it
+
+    # Short clips scale budget to window duration rather than returning all 4 fps candidates.
+    short_times = np.arange(0, 3.0, 0.25)
+    short_frames = np.zeros((len(short_times), 16, 16, 3), dtype=np.uint8)
+    short_frames[(short_times >= 1.25) & (short_times < 1.75)] = 255
+    short_win = plan(short_times, 3.0, 32.0, "content", 1.0, 32, short_frames)
+    assert len(short_win) == 1 and len(short_win[0][2]) == 3
+    assert any(1.25 <= short_times[s] < 1.75 for s in short_win[0][2])

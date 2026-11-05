@@ -15,6 +15,7 @@ pre-decoded frames path (``do_sample_frames=False`` with ``video_metadata``)
 are mlx-vlm internals; tests/contract/test_mlxvlm_surface.py pins them.
 """
 import copy
+import logging
 
 import numpy as np
 
@@ -29,18 +30,19 @@ def pick_fps(times, lo, hi, fps, max_frames):
     return sorted({int(np.argmin(np.abs(times - t))) for t in steps})
 
 
-def pick_content(frames, times, lo, hi, max_frames):
+def pick_content(frames, times, lo, hi, max_frames, fps=1.0):
     """Anchors plus the frames least like the anchors' median, within [lo, hi)."""
     idx = np.where((times >= lo) & (times < hi))[0]
-    if len(idx) <= max_frames:
+    budget = min(max_frames, max(2, int(np.ceil((hi - lo) * fps))))
+    if len(idx) <= budget:
         return [int(i) for i in idx]
     small = frames[idx][:, ::THUMB_STRIDE, ::THUMB_STRIDE].astype(np.float32)
-    anchors = np.linspace(0, len(idx) - 1, max_frames // 2).round().astype(int)
-    background = np.median(small[anchors], axis=0)
+    anchors = np.linspace(0, len(idx) - 1, max(1, budget // 2)).round().astype(int)
+    background = np.median(small[anchors] if len(anchors) >= 3 else small, axis=0)
     novelty = np.abs(small - background).mean(axis=(1, 2, 3))
     chosen, blocked = set(anchors.tolist()), set()
     for j in np.argsort(-novelty):
-        if len(chosen) >= max_frames:
+        if len(chosen) >= budget:
             break
         if j in chosen or j in blocked:
             continue
@@ -54,7 +56,7 @@ def plan(times, duration, seconds, sampling, fps, max_frames, frames=None):
     out = []
     for lo in np.arange(0.0, duration, seconds):
         hi = min(lo + seconds, duration)
-        sel = (pick_content(frames, times, lo, hi, max_frames) if sampling == "content"
+        sel = (pick_content(frames, times, lo, hi, max_frames, fps=fps) if sampling == "content"
                else pick_fps(times, lo, hi, fps, max_frames))
         sel = [s for s in sel if lo <= times[s] < hi] or sel
         if sel:
@@ -69,7 +71,7 @@ def embed_windows(provider, prompt, part, check_cancel, too_long, forward):
     fps, max_frames = float(vp.fps), int(vp.max_frames)
     options = part["windows"]
     seconds = options.get("seconds") or max_frames / fps
-    sampling = options.get("sampling") or "content"
+    sampling = options.get("sampling") or "fps"
     rate = CONTENT_CANDIDATE_FPS if sampling == "content" else fps
 
     def decode(indices):
@@ -94,11 +96,14 @@ def embed_windows(provider, prompt, part, check_cancel, too_long, forward):
         times = in_window / metadata.fps
         if sampling == "content":
             frames, md = decode(in_window)
-            sel = pick_content(frames, times, lo, hi, max_frames)
+            in_window = in_window[:len(frames)]
+            times = in_window / metadata.fps
+            sel = pick_content(frames, times, lo, hi, max_frames, fps=fps)
             frames = frames[sel]
         else:
             sel = pick_fps(times, lo, hi, fps, max_frames)
             frames, md = decode(in_window[sel])
+            sel = sel[:len(frames)]
         md = copy.copy(md)
         md.frames_indices = in_window[sel]
         inputs = proc(text=[text], videos=[frames], video_metadata=[md],
@@ -110,4 +115,8 @@ def embed_windows(provider, prompt, part, check_cancel, too_long, forward):
                         "frame_times": [round(float(t), 3) for t in times[sel]],
                         "embedding": forward(dict(inputs))})
         tokens += length
+    logging.debug(
+        "video_windows: duration=%.2fs sampling=%s windows=%d tokens=%d",
+        metadata.duration, sampling, len(windows), tokens,
+    )
     return windows, tokens

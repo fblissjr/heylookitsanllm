@@ -54,13 +54,13 @@ class VideoWindows(BaseModel):
 
     ``seconds`` omitted means the longest window the model trained on (the
     engine reports it as ``engine.embedding.video_windows.max_seconds``).
-    ``sampling`` picks frames inside a window: ``content`` (the default) keeps
-    evenly spaced anchors plus the frames that differ most from them; ``fps``
-    takes frames at the model's own rate.
+    ``sampling`` picks frames inside a window: ``fps`` (the default) takes
+    frames at the model's own rate; ``content`` keeps evenly spaced anchors
+    plus the frames that differ most from them within the window's frame budget.
     """
     model_config = ConfigDict(extra="forbid")
     seconds: float | None = Field(default=None, gt=0)
-    sampling: Literal["content", "fps"] = "content"
+    sampling: Literal["content", "fps"] = "fps"
 
 
 class EmbeddingMedia(BaseModel):

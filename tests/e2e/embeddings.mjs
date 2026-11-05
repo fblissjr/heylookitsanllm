@@ -1,7 +1,7 @@
 // Model-free browser checks for the embedding workbench, including phone layout.
 import { serveV3 } from './render.mjs?lib';
 import { launchBrowser } from './lib/browser.mjs';
-import { assert, skip } from './lib/harness.mjs';
+import { assert } from './lib/harness.mjs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,10 +13,11 @@ let payload;
 let pending, cancelled, hold = false;
 const info = { modalities: ['text','image','audio','video'], dimensions: [128,768], native_dimensions: 768,
   max_input_tokens: 8192, prompts: { SearchQuery: 'query: ' },
-  video_windows: { max_seconds: 32, sampling: ['content', 'fps'], default_sampling: 'content' },
+  video_windows: { max_seconds: 32, sampling: ['fps', 'content'], default_sampling: 'fps' },
   limits: { items: 16, blocks_per_item: 32, text_chars: 131072,
     media_bytes: { image: 1024, audio: 32 * 2 ** 20, video: 256 * 2 ** 20 },
     request_media_bytes: 256 * 2 ** 20 } };
+const ggufInfo = { ...info, video_windows: null };
 try {
   for (const width of [1280, 390]) {
     const page = await browser.newPage();
@@ -28,11 +29,17 @@ try {
       const url = new URL(request.url());
       if (!url.pathname.startsWith('/v1/')) return request.continue();
       let body = {};
-      if (url.pathname === '/v1/models') body = { data: [{ id: 'embed', engine: { embedding: info } }, { id: 'chat', engine: {} }] };
+      if (url.pathname === '/v1/models') {
+        body = { data: [
+          { id: 'embed-gguf', engine: { runtime: { value: 'llama.cpp' }, embedding: ggufInfo } },
+          { id: 'embed', engine: { runtime: { value: 'mlx-vlm' }, embedding: info } },
+          { id: 'chat', engine: {} },
+        ] };
+      }
       if (url.pathname === '/v1/embeddings') {
         payload = JSON.parse(request.postData());
         if (hold) { pending = request; return; }
-        body = { model: 'embed', dimensions: payload.dimensions, elapsed_ms: 12, input_tokens: 9,
+        body = { model: payload.model, dimensions: payload.dimensions, elapsed_ms: 12, input_tokens: 9,
           data: payload.input.map((item, i) => ({
             index: i,
             embedding: i === 2 ? [0,1] : [1,0],
@@ -49,8 +56,8 @@ try {
     });
     await page.goto(`${base}/#/embeddings`);
     await page.waitForFunction(() => document.querySelector('[role="status"]')?.textContent.startsWith('Ready.'));
-    assert(await page.$eval('select[aria-label="Embedding model"]', e => e.options.length) === 1, 'chat model leaked into embedding selector');
-    assert(await page.$eval('input[aria-label="Index media folder"]', e => e.webkitdirectory === true), 'finder folder input missing webkitdirectory');
+    assert(await page.$eval('select[aria-label="Embedding model"]', e => e.options.length) === 2, 'chat model leaked into embedding selector');
+    assert(await page.$eval('select[aria-label="Embedding model"]', e => e.value) === 'embed', 'MLX embedding model should sort first by default');
     assert(await page.$eval('input[aria-label="Choose benchmark folder"]', e => e.webkitdirectory === true), 'lab folder input missing webkitdirectory');
 
     // Over-limit media check (image cap stubbed to 1024 bytes; scene.png is 68 bytes, oversized.png is 2048 bytes)
@@ -67,12 +74,12 @@ try {
     await page.waitForSelector('select[aria-label="Video windows"]');
 
     // Refusal when an item with video windows also contains other blocks
-    await page.select('select[aria-label="Video windows"]', 'content');
+    await page.select('select[aria-label="Video windows"]', 'fps');
     await page.evaluate(() => [...document.querySelectorAll('button')].find(e => e.textContent === 'Embed & compare').click());
     assert(await page.$eval('[role="status"]', e => e.textContent) === 'Item 1: an item with video windows must contain only that video block.', 'multi-block video windows not refused');
     await page.select('select[aria-label="Video windows"]', '');
 
-    // Make Item 2 a single-video item with windows='content' to verify Compare windowed payload + results
+    // Make Item 2 a single-video item with windows='fps' to verify Compare windowed payload + results
     const item2 = (await page.$$('.embeddings__item'))[1];
     await (await item2.$('input[type=file]')).uploadFile(video);
     await item2.$eval('button', b => {}); // ensure item2 exists
@@ -82,14 +89,14 @@ try {
       rmBtn.click();
     });
     const winSelects = await page.$$('select[aria-label="Video windows"]');
-    await winSelects[1].select('content');
+    await winSelects[1].select('fps');
 
     await page.select('select[aria-label="Task prompt"]', 'SearchQuery');
     await page.select('select[aria-label="Embedding dimensions"]', '128');
     await page.evaluate(() => [...document.querySelectorAll('button')].find(e => e.textContent === 'Embed & compare').click());
     await page.waitForSelector('.embeddings__matrix');
     assert(payload.input.length === 3 && payload.input[0].content.map(b => b.type).join() === 'text,image,audio,video', 'joint multimodal composition lost');
-    assert(payload.input[1].content.length === 1 && payload.input[1].content[0].windows?.sampling === 'content', 'Compare video windows payload missing');
+    assert(payload.input[1].content.length === 1 && payload.input[1].content[0].windows?.sampling === 'fps', 'Compare video windows payload missing');
     assert(payload.input[0].prompt_name === 'SearchQuery' && payload.dimensions === 128, 'task/dimension ignored');
     assert(await page.$eval('.embeddings__results ol', e => e.children[0].textContent) === 'Item 2: 1.000', 'ranking incorrect');
     assert(await page.$eval('.embeddings__windows-list li', e => e.textContent) === 'Item 2 [0:32–1:04]: 1.000', 'Compare video windows ranking incorrect');
@@ -115,46 +122,7 @@ try {
     assert(cancelled && await page.$('.embeddings__matrix') === null, 'cancel did not reach the server or retained results');
     hold = false;
 
-    // Mode 2: Media Finder (in-app IndexedDB indexing + windowed video search + Clear this setting vs Clear all)
-    await page.evaluate(async () => {
-      const { STORAGE_KEYS, lsWrite } = await import('/js/storage.js');
-      lsWrite(STORAGE_KEYS.CHAT_DRAFT_PROMPT, 'keep-my-draft');
-      [...document.querySelectorAll('button')].find(e => e.textContent === 'Media Finder').click();
-    });
-    await (await page.$('input[aria-label="Index media files"]')).uploadFile(video);
-    await page.waitForFunction(() => {
-      const t = document.querySelector('[role="status"]').textContent;
-      return t.includes('Indexed 1 file') || t.includes('already indexed');
-    });
-    const finderStatus = await page.$eval('[role="status"]', e => e.textContent);
-    if (finderStatus.includes('already indexed')) {
-      skip('media file already indexed in IndexedDB');
-    } else {
-      assert(payload.input[0].content[0].windows?.sampling === 'content', 'video windows sampling not sent in Media Finder');
-    }
-    await page.$eval('input[type="search"]', e => { e.value = 'collision'; });
-    await page.evaluate(() => [...document.querySelectorAll('button')].find(e => e.textContent === 'Search index').click());
-    await page.waitForSelector('button.embeddings__card .embeddings__card-name');
-    assert(await page.evaluate(() => [...document.querySelectorAll('button.embeddings__card .embeddings__card-name')].some(e => e.textContent.includes('[0:32–1:04]'))), 'video window span missing in Media Finder');
-    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'horizontal overflow in Media Finder');
-
-    // Index under a second dimension setting (768), verify status names both, Clear this setting leaves 128, Clear all leaves 0 with chat draft intact
-    await page.select('select[aria-label="Embedding dimensions"]', '768');
-    await (await page.$('input[aria-label="Index media files"]')).uploadFile(video);
-    await page.waitForFunction(() => document.body.textContent.includes('1 file here') && document.body.textContent.includes('1 under 1 other setting'));
-    await page.evaluate(() => [...document.querySelectorAll('button')].find(e => e.textContent === 'Clear index').click());
-    await page.evaluate(() => [...document.querySelectorAll('button')].find(e => e.textContent === 'Clear this setting').click());
-    await page.waitForFunction(() => document.body.textContent.includes('0 files here') && document.body.textContent.includes('1 under 1 other setting'));
-    await page.evaluate(() => [...document.querySelectorAll('button')].find(e => e.textContent === 'Clear index').click());
-    await page.evaluate(() => [...document.querySelectorAll('button')].find(e => e.textContent === 'Clear all Media Finder data').click());
-    await page.waitForFunction(() => document.body.textContent.includes('0 files here') && document.body.textContent.includes('0 under other settings'));
-    const draftSurvived = await page.evaluate(async () => {
-      const { STORAGE_KEYS, lsRead } = await import('/js/storage.js');
-      return lsRead(STORAGE_KEYS.CHAT_DRAFT_PROMPT);
-    });
-    assert(draftSurvived === 'keep-my-draft', 'clearing Media Finder wiped chat draft prompt');
-
-    // Mode 3: Embedding Lab (folder input + built-in 8-case sample set)
+    // Mode 2: Embedding Lab (folder input + built-in 8-case sample set)
     await page.evaluate(() => [...document.querySelectorAll('button')].find(e => e.textContent === 'Embedding Lab').click());
     await page.evaluate(() => {
       const inp = document.querySelector('input[aria-label="Choose benchmark folder"]');

@@ -1,5 +1,6 @@
 """Non-streaming multimodal embeddings on the existing model lifecycle."""
 import asyncio
+import logging
 import time
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -60,6 +61,11 @@ async def create_embeddings(body: EmbeddingRequest, request: Request, response: 
                 result = provider.embed(body, abort)
                 result.request_id = request_id
                 result.elapsed_ms = (time.perf_counter() - started) * 1000
+                logging.debug(
+                    "embeddings %s: model=%s items=%d dims=%d tokens=%s elapsed=%.1fms",
+                    request_id, body.model, len(body.input), result.dimensions,
+                    result.input_tokens, result.elapsed_ms,
+                )
                 from .observability import record_event
                 record_event("embedding", tier="metrics", min_level="minimal", source="embeddings",
                              fields={"model": body.model, "items": len(body.input),

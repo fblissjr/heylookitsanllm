@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.243]
+
+### Changed
+
+- **Video window sampling defaults to `"fps"`, `pick_content` scales frame budget to window duration, and Media Finder removed from `#/embeddings`.**
+  - Flipped `VideoWindows.sampling` default (`src/heylook_llm/schema/embeddings.py`), `embedding_models._video_windows` (`src/heylook_llm/embedding_models.py`), and `video_windows.embed_windows` (`src/heylook_llm/providers/video_windows.py`) from `"content"` to `"fps"`, avoiding 4 fps candidate decoding unless explicitly requested.
+  - Fixed `video_windows.pick_content` to scale its frame budget to `min(max_frames, max(2, ceil((hi - lo) * fps)))` instead of returning all 4 fps candidates on clips shorter than `max_frames / fps`, and clamped candidate arrays when an OpenCV fallback returns fewer frames than container header count.
+  - Added debug logging to `embeddings_api.create_embeddings` and `video_windows.embed_windows`.
+  - Removed the browser `Media Finder` tab from `#/embeddings` (`frontend/js/pages/embeddings.js`), keeping **Compare** and **Embedding Lab**; sorted MLX embedding models ahead of GGUF by default and seeded Compare's example query/documents with `query` and `document` task prompts when offered by the checkpoint.
+
 ## [2.0.242]
 
 ### Changed

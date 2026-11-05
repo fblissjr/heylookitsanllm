@@ -78,7 +78,7 @@ def _video_windows(provider, root, modalities):
     fps, max_frames = video.get("fps"), video.get("max_frames")
     if not fps or not max_frames:
         return None
-    return {"max_seconds": max_frames / fps, "sampling": ["content", "fps"], "default_sampling": "content"}
+    return {"max_seconds": max_frames / fps, "sampling": ["fps", "content"], "default_sampling": "fps"}
 
 
 def gguf_embedding_profile(config):

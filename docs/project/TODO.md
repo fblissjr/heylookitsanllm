@@ -62,13 +62,13 @@ Five active tracks across upstream kernels, backend engine control, model regist
   - Step 4 (`v2.0.218`): ran `bun run e2e:cost` A/B/A/B comparison (`wrap` vs `pretty` during streaming) and recorded in `internal/claude/perf/paint_cost_2026-10-30.md`.
 
 ### Track 5: Embedding Workbench Extensions (`#/embeddings`, `jspace`, Notebook)
-- [x] **5.1 Unified `#/embeddings` studio (`frontend/js/pages/embeddings.js`, `frontend/js/embed-kit.js`, `frontend/js/storage.js`, `tests/e2e/embed-kit.test.mjs`, `tests/unit/test_frontend_storage_guard.py`): Compare, Media Finder, and Embedding Lab (`v2.0.205` - `v2.0.206`, folded into `#/embeddings` and standalone apps retired in `v2.0.232` / `v2.0.240` - `v2.0.241`), windowed video embeddings (`v2.0.233` - `v2.0.235`), `engine.embedding.limits` (`v2.0.238` - `v2.0.240`), audio attachment E2E check (`v2.0.213`), and Notebook `refreshAfterResume` (`v2.0.211`).**
+- [x] **5.1 Unified `#/embeddings` studio (`frontend/js/pages/embeddings.js`, `frontend/js/embed-kit.js`, `frontend/js/storage.js`, `tests/e2e/embed-kit.test.mjs`, `tests/unit/test_frontend_storage_guard.py`): Compare and Embedding Lab (`v2.0.205` - `v2.0.206`, folded into `#/embeddings` and standalone apps retired in `v2.0.232` / `v2.0.240` - `v2.0.241`; browser Media Finder tab retired in `v2.0.243`), windowed video embeddings (`v2.0.233` - `v2.0.235`, default `"fps"` sampling and duration-scaled `"content"` budget in `v2.0.243`), `engine.embedding.limits` (`v2.0.238` - `v2.0.240`), audio attachment E2E check (`v2.0.213`), and Notebook `refreshAfterResume` (`v2.0.211`).**
 - [x] **5.2 Shared Keyboard Shortcuts (`frontend/js/hotkeys.js`, `v2.0.218` - `v2.0.219`):**
   - Added `frontend/js/hotkeys.js` (`mountHotkeysModal` + `registerPageHotkeys`) wired across `app.js`, `chat.js`, `notebook.js`, `models.js`, and `presets.js`: `Cmd/Ctrl+Enter` sends/generates, `Escape` stops an active stream or closes open bar/preview/config/editor/dialog overlays, and `?` (outside editable fields) toggles a native `<dialog class="hotkeys-dialog" closedby="any">` shortcut sheet with Safari backdrop light-dismiss fallback (`render.mjs` 109/109).
 - [ ] **5.3 `jspace` Part 2 (`docs/jspace_integration_plan.md`):**
   - Flip `jspace` analyze to chat-turn default, display special tokens, and add assistant prefill / per-token possibility-horizon inspection.
 - [ ] **5.3 Notebook Save-to-Conversations (`frontend/js/pages/notebook.js`):** add "Save to Conversations" action persisting a Notebook buffer into the shared DuckDB store (`kind: 'notebook'`) so buffers survive browser storage clears and sync across Desktop and iPhone.
-- [ ] **5.4 Live browser verification & expanded evaluation sets:** run `#/embeddings` Media Finder and Embedding Lab across audio/video and larger multimodal corpora on MLX and GGUF embedding models.
+- [ ] **5.4 Live browser verification & expanded evaluation sets:** run `#/embeddings` Compare and Embedding Lab across audio/video and larger multimodal corpora on MLX and GGUF embedding models.
 
 ## Cache follow-ups from the Context Language Models paper (2026-10-05)
 
