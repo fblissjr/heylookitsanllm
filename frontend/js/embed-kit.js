@@ -1,9 +1,8 @@
-// Shared client primitives for #/embeddings (Compare, Media Finder, Embedding Lab):
-// MIME/kind resolution, base64 encoding, bounded batch planning, vector-store
-// space keys, flat cosine top-K search, thumbnails, and retrieval benchmark metrics.
+// Shared client primitives for #/embeddings (Compare and Embedding Lab):
+// MIME/kind resolution, base64 encoding, bounded batch planning, thumbnails,
+// and retrieval benchmark metrics.
 
 import { httpError, requestId } from './api.js';
-export { openVectorStore as openStore } from './storage.js';
 
 export const KINDS = ['image', 'audio', 'video'];
 
@@ -97,22 +96,6 @@ export function planBatches(entries, limits) {
   return batches;
 }
 
-// ---- Vector space key & top-K search ---------------------------------------
-
-export const spaceId = ({ model, dimensions, prompt, windows }) =>
-  `${model}|${dimensions}|${prompt || '-'}|${windows || '-'}`;
-
-export function topK(query, records, k = 24) {
-  const q = Float32Array.from(query);
-  const scored = records.map((record) => {
-    let dot = 0;
-    const v = record.vec;
-    for (let i = 0; i < q.length; i++) dot += q[i] * v[i];
-    return { record, score: dot };
-  });
-  return scored.sort((a, b) => b.score - a.score).slice(0, k);
-}
-
 // ---- Thumbnails ------------------------------------------------------------
 
 const THUMB = 192;
@@ -160,9 +143,21 @@ export function cosine(a, b) {
   return na && nb ? dot / Math.sqrt(na * nb) : 0;
 }
 
+export function scoreItem(query, entry) {
+  if (Array.isArray(entry) || ArrayBuffer.isView(entry)) return cosine(query, entry);
+  let best = entry?.embedding ? cosine(query, entry.embedding) : -Infinity;
+  if (Array.isArray(entry?.windows)) {
+    for (const w of entry.windows) {
+      if (w?.embedding) best = Math.max(best, cosine(query, w.embedding));
+    }
+  }
+  return best;
+}
+
 export function evaluateCase(query, pool, positives, excluded = new Set()) {
+  const qVec = Array.isArray(query) || ArrayBuffer.isView(query) ? query : query?.embedding;
   let bestPos = -Infinity, bestNeg = -Infinity, bestPosIndex = -1, bestNegIndex = -1;
-  const scores = pool.map((vec) => cosine(query, vec));
+  const scores = pool.map((entry) => scoreItem(qVec, entry));
   scores.forEach((score, i) => {
     if (excluded.has(i)) return;
     if (positives.has(i)) { if (score > bestPos) { bestPos = score; bestPosIndex = i; } }
@@ -194,16 +189,19 @@ export function buildPlan(set, known) {
   const pool = [], index = new Map(), queries = [], cases = [], seenIds = new Set();
   const norm = (raw, where) => {
     const item = typeof raw === 'string' ? { text: raw } : raw;
-    if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error(`${where}: expected a string or {text, file}.`);
-    const extra = Object.keys(item).filter((k) => k !== 'text' && k !== 'file');
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error(`${where}: expected a string or {text, file, windows}.`);
+    const extra = Object.keys(item).filter((k) => k !== 'text' && k !== 'file' && k !== 'windows');
     if (extra.length) throw new Error(`${where}: unknown field "${extra[0]}".`);
     const text = item.text == null ? undefined : String(item.text);
     const file = item.file == null ? undefined : String(item.file);
+    const windows = item.windows == null || item.windows === '' ? undefined : String(item.windows);
+    if (windows && windows !== 'fps' && windows !== 'content') throw new Error(`${where}: windows must be "fps" or "content".`);
+    if (windows && (!file || text?.trim())) throw new Error(`${where}: windows requires a single video file without text.`);
     if (!text?.trim() && !file) throw new Error(`${where}: needs text or a file.`);
     if (file && !known(file)) throw new Error(`${where}: file "${file}" is not in the chosen folder.`);
-    return { ...(text?.trim() ? { text } : {}), ...(file ? { file } : {}) };
+    return { ...(text?.trim() ? { text } : {}), ...(file ? { file } : {}), ...(windows ? { windows } : {}) };
   };
-  const keyOf = (item) => JSON.stringify([item.text ?? null, item.file ?? null]);
+  const keyOf = (item) => JSON.stringify([item.text ?? null, item.file ?? null, item.windows ?? null]);
   const add = (raw, where) => {
     const item = norm(raw, where);
     const key = keyOf(item);

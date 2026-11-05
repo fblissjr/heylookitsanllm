@@ -1436,24 +1436,19 @@ All browser-local persistence in `frontend/js/` lives behind a single module,
 `tests/unit/test_frontend_storage_guard.py`):
 
 - **One wrapper and one registry (`STORAGE_REGISTRY`):** `lsRead`/`lsWrite`
-  manage `localStorage` under `heylook.`, and `openVectorStore` manages object
-  stores inside one `heylook` IndexedDB database (`media-finder` for `#/embeddings`
-  Media Finder). Before v2.0.240, `utils.js` owned `localStorage` while
-  `embed-kit.js` opened its own `embed-kit:media-finder` IndexedDB database
-  outside the sweep and status accounting.
+  manage `localStorage` under `heylook.`. Before v2.0.240, `utils.js` owned
+  `localStorage` while `embed-kit.js` opened its own `embed-kit:media-finder`
+  IndexedDB database outside the sweep and status accounting.
 - **Eviction and origin scope:** Safari throws in private mode, quota is finite,
   and iOS evicts script-writable storage (`localStorage` and `IndexedDB`) for an
   origin the user has not visited recently. Everything stored in the browser is
   scoped to that browser and address (`host:port`) and is either a convenience
-  with a clean fallback (`chat.last-conversation`), a short-lived bridge before
-  document creation (`chat.draft-prompt`), or a rebuildable local index
-  (`media-finder`).
+  with a clean fallback (`chat.last-conversation`) or a short-lived bridge
+  before document creation (`chat.draft-prompt`).
 - **One startup sweep, no migration:** `sweepRetiredStorage()` moves renamed
   keys (`MOVED_KEYS`), deletes retired `localStorage` keys (`RETIRED_KEYS`), and
   deletes retired IndexedDB databases (`RETIRED_DATABASES`, including
-  `embed-kit:media-finder`). And clearing Media Finder (`Clear this setting` or
-  `Clear all Media Finder data`) operates strictly on the `media-finder` object
-  store so it never wipes chat's `localStorage` keys.
+  `embed-kit:media-finder` and `heylook` now that browser Media Finder is retired).
 
 ## MLX engine
 

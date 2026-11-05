@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.244]
+
+### Changed
+
+- **`#/embeddings` video-window preview dialog, Compare-to-Lab bridge, and retired IndexedDB storage cleanup.**
+  - Added interactive video-window preview (`<dialog class="embeddings__dialog">`) to `#/embeddings` **Compare** (`frontend/js/pages/embeddings.js`): ranked video windows now show their sampled frame count and timestamps (`w.frame_times`) and offer a **Preview** button that opens the video seeked to `w.start` with quick-jump buttons for each sampled frame timestamp.
+  - Added **Send to Embedding Lab** in **Compare** (`frontend/js/pages/embeddings.js`) to import the active Compare query, positive, and negative items (including attached media and video-window modes) directly into **Embedding Lab**, and extended `buildPlan`, `scoreItem`, and `evaluateCase` (`frontend/js/embed-kit.js`) so video documents with `windows: "fps" | "content"` score by their best-matching window.
+  - Retired the `heylook` IndexedDB database in `frontend/js/storage.js` (`RETIRED_DATABASES = ['embed-kit:media-finder', 'heylook']`), removed unused `openVectorStore`, `spaceId`, and `topK` helpers from `storage.js` / `embed-kit.js`, and removed unused Media Finder rules from `frontend/css/app.css`.
+
 ## [2.0.243]
 
 ### Changed

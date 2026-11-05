@@ -27,14 +27,19 @@ choose one of two tools:
   first item and shows all pairwise cosine similarities. On models that advertise
   `video_windows`, a single-video item can also choose **Windows: fixed rate (32s)**
   (`"fps"`, default) or **Windows: content (32s)** (`"content"`) to embed
-  overlapping 32-second windows (`16s` stride) and rank matching video segments
-  alongside whole-item vectors. **Download vectors** exports labels and the
-  complete result as JSON.
-- **Embedding Lab:** Load the built-in 8-case multimodal sample set or choose a
-  folder containing `set.json`, queue configurations across models, dimensions,
-  and query/document task prompts (including **Add prompts on vs. off**), and
-  evaluate **Recall@1**, **Recall@3**, **MRR**, and cosine margins (`best
-  positive − best negative`). **Download benchmark JSON** exports the run.
+  overlapping 32-second windows (`16s` stride), rank matching video segments
+  alongside whole-item vectors, show the sampled frame timestamps, and open a
+  **Preview** dialog seeked to the window's start with jump buttons for each
+  sampled frame. **Send to Embedding Lab** imports your Compare query and
+  candidate items into a benchmark case, and **Download vectors** exports labels
+  and the complete result as JSON.
+- **Embedding Lab:** Load the built-in 8-case multimodal sample set, import items
+  from **Compare**, or choose a folder containing `set.json` (which can include
+  `windows: "fps" | "content"` on video entries), queue configurations across
+  models, dimensions, and query/document task prompts (including **Add prompts on
+  vs. off**), and evaluate **Recall@1**, **Recall@3**, **MRR**, and cosine
+  margins (`best positive − best negative`). **Download benchmark JSON** exports
+  the run.
 
 **Storage & lifecycle:** **Compare** and **Embedding Lab** store nothing; their
 inputs and results exist only in memory and are discarded when leaving the page.

@@ -99,7 +99,13 @@ try {
     assert(payload.input[1].content.length === 1 && payload.input[1].content[0].windows?.sampling === 'fps', 'Compare video windows payload missing');
     assert(payload.input[0].prompt_name === 'SearchQuery' && payload.dimensions === 128, 'task/dimension ignored');
     assert(await page.$eval('.embeddings__results ol', e => e.children[0].textContent) === 'Item 2: 1.000', 'ranking incorrect');
-    assert(await page.$eval('.embeddings__windows-list li', e => e.textContent) === 'Item 2 [0:32–1:04]: 1.000', 'Compare video windows ranking incorrect');
+    assert(await page.$eval('.embeddings__windows-list .embeddings__win-label', e => e.textContent) === 'Item 2 [0:32–1:04]: 1.000', 'Compare video windows ranking incorrect');
+    assert(await page.$eval('.embeddings__windows-list .embeddings__win-meta', e => e.textContent) === '(4 frames: 0:32, 0:40, 0:48, 0:56)', 'Compare video windows sampled frames meta incorrect');
+    await page.click('.embeddings__windows-list .embeddings__win-preview');
+    assert(await page.$eval('dialog.embeddings__dialog', d => d.open === true), 'Compare video window preview dialog did not open');
+    assert(await page.$$eval('.embeddings__win-frames button', bs => bs.map(b => b.textContent).join(',')) === '0:32,0:40,0:48,0:56', 'Compare video window frame jump buttons missing');
+    await page.evaluate(() => [...document.querySelectorAll('dialog.embeddings__dialog button')].find(b => b.textContent === 'Close').click());
+    assert(await page.$eval('dialog.embeddings__dialog', d => d.open === false), 'Compare video window preview dialog did not close');
     const exported = await page.evaluate(async () => {
       let blob;
       URL.createObjectURL = value => { blob = value; return 'blob:embedding-test'; };
@@ -122,8 +128,20 @@ try {
     assert(cancelled && await page.$('.embeddings__matrix') === null, 'cancel did not reach the server or retained results');
     hold = false;
 
-    // Mode 2: Embedding Lab (folder input + built-in 8-case sample set)
-    await page.evaluate(() => [...document.querySelectorAll('button')].find(e => e.textContent === 'Embedding Lab').click());
+    // Mode 2: Send to Embedding Lab from Compare + folder input + built-in 8-case sample set
+    await page.evaluate(() => [...document.querySelectorAll('button')].find(e => e.textContent === 'Send to Embedding Lab').click());
+    assert(await page.$eval('[role="status"]', e => e.textContent) === 'Item 1: Embedding Lab items support at most one media file per item.', 'multi-media Lab import not refused');
+    // Remove the 3 media blocks from Item 1 leaving text-only query, then Send to Embedding Lab
+    await page.evaluate(() => {
+      const card1 = document.querySelectorAll('.embeddings__item')[0];
+      while (card1.querySelectorAll('.embeddings__block').length > 1) {
+        const blocks = card1.querySelectorAll('.embeddings__block');
+        const rm = [...blocks[blocks.length - 1].querySelectorAll('button')].find(b => b.textContent === 'Remove block');
+        rm.click();
+      }
+      [...document.querySelectorAll('button')].find(e => e.textContent === 'Send to Embedding Lab').click();
+    });
+    await page.waitForFunction(() => document.body.textContent.includes('From Compare: 1 case, 2 candidate document(s), 1 media file(s).'));
     await page.evaluate(() => {
       const inp = document.querySelector('input[aria-label="Choose benchmark folder"]');
       const dt = new DataTransfer();

@@ -37,7 +37,7 @@ def test_only_storage_module_touches_browser_storage():
 
 def test_storage_module_declares_registry_and_retired_db():
     src = STORAGE_MODULE.read_text(encoding="utf-8")
-    assert "export const IDB_NAME = 'heylook';" in src
     assert "export const STORAGE_REGISTRY =" in src
     assert "export const RETIRED_DATABASES =" in src
     assert "'embed-kit:media-finder'" in src
+    assert "'heylook'" in src

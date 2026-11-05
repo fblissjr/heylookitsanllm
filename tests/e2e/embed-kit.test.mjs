@@ -2,11 +2,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildPlan, cosine, evaluateCase, maxBytesFor, planBatches, spaceId, summarize,
+  buildPlan, cosine, evaluateCase, maxBytesFor, planBatches, scoreItem, summarize,
 } from '../../frontend/js/embed-kit.js';
 import {
-  IDB_NAME, IDB_STORES, RETIRED_DATABASES, STORAGE_KEYS, STORAGE_REGISTRY,
-  lsRead, lsWrite, openVectorStore, sweepRetiredStorage,
+  RETIRED_DATABASES, STORAGE_KEYS, STORAGE_REGISTRY,
+  lsRead, lsWrite, sweepRetiredStorage,
 } from '../../frontend/js/storage.js';
 
 test('cosine of parallel, orthogonal and zero vectors', () => {
@@ -87,9 +87,22 @@ test('buildPlan rejects malformed sets with a message naming the place', () => {
   assert.throws(() => buildPlan({ cases: [{ id: 'x', query: 'q', positives: ['p'] }, { id: 'x', query: 'q', positives: ['p'] }] }, has), /Duplicate case id/);
 });
 
-test('spaceId includes model, dimensions, prompt, and windows', () => {
-  assert.equal(spaceId({ model: 'm1', dimensions: 256, prompt: 'document', windows: 'content' }), 'm1|256|document|content');
-  assert.equal(spaceId({ model: 'm1', dimensions: 256, prompt: '', windows: '' }), 'm1|256|-|-');
+test('buildPlan accepts video windows ("fps" or "content") and scoreItem scores best window', () => {
+  const plan = buildPlan({ cases: [
+    { id: 'vid', query: 'person walking', positives: [{ file: 'clip.mp4', windows: 'fps' }], negatives: ['other'] },
+  ] }, has);
+  assert.equal(plan.pool[0].windows, 'fps');
+  assert.throws(() => buildPlan({ cases: [{ id: 'bad', query: 'q', positives: [{ file: 'clip.mp4', windows: 'invalid' }] }] }, has), /windows must be "fps" or "content"/);
+  assert.throws(() => buildPlan({ cases: [{ id: 'bad2', query: 'q', positives: [{ text: 'hi', file: 'clip.mp4', windows: 'fps' }] }] }, has), /windows requires a single video file without text/);
+
+  const windowedEntry = {
+    embedding: [0, 1],
+    windows: [{ start: 0, end: 32, embedding: [0, 1] }, { start: 32, end: 64, embedding: [1, 0] }],
+  };
+  assert.equal(scoreItem([1, 0], windowedEntry), 1);
+  const res = evaluateCase([1, 0], [windowedEntry, [0.6, 0.8]], new Set([0]));
+  assert.equal(res.rank, 1);
+  assert.ok(Math.abs(res.margin - 0.4) < 1e-12);
 });
 
 test('maxBytesFor and planBatches fail closed when limits are missing', () => {
@@ -99,12 +112,11 @@ test('maxBytesFor and planBatches fail closed when limits are missing', () => {
 });
 
 test('storage registry enforces registered keys and sweeps retired databases', async () => {
-  assert.equal(IDB_NAME, 'heylook');
   assert.ok(RETIRED_DATABASES.includes('embed-kit:media-finder'));
-  assert.equal(STORAGE_REGISTRY.length, 3);
+  assert.ok(RETIRED_DATABASES.includes('heylook'));
+  assert.equal(STORAGE_REGISTRY.length, 2);
   assert.throws(() => lsRead('unregistered.key'), /Unregistered browser storage key/);
   assert.throws(() => lsWrite('unregistered.key', 'v'), /Unregistered browser storage key/);
-  await assert.rejects(() => openVectorStore('unregistered-store'), /Unregistered IndexedDB store/);
 
   const deletedDbs = [];
   const bag = new Map([
@@ -123,7 +135,7 @@ test('storage registry enforces registered keys and sweeps retired databases', a
     sweepRetiredStorage();
     assert.equal(lsRead(STORAGE_KEYS.CHAT_DRAFT_PROMPT), 'migrated draft');
     assert.equal(bag.has('heylook-v3-settings'), false);
-    assert.deepEqual(deletedDbs, ['embed-kit:media-finder']);
+    assert.deepEqual(deletedDbs, ['embed-kit:media-finder', 'heylook']);
     lsWrite(STORAGE_KEYS.CHAT_LAST_CONVERSATION, 'conv-1');
     assert.equal(lsRead(STORAGE_KEYS.CHAT_LAST_CONVERSATION), 'conv-1');
     lsWrite(STORAGE_KEYS.CHAT_LAST_CONVERSATION, '');

@@ -2180,30 +2180,8 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
 .embeddings__lab-configs { margin: 0; padding-left: 1.25rem; display: flex; flex-direction: column; gap: var(--space-1); }
 .embeddings__lab-config-item { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-1) 0; }
 .embeddings__progress { width: 100%; height: 0.5rem; }
-.embeddings__finder-search { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; min-width: 0; }
-.embeddings__finder-search input[type="search"] { flex: 1 1 14rem; min-width: 0; }
-.embeddings__chip {
-  display: inline-flex; align-items: center; gap: var(--space-1); padding: 0.15rem var(--space-2);
-  border: 1px solid var(--line-strong); border-radius: var(--r-ctl); background: var(--surface-2); font-size: var(--text-sm);
-}
-.embeddings__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr)); gap: var(--space-3); min-width: 0; }
-.embeddings__card {
-  border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface);
-  overflow: hidden; display: flex; flex-direction: column; min-width: 0;
-  padding: 0; font: inherit; color: inherit; text-align: left; width: 100%;
-}
-.embeddings__card--clickable { cursor: pointer; }
-.embeddings__card--clickable:hover { border-color: var(--brand); }
-.embeddings__card-thumb, .embeddings__card-placeholder {
-  width: 100%; aspect-ratio: 4 / 3; object-fit: cover; background: var(--surface-2);
-  display: flex; align-items: center; justify-content: center; color: var(--ink-muted); font-size: var(--text-sm);
-}
-.embeddings__card-meta { padding: var(--space-2); display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
-.embeddings__score-pill {
-  font-family: var(--font-mono); font-size: var(--text-xs); padding: 0.1rem 0.35rem;
-  border-radius: var(--r-ctl); background: var(--brand-tint); color: var(--ink);
-}
-.embeddings__card-name { font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.embeddings__win-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: var(--space-1) 0; }
+.embeddings__win-frames { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); margin-top: var(--space-2); }
 .embeddings__dialog {
   border: 1px solid var(--line-strong); border-radius: var(--r-card); background: var(--surface);
   color: var(--ink); padding: var(--space-3); max-width: min(92vw, 48rem);

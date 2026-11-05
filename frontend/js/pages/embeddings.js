@@ -52,6 +52,7 @@ export default createPage({
     const controls = el("fieldset", { class: "embeddings__controls" });
 
     const run = button("Embed & compare", execute);
+    const sendToLab = button("Send to Embedding Lab", importFromCompare);
     const stop = button("Stop", async () => {
       s.abort?.abort();
       if (!s.runId) return;
@@ -65,6 +66,42 @@ export default createPage({
     stop.hidden = true;
     const add = button("Add item", () => { addItem(); invalidate(); });
 
+    // Video window preview dialog
+    let previewUrl = null;
+    const previewTitle = el("strong", {});
+    const previewVideo = el("video", { class: "embeddings__preview-media", controls: true, preload: "auto" });
+    const previewFrames = el("div", { class: "embeddings__win-frames" });
+    const previewDialog = el("dialog", { class: "embeddings__dialog", closedby: "any", "aria-label": "Video window preview" }, [
+      el("div", { class: "embeddings__dialog-head" }, [
+        previewTitle,
+        button("Close", () => previewDialog.close()),
+      ]),
+      previewVideo,
+      previewFrames,
+    ]);
+    function cleanupPreview() {
+      previewVideo.pause?.();
+      previewVideo.removeAttribute("src");
+      previewFrames.replaceChildren();
+      if (previewUrl) { URL.revokeObjectURL(previewUrl); previewUrl = null; }
+    }
+    previewDialog.addEventListener("close", cleanupPreview);
+    function openWindowPreview(hit) {
+      cleanupPreview();
+      previewTitle.textContent = `${hit.label} (${hit.score.toFixed(3)})`;
+      previewUrl = URL.createObjectURL(hit.file);
+      previewVideo.src = previewUrl;
+      previewVideo.onloadedmetadata = () => { previewVideo.currentTime = hit.start ?? 0; };
+      if (hit.frameTimes?.length) {
+        previewFrames.append(
+          el("span", { class: "muted small" }, [`Sampled frames (${hit.frameTimes.length}):`]),
+          ...hit.frameTimes.map((t) => button(fmtSec(t), () => { previewVideo.currentTime = t; })),
+        );
+      }
+      if (typeof previewDialog.showModal === "function") previewDialog.showModal();
+      else previewDialog.setAttribute("open", "");
+    }
+
     // Mode tabs: Compare (default) | Embedding Lab
     const tabCompare = el("button", { type: "button", class: "btn btn--sm embeddings__tab", "aria-pressed": "true" }, ["Compare"]);
     const tabLab = el("button", { type: "button", class: "btn btn--sm embeddings__tab", "aria-pressed": "false" }, ["Embedding Lab"]);
@@ -74,7 +111,7 @@ export default createPage({
 
     const comparePane = el("div", { class: "embeddings__pane" }, [
       cards,
-      el("div", { class: "embeddings__toolbar" }, [add, run]),
+      el("div", { class: "embeddings__toolbar" }, [add, run, sendToLab]),
     ]);
     const labPane = el("div", { class: "embeddings__pane", hidden: true });
 
@@ -103,7 +140,7 @@ export default createPage({
       el("details", {}, [el("summary", {}, ["Ways to use this"]), el("p", {}, [
         "Compare: put a query first and candidates after it, or combine text + media inside one item. Embedding Lab: evaluate Recall@1, MRR, and cosine margins across models, dimensions, and task prompts.",
       ])]),
-      controls, stop, status, results,
+      controls, stop, status, results, previewDialog,
     ]));
 
     const selected = () => s.models.find((m) => m.id === model.value);
@@ -236,6 +273,7 @@ export default createPage({
       for (const item of items) {
         const kind = item.file && kindOf(s.labFiles.get(item.file));
         if (kind && !info.modalities.includes(kind)) throw new Error(`${cfg.model} does not take ${kind} (${item.file}).`);
+        if (item.windows && !info.video_windows) throw new Error(`${cfg.model} does not support video windows (${item.file}).`);
       }
       const entries = items.map((item) => ({ item, bytes: item.file ? s.labFiles.get(item.file).size : 1 }));
       const vectors = [];
@@ -245,8 +283,10 @@ export default createPage({
           const content = [];
           if (e.item.text) content.push(textBlock(e.item.text));
           if (e.item.file) {
-            if (!labBlocks.has(e.item.file)) labBlocks.set(e.item.file, mediaBlock(s.labFiles.get(e.item.file)));
-            content.push(await labBlocks.get(e.item.file));
+            const win = e.item.windows && info.video_windows ? { sampling: e.item.windows } : null;
+            const cacheKey = `${e.item.file}|${e.item.windows || ""}`;
+            if (!labBlocks.has(cacheKey)) labBlocks.set(cacheKey, mediaBlock(s.labFiles.get(e.item.file), win));
+            content.push(await labBlocks.get(cacheKey));
           }
           input.push({ content, ...(prompt ? { prompt_name: prompt } : {}) });
         }
@@ -256,9 +296,56 @@ export default createPage({
           reqId: s.runId, signal: s.abort.signal,
         });
         if (res.data.length !== batch.length) throw new Error("The server returned the wrong number of vectors.");
-        for (const row of res.data) vectors.push(row.embedding);
+        for (const row of res.data) {
+          vectors.push(Array.isArray(row.windows) && row.windows.length ? { embedding: row.embedding, windows: row.windows } : row.embedding);
+        }
       }
       return vectors;
+    }
+
+    function importFromCompare() {
+      try {
+        if (s.items.length < 2) throw new Error("Compare needs at least 2 items (1 query + 1 positive) to send to Embedding Lab.");
+        const files = new Map();
+        const toLabItem = (item, idx) => {
+          const label = item.name.value.trim() || `Item ${idx + 1}`;
+          const texts = item.blocks.filter((b) => !b.file && b.text?.trim()).map((b) => b.text.trim());
+          const media = item.blocks.filter((b) => b.file);
+          if (media.length > 1) throw new Error(`${label}: Embedding Lab items support at most one media file per item.`);
+          let fileKey;
+          let windows;
+          if (media.length === 1) {
+            fileKey = `${idx + 1}-${media[0].file.name}`;
+            files.set(fileKey, media[0].file);
+            if (media[0].kind === "video" && media[0].windows) windows = media[0].windows;
+          }
+          const text = texts.join("\n");
+          if (!text && !fileKey) throw new Error(`${label} is empty.`);
+          if (windows && text) throw new Error(`${label}: an item with video windows cannot also include text.`);
+          return { ...(text ? { text } : {}), ...(fileKey ? { file: fileKey } : {}), ...(windows ? { windows } : {}) };
+        };
+        const mapped = s.items.map(toLabItem);
+        const set = {
+          name: "From Compare",
+          cases: [{
+            id: s.items[0].name.value.trim() || "compare-query",
+            query: mapped[0],
+            positives: [mapped[1]],
+            negatives: mapped.slice(2),
+          }],
+        };
+        labBlocks.clear();
+        resetLabResults();
+        const plan = buildPlan(set, (p) => files.has(p));
+        s.labSetName = set.name; s.labFiles = files; s.labPlan = plan;
+        labSetInfo.textContent = `From Compare: 1 case, ${plan.pool.length} candidate document(s), ${files.size} media file(s).`;
+        if (!s.labConfigs.length && model.value) addLabAblation();
+        else renderLabConfigs();
+        switchMode("lab");
+        status.textContent = "Loaded Compare items into Embedding Lab.";
+      } catch (err) {
+        if (ctx.alive) status.textContent = err.message;
+      }
     }
 
     function renderLabResults() {
@@ -513,14 +600,31 @@ export default createPage({
         const winHits = [];
         result.data.forEach((row, i) => {
           if (i === 0 || !Array.isArray(row.windows)) return;
+          const videoFile = s.items[i]?.blocks.find((b) => b.kind === "video")?.file ?? null;
           for (const w of row.windows) {
-            winHits.push({ label: `${labels[i]}${fmtSpan(w)}`, score: dot(vectors[0], w.embedding) });
+            winHits.push({
+              label: `${labels[i]}${fmtSpan(w)}`,
+              score: dot(vectors[0], w.embedding),
+              start: w.start,
+              end: w.end,
+              frameTimes: Array.isArray(w.frame_times) ? w.frame_times : [],
+              file: videoFile,
+            });
           }
         });
         winHits.sort((a, b) => b.score - a.score);
         results.append(el("h2", {}, ["Results"]), el("p", {}, [`${result.model} · ${result.dimensions} dimensions · ${result.data.length} vectors`]),
           ...(ranking.length ? [el("h3", {}, [`Closest to ${labels[0]}`]), el("ol", {}, ranking.map((r) => el("li", {}, [`${r.label}: ${r.score.toFixed(3)}`])))] : []),
-          ...(winHits.length ? [el("h3", {}, [`Closest video windows to ${labels[0]}`]), el("ol", { class: "embeddings__windows-list" }, winHits.map((r) => el("li", {}, [`${r.label}: ${r.score.toFixed(3)}`])))] : []),
+          ...(winHits.length ? [
+            el("h3", {}, [`Closest video windows to ${labels[0]}`]),
+            el("ol", { class: "embeddings__windows-list" }, winHits.map((r) => el("li", { class: "embeddings__win-row" }, [
+              el("span", { class: "embeddings__win-label" }, [`${r.label}: ${r.score.toFixed(3)}`]),
+              r.frameTimes.length ? el("span", { class: "muted small embeddings__win-meta" }, [
+                `(${r.frameTimes.length} frames: ${r.frameTimes.map(fmtSec).join(", ")})`,
+              ]) : null,
+              r.file ? button("Preview", () => openWindowPreview(r), "btn btn--sm embeddings__win-preview") : null,
+            ]))),
+          ] : []),
           el("div", { class: "embeddings__table-scroll", tabIndex: 0, "aria-label": "Similarity table" }, [table]),
           button("Download vectors", () => download({ labels, ...result })),
           el("details", {}, [el("summary", {}, ["Inspect vectors"]), el("pre", {}, [JSON.stringify(result.data, null, 2)])]));
@@ -532,6 +636,7 @@ export default createPage({
     model.addEventListener("change", () => refreshModel());
     dimensions.addEventListener("change", () => invalidate());
     ctx.onTeardown(() => {
+      cleanupPreview();
       s.abort?.abort();
       if (s.runId) fetch(`/v1/requests/${encodeURIComponent(s.runId)}`, { method: "DELETE", keepalive: true }).catch(() => {});
     });
