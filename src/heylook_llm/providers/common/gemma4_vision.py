@@ -1,4 +1,4 @@
-"""Shared Gemma 4 vision customizations for generative and embedding paths."""
+"""Shared Gemma 4 model customizations for generative and embedding paths."""
 
 import inspect
 import logging
@@ -8,6 +8,178 @@ VISUAL_PATCH_KEYS = (
     ("pixel_values", "image_position_ids"),
     ("pixel_values_videos", "video_position_ids"),
 )
+
+
+def _is_unpadded_single_row_batch_cache(c) -> bool:
+    """True when ``c`` is a batch-1 cache with no left or pending right padding."""
+    lp = getattr(c, "left_padding", None)
+    if lp is None or getattr(lp, "shape", None) != (1,):
+        return False
+    if getattr(c, "_right_padding", None) is not None or getattr(c, "_lengths", None) is not None:
+        c._heylook_unpadded_b1 = False
+        c._heylook_lp_id = None
+        return False
+    lp_id = id(lp)
+    cached = getattr(c, "_heylook_unpadded_b1", None)
+    if cached is not None:
+        if getattr(c, "_heylook_lp_id", None) == lp_id:
+            return cached
+        # BatchRotatingKVCache rebinds self.left_padding (-= S) when trimming or
+        # rotating, which only makes left_padding more negative while keys stay resident.
+        if cached and c.keys is not None and type(c).__name__ == "BatchRotatingKVCache":
+            return True
+    ok = int(lp.item()) <= 0
+    c._heylook_unpadded_b1 = ok
+    c._heylook_lp_id = lp_id
+    return ok
+
+
+def _cache_has_positive_offset(c) -> bool:
+    """Check ``offset > 0`` without forcing a GPU-to-CPU sync on single-row caches."""
+    if c is None:
+        return False
+    int_off = getattr(c, "_offset", None)
+    if isinstance(int_off, int):
+        if int_off <= 0:
+            return False
+        if _is_unpadded_single_row_batch_cache(c):
+            return True
+    off = getattr(c, "offset", 0)
+    if isinstance(off, int):
+        return off > 0
+    if (
+        isinstance(getattr(off, "shape", None), tuple)
+        and off.shape == (1,)
+        and _is_unpadded_single_row_batch_cache(c)
+    ):
+        idx = getattr(c, "_idx", None)
+        if isinstance(idx, int):
+            return idx > 0
+    import mlx.core as mx
+
+    return int(mx.max(mx.array(off)).item()) > 0
+
+
+def gemma4_make_masks(self, h, cache, mm_token_type_ids=None):
+    """Gemma 4 text attention masks without per-step syncs or redundant 4D masks.
+
+    Upstream (mlx-vlm ``gemma4/language.py`` ``Gemma4TextModel._make_masks``)
+    runs synchronous ``.item()`` checks on ``mm_token_type_ids`` and
+    ``c.offset`` on prefill/verification steps, and lets ``BatchKVCache`` /
+    ``BatchRotatingKVCache`` materialize 4D boolean masks even for an unpadded
+    single row. This preserves the 4D sliding mask once ``BatchRotatingKVCache``
+    rotates or crosses ``window_size`` with ``N > 1``, which
+    ``Gemma4ExactSpeculativeVerifier`` requires past the window boundary.
+    heylook-owned (VISION principle 6): pinned against upstream in
+    ``test_mlxvlm_surface.TestOwnedGemma4TextMasks``.
+    """
+    import mlx.core as mx
+    from mlx_vlm.models.base import create_attention_mask, create_causal_mask
+    from mlx_vlm.models.cache import BatchKVCache, BatchRotatingKVCache, KVCache
+
+    n = h.shape[1]
+    use_bidirectional_vision = (
+        n > 1
+        and mm_token_type_ids is not None
+        and getattr(self.config, "use_bidirectional_attention", None) == "vision"
+        and bool(mx.any((mm_token_type_ids == 1) | (mm_token_type_ids == 2)).item())
+    )
+
+    mask = {}
+    masks = []
+    for layer, c in zip(self.layers, cache):
+        lt = layer.layer_type
+        if lt not in mask:
+            if lt == "full_attention":
+                if not use_bidirectional_vision and (
+                    c is None
+                    or type(c) is KVCache
+                    or (type(c) is BatchKVCache and _is_unpadded_single_row_batch_cache(c))
+                ):
+                    m = None if n == 1 else "causal"
+                else:
+                    return_array = (
+                        use_bidirectional_vision
+                        or getattr(c, "left_padding", None) is not None
+                    )
+                    m = create_attention_mask(h, c, return_array=return_array)
+            elif lt == "sliding_attention":
+                unpadded_b1 = (
+                    not use_bidirectional_vision
+                    and type(c) is BatchRotatingKVCache
+                    and c.max_size <= self.window_size
+                    and _is_unpadded_single_row_batch_cache(c)
+                )
+                if unpadded_b1 and (
+                    n == 1
+                    or (
+                        not c.rotated
+                        and min(c.max_size - 1, c._offset) + n <= self.window_size
+                    )
+                ):
+                    m = None if n == 1 else "causal"
+                else:
+                    return_array = (
+                        (n > 1 and _cache_has_positive_offset(c))
+                        or use_bidirectional_vision
+                    )
+                    m = create_attention_mask(
+                        h, c, window_size=self.window_size, return_array=return_array
+                    )
+            else:
+                m = create_attention_mask(h, c, return_array=use_bidirectional_vision)
+
+            if use_bidirectional_vision and isinstance(m, str) and m == "causal":
+                window = self.window_size if lt == "sliding_attention" else None
+                m = create_causal_mask(n, window_size=window)
+            if use_bidirectional_vision and isinstance(m, mx.array):
+                m = self._apply_blockwise_bidirectional_overlay(m, mm_token_type_ids)
+            mask[lt] = m
+        masks.append(mask[lt])
+    return masks
+
+
+def bind_text_masks(model) -> bool:
+    """Bind ``gemma4_make_masks`` onto this Gemma 4 text model instance.
+
+    Stands down silently on unrelated architectures, text-only ``gemma4_text``,
+    embeddings, and mock MLX environments. Logs a warning and stands down if a
+    multimodal Gemma 4 text model changes the signature or attributes this
+    helper expects.
+    """
+    import mlx.core as mx
+
+    if not isinstance(getattr(mx, "array", None), type):
+        return False
+    text_model = getattr(getattr(model, "language_model", None), "model", None)
+    if text_model is None or "unittest.mock" in type(text_model).__module__:
+        return False
+
+    mod = type(text_model).__module__
+    if ".gemma4." not in mod:
+        return False
+
+    method = getattr(text_model, "_make_masks", None)
+    if getattr(method, "__func__", None) is gemma4_make_masks:
+        return True
+
+    valid_method = (
+        callable(method)
+        and tuple(inspect.signature(method).parameters)
+        == ("h", "cache", "mm_token_type_ids")
+    )
+    valid_attrs = (
+        callable(getattr(text_model, "_apply_blockwise_bidirectional_overlay", None))
+        and isinstance(getattr(text_model, "window_size", None), int)
+        and isinstance(getattr(text_model, "layers", None), list)
+    )
+    if not (valid_method and valid_attrs):
+        logging.warning(
+            "gemma4 text mask fast path stood down: text model is not the shape it was written for"
+        )
+        return False
+    text_model._make_masks = types.MethodType(gemma4_make_masks, text_model)
+    return True
 
 
 def gathered_position_embeddings(self, patch_positions, padding_positions):

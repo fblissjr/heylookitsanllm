@@ -56,15 +56,15 @@ def _non_causal_names(tree: Path) -> set[str]:
                 enums.update(pending)
             pending = []
     names = dict(re.findall(r'\{\s*(PROJECTOR_TYPE_\w+),\s*"([^"]+)"\s*\}',
-                            (tree / "tools/mtmd/clip-impl.h").read_text()))
+                            (tree / "tools/mtmd/mtmd-impl.h").read_text()))
     return {names[e] for e in enums}
 
 
-def _default_max(clip_src: str, enum: str) -> int | None:
+def _default_max(model_src: str, enum: str) -> int | None:
     """The per-image token maximum a projector's case block sets, or None."""
     found = None
-    for m in re.finditer(rf"case {enum}:", clip_src):
-        block = clip_src[m.end():clip_src.find("break;", m.end())]
+    for m in re.finditer(rf"case {enum}:", model_src):
+        block = model_src[m.end():model_src.find("break;", m.end())]
         hit = (re.search(r"set_limit_image_tokens\(\d+,\s*(\d+)\)", block)
                or re.search(r"dsv4_max_n_token\s*=\s*(\d+);", block))
         if hit:
@@ -78,16 +78,16 @@ def test_non_causal_table_matches_the_build():
     assert _non_causal_names(tree) == set(P.NON_CAUSAL_IMAGE_PROJECTORS), (
         "mtmd_decode_use_non_causal changed; update NON_CAUSAL_IMAGE_PROJECTORS")
 
-    clip_src = (tree / "tools/mtmd/clip.cpp").read_text()
+    model_src = (tree / "tools/mtmd/mtmd-model.cpp").read_text()
     enums = {v: k for k, v in re.findall(
         r'\{\s*(PROJECTOR_TYPE_\w+),\s*"([^"]+)"\s*\}',
-        (tree / "tools/mtmd/clip-impl.h").read_text())}
+        (tree / "tools/mtmd/mtmd-impl.h").read_text())}
     for name, (default_max, cappable) in P.NON_CAUSAL_IMAGE_PROJECTORS.items():
-        found = _default_max(clip_src, enums[name])
+        found = _default_max(model_src, enums[name])
         if cappable:
-            assert found == default_max, f"{name}: clip.cpp sets {found}, table says {default_max}"
+            assert found == default_max, f"{name}: mtmd-model.cpp sets {found}, table says {default_max}"
         else:
-            assert found is None, f"{name}: clip.cpp now sets a token limit ({found})"
+            assert found is None, f"{name}: mtmd-model.cpp now sets a token limit ({found})"
 
     common = (tree / "common/common.h").read_text()
     assert re.search(rf"\bn_ubatch\s*=\s*{P.LLAMA_DEFAULT_N_UBATCH};", common)
@@ -109,9 +109,12 @@ def test_spec_rule_matches_the_build():
     m = re.search(r"common_speculative_types_from_gguf\(const std::string & path\) \{.*?\n\}\n", src, re.S)
     assert m, "common_speculative_types_from_gguf not found"
     body = re.sub(r"\s+", " ", m.group(0))
-    for piece in ('arch != "dflash"', '"markov_w1.weight"', "DRAFT_DSPARK", "DRAFT_DFLASH",
+    for piece in ('arch != "dflash"', "DRAFT_DFLASH",
                   '".block_count"', "block_count - 1", '".nextn.eh_proj.weight"', "DRAFT_MTP"):
         assert piece in body, f"the build's drafter rule changed ({piece!r}); update spec_type_from_gguf"
+    assert "DRAFT_DSPARK" not in body, (
+        "common_speculative_types_from_gguf split DRAFT_DSPARK again; update spec_type_from_gguf"
+    )
 
 def _log_messages(tree: Path) -> list[str]:
     """Every server log message the build prints, rendered with sample

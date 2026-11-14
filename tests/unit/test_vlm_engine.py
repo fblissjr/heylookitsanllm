@@ -166,6 +166,27 @@ def test_a_drafting_round_ends_at_a_stop_and_counts_its_kept_drafts(monkeypatch)
 
 
 @pytest.mark.unit
+def test_draft_max_context_gates_speculative_per_request(monkeypatch):
+    """draft_max_context skips speculative drafting per request when prompt tokens
+    exceed the cap, without unloading or blocking prompts within the cap."""
+    from heylook_llm.providers.common.vlm_engine import drafting_blocker
+
+    assert drafting_blocker([], prompt_tokens=4096, draft_max_context=4096) is None
+    reason = drafting_blocker([], prompt_tokens=4097, draft_max_context=4096)
+    assert reason and "4097" in reason and "4096" in reason
+
+    resp = lambda tok, fin=None: SimpleNamespace(uid=0, token=tok, finish_reason=fin)
+    # _run sends a 3-token input_ids prompt ([1, 2, 3])
+    _, bg_blocked = _run(monkeypatch, [([], [resp(5, "stop")])], draft=("drafter", "mtp"),
+                         draft_max_context=2)
+    assert "draft_model" not in bg_blocked.kwargs
+
+    _, bg_allowed = _run(monkeypatch, [([], [resp(5, "stop")])], draft=("drafter", "mtp"),
+                         draft_max_context=3)
+    assert (bg_allowed.kwargs["draft_model"], bg_allowed.kwargs["draft_kind"]) == ("drafter", "mtp")
+
+
+@pytest.mark.unit
 def test_a_cancel_during_prefill_gives_back_its_prefix_blocks(monkeypatch):
     """remove() during prefill drops the batch without releasing the blocks a
     prefix hit acquired; unreleased blocks are never evictable."""

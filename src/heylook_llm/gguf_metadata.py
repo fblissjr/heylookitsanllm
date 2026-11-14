@@ -353,11 +353,11 @@ def spec_type_from_gguf(files: list[Path]) -> Optional[str]:
 
     The rule is ``common_speculative_types_from_gguf`` in the build's
     common/speculative.cpp (pinned by test_spec_rule_matches_the_build):
-    architecture ``dflash`` is draft-dspark when it carries
-    ``markov_w1.weight`` and draft-dflash otherwise; any other architecture is
-    draft-mtp when its LAST block has ``nextn.eh_proj.weight``. The same rule
-    answers for a drafter file and for a target whose MTP head is built into
-    its weights.
+    architecture ``dflash`` maps directly to draft-dflash (llama.cpp folded
+    DSpark dispatch under that type, using the loaded head to pick the driver);
+    any other architecture is draft-mtp when its LAST block has
+    ``nextn.eh_proj.weight``. The same rule answers for a drafter file and for a
+    target whose MTP head is built into its weights.
 
     ``files`` is every split of one model, first split first. llama.cpp reads
     only the first split (so a sharded drafter needs ``--spec-type``); this
@@ -375,7 +375,7 @@ def spec_type_from_gguf(files: list[Path]) -> Optional[str]:
         kv, names = read_header(files[0], {_ARCH_KEY})
         arch = kv.get(_ARCH_KEY)
         if arch == "dflash":
-            answer = "draft-dspark" if "markov_w1.weight" in names else "draft-dflash"
+            answer = "draft-dflash"
         elif arch:
             kv, _ = read_header(files[0], {f"{arch}.block_count"})
             blocks = kv.get(f"{arch}.block_count")

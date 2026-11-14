@@ -210,7 +210,7 @@ class TestSpecTypeFromGguf:
     """llama.cpp's rule (common_speculative_types_from_gguf), from the header."""
 
     @pytest.mark.parametrize("arch,tensors,expected", [
-        ("dflash", ["markov_w1.weight", "x"], "draft-dspark"),
+        ("dflash", ["markov_w1.weight", "x"], "draft-dflash"),
         ("dflash", ["x"], "draft-dflash"),
         ("qwen35", ["blk.3.nextn.eh_proj.weight"], "draft-mtp"),   # last block
         ("qwen35", ["blk.2.nextn.eh_proj.weight"], None),          # not the last

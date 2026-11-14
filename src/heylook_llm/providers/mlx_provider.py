@@ -22,7 +22,7 @@ from ..capabilities import model_context_length
 from ..samplers import GLOBAL_SAMPLER_FLOOR, load_vendor_sampling, resolve_effective_sampling
 from ..thinking_controls import detect as detect_thinking
 from .common.samplers import build as build_sampler
-from .common.gemma4_vision import bind_position_gather, trim_visual_padding
+from .common.gemma4_vision import bind_position_gather, bind_text_masks, trim_visual_padding
 from .common.vlm_inputs import (
     carry_message_extras, continue_from_generation_prompt, thinking_for_template)
 from .common.generation_core import continuation_detokenizer, detokenizer_source
@@ -564,6 +564,7 @@ class UnifiedTextStrategy:
                 request, effective_request, self.template_info, tokenizer),
             draft=getattr(self.owner, "_draft", None),
             draft_block_size=effective_request.get('draft_block_size'),
+            draft_max_context=effective_request.get('draft_max_context'),
         )
 
     def _prepare_messages(self, messages) -> list[dict]:
@@ -862,6 +863,7 @@ class VLMVisionStrategy:
                 getattr(processor, "tokenizer", processor)),
             draft=getattr(self.owner, "_draft", None),
             draft_block_size=effective_request.get('draft_block_size'),
+            draft_max_context=effective_request.get('draft_max_context'),
         )
 
     def _prepare_vlm_inputs_parallel(self, messages: List, processor, config,
@@ -1186,6 +1188,7 @@ class MLXProvider(BaseProvider):
             # engine (plan W10, outcome A2).
             self.model, self.processor = self._load_vlm_with_fallback(model_path)
             bind_position_gather(self.model)
+            bind_text_masks(self.model)
 
             # Stop-token completeness: raw HF tokenizers on the mlx-vlm path
             # don't absorb generation_config's eos list (gemma-4: <turn|>

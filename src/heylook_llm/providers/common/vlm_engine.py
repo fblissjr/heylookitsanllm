@@ -311,7 +311,12 @@ def release_prefill(bg) -> None:
         logging.debug(f"APC block release skipped: {e}")
 
 
-def drafting_blocker(processors: list) -> Optional[str]:
+def drafting_blocker(
+    processors: list,
+    *,
+    prompt_tokens: int = 0,
+    draft_max_context: Optional[int] = None,
+) -> Optional[str]:
     """Why this request cannot draft, or None when it can.
 
     mlx-vlm's speculative loop (``SpeculativeGenerationBatch``) takes no
@@ -319,9 +324,13 @@ def drafting_blocker(processors: list) -> Optional[str]:
     structured output) runs without its drafter rather than silently losing
     it. A thinking budget is not a blocker: the speculative loop applies it
     (mlx-vlm#2641). Neither is sampling: every emitted token is the target's
-    own sample, and a draft is kept only where it equals it."""
+    own sample, and a draft is kept only where it equals it. A configured
+    ``draft_max_context`` skips drafting per request once the rendered prompt
+    exceeds that token count, without reloading the model."""
     if processors:
         return "a logits processor (penalty, logit bias or structured output)"
+    if draft_max_context is not None and prompt_tokens > draft_max_context:
+        return f"prompt length ({prompt_tokens}) exceeds draft_max_context ({draft_max_context})"
     return None
 
 
@@ -354,6 +363,7 @@ def generate(
     shared_prefixes: Iterable[list[int]] = (),
     draft=None,
     draft_block_size: Optional[int] = None,
+    draft_max_context: Optional[int] = None,
 ) -> Generator[GenerationChunk, None, None]:
     """One request, start to finish, yielding GenerationChunks.
 
@@ -410,13 +420,15 @@ def generate(
     active = generated_only(processors) or []
     drafting = False
     if draft is not None:
-        blocker = drafting_blocker(active)
+        blocker = drafting_blocker(
+            active, prompt_tokens=n, draft_max_context=draft_max_context
+        )
         if blocker is None:
             drafting = True
             bg_kwargs.update(draft_model=draft[0], draft_kind=draft[1],
                              draft_block_size=draft_block_size)
         else:
-            logging.debug(f"{model_id}: not drafting this request: it carries {blocker}")
+            logging.debug(f"{model_id}: not drafting this request: {blocker}")
     bg = BatchGenerator(model.language_model, processor, **bg_kwargs)
     detok = None
     salt, boundaries = None, []

@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.246]
+
+### Changed
+
+- **Owned Gemma 4 single-row text attention mask fast path (`bind_text_masks`), per-request `draft_max_context` gate, `perf_ab.py` speculative telemetry, and `llama.cpp` `3549c274dc` build-pin sync.**
+  - Added `gemma4_make_masks` and `bind_text_masks` in [`providers/common/gemma4_vision.py`](src/heylook_llm/providers/common/gemma4_vision.py) and wired `bind_text_masks(self.model)` in `MLXProvider.load_model()` (`src/heylook_llm/providers/mlx_provider.py`). Eliminates per-step `.item()` GPU-to-CPU syncs and redundant 4D mask materializations on unpadded single-row `BatchKVCache` / in-window `BatchRotatingKVCache` steps while preserving 4D sliding masks once rotated or crossing `window_size` with `N > 1` (needed by `Gemma4ExactSpeculativeVerifier`); pinned against upstream in [`tests/contract/test_mlxvlm_surface.py`](tests/contract/test_mlxvlm_surface.py) (`TestOwnedGemma4TextMasks`).
+  - Added `MLXModelConfig.draft_max_context` (`Optional[int]`, `gt=0`, `effect: per_request`, runtime-default propagated) in [`config.py`](src/heylook_llm/config.py) and wired it into `vlm_engine.drafting_blocker` ([`vlm_engine.py`](src/heylook_llm/providers/common/vlm_engine.py)) and `MLXProvider` (`UnifiedTextStrategy` and `VLMVisionStrategy`). Prompts exceeding `draft_max_context` tokens fall back cleanly to single-token target decode where multi-token verification is slower on long KV prefixes, while shorter prompts stay drafted.
+  - Added informational speculative-decoding telemetry (`SPEC_INFO_METRICS`: `spec_accept_rate`, `followup_spec_accept_rate`) to [`scripts/perf_ab.py`](scripts/perf_ab.py), scraped from `chunk.spec` (`accepted`/`emitted`) and printed as `(info)` rows outside pass/noise speed-and-memory verdicts.
+  - Synced GGUF speculative metadata detection and build-pin checks against `llama.cpp` `3549c274dc`: updated `gguf_metadata.spec_type_from_gguf` (`dflash` returns `"draft-dflash"` directly as `DRAFT_DSPARK` folded into `DRAFT_DFLASH`), updated header/source paths in [`tests/unit/test_gguf_non_causal_images.py`](tests/unit/test_gguf_non_causal_images.py) (`tools/mtmd/mtmd-impl.h` and `tools/mtmd/mtmd-model.cpp`), and updated [`docs/architecture/sharp_edges.md`](docs/architecture/sharp_edges.md).
+
 ## [2.0.245]
 
 ### Changed

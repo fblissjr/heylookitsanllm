@@ -674,6 +674,163 @@ class TestOwnedVisionPositionGather:
             assert not caplog.records
 
 
+class TestOwnedGemma4TextMasks:
+    """heylook binds gemma4_make_masks onto loaded Gemma 4 text model instances
+    to eliminate per-step GPU syncs and redundant 4D masks on unpadded single-row
+    caches while keeping exact output equivalence with upstream _make_masks."""
+
+    @staticmethod
+    def _tiny_pair():
+        import copy
+        from mlx.utils import tree_flatten
+        from mlx_vlm.models.gemma4.config import TextConfig
+        from mlx_vlm.models.gemma4.language import LanguageModel
+        from heylook_llm.providers.common.gemma4_vision import bind_text_masks
+
+        cfg = TextConfig(
+            hidden_size=16,
+            intermediate_size=32,
+            num_hidden_layers=2,
+            layer_types=["sliding_attention", "full_attention"],
+            sliding_window=8,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            num_global_key_value_heads=1,
+            head_dim=8,
+            global_head_dim=8,
+            vocab_size=32,
+            hidden_size_per_layer_input=0,
+            num_kv_shared_layers=0,
+            use_bidirectional_attention="vision",
+            exact_speculative_verify=True,
+        )
+        upstream = LanguageModel(cfg)
+        bound = copy.deepcopy(upstream)
+        bound.load_weights(tree_flatten(upstream.parameters()))
+        wrapper = type("M", (), {"language_model": bound})()
+        assert bind_text_masks(wrapper) is True
+        return upstream, bound
+
+    @staticmethod
+    def _batch_cache(mx):
+        from mlx_vlm.models.cache import BatchKVCache, BatchRotatingKVCache
+        return [BatchRotatingKVCache(8, [0]), BatchKVCache([0])]
+
+    def test_single_row_batch_cache_matches_upstream_across_window_and_verify(self):
+        import mlx.core as mx
+        from mlx_vlm.models.gemma4 import language as gemma4_lang
+
+        params = list(inspect.signature(gemma4_lang.Gemma4TextModel._make_masks).parameters)
+        assert params == ["self", "h", "cache", "mm_token_type_ids"]
+
+        with mx.stream(mx.cpu):
+            mx.random.seed(7)
+            upstream, bound = self._tiny_pair()
+            c_up = self._batch_cache(mx)
+            c_bd = self._batch_cache(mx)
+
+            # 1. Cold prefill (< sliding_window=8): single-row unpadded batch caches
+            # get fast-path ("causal", "causal") instead of 4D boolean masks.
+            p1 = mx.array([[1, 2, 3, 4, 5]])
+            h1 = mx.random.normal((1, 5, 16))
+            assert bound.model._make_masks(h1, c_bd, None) == ["causal", "causal"]
+            out_up = upstream(p1, cache=c_up).logits
+            out_bd = bound(p1, cache=c_bd).logits
+            assert mx.allclose(out_up, out_bd, atol=1e-5).item()
+
+            # 2. Suffix prefill crossing sliding_window=8 (total 10 > 8): sliding gets
+            # 4D mask while full_attention stays on the causal fast path.
+            p2 = mx.array([[6, 7, 8, 9, 10]])
+            masks_suf = bound.model._make_masks(mx.random.normal((1, 5, 16)), c_bd, None)
+            assert isinstance(masks_suf[0], mx.array) and masks_suf[0].ndim == 4
+            assert masks_suf[1] == "causal"
+            out_up = upstream(p2, cache=c_up).logits
+            out_bd = bound(p2, cache=c_bd).logits
+            assert mx.allclose(out_up, out_bd, atol=1e-5).item()
+
+            # 3. Decode steps past rotation (BatchRotatingKVCache decrements left_padding):
+            # both layers skip mask allocation completely (`None`).
+            h_dec = mx.random.normal((1, 1, 16))
+            for tok in (11, 12, 13):
+                assert bound.model._make_masks(h_dec, c_bd, None) == [None, None]
+                step = mx.array([[tok]])
+                assert mx.allclose(
+                    upstream(step, cache=c_up).logits,
+                    bound(step, cache=c_bd).logits,
+                    atol=1e-5,
+                ).item()
+
+            # 4. Exact 4-token speculative verification both inside and past window:
+            # past window keeps the 4D sliding mask that _attention slices by ndim >= 4,
+            # while full_attention uses causal -> mask=None per query.
+            masks_ver = bound.model._make_masks(mx.random.normal((1, 4, 16)), c_bd, None)
+            assert isinstance(masks_ver[0], mx.array) and masks_ver[0].ndim >= 4
+            assert masks_ver[1] == "causal"
+            v_toks = mx.array([[14, 15, 16, 17]])
+            assert mx.allclose(
+                upstream(v_toks, cache=c_up, speculative_verify=True).logits,
+                bound(v_toks, cache=c_bd, speculative_verify=True).logits,
+                atol=1e-5,
+            ).item()
+
+            # Fresh inside-window verify check (offset=3, 3+4=7 <= 8)
+            c_up_short = self._batch_cache(mx)
+            c_bd_short = self._batch_cache(mx)
+            upstream(mx.array([[1, 2, 3]]), cache=c_up_short)
+            bound(mx.array([[1, 2, 3]]), cache=c_bd_short)
+            assert mx.allclose(
+                upstream(v_toks, cache=c_up_short, speculative_verify=True).logits,
+                bound(v_toks, cache=c_bd_short, speculative_verify=True).logits,
+                atol=1e-5,
+            ).item()
+
+    def test_vision_bidirectional_and_padded_or_batched_caches_match_upstream(self):
+        import mlx.core as mx
+        from mlx_vlm.models.cache import BatchKVCache, BatchRotatingKVCache
+
+        with mx.stream(mx.cpu):
+            mx.random.seed(11)
+            upstream, bound = self._tiny_pair()
+            h_vis = mx.random.normal((1, 6, 16))
+            mm_types = mx.array([[0, 1, 1, 1, 0, 0]])
+            masks_up = upstream.model._make_masks(h_vis, self._batch_cache(mx), mm_types)
+            masks_bd = bound.model._make_masks(h_vis, self._batch_cache(mx), mm_types)
+            for a, b in zip(masks_up, masks_bd):
+                assert mx.array_equal(a, b).item()
+
+            # Padded single row and B=2 fall back to exact upstream array masks.
+            for pad in ([2], [0, 2]):
+                b = len(pad)
+                h = mx.random.normal((b, 4, 16))
+                cu = [BatchRotatingKVCache(8, list(pad)), BatchKVCache(list(pad))]
+                cb = [BatchRotatingKVCache(8, list(pad)), BatchKVCache(list(pad))]
+                mu = upstream.model._make_masks(h, cu, None)
+                mb = bound.model._make_masks(h, cb, None)
+                for a, x in zip(mu, mb):
+                    assert isinstance(x, mx.array)
+                    assert mx.array_equal(a, x).item()
+
+    def test_bind_text_masks_ignores_non_gemma4_vlm_models(self, caplog):
+        import logging
+        import mlx.core as mx
+        from mlx_vlm.models.embedding_gemma2.config import TextConfig as EmbedTextConfig
+        from mlx_vlm.models.embedding_gemma2.language import TextModel as EmbedTextModel
+        from heylook_llm.providers.common.gemma4_vision import bind_text_masks
+
+        with mx.stream(mx.cpu), caplog.at_level(logging.WARNING):
+            inner = EmbedTextModel(
+                EmbedTextConfig(
+                    hidden_size=16, intermediate_size=32, num_hidden_layers=1,
+                    num_attention_heads=2, num_key_value_heads=1, head_dim=8,
+                    vocab_size=32, hidden_size_per_layer_input=0, embedding_dim=16,
+                    layer_types=["full_attention"],
+                )
+            )
+            model = type("M", (), {"language_model": type("L", (), {"model": inner})()})()
+            assert bind_text_masks(model) is False
+            assert not caplog.records
+
+
 class TestVideoWindowHooks:
     """providers/video_windows.py calls two EmbeddingGemma 2 video processor internals:
     the decoder with a caller sampler, and the pre-decoded frames path."""

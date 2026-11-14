@@ -134,6 +134,13 @@ class TestMLXRuntimeDefaultFields:
                 f"that forces every models.toml entry to set it. Add a default."
             )
 
+    def test_draft_max_context_propagates_and_validates(self):
+        assert "draft_max_context" in MLX_RUNTIME_DEFAULT_FIELDS
+        cfg = MLXModelConfig(model_path="/fake/model", draft_max_context=8192)
+        assert cfg.draft_max_context == 8192
+        with pytest.raises(Exception):
+            MLXModelConfig(model_path="/fake/model", draft_max_context=0)
+
 
 class TestMLXModelConfigValidation:
     """Config typos and impossible values must fail at load time, not at

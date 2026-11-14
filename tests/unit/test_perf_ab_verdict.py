@@ -93,5 +93,55 @@ def test_timed_on_gguf_shaped_stream_keys_ttft_on_first_output_not_token_count(m
     assert res["gen_tokens"] == 5
     assert res["prompt_tokens"] == 32
     assert res["cached_tokens"] == 16
+    assert res["spec_accept_rate"] is None
     assert res["reply"] == "Hello world!"
+
+
+@pytest.mark.unit
+def test_timed_scrapes_spec_telemetry_and_report_keeps_it_informational(monkeypatch):
+    """chunk.spec populates spec_accepted/spec_emitted/spec_accept_rate for MLX
+    speculative runs, and report_text prints it without polluting speed/memory verdicts."""
+    from types import SimpleNamespace
+
+    clock = iter([20.0, 20.1, 20.2, 20.25])
+    monkeypatch.setattr(perf_ab.time, "perf_counter", lambda: next(clock))
+
+    chunks = [
+        SimpleNamespace(text="hi ", thinking=None, generation_tokens=0, prompt_tokens=None, cache=None, spec=None),
+        SimpleNamespace(text="there", thinking=None, generation_tokens=12, prompt_tokens=16,
+                        cache=SimpleNamespace(cached_tokens=0), spec=SimpleNamespace(accepted=9, emitted=12)),
+    ]
+
+    class _FakeSpecProvider:
+        def create_chat_completion(self, _req):
+            yield from chunks
+
+    res = perf_ab._timed(_FakeSpecProvider(), object())
+    assert res["spec_accepted"] == 9
+    assert res["spec_emitted"] == 12
+    assert res["spec_accept_rate"] == pytest.approx(0.75)
+
+    def _run_for(decode_values, rate_values):
+        return {
+            "round": 0, "load_s": 1.0, "foreign_start": [], "foreign_end": [],
+            "idle_gpu_util": 0, "samples": [{"footprint_gb": 20.0, "mlx_peak_gb": 19.0}],
+            "requests": [
+                {"warmup": False, "workload": "short", "ttft_s": 0.1,
+                 "decode_tps": d, "spec_accept_rate": r}
+                for d, r in zip(decode_values, rate_values)
+            ],
+        }
+
+    record = {
+        "model": "test-model", "rounds": 3, "reps": 3,
+        "arms": {
+            "base": {"dirty": False, "runs": [_run_for([50, 51, 50], [0.80, 0.81, 0.82])]},
+            "new": {"dirty": False, "runs": [_run_for([70, 71, 72], [0.60, 0.61, 0.62])]},
+        },
+    }
+    text = perf_ab.report_text(record)
+    assert "spec_accept_rate" in text
+    assert "(info)" in text
+    assert "overall: free lunch" in text
+
 

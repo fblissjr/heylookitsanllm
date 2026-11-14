@@ -512,6 +512,17 @@ class MLXModelConfig(BaseModel):
         json_schema_extra={"is_runtime_default": True,
                            "effect": EFFECT_PER_REQUEST},
     )
+    draft_max_context: Optional[int] = Field(
+        default=None, gt=0,
+        description=(
+            "Maximum prompt token length at which speculative decoding runs. "
+            "Prompts longer than this skip the drafter for that request without "
+            "reloading, avoiding extra full-attention multi-token verification "
+            "work on long contexts. Unset = draft at any context length. Inert "
+            "without `draft_model_path`."),
+        json_schema_extra={"is_runtime_default": True,
+                           "effect": EFFECT_PER_REQUEST},
+    )
     # Model-level thinking DEFAULT (Qwen3 <think> blocks, gemma-4 thought
     # channels). None = unset (v1.79.62): the cascade then falls back to the
     # model's thinking CAPABILITY (on for a model whose template reads

@@ -278,7 +278,8 @@ decode is off (found 2026-09-19; the importer's comment asserted the opposite
 for a year). `draft_model_path` is the switch: the provider emits `-md` on
 that field alone, and llama.cpp infers the type from the drafter's own header
 whenever `--spec-type` is absent (`common_speculative_types_from_gguf`: arch
-`dflash` + a `markov_w1.weight` tensor = draft-dspark, a trailing
+`dflash` = draft-dflash, which runs both DFlash and DSpark heads using the
+loaded drafter's head to pick the driver, and a trailing
 `blk.N.nextn.eh_proj.weight` = draft-mtp). `spec_type` only pins the type, and
 is strictly required only for a sharded drafter, where the header read sees
 the first split alone. Sharding of the target is irrelevant, which is why

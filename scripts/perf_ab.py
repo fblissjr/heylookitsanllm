@@ -92,6 +92,11 @@ METRICS = {
     **REQUEST_METRICS,
     "peak_footprint_gb": False, "peak_mlx_gb": False, "load_s": False,
 }
+# Informational speculative-decoding counters: surfaced in the report for
+# interpretation alongside decode_tps/ttft_s, never included in speed/memory
+# `verdicts` (a different block size can trade acceptance fraction for net
+# throughput).
+SPEC_INFO_METRICS = ("spec_accept_rate", "followup_spec_accept_rate")
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +272,7 @@ def _timed(provider, request) -> dict:
     t0 = time.perf_counter()
     first = last = None
     n, prompt_tokens, cached, text = 0, None, None, ""
+    spec_accepted = spec_emitted = None
     for chunk in provider.create_chat_completion(request):
         now = time.perf_counter()
         text += chunk.text or ""
@@ -285,9 +291,20 @@ def _timed(provider, request) -> dict:
         prompt_tokens = chunk.prompt_tokens or prompt_tokens
         if getattr(chunk, "cache", None) is not None:
             cached = chunk.cache.cached_tokens
+        spec = getattr(chunk, "spec", None)
+        if spec is not None:
+            spec_accepted = getattr(spec, "accepted", None)
+            spec_emitted = getattr(spec, "emitted", None)
+    spec_rate = (
+        round(spec_accepted / spec_emitted, 4)
+        if spec_emitted and spec_accepted is not None
+        else None
+    )
     return {"ttft_s": round(first - t0, 4) if first else None,
             "decode_tps": round((n - 1) / (last - first), 2) if n > 1 and last > first else None,
             "gen_tokens": n, "prompt_tokens": prompt_tokens, "cached_tokens": cached,
+            "spec_accepted": spec_accepted, "spec_emitted": spec_emitted,
+            "spec_accept_rate": spec_rate,
             "wall_s": round(time.perf_counter() - t0, 4), "reply": text}
 
 
@@ -353,7 +370,10 @@ def worker(args) -> None:
                 fu = on_worker(lambda: _timed(provider, _request(args.model, messages, spec["gen"], nonce)))
                 row.update(followup_ttft_s=fu["ttft_s"], followup_decode_tps=fu["decode_tps"],
                            followup_cached=fu["cached_tokens"],
-                           followup_prompt_tokens=fu["prompt_tokens"])
+                           followup_prompt_tokens=fu["prompt_tokens"],
+                           followup_spec_accepted=fu["spec_accepted"],
+                           followup_spec_emitted=fu["spec_emitted"],
+                           followup_spec_accept_rate=fu["spec_accept_rate"])
             row.pop("reply", None)
             row.update(workload=name, rep=rep, warmup=rep == 0)
             requests.append(row)
@@ -552,6 +572,19 @@ def arm_values(arm: dict) -> dict:
     return out
 
 
+def arm_spec_values(arm: dict) -> dict:
+    """{(workload, metric): [per-rep values]} for informational spec telemetry."""
+    out: dict = {}
+    for run in arm["runs"]:
+        for r in run["requests"]:
+            if r["warmup"]:
+                continue
+            for m in SPEC_INFO_METRICS:
+                if r.get(m) is not None:
+                    out.setdefault((r["workload"], m), []).append(r[m])
+    return out
+
+
 # A verdict needs this many values per arm; per-run metrics (load time,
 # peaks) get one per process, so they need at least this many rounds.
 MIN_VALUES = 3
@@ -601,27 +634,38 @@ def contamination(record: dict) -> list[str]:
     return notes
 
 
+def _format_arm_cells(names: list[str], values_by_arm: dict, key: tuple) -> list[str]:
+    cells = []
+    for n in names:
+        vs = values_by_arm[n].get(key, [])
+        cells.append(f"{n}: {statistics.median(vs):.4g} [{min(vs):.4g}..{max(vs):.4g}]"
+                     if vs else f"{n}: -")
+    return cells
+
+
 def report_text(record: dict) -> str:
     names = list(record["arms"])
     lines = [f"model {record['model']}  arms {', '.join(names)}  "
              f"rounds {record['rounds']} x reps {record['reps']}"]
     values = {n: arm_values(record["arms"][n]) for n in names}
+    spec_values = {n: arm_spec_values(record["arms"][n]) for n in names}
     keys = sorted({k for v in values.values() for k in v})
+    spec_keys = sorted({k for v in spec_values.values() for k in v})
     base = names[0]
     verdicts = []
     for key in keys:
         wl, metric = key
-        cells = []
-        for n in names:
-            vs = values[n].get(key, [])
-            cells.append(f"{n}: {statistics.median(vs):.4g} [{min(vs):.4g}..{max(vs):.4g}]"
-                         if vs else f"{n}: -")
+        cells = _format_arm_cells(names, values, key)
         tail = ""
         for n in names[1:]:
             v = verdict(values[base].get(key, []), values[n].get(key, []), METRICS.get(metric, False))
             verdicts.append(v)
             tail += f"  {n} vs {base}: {v}"
         lines.append(f"  {wl:9s} {metric:18s} " + "  ".join(cells) + tail)
+    for key in spec_keys:
+        wl, metric = key
+        cells = _format_arm_cells(names, spec_values, key)
+        lines.append(f"  {wl:9s} {metric:18s} " + "  ".join(cells) + "  (info)")
     dirty = [n for n in names if record["arms"][n]["dirty"]]
     if dirty:
         lines.append(f"  note: arm(s) {', '.join(dirty)} ran an uncommitted src/ tree")
