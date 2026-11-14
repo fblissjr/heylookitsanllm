@@ -96,7 +96,20 @@ def hidden_size(config_data: Optional[dict]) -> Optional[int]:
     an mlx-vlm drafter), else at the top. None when absent."""
     cfg = config_data or {}
     size = (cfg.get("text_config") or {}).get("hidden_size", cfg.get("hidden_size"))
-    return size if isinstance(size, int) else None
+    return size if isinstance(size, int) and not isinstance(size, bool) else None
+
+
+def drafter_target_hidden_size(config_data: Optional[dict]) -> Optional[int]:
+    """The target hidden size a standalone drafter checkpoint expects, matching
+    ``mlx_vlm.speculative.drafters.validate_drafter_compatibility``:
+    ``backbone_hidden_size`` (``gemma4_assistant``), then ``target_hidden_size``,
+    else ``hidden_size(config_data)``."""
+    cfg = config_data or {}
+    for key in ("backbone_hidden_size", "target_hidden_size"):
+        size = cfg.get(key)
+        if isinstance(size, int) and not isinstance(size, bool):
+            return size
+    return hidden_size(cfg)
 
 
 def has_bundled_mlx_mtp(path: Path, config_data: Optional[dict] = None) -> bool:

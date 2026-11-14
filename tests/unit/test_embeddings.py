@@ -150,12 +150,56 @@ def test_mlx_text_batches_keep_order_lengths_and_the_failing_index():
 
 def test_visual_padding_trims_to_the_longest_row_and_leaves_full_grids():
     mx = pytest.importorskip("mlx.core")
-    from heylook_llm.providers.mlx_embeddings import trim_visual_padding
+    from heylook_llm.providers.common.gemma4_vision import trim_visual_padding
+    from heylook_llm.providers.mlx_embeddings import trim_visual_padding as embed_trim
+    assert embed_trim is trim_visual_padding
+
     pos = mx.array([[[0, 0], [1, 0], [-1, -1], [-1, -1]], [[0, 0], [1, 0], [2, 0], [-1, -1]]])
     out = trim_visual_padding({"pixel_values": mx.arange(8).reshape(2, 4, 1), "image_position_ids": pos})
     assert out["pixel_values"].shape == (2, 3, 1) and out["image_position_ids"][0, 2].tolist() == [-1, -1]
     full = {"pixel_values_videos": mx.zeros((1, 2, 1)), "video_position_ids": mx.zeros((1, 2, 2), dtype=mx.int32)}
     assert trim_visual_padding(full)["pixel_values_videos"].shape == (1, 2, 1)
+
+    # 4D video batch [N_videos, N_frames, max_patches, D] trims along patch axis -2
+    vpos = mx.array([[
+        [[0, 0], [1, 0], [-1, -1], [-1, -1], [-1, -1]],
+        [[0, 0], [1, 0], [2, 0], [3, 0], [-1, -1]],
+    ]])
+    vpixels = mx.arange(1 * 2 * 5 * 3).reshape(1, 2, 5, 3)
+    vout = trim_visual_padding({"pixel_values_videos": vpixels, "video_position_ids": vpos})
+    assert vout["pixel_values_videos"].shape == (1, 2, 4, 3)
+    assert vout["video_position_ids"].shape == (1, 2, 4, 2)
+    assert trim_visual_padding({"input_ids": mx.array([[1, 2, 3]])})["input_ids"].shape == (1, 3)
+    assert trim_visual_padding(None) is None
+
+
+def test_bind_position_gather_stands_down_cleanly(caplog):
+    import logging
+    mx = pytest.importorskip("mlx.core")
+    from types import SimpleNamespace
+    from heylook_llm.providers.common.gemma4_vision import bind_position_gather
+
+    with caplog.at_level(logging.WARNING):
+        # Text-only / missing patch_embedder -> silent False
+        assert bind_position_gather(SimpleNamespace()) is False
+        # Non-Gemma embedder without _position_embeddings -> silent False
+        assert bind_position_gather(SimpleNamespace(vision_tower=SimpleNamespace(
+            patch_embedder=SimpleNamespace(position_embedding_table="other")))) is False
+        assert not caplog.records
+
+        # Gemma-shaped config/embedder with unexpected table -> warns and stands down
+        def _position_embeddings(self, patch_positions, padding_positions):
+            return patch_positions
+        bad_embedder = SimpleNamespace(
+            position_embedding_table=mx.zeros((4, 8)),
+            _position_embeddings=_position_embeddings.__get__(SimpleNamespace()),
+        )
+        gemma_model = SimpleNamespace(
+            config=SimpleNamespace(model_type="gemma4"),
+            vision_tower=SimpleNamespace(patch_embedder=bad_embedder),
+        )
+        assert bind_position_gather(gemma_model) is False
+        assert any("vision position gather stood down" in r.message for r in caplog.records)
 
 
 def test_mlx_load_materializes_private_buffers_across_workers():

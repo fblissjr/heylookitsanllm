@@ -620,14 +620,20 @@ class TestCarriedPatches:
 
 class TestOwnedVisionPositionGather:
     """heylook binds its own row gather over Gemma 4's one-hot position lookup
-    (providers/mlx_embeddings.bind_position_gather). It must equal the upstream
-    method exactly, on the CPU stream, for padded and unpadded positions."""
+    (providers/common/gemma4_vision.bind_position_gather, shared by
+    mlx_provider and mlx_embeddings). It must equal the upstream method
+    exactly on the CPU stream, and stand down silently on unrelated VLM
+    architectures."""
 
     def test_gather_equals_upstream_one_hot_lookup(self):
         import mlx.core as mx
         from mlx_vlm.models.gemma4 import vision as gemma4_vision
         from mlx_vlm.models.gemma4.config import VisionConfig
-        from heylook_llm.providers.mlx_embeddings import bind_position_gather
+        from heylook_llm.providers.common.gemma4_vision import bind_position_gather
+        from heylook_llm.providers.mlx_embeddings import (
+            bind_position_gather as embed_bind_position_gather,
+        )
+        assert embed_bind_position_gather is bind_position_gather
         params = list(inspect.signature(gemma4_vision.VisionPatchEmbedder._position_embeddings).parameters)
         assert params == ["self", "patch_positions", "padding_positions"]
         with mx.stream(mx.cpu):
@@ -644,6 +650,28 @@ class TestOwnedVisionPositionGather:
             assert bind_position_gather(model)
             got = upstream._position_embeddings(positions, padding)
             assert mx.array_equal(expected, got).item()
+
+    def test_bind_position_gather_ignores_non_gemma_patch_embedder(self, caplog):
+        import logging
+        import mlx.core as mx
+        from mlx_vlm.models.muse_spark import vision as muse_vision
+        from mlx_vlm.models.muse_spark.config import VisionConfig
+        from heylook_llm.providers.common.gemma4_vision import bind_position_gather
+        with mx.stream(mx.cpu), caplog.at_level(logging.WARNING):
+            cfg = VisionConfig(
+                hidden_size=16,
+                num_attention_heads=4,
+                intermediate_size=32,
+                num_hidden_layers=1,
+                pos_emb_height=4,
+                pos_emb_width=4,
+            )
+            model = type("M", (), {})()
+            model.config = type("C", (), {"model_type": "muse_spark"})()
+            model.vision_tower = type("V", (), {})()
+            model.vision_tower.patch_embedder = muse_vision.VisionPatchEmbedder(cfg)
+            assert bind_position_gather(model) is False
+            assert not caplog.records
 
 
 class TestVideoWindowHooks:

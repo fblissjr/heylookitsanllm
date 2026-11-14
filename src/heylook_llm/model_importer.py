@@ -23,6 +23,7 @@ from heylook_llm.modality_detect import (
     read_model_config_json,
 )
 from heylook_llm.providers.common.loader_routing import (
+    drafter_target_hidden_size,
     has_bundled_mlx_mtp,
     hidden_size,
     mlx_drafter_kind,
@@ -467,10 +468,13 @@ class ModelImporter:
            (``mlx_drafter_kind``) and whose name, less its last ``-segment``,
            begins this model's name: ``mlx_vlm.convert --mtp`` writes
            ``<model>-mtp``, and one drafter serves every conversion of the model
-           beside it (``<model>``, ``<model>-8bit``). Its hidden size must match
-           this model's, which keeps a smaller sibling's drafter off a bigger
-           model whose name it prefixes. Exactly one candidate or none: an
-           ambiguous sibling pairing falls through.
+           beside it (``<model>``, ``<model>-8bit``). Its target hidden size
+           (``drafter_target_hidden_size``: ``backbone_hidden_size``,
+           ``target_hidden_size``, else ``hidden_size``) must match this model's,
+           which keeps a smaller sibling's drafter off a bigger model whose
+           name it prefixes while still pairing asymmetric-width drafters such
+           as ``gemma4_assistant``. Exactly one candidate or none: an ambiguous
+           sibling pairing falls through.
         2. An MTP head bundled inside the checkpoint's own weights
            (``has_bundled_mlx_mtp``, mlx-vlm#2457): returns ``path`` itself so
            ``load_drafter`` splits the ``mtp.*`` tensors in memory at load,
@@ -487,7 +491,7 @@ class ModelImporter:
             cfg = self._read_model_config(sib)
             if mlx_drafter_kind(cfg) is None:
                 continue
-            if want is not None and hidden_size(cfg) not in (None, want):
+            if want is not None and drafter_target_hidden_size(cfg) not in (None, want):
                 continue
             found.append(sib)
         if len(found) > 1:

@@ -1,6 +1,12 @@
 """Native mlx-vlm embeddings, executed only on a leased pinned worker."""
 from .base import InvalidGenerationRequest
 from .common.embedding import check_cancel
+from .common.gemma4_vision import (
+    VISUAL_PATCH_KEYS,
+    bind_position_gather,
+    gathered_position_embeddings,
+    trim_visual_padding,
+)
 
 
 def load(provider):
@@ -23,42 +29,6 @@ def _load(provider):
         materialize_state(provider.model)
     bind_position_gather(provider.model)
     provider.context_length = provider.embedding["max_input_tokens"]
-
-
-def gathered_position_embeddings(self, patch_positions, padding_positions):
-    """Gemma 4 vision position lookup as a row gather.
-
-    Upstream (mlx-vlm gemma4/vision.py ``_position_embeddings``) builds a
-    float32 one-hot over the 10240-row table and multiplies it in; a 32-frame
-    window peaks several GB above resident for that alone. The gather gives
-    bit-identical rows (internal/claude/embeddinggemma2_probes/posemb.py,
-    posemb_memory.py). heylook-owned (VISION principle 6, owner 2026-11-04):
-    no upstream PR; test_mlxvlm_surface pins it against the upstream method.
-    """
-    import mlx.core as mx
-    pos = mx.maximum(patch_positions, 0)          # padding rows carry -1; masked below
-    table = self.position_embedding_table
-    rows = table[0][pos[..., 0]] + table[1][pos[..., 1]]
-    return mx.where(mx.expand_dims(padding_positions, -1), 0.0, rows)
-
-
-def bind_position_gather(model):
-    """Bind the gather onto this model's patch embedder instance, never the class.
-
-    Stands down (and says so) when the instance does not have the shape it was
-    written against: a two-axis table and a ``_position_embeddings`` method.
-    """
-    import logging
-    import types
-    embedder = getattr(getattr(model, "vision_tower", None), "patch_embedder", None)
-    if embedder is None:
-        return False
-    table = getattr(embedder, "position_embedding_table", None)
-    if table is None or table.ndim != 3 or table.shape[0] != 2 or not hasattr(embedder, "_position_embeddings"):
-        logging.warning("vision position gather stood down: patch embedder is not the shape it was written for")
-        return False
-    embedder._position_embeddings = types.MethodType(gathered_position_embeddings, embedder)
-    return True
 
 
 def materialize_state(model):
@@ -88,30 +58,6 @@ def _render(provider, conversations):
 def _too_long(provider, index, length):
     return InvalidGenerationRequest(
         f"input[{index}]: expanded input has {length} tokens; limit is {provider.context_length}")
-
-
-VISUAL_PATCH_KEYS = (("pixel_values", "image_position_ids"),
-                     ("pixel_values_videos", "video_position_ids"))
-
-
-def trim_visual_padding(inputs):
-    """Drop trailing patch slots that no image or frame uses.
-
-    The processor pads every grid to the largest budget (position id -1); the
-    vision tower masks those slots, so cutting them changes no valid patch and
-    shortens attention. Rows keep their own padding up to the longest one.
-    Measured: internal/claude/embeddinggemma2_probes/vision_candidates.txt (C4).
-    """
-    import mlx.core as mx
-    for values, positions in VISUAL_PATCH_KEYS:
-        ids = inputs.get(positions)
-        if ids is None or ids.ndim != 3:
-            continue
-        n = int(mx.sum(mx.all(ids != -1, axis=-1), axis=-1).max().item())
-        if 0 < n < ids.shape[1]:
-            inputs[values] = inputs[values][:, :n]
-            inputs[positions] = ids[:, :n]
-    return inputs
 
 
 def _embed_one(provider, index, item, vectors):

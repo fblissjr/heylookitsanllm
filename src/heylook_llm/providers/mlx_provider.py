@@ -10,7 +10,7 @@ from typing import Generator, Dict, List, Optional, Tuple
 import mlx.core as mx
 from PIL import Image
 
-from mlx_vlm.utils import load as vlm_load, prepare_inputs as vlm_prepare_inputs
+from mlx_vlm.utils import load as vlm_load, prepare_inputs as _vlm_prepare_inputs
 from mlx_vlm.prompt_utils import apply_chat_template as mlx_vlm_apply_chat_template
 
 from ..config import ChatRequest, ModelMetrics, MLX_RUNTIME_DEFAULT_FIELDS
@@ -22,6 +22,7 @@ from ..capabilities import model_context_length
 from ..samplers import GLOBAL_SAMPLER_FLOOR, load_vendor_sampling, resolve_effective_sampling
 from ..thinking_controls import detect as detect_thinking
 from .common.samplers import build as build_sampler
+from .common.gemma4_vision import bind_position_gather, trim_visual_padding
 from .common.vlm_inputs import (
     carry_message_extras, continue_from_generation_prompt, thinking_for_template)
 from .common.generation_core import continuation_detokenizer, detokenizer_source
@@ -51,6 +52,10 @@ from .common.template_info import (
 # the patch can apply, and `from transformers.utils import auto_docstring`
 # now binds the decorator function, not the submodule -- both no-oped.)
 _log = logging.getLogger(__name__)
+
+
+def vlm_prepare_inputs(*args, **kwargs):
+    return trim_visual_padding(_vlm_prepare_inputs(*args, **kwargs))
 
 
 def _apply_transformers_patches():
@@ -1180,6 +1185,7 @@ class MLXProvider(BaseProvider):
             # Every MLX model, text-only included, loads and runs on mlx-vlm's
             # engine (plan W10, outcome A2).
             self.model, self.processor = self._load_vlm_with_fallback(model_path)
+            bind_position_gather(self.model)
 
             # Stop-token completeness: raw HF tokenizers on the mlx-vlm path
             # don't absorb generation_config's eos list (gemma-4: <turn|>

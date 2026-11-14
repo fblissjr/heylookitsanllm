@@ -145,6 +145,58 @@ def test_an_mlx_drafter_folder_pairs_onto_its_models_and_is_not_one(importer, tm
 
 
 @pytest.mark.unit
+def test_asymmetric_mlx_drafters_pair_by_backbone_or_target_hidden_size(importer, tmp_path):
+    """Standalone drafters like ``gemma4_assistant`` (``backbone_hidden_size``)
+    and asymmetric ``dflash``/``dspark`` checkpoints (``target_hidden_size``) carry
+    their own narrower width under ``text_config.hidden_size``. Pairing reads
+    their target hidden size rather than rejecting them or pairing them onto a
+    sibling whose width matches the drafter's inner layers."""
+    def write_dir(name, config):
+        d = tmp_path / name
+        d.mkdir()
+        (d / "config.json").write_text(json.dumps(config))
+        _write_bytes(d / "model.safetensors", 1000)
+        return d
+
+    write_dir("gemma-4-26B-A4B-it", {"model_type": "gemma4", "text_config": {"hidden_size": 2816}})
+    write_dir("gemma-4-26B-A4B-it-8bit", {"model_type": "gemma4", "text_config": {"hidden_size": 2816}})
+    write_dir("gemma-4-26B-A4B-it-small", {"model_type": "gemma4", "text_config": {"hidden_size": 1536}})
+    write_dir("gemma-4-26B-A4B-it-big", {"model_type": "gemma4", "text_config": {"hidden_size": 5376}})
+    assistant = write_dir(
+        "gemma-4-26B-A4B-it-mtp",
+        {
+            "model_type": "gemma4_assistant",
+            "backbone_hidden_size": 2816,
+            "text_config": {"hidden_size": 1536},
+        },
+    )
+
+    write_dir("t", {"model_type": "qwen3_5", "text_config": {"hidden_size": 4096}})
+    write_dir("t-8bit", {"model_type": "qwen3_5", "text_config": {"hidden_size": 4096}})
+    write_dir("t-narrow", {"model_type": "qwen3_5", "text_config": {"hidden_size": 1024}})
+    dspark = write_dir(
+        "t-dspark",
+        {
+            "model_type": "dspark",
+            "target_hidden_size": 4096,
+            "text_config": {"hidden_size": 1024},
+        },
+    )
+
+    found = {e["id"]: e["config"].get("draft_model_path")
+             for e in importer.scan_directory(str(tmp_path))}
+    assert found == {
+        "gemma-4-26B-A4B-it": str(assistant),
+        "gemma-4-26B-A4B-it-8bit": str(assistant),
+        "gemma-4-26B-A4B-it-small": None,
+        "gemma-4-26B-A4B-it-big": None,
+        "t": str(dspark),
+        "t-8bit": str(dspark),
+        "t-narrow": None,
+    }
+
+
+@pytest.mark.unit
 def test_an_mlx_checkpoint_with_bundled_mtp_weights_pairs_itself_as_drafter(importer, tmp_path):
     """When an MLX checkpoint bundles mtp.* weights in its own shards
     (mlx-vlm#2457), discovery pairs the model directory itself as

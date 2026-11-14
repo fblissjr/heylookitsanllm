@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.245]
+
+### Changed
+
+- **Shared Gemma 4 MLX vision customizations (`bind_position_gather`, 3D/4D `trim_visual_padding`) and asymmetric drafter auto-pairing (`gemma4_assistant`, `dflash`/`dspark`).**
+  - Extracted `gathered_position_embeddings`, `bind_position_gather`, and `trim_visual_padding` into [`providers/common/gemma4_vision.py`](src/heylook_llm/providers/common/gemma4_vision.py) so both generative `MLXProvider` (`load_model` and `vlm_prepare_inputs`) and `mlx_embeddings` share one implementation (re-exported from `mlx_embeddings.py`).
+  - `bind_position_gather` binds the 2-axis row gather onto `vision_tower.patch_embedder` per loaded Gemma 4 model instance, checks `isinstance(mx.array, type)` cleanly for `nanobind`, stands down silently on text-only models, mocks, and unrelated VLM architectures that also define `patch_embedder` (`muse_spark`, `muse_glimmer`), and warns only when a Gemma-family embedder changes shape.
+  - Generalized `trim_visual_padding` to trim trailing `-1` padding slots along patch axis `-2` for both 3D image `[B, L, D]` and 4D video `[N_videos, N_frames, L, D]` tensors.
+  - Added `loader_routing.drafter_target_hidden_size` (`backbone_hidden_size` -> `target_hidden_size` -> `hidden_size`, matching `mlx_vlm.speculative.drafters.validate_drafter_compatibility`) and wired it into `ModelImporter._pick_mlx_drafter` so standalone asymmetric drafters (`gemma4_assistant` where `text_config.hidden_size` holds the narrow draft width) auto-pair onto matching sibling targets (`<stem>` / `<stem>-8bit` + `<stem>-mtp`).
+
 ## [2.0.244]
 
 ### Changed
