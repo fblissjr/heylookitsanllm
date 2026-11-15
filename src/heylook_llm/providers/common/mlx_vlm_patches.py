@@ -1,21 +1,14 @@
-"""Local carries of heylook's own open mlx-vlm PRs, applied per generator.
+"""Heylook-owned runtime customizations over mlx-vlm, applied per generator.
 
-The pin stays on an upstream SHA; a fix we have filed but upstream has not
-merged is carried here as a wrapper instead of a fork. Each patch:
+Heylook owns these optimizations locally alongside upstream pins rather than
+waiting on upstream merges or maintaining a fork. Each wrapper:
 
-- names its PR and keeps the PR's own condition, so the carried behaviour is
-  the reviewed diff, not a local variant;
-- wraps the upstream method and falls through to it for every other case;
-- binds to one request's ``BatchGenerator`` (``vlm_engine.generate`` calls
-  ``apply_to`` right after building it), never to the class, so nothing is
-  left patched in the process;
-- applies only while the wrapped signature is the one it was written
-  against, and logs and stands down otherwise.
-
-Retirement is enforced, not remembered: tests/contract/test_mlxvlm_surface.py
-runs the UNPATCHED upstream restore path and fails once it already behaves
-like the patch, naming the patch to delete. Moving the pin past the PR is the
-moment that test goes red.
+- checks the target method or symbol signature before binding, logging and
+  standing down cleanly if an upstream bump changes the surface or adopts an
+  equivalent native symbol;
+- wraps upstream and falls through to it for every unmatched shape or condition;
+- binds per-request onto one ``BatchGenerator`` (via ``apply_to``) or
+  idempotently installs stateless Metal kernels where noted.
 """
 
 import inspect
@@ -45,15 +38,26 @@ PATCH_2356 = "mlx-vlm#2356"
 RESTORE_MERGE = "_merge_and_release_cache_rows"
 MERGE_ROWS_PARAMS = ("picks", "prefix_lens", "kv_quant_config")  # bound method
 
-# Carry of mlx-lm's 8-row packed Gated DeltaNet Metal kernel
-# (_make_gated_delta_packed_kernel) for scalar-gated Dk=128, Dv % 8 == 0
-# multi-token recurrence. Upstream mlx-vlm landed this in
-# mlx_vlm/models/qwen3_5/gated_delta.py (d13bd3cc, T > 1); this carry covers
-# the shared mlx_vlm/models/gated_delta.py module (qwen3_next, kimi_linear,
-# lfm3) until it is synced there too. Retires once mlx_vlm.models.gated_delta
-# defines _gated_delta_kernel_packed.
+# Packed 8-row Gated DeltaNet Metal kernel (_make_gated_delta_packed_kernel)
+# for scalar-gated Dk=128, Dv % 8 == 0 multi-token recurrence in shared
+# mlx_vlm/models/gated_delta.py (qwen3_next, kimi_linear, lfm3). Stands down
+# if mlx_vlm.models.gated_delta defines _gated_delta_kernel_packed natively.
 PATCH_GDN_PACKED = "mlx-vlm#gdn-packed"
 GDN_KERNEL_PARAMS = ("q", "k", "v", "g", "beta", "state", "mask", "state_steps")
+
+PATCH_MTP_B1_WALK = "heylook#mtp-b1-walk"
+PATCH_MTP_LEFT_PADDING = "heylook#mtp-b1-left-padding"
+MTP_WALK_PARAMS = (
+    "lm",
+    "target_hidden",
+    "draft_tokens",
+    "sampler",
+    "budgets",
+    "row_ids",
+    "base_positions",
+)
+MTP_LEFT_PADDING_PARAMS = ("prompt_cache",)
+MTP_QMV_MAX_T = 8
 
 _PACKED_KERNEL_SOURCE = r"""
     constexpr int lanes_per_row = 4;
@@ -279,11 +283,160 @@ def _patch_merge_rows(coord) -> bool:
     return True
 
 
+def _install_mtp_walk_fast_path(mtp, mx) -> bool:
+    current = getattr(mtp, "_speculative_walk_batch_deferred_greedy", None)
+    if current is None:
+        return False
+    if getattr(current, "_heylook_patch", None) == PATCH_MTP_B1_WALK:
+        return True
+    if tuple(inspect.signature(current).parameters) != MTP_WALK_PARAMS:
+        logging.warning(
+            "%s stood down: _speculative_walk_batch_deferred_greedy signature changed",
+            PATCH_MTP_B1_WALK,
+        )
+        return False
+    if not (
+        callable(getattr(mtp, "_mtp_logits_from_hidden", None))
+        and callable(getattr(mtp, "_sampler_supports_positioned_target", None))
+        and hasattr(mtp, "generation_stream")
+    ):
+        return False
+
+    upstream = current
+
+    def _heylook_mtp_walk_batch(
+        lm,
+        target_hidden,
+        draft_tokens,
+        sampler,
+        budgets,
+        row_ids=None,
+        base_positions=None,
+    ):
+        if (
+            getattr(lm, "_heylook_gemma4_runtime", False)
+            and getattr(draft_tokens, "ndim", 0) == 2
+            and draft_tokens.shape[0] == 1
+            and getattr(target_hidden, "ndim", 0) == 3
+            and target_hidden.shape[0] == 1
+        ):
+            n_draft = int(draft_tokens.shape[1])
+            total_t = n_draft + 1
+            if 2 <= total_t <= MTP_QMV_MAX_T and target_hidden.shape[1] >= total_t:
+                positioned = bool(mtp._sampler_supports_positioned_target(sampler))
+                sample_target = (
+                    getattr(sampler, "sample_target", None) if positioned else None
+                )
+                if not positioned or (
+                    callable(sample_target)
+                    and row_ids is not None
+                    and base_positions is not None
+                ):
+                    budget = int(budgets[0])
+                    draft_list = [int(tok) for tok in draft_tokens[0].tolist()]
+                    with mx.stream(mtp.generation_stream):
+                        logits = mtp._mtp_logits_from_hidden(
+                            lm, target_hidden[:, :total_t, :]
+                        )
+                        if logits.ndim == 3 and logits.shape[0] == 1:
+                            logits = logits[0]
+                        logprobs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
+                        if sample_target is not None:
+                            positions = [
+                                int(base_positions[0]) + pos for pos in range(total_t)
+                            ]
+                            target_tokens = sample_target(
+                                logprobs,
+                                row_ids=[int(row_ids[0])] * total_t,
+                                positions=positions,
+                            )
+                        else:
+                            target_tokens = sampler(logprobs)
+                    mx.eval(target_tokens)
+                    target_list = [int(tok) for tok in target_tokens.reshape(-1).tolist()]
+                    accepted = 0
+                    new_tokens = []
+                    for pos, token in enumerate(target_list[:total_t]):
+                        if pos < n_draft and token == draft_list[pos]:
+                            accepted += 1
+                            if len(new_tokens) < budget:
+                                new_tokens.append(token)
+                            continue
+                        if len(new_tokens) < budget:
+                            new_tokens.append(token)
+                        break
+                    return [accepted], [new_tokens]
+        return upstream(
+            lm,
+            target_hidden,
+            draft_tokens,
+            sampler,
+            budgets,
+            row_ids=row_ids,
+            base_positions=base_positions,
+        )
+
+    _heylook_mtp_walk_batch.__doc__ = upstream.__doc__
+    setattr(_heylook_mtp_walk_batch, "_heylook_patch", PATCH_MTP_B1_WALK)
+    setattr(_heylook_mtp_walk_batch, "_heylook_upstream", upstream)
+    mtp._speculative_walk_batch_deferred_greedy = _heylook_mtp_walk_batch
+    return True
+
+
+def _install_mtp_left_padding_fast_path(mtp) -> bool:
+    current = getattr(mtp, "_batch_cache_left_padding", None)
+    if current is None:
+        return False
+    if getattr(current, "_heylook_patch", None) == PATCH_MTP_LEFT_PADDING:
+        return True
+    if tuple(inspect.signature(current).parameters) != MTP_LEFT_PADDING_PARAMS:
+        logging.warning(
+            "%s stood down: _batch_cache_left_padding signature changed",
+            PATCH_MTP_LEFT_PADDING,
+        )
+        return False
+
+    from .gemma4_vision import _is_unpadded_single_row_batch_cache
+
+    upstream = current
+
+    def _heylook_batch_cache_left_padding(prompt_cache):
+        found_lp = False
+        for cache_entry in prompt_cache:
+            if getattr(cache_entry, "left_padding", None) is not None:
+                found_lp = True
+                if not _is_unpadded_single_row_batch_cache(cache_entry):
+                    return upstream(prompt_cache)
+        return None if found_lp else upstream(prompt_cache)
+
+    _heylook_batch_cache_left_padding.__doc__ = upstream.__doc__
+    setattr(_heylook_batch_cache_left_padding, "_heylook_patch", PATCH_MTP_LEFT_PADDING)
+    setattr(_heylook_batch_cache_left_padding, "_heylook_upstream", upstream)
+    mtp._batch_cache_left_padding = _heylook_batch_cache_left_padding
+    return True
+
+
+def install_mtp_single_row_fast_paths() -> bool:
+    """Install single-row B=1 MTP walk and left-padding fast paths on ``mlx_vlm.speculative.mtp``."""
+    try:
+        import mlx.core as mx
+        from mlx_vlm.speculative import mtp
+    except ImportError:
+        return False
+
+    if not isinstance(getattr(mx, "array", None), type):
+        return False
+    walk_ok = _install_mtp_walk_fast_path(mtp, mx)
+    pad_ok = _install_mtp_left_padding_fast_path(mtp)
+    return bool(walk_ok and pad_ok)
+
+
 def apply_to(bg) -> bool:
-    """Install every carried patch on this generator. True when #2356's
-    carry is in force for it; False for a generator the rule leaves on
-    batch caches, one without a prefix cache, or a stood-down carry."""
+    """Install every heylook-owned generator/runtime optimization. Returns True when
+    #2356 is in force on this generator; False for batched/drafting generators or
+    generators without a prefix cache."""
     install_gated_delta_packed_kernel()
+    install_mtp_single_row_fast_paths()
     coord = getattr(bg, "apc", None)
     if coord is None or not plain_single_row_generator(bg):
         return False

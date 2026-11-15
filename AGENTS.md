@@ -55,7 +55,7 @@ Each file below holds the mechanisms that bite in its area. Claude Code loads it
 - The checks the Tests section names for what you touched have run, and you say which did not.
 - Docs moved in the same commit: the matching wiki page when a subsystem's behaviour changed, spec §4 when an API contract changed, and `sharp_edges.md` when a new rule has a story behind it.
 - For a change landing on main, `CHANGELOG.md` has the entry and `src/heylook_llm/__init__.py` `__version__` matches it (a pre-commit guard checks this). On a branch someone else will merge, such as a loop run's, leave both alone and propose the entry in your report: sessions on main bump the version constantly, so a branch that bumps it conflicts at merge.
-- A dependency pin move on its own (the mlx-vlm `rev =`, `uv.lock`) needs no CHANGELOG entry or version bump (owner, 2026-09-30); the commit message names the SHA and what ran. The pre-commit guard still requires `HEYLOOK_ALLOW_CHANNEL_COMMIT=1` for it.
+- A dependency pin move on its own (the mlx-vlm `rev =`, `uv.lock`) needs no CHANGELOG entry or version bump (owner, 2026-09-30); the commit message names the SHA and what ran. Exact 40-hex `rev` git pins and `uv.lock` updates commit cleanly through `scripts/guard_stable_channel.sh`; floating refs (`branch`/`tag`/unpinned `git`), local paths, and channel overrides still require `HEYLOOK_ALLOW_CHANNEL_COMMIT=1`.
 - `internal/log/log_YYYY-MM-DD.md` is updated before the session ends.
 
 ## Tests

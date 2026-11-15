@@ -1933,11 +1933,15 @@ never `branch =`, because a branch pin moves under a plain
 reason is that mlx-lm is release-starved (PyPI's newest was five months old,
 with the behaviour the server is written against sitting unreleased on main),
 and the ecosystem posture has said "SHA-pin rather than wait" all along.
-`scripts/guard_stable_channel.sh` still blocks a git pin by default so that a
-pin commit stays a named act rather than a stray relock, which is also why a
-trying-things `branch = "main"` pin in the working tree is safe: it cannot
-land by accident. A cloner's `uv sync` needs git and GitHub reachable; that is
-the price, priced.
+`scripts/guard_stable_channel.sh` originally blocked every git pin by default so
+a trying-things `branch = "main"` pin in the working tree could never land by
+accident. On 2026-11-15 (v2.0.247, owner decision), the guard was relaxed to
+allow exact 40-hex `rev` git pins (`#<40-hex>` lock entries) plus self
+`editable = "."` to commit cleanly, while continuing to block floating
+`branch`/`tag`/unpinned `git` refs, non-40-hex revs, local path sources, and
+`latest` overrides unless `HEYLOOK_ALLOW_CHANNEL_COMMIT=1` is set
+(`tests/unit/test_guard_stable_channel.py`). A cloner's `uv sync` still needs
+git and GitHub reachable; that is the price, priced.
 
 (v2.0.88) mlx-lm is no longer a dependency: plan W10 moved every MLX model
 onto mlx-vlm's engine. Its streaming detokenizer is vendored, because
@@ -1954,12 +1958,15 @@ upstream while every pin move left the slowdown in place ("picked up when the
 pin moves"). Pinning the fork branch would mean rebasing it onto each new
 upstream SHA, so the owner asked for a carry that survives pin moves instead:
 `providers/common/mlx_vlm_patches.py` wraps the one upstream method with the
-PR's own condition. The risk of a carry is that it outlives its reason, so
-retirement is a test, not a note: `TestCarriedPatches` runs the unpatched
-upstream method and goes red once the pin already does what the patch does.
-This is not the "no mlx-vlm fork" decision in `.claude/rules/mlx.md`, which is
-about carrying assistant-turn image support; a carry here is always a filed
-upstream PR of ours.
+PR's own condition. Originally (v2.0.185), retirement was enforced as a
+red-test in `TestCarriedPatches` driving the unpatched upstream path; on
+2026-11-15 (v2.0.247, owner decision), those upstream PR retirement red-tests
+were removed so routine pin bumps do not fail on fixed upstream PRs, while
+keeping signature, binding, call-site, and behavioral checks (plus clean
+stand-down warnings) for carries (`PATCH_2356`, `PATCH_GDN_PACKED`) and
+generator-scoped MTP single-row fast paths (`PATCH_MTP_B1_WALK`,
+`PATCH_MTP_LEFT_PADDING`). This is not the "no mlx-vlm fork" decision in
+`.claude/rules/mlx.md`, which is about carrying assistant-turn image support.
 
 The carry follows its PR (2026-09-30, v2.0.188). Reviewing #2356 found the
 first version's condition could not see the drafter: `merge_rows` belongs to
@@ -2006,6 +2013,20 @@ rest of its round as text, and put several tokens' text under one chunk's
 single `token` id, which chain_probe's token alignment reads. And `laguna` is
 both a real mlx-vlm model and a key in the drafter map, so "a model_type the
 drafter map names" alone would have hidden every laguna model.
+
+Nested VLM configs and APC media boundaries (2026-11-15, v2.0.247).
+`vlm_engine.generate` passes `model.language_model` into `BatchGenerator`,
+matching mlx-vlm's own server. On nested VLM checkpoints such as Gemma 4,
+`image_token_id` and `audio_token_id` live on outer `model.config` and
+`processor`, not on `language_model.config` (`TextConfig`), so upstream
+`BatchGenerator._apc_media_token_ids()` returned an empty set. Without those
+placeholder IDs, `adjust_prefix_to_text_suffix_boundary` could split a
+contiguous bidirectional image span across an APC block boundary, corrupting
+bidirectional vision attention on suffix prefill (`vlm_parity_probe.py` caught
+the drift on dense Gemma 4 31B). `vlm_engine.install_media_token_ids` collects
+media token IDs across outer `model.config`, inner `language_model.config`,
+and `processor` and wraps `_apc_media_token_ids()` per generator before
+`install_capture_policy`.
 
 The optloop-lib bench exists because the app-level optloop (retired
 2026-07-06) bypassed the server code it claimed to measure.

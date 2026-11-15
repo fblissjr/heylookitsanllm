@@ -115,10 +115,10 @@ override-dependencies = ["transformers>=5.15.0"]
 # moves under a plain `uv lock --upgrade` and the manifest would stop saying
 # what it depends on. Moving the pin = edit the rev here, `uv lock && uv sync`
 # (the rev edit is what moves it), run the suite, name the new SHA in the
-# commit message; no CHANGELOG entry. The pre-commit guard still blocks a git pin by default;
-# committing one is HEYLOOK_ALLOW_CHANNEL_COMMIT=1, so the act stays
-# deliberate. `mlx` itself is a PyPI release, not pinned here.
-mlx-vlm = { git = "https://github.com/Blaizzy/mlx-vlm", rev = "003311ec81e04f044e02c524c2573244e84bac9a" }
+# commit message; no CHANGELOG entry. Exact 40-char commit pins commit cleanly
+# without an override env var; floating branch/tag refs and local paths still
+# require HEYLOOK_ALLOW_CHANNEL_COMMIT=1. `mlx` itself is a PyPI release.
+mlx-vlm = { git = "https://github.com/Neywa-Labs/mlx-vlm", rev = "e267ccf740b8b9dfc4529665b5efd8b9e1eff187" }
 
 # ── Pytest ──────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]

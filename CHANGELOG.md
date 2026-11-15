@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.247]
+
+### Changed
+
+- **Owned Gemma 4 Dense & MoE + MTP runtime bindings, generator-scoped MTP single-row fast paths, relaxed 40-hex dependency pin guard, and `mlx-vlm` pin update.**
+  - Added [`providers/common/gemma4_runtime.py`](src/heylook_llm/providers/common/gemma4_runtime.py) and wired `bind_gemma4_runtime` (`MLXProvider.load_model`) and `bind_gemma4_drafter` (`MLXProvider._load_drafter`) in [`mlx_provider.py`](src/heylook_llm/providers/mlx_provider.py) for both dense (`31B-it`) and MoE (`26B-A4B-it`) Gemma 4 + MTP models: routes wide-output affine layers and tied LM heads through split-K multi-token QMV kernels (`gemma4_qmv_multi`), fuses dense `gate_proj + up_proj` MLP pairs (`gemma4_qmv_fused`), binds transaction-safe `_scalar_rope_offset` onto `Attention` layers, caches pre-scaled norm weights on MoE `Router` layers, adds sync-free unpadded single-row `shared_kv_from_cache` extraction, and dynamically subclasses `Gemma4AssistantDraftModel.draft_block` (surviving `copy.copy`) to hoist `make_drafter_masks` out of the draft loop; pinned in [`tests/contract/test_mlxvlm_surface.py`](tests/contract/test_mlxvlm_surface.py) (`TestOwnedGemma4Runtime`).
+  - Added `install_mtp_single_row_fast_paths` (`PATCH_MTP_B1_WALK`, `PATCH_MTP_LEFT_PADDING`) in [`providers/common/mlx_vlm_patches.py`](src/heylook_llm/providers/common/mlx_vlm_patches.py), bound per generator in `apply_to(bg)` for unpadded single-row `SpeculativeGenerationBatch` verification and left-padding checks.
+  - Updated `mlx-vlm` SHA pin (`e267ccf740b8b9dfc4529665b5efd8b9e1eff187`) and `uv.lock`, relaxed [`scripts/guard_stable_channel.sh`](scripts/guard_stable_channel.sh) so exact 40-hex `rev` git pins (`#<40-hex>` lock entries) plus self `editable = "."` commit cleanly without `HEYLOOK_ALLOW_CHANNEL_COMMIT=1` while floating `branch`/`tag`/unpinned `git` refs, non-40-hex revs, local path sources, and channel overrides remain blocked ([`tests/unit/test_guard_stable_channel.py`](tests/unit/test_guard_stable_channel.py)), and removed upstream PR retirement red-tests from `TestCarriedPatches` in [`tests/contract/test_mlxvlm_surface.py`](tests/contract/test_mlxvlm_surface.py) while retaining signature, binding, and call-site guards.
+
+### Fixed
+
+- **Nested VLM APC media boundary lookup (`install_media_token_ids`).**
+  - Added `multimodal_token_ids` and `install_media_token_ids` in [`providers/common/vlm_engine.py`](src/heylook_llm/providers/common/vlm_engine.py), wired before `install_capture_policy`, so `BatchGenerator._apc_media_token_ids()` includes placeholder token IDs from outer `model.config` and `processor` when `model.language_model.config` omits them (preventing APC chunk boundaries from splitting Gemma 4 bidirectional image blocks; pinned in `TestVlmEngineSurface.test_install_media_token_ids_covers_nested_vlm_configs`).
+
+### Verification
+
+- Verified: `tests/unit/` + `tests/contract/` (`1653 passed`), `scripts/vlm_parity_probe.py` (`ok=true`) and `scripts/chain_probe.py` (all 5 hops `match=True`, `restored=reused`) on both `gemma-4-26B-A4B-it-8bit` and `gemma-4-31B-it-8bit`, `scripts/vendor_frontend.py --check` (`marked` `18.1.3` and `dompurify` `3.4.17` match manifest; `Behind: marked, dompurify`, not updated).
+- NOT run: `scripts/perf_ab.py` (deferred by owner request), `tests/smoke/` (`mlx-text`, `mlx-vision`, `gguf` all uncovered), `tests/eval/`, live browser `e2e:chat` / `e2e:pages`.
+
 ## [2.0.246]
 
 ### Changed

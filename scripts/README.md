@@ -14,7 +14,7 @@ would just create churn.
 | `rpc_worker.sh` | Starts `ggml-rpc-server` from the canonical `build_llama.py` build on a secondary Mac (e.g. over Thunderbolt Bridge `worker.local:50052`) with `-c` local SSD tensor hash caching enabled by default. | `scripts/rpc_worker.sh [--host <worker-ip>] [--port 50052] [--no-cache]` |
 | `mlx_pipeline_worker.py` | **Distributed MLX pipeline worker and 2-rank smoke runner.** Loads a model with `selective_pipeline_load` (filtering off-rank safetensors keys before `sanitize_weights`) and runs `run_pipeline_worker_loop` on Rank >= 1 (or a 2-rank greedy smoke prompt when `--smoke-prompt` is passed under `mlx.launch`). | `mlx.launch -n 2 uv run python scripts/mlx_pipeline_worker.py --model-path DIR [--ratios 0.8,0.2] [--smoke-prompt TEXT]` |
 | `distributed_probe.py` | **Multi-Mac distributed inference diagnostic & smoke harness.** `preflight` checks binaries (`llama-server` + `ggml-rpc-server`), `heylook-build.json` (`GGML_RPC=ON`), `bridge0`, and peer TCP; `mlx-local` runs a 1-rank vs 2-rank (`mlx.launch -n 2`) greedy parity test; `mlx-cluster` runs a multi-Mac `mlx.launch --backend ring --hostfile` test; `gguf-rpc` compares single-node vs distributed `ram_fit` and runs `llama-fit-params` against a remote `ggml-rpc-server`. | `uv run python scripts/distributed_probe.py preflight\|mlx-local\|mlx-cluster\|gguf-rpc ...` |
-| `guard_stable_channel.sh` | **Pre-commit guard** (wired into the git hook): blocks committing `pyproject.toml`/`uv.lock` while they carry a git pin (a `[tool.uv.sources]` rev, a git-sourced lock entry). See "Dependencies" below. | runs from the hook; manual: `scripts/guard_stable_channel.sh` |
+| `guard_stable_channel.sh` | **Pre-commit guard** (wired into the git hook): allows exact 40-hex `rev` git pins and `#<40-hex>` lock entries plus self `editable = "."`, while blocking floating refs (`branch`/`tag`/unpinned `git`), non-40-hex revs, local path sources, and `latest` channel overrides unless `HEYLOOK_ALLOW_CHANNEL_COMMIT=1`. See "Dependencies" below. | runs from the hook; manual: `scripts/guard_stable_channel.sh` |
 | `check_version_sync.py` | **Pre-commit guard** (wired into the git hook): the newest `## [x.y.z]` heading in `CHANGELOG.md` must equal `__version__`, read from the STAGED blobs. Stdlib only and fails closed. Replaced a hookify reminder that never ran while the plugin was disabled. | runs from the hook; manual: `scripts/check_version_sync.py` |
 | `hooks/git_add_guard.py` | **Claude Code PreToolUse hook** (Bash), wired in `.claude/settings.json`: refuses `git add -A/--all/-u/--update/./:/` and `git commit -a/--all`, because parallel sessions share this checkout. Stage files by name. Heredoc bodies are ignored. | runs from Claude Code; `tests/unit/test_git_add_guard.py` |
 | `hooks/config_toml_posttool.py` | **Claude Code PostToolUse hook**, wired in `.claude/settings.json`: after an edit to `heylook.toml` it runs the validation the server runs at startup, and exits 2 with the error so the model sees it at edit time. Ignores every other file. | runs from Claude Code; manual: pipe a hook payload into it |
@@ -40,12 +40,13 @@ uv lock --upgrade && uv sync              # everything, newest releases
 uv lock --upgrade-package mlx-vlm && uv sync  # one package
 ```
 
-The one committed git pin is mlx-vlm (`[tool.uv.sources]`, an exact `rev`;
+The one committed git pin is mlx-vlm (`[tool.uv.sources]`, an exact 40-hex `rev`;
 owner decision 2026-09-05); everything else points at published releases.
-`guard_stable_channel.sh` blocks committing any git pin by default, because uv
-honors no gitignored file for source pins and every pin propagates into
-`uv.lock`, so a stray experiment cannot land. Moving the mlx-vlm pin is a
-deliberate commit with `HEYLOOK_ALLOW_CHANNEL_COMMIT=1`.
+`guard_stable_channel.sh` allows exact 40-hex `rev` git pins (`#<40-hex>` in
+`uv.lock`) plus self `editable = "."` to commit directly, while blocking floating
+refs (`branch`, `tag`, unpinned `git`), non-40-hex revs, local path sources, and
+channel overrides so stray local experiments cannot land by accident. Committing
+one of those blocked overrides requires `HEYLOOK_ALLOW_CHANNEL_COMMIT=1`.
 
 ## Vendored frontend libraries
 

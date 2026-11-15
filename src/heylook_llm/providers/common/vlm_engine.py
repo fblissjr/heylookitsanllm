@@ -36,6 +36,7 @@ Rules the W10 spike established (internal/claude/w10/spike_results.md):
 
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 from typing import Any, Generator, Iterable, Optional
@@ -142,6 +143,69 @@ def refresh_snapshots(apc_manager, prompt: list[int], boundaries: Iterable[int],
             key = _sequence_hash(tuple(prompt[:n]), extra_hash, apc_manager.block_size)
             if key in store:
                 store.move_to_end(key)
+
+
+_MEDIA_TOKEN_ID_ATTRS = (
+    "image_token_id",
+    "image_token_index",
+    "video_token_id",
+    "video_token_index",
+    "audio_token_id",
+    "audio_token_index",
+)
+
+
+def _is_mock_or_none(obj: Any) -> bool:
+    return obj is None or "unittest.mock" in type(obj).__module__
+
+
+def multimodal_token_ids(model: Any, processor: Any = None) -> set[int]:
+    """Collect media placeholder token IDs across outer VLM, inner LM, and processor.
+
+    ``BatchGenerator`` receives ``model.language_model``, whose inner ``TextConfig``
+    can omit outer VLM attributes (e.g. Gemma 4 ``image_token_id``/``audio_token_id``).
+    """
+    from mlx_vlm.apc import multimodal_token_ids_from_config
+
+    lm = None if _is_mock_or_none(model) else getattr(model, "language_model", None)
+    model_cfg = None if _is_mock_or_none(model) else getattr(model, "config", None)
+    lm_cfg = None if _is_mock_or_none(lm) else getattr(lm, "config", None)
+
+    ids: set[int] = set()
+    for cfg in (model_cfg, lm_cfg):
+        if not _is_mock_or_none(cfg):
+            ids.update(multimodal_token_ids_from_config(cfg))
+    for holder in (model_cfg, lm_cfg, processor):
+        if _is_mock_or_none(holder):
+            continue
+        for attr in _MEDIA_TOKEN_ID_ATTRS:
+            val = getattr(holder, attr, None)
+            if isinstance(val, int) and not isinstance(val, bool) and val >= 0:
+                ids.add(val)
+    return ids
+
+
+def install_media_token_ids(bg: Any, model: Any, processor: Any = None) -> bool:
+    """Bind outer VLM + processor media token IDs onto ``bg._apc_media_token_ids``."""
+    if _is_mock_or_none(bg):
+        return False
+    upstream = getattr(bg, "_apc_media_token_ids", None)
+    if not callable(upstream):
+        return False
+    try:
+        params = tuple(inspect.signature(upstream).parameters)
+    except (TypeError, ValueError):
+        return False
+    if params != ():
+        logging.warning(
+            "install_media_token_ids stood down: _apc_media_token_ids signature changed"
+        )
+        return False
+    extra_ids = frozenset(multimodal_token_ids(model, processor))
+    if not extra_ids:
+        return False
+    bg._apc_media_token_ids = lambda: set(upstream()) | extra_ids
+    return True
 
 
 def install_capture_policy(bg, boundaries: Iterable[int]) -> None:
@@ -434,6 +498,7 @@ def generate(
     salt, boundaries = None, []
     try:
         boundaries = shared_prefix_len(prompt_list, shared_prefixes)
+        install_media_token_ids(bg, model, processor)
         install_capture_policy(bg, boundaries)
         mlx_vlm_patches.apply_to(bg)
         cold = apc_is_empty(apc_manager)

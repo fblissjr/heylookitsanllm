@@ -22,7 +22,8 @@ from ..capabilities import model_context_length
 from ..samplers import GLOBAL_SAMPLER_FLOOR, load_vendor_sampling, resolve_effective_sampling
 from ..thinking_controls import detect as detect_thinking
 from .common.samplers import build as build_sampler
-from .common.gemma4_vision import bind_position_gather, bind_text_masks, trim_visual_padding
+from .common.gemma4_runtime import bind_gemma4_drafter, bind_gemma4_runtime
+from .common.gemma4_vision import bind_position_gather, trim_visual_padding
 from .common.vlm_inputs import (
     carry_message_extras, continue_from_generation_prompt, thinking_for_template)
 from .common.generation_core import continuation_detokenizer, detokenizer_source
@@ -1188,7 +1189,7 @@ class MLXProvider(BaseProvider):
             # engine (plan W10, outcome A2).
             self.model, self.processor = self._load_vlm_with_fallback(model_path)
             bind_position_gather(self.model)
-            bind_text_masks(self.model)
+            bind_gemma4_runtime(self.model)
 
             # Stop-token completeness: raw HF tokenizers on the mlx-vlm path
             # don't absorb generation_config's eos list (gemma-4: <turn|>
@@ -1371,6 +1372,7 @@ class MLXProvider(BaseProvider):
                 load_drafter, validate_drafter_compatibility)
             drafter, kind = load_drafter(str(Path(str(path)).expanduser()))
             validate_drafter_compatibility(self.model, drafter, kind)
+            bind_gemma4_drafter(drafter)
         except Exception as e:  # noqa: BLE001 - any failure means serve without it
             self.drafter_skipped = f"drafter {name} not used: {e}"
             logging.warning(f"{self.model_id}: speculative decoding off: {self.drafter_skipped}")

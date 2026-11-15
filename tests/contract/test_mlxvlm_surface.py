@@ -425,6 +425,70 @@ class TestVlmEngineSurface:
         for attr in ("enabled", "is_checkpoint", "checkpoint_len"):
             assert hasattr(APCCoordinator, attr), attr
 
+    def test_install_media_token_ids_covers_nested_vlm_configs(self, caplog):
+        import importlib
+        import logging
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from mlx_vlm import apc as _apc
+        from mlx_vlm.generate.ar import BatchGenerator
+        from mlx_vlm.models.gemma4.config import ModelConfig as Gemma4ModelConfig, TextConfig as Gemma4TextConfig
+        from heylook_llm.providers.common.vlm_engine import (
+            install_media_token_ids,
+            multimodal_token_ids,
+        )
+
+        # Upstream BatchGenerator._apc_media_token_ids takes only self and is called
+        # by all four APC boundary/suffix checks.
+        assert list(inspect.signature(BatchGenerator._apc_media_token_ids).parameters) == ["self"]
+        ar_src = inspect.getsource(importlib.import_module("mlx_vlm.generate.ar"))
+        for callsite in (
+            "_apc_safe_prefix_lookup_min",
+            "_apc_suffix_is_text_only",
+            "_apc_exact_checkpoint_len",
+            "_apc_exact_checkpoint_lengths",
+        ):
+            assert f"def {callsite}(" in ar_src
+        assert ar_src.count("self._apc_media_token_ids()") >= 5
+
+        cfg = Gemma4ModelConfig(
+            text_config=Gemma4TextConfig(),
+            image_token_id=258880,
+            audio_token_id=258881,
+        )
+        assert _apc.multimodal_token_ids_from_config(cfg.text_config) == set()
+
+        fake_vlm = SimpleNamespace(
+            config=cfg,
+            language_model=SimpleNamespace(config=cfg.text_config),
+        )
+        proc = SimpleNamespace(video_token_id=258884)
+        assert multimodal_token_ids(fake_vlm, proc) == {258880, 258881, 258884}
+
+        bg = SimpleNamespace(_apc_media_token_ids=lambda: {999})
+        assert install_media_token_ids(bg, fake_vlm, proc) is True
+        assert bg._apc_media_token_ids() == {999, 258880, 258881, 258884}
+
+        # Verify APC checkpoint boundary advances past a 280-token image span instead
+        # of splitting at token 256.
+        toks = [1, 2, *([258880] * 280), 3, 4, 5]
+        adjusted = _apc.adjust_prefix_to_text_suffix_boundary(
+            toks,
+            256,
+            bg._apc_media_token_ids(),
+            max_prefix_tokens=len(toks) - 1,
+        )
+        assert adjusted == 282
+
+        # Mock / changed signature guards must stand down cleanly.
+        assert install_media_token_ids(MagicMock(), fake_vlm, proc) is False
+        assert multimodal_token_ids(MagicMock(), MagicMock()) == set()
+        bad_bg = SimpleNamespace(_apc_media_token_ids=lambda extra: set())
+        with caplog.at_level(logging.WARNING):
+            assert install_media_token_ids(bad_bg, fake_vlm, proc) is False
+        assert any("stood down" in r.message for r in caplog.records)
+
     def test_the_salt_helpers_take_what_we_pass(self):
         from mlx_vlm import apc as _apc
         from mlx_vlm.tokenizer_utils import make_streaming_detokenizer  # noqa: F401
@@ -467,10 +531,10 @@ class TestSpeculativeSurface:
             "restore the thinking-budget rule in vlm_engine.drafting_blocker")
 
 class TestCarriedPatches:
-    """providers/common/mlx_vlm_patches.py carries heylook's own open
-    mlx-vlm PRs. Each test runs the UNPATCHED upstream function too: when it
-    already behaves like the patch, the pin has moved past the PR and the
-    patch is dead weight."""
+    """providers/common/mlx_vlm_patches.py applies heylook-owned runtime
+    customizations and wrappers over mlx-vlm. Each contract test verifies
+    safe binding, upstream call-site/signature compatibility, and clean
+    stand-down rather than blocking package bumps for upstream PR retirement."""
 
     def test_2356_carry_binds_per_generator_under_the_cold_rule(self):
         from types import SimpleNamespace
@@ -551,57 +615,19 @@ class TestCarriedPatches:
             f"{mlx_vlm_patches.RESTORE_MERGE}: move the #2356 carry "
             "(mlx_vlm_patches.RESTORE_MERGE) to the call it makes now")
 
-    def test_2356_upstream_restore_path_still_merges_a_lone_row(self):
-        """Retirement: runs mlx-vlm's UNPATCHED restore site. When it stops
-        sending a lone checkpoint hit on a plain-eligible generator through
-        the coordinator's row merge (the PR's own fix, or any equivalent),
-        the carry is dead weight."""
-        from heylook_llm.providers.common import mlx_vlm_patches
-        import sys
-        from types import SimpleNamespace
-        from unittest.mock import MagicMock, patch
-
-        import mlx.core as mx
-        from mlx_vlm.generate.ar import BatchGenerator
-
-        bg = object.__new__(BatchGenerator)
-        bg.apc_manager = object()
-        bg.model = SimpleNamespace(layers=[object()], make_cache=lambda: [])
-        bg.prefill_step_size = None
-        bg.kv_bits, bg.kv_group_size, bg.kv_quant_scheme = None, 64, "uniform"
-        bg._wire_stack = None
-        bg.apc = MagicMock()
-        merge = getattr(bg.apc, mlx_vlm_patches.RESTORE_MERGE)
-        merge.return_value = (["merged"], 4)
-        bg.apc.materialize_single.return_value = ["plain"]
-        pick = {"warm_cache": ["warm"], "matched_blocks": [], "prefix_len": 4,
-                "extra_hash": 7, "full_input_ids": list(range(8))}
-        sequence = (0, list(range(8)), 1, {"inputs_embeds": mx.ones((1, 8, 4))}, [], None)
-        captured = {}
-        with (patch.object(BatchGenerator, "_apc_pick_for", side_effect=[pick]),
-              patch.object(sys.modules["mlx_vlm.generate"], "PromptProcessingBatch",
-                           lambda **kw: captured.update(kw) or SimpleNamespace(**kw))):
-            assert bg._build_mixed_prompt_batch([sequence]) is not None
-        assert merge.called and captured["warm_cache"] == ["merged"], (
-            "upstream no longer merges a lone restored row: Blaizzy/mlx-vlm#2356 "
-            "(or its equivalent) is in the pin. Delete providers/common/"
-            "mlx_vlm_patches.py's #2356 carry, its apply_to call in "
-            "vlm_engine.generate, and these two tests.")
-
     def test_gdn_packed_kernel_carry_and_retirement(self):
-        """Retirement & binding test for PATCH_GDN_PACKED:
-        1. If the pinned upstream mlx-vlm already defines _gated_delta_kernel_packed,
-           fail with a retirement message naming PATCH_GDN_PACKED to delete.
+        """Contract & stand-down test for PATCH_GDN_PACKED:
+        1. If upstream mlx-vlm already defines _gated_delta_kernel_packed,
+           install_gated_delta_packed_kernel() stands down cleanly (returns False).
         2. Otherwise, verify install_gated_delta_packed_kernel() binds cleanly to
            mlx_vlm.models.gated_delta.gated_delta_kernel."""
         import mlx.core as mx
         from mlx_vlm.models import gated_delta as gd
         from heylook_llm.providers.common import mlx_vlm_patches
 
-        assert not hasattr(gd, "_gated_delta_kernel_packed"), (
-            "upstream mlx-vlm now includes _gated_delta_kernel_packed natively: "
-            "delete PATCH_GDN_PACKED and install_gated_delta_packed_kernel() from "
-            "providers/common/mlx_vlm_patches.py and this test.")
+        if hasattr(gd, "_gated_delta_kernel_packed"):
+            assert not mlx_vlm_patches.install_gated_delta_packed_kernel()
+            return
 
         if not mx.metal.is_available():
             pytest.skip("Metal required to compile packed Gated DeltaNet kernel")
@@ -841,3 +867,430 @@ class TestVideoWindowHooks:
         assert "video_metadata" in inspect.signature(P.preprocess).parameters
         source = inspect.getsource(P.preprocess)
         assert "do_sample_frames" in source and "Set `do_sample_frames=False`" in source
+
+
+class TestOwnedGemma4Runtime:
+    """heylook binds affine QMV kernels, scalar RoPE offsets, Router norm
+    caching, unpadded B=1 shared KV views, hoisted drafter masks, and single-
+    shot B=1 MTP verification onto Gemma 4 instances."""
+
+    @staticmethod
+    def _tiny_config(**overrides):
+        from mlx_vlm.models.gemma4.config import TextConfig
+
+        defaults = dict(
+            hidden_size=256,
+            intermediate_size=64,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            num_global_key_value_heads=1,
+            head_dim=64,
+            global_head_dim=64,
+            vocab_size=64,
+            hidden_size_per_layer_input=0,
+            sliding_window=8,
+            sliding_window_pattern=2,
+            num_kv_shared_layers=0,
+            layer_types=["sliding_attention", "full_attention"],
+            rope_parameters={
+                "sliding_attention": {"rope_theta": 10000.0},
+                "full_attention": {"rope_theta": 10000.0},
+            },
+            final_logit_softcapping=30.0,
+        )
+        defaults.update(overrides)
+        return TextConfig(**defaults)
+
+    @pytest.mark.parametrize("bits", [8, 4])
+    def test_qmv_multi_matches_t1_qmv_and_stands_down(self, bits):
+        import mlx.core as mx
+        import mlx.nn as nn
+        from heylook_llm.providers.common.gemma4_runtime import gemma4_qmv_multi
+
+        if not mx.metal.is_available() or mx.default_device() != mx.gpu:
+            pytest.skip("Metal GPU required for affine QMV kernel")
+
+        mx.random.seed(0)
+        k_dim = 256 if bits == 8 else 512
+        box = nn.Module()
+        box.lin = nn.Linear(k_dim, 64, bias=False)
+        box.lin.update({"weight": mx.random.normal((64, k_dim)).astype(mx.bfloat16)})
+        box.emb = nn.Embedding(64, k_dim)
+        box.emb.update({"weight": mx.random.normal((64, k_dim)).astype(mx.bfloat16)})
+        nn.quantize(box, group_size=64, bits=bits)
+        lin, emb = box.lin, box.emb
+        x = mx.random.normal((1, 5, k_dim)).astype(mx.bfloat16)
+
+        ref_lin = mx.concatenate([lin(x[:, t : t + 1, :]) for t in range(5)], axis=1)
+        got_lin = gemma4_qmv_multi(lin, x, min_out_rows=64)
+        mx.eval(ref_lin, got_lin)
+        assert got_lin is not None and mx.array_equal(got_lin, ref_lin).item()
+
+        ref_emb = mx.concatenate(
+            [emb.as_linear(x[:, t : t + 1, :]) for t in range(5)], axis=1
+        )
+        got_emb = gemma4_qmv_multi(emb, x, min_out_rows=64)
+        mx.eval(ref_emb, got_emb)
+        assert got_emb is not None and mx.array_equal(got_emb, ref_emb).item()
+
+        # Default threshold stands down on narrow matrices, unaligned 4-bit K, and float32 scales.
+        assert gemma4_qmv_multi(lin, x) is None
+        if bits == 4:
+            short_box = nn.Module()
+            short_box.lin = nn.Linear(256, 64, bias=False)
+            short_box.lin.update({"weight": mx.random.normal((64, 256)).astype(mx.bfloat16)})
+            nn.quantize(short_box, group_size=64, bits=4)
+            assert gemma4_qmv_multi(short_box.lin, x[:, :, :256], min_out_rows=64) is None
+        f32_lin = nn.QuantizedLinear(k_dim, 64, group_size=64, bits=bits, bias=False)
+        assert gemma4_qmv_multi(f32_lin, x, min_out_rows=64) is None
+
+    def test_qmv_fused_and_mlp_dynamic_subclass(self):
+        import copy
+        import mlx.core as mx
+        import mlx.nn as nn
+        from mlx_vlm.models.gemma4.language import MLP
+        from heylook_llm.providers.common.gemma4_runtime import (
+            _bind_mlp_subclass,
+            gemma4_qmv_fused,
+        )
+
+        if not mx.metal.is_available() or mx.default_device() != mx.gpu:
+            pytest.skip("Metal GPU required for fused affine QMV kernel")
+
+        mx.random.seed(1)
+        cfg = self._tiny_config(hidden_size=256, intermediate_size=64)
+        mlp_up = MLP(cfg)
+        for name in ("gate_proj", "up_proj", "down_proj"):
+            proj = getattr(mlp_up, name)
+            proj.update(
+                {"weight": mx.random.normal(proj.weight.shape).astype(mx.bfloat16)}
+            )
+        nn.quantize(mlp_up, group_size=64, bits=8)
+        mlp_bd = copy.deepcopy(mlp_up)
+        assert _bind_mlp_subclass(mlp_bd, min_out_rows=128) is True
+
+        x = mx.random.normal((1, 5, 256)).astype(mx.bfloat16)
+        fg, fu = gemma4_qmv_fused((mlp_up.gate_proj, mlp_up.up_proj), x, min_out_rows=128)
+        rg = mx.concatenate([mlp_up.gate_proj(x[:, t : t + 1, :]) for t in range(5)], axis=1)
+        ru = mx.concatenate([mlp_up.up_proj(x[:, t : t + 1, :]) for t in range(5)], axis=1)
+        mx.eval(fg, fu, rg, ru)
+        assert mx.array_equal(fg, rg).item() and mx.array_equal(fu, ru).item()
+
+        # Verify nn.Module __call__ special-method dispatch hits the subclass on mlp(x).
+        from mlx_vlm.models.gemma4.language import geglu
+
+        out_bd = mlp_bd(x)
+        ref_out = mlp_up.down_proj(geglu(rg, ru))
+        mx.eval(out_bd, ref_out)
+        assert mx.array_equal(out_bd, ref_out).item()
+
+    def test_attention_scalar_rope_offset_and_cache_lifecycle(self):
+        import copy
+        import mlx.core as mx
+        from mlx_vlm.models.cache import BatchKVCache, BatchRotatingKVCache, KVCache, RotatingKVCache
+        from mlx_vlm.models.gemma4.language import Attention
+        from mlx_vlm.speculative.cache_state import start_speculative_cache
+        from heylook_llm.providers.common.gemma4_runtime import _bind_attention_subclass
+
+        mx.random.seed(2)
+        cfg = self._tiny_config(hidden_size=128, num_attention_heads=2, num_key_value_heads=1, head_dim=64)
+        attn_up = Attention(cfg, layer_idx=0)
+        attn_bd = copy.deepcopy(attn_up)
+        assert _bind_attention_subclass(attn_bd) is True
+
+        # 1. KVCache & BatchKVCache([0])
+        for make_c in (lambda: KVCache(), lambda: BatchKVCache([0])):
+            cu, cb = make_c(), make_c()
+            x_pre = mx.random.normal((1, 4, 128))
+            y_u, _, off_u = attn_up(x_pre, cache=cu)
+            y_b, _, off_b = attn_bd(x_pre, cache=cb)
+            assert isinstance(off_b, int) and off_b == 0
+            x_dec = mx.random.normal((1, 1, 128))
+            y_u2, _, _ = attn_up(x_dec, cache=cu)
+            y_b2, _, off_b2 = attn_bd(x_dec, cache=cb)
+            assert isinstance(off_b2, int) and off_b2 == 4
+            mx.eval(y_u, y_b, y_u2, y_b2)
+            assert mx.array_equal(y_u, y_b).item()
+            assert mx.array_equal(y_u2, y_b2).item()
+
+        # 2. BatchRotatingKVCache across rotation + _RotatingCacheTransaction rollback
+        ru = BatchRotatingKVCache(8, [0])
+        rb = BatchRotatingKVCache(8, [0])
+        x_fill = mx.random.normal((1, 10, 128))
+        attn_up(x_fill, cache=ru)
+        attn_bd(x_fill, cache=rb)
+        # Trigger partial speculative rollback (abort clones left_padding array id!)
+        tu = start_speculative_cache([ru], 4)
+        tb = start_speculative_cache([rb], 4)
+        x_spec = mx.random.normal((1, 4, 128))
+        attn_up(x_spec, cache=ru)
+        attn_bd(x_spec, cache=rb)
+        tu.commit([2])
+        tb.commit([2])
+        x_after = mx.random.normal((1, 1, 128))
+        yu, _, offu = attn_up(x_after, cache=ru)
+        yb, _, offb = attn_bd(x_after, cache=rb)
+        mx.eval(yu, yb, offu)
+        assert isinstance(offb, int) and offb == int(offu.item()) == 12
+        assert mx.array_equal(yu, yb).item()
+
+        # 3. Merged rotated BatchRotatingKVCache where offset (25) > max_size (8)
+        rc = RotatingKVCache(8)
+        rc.update_and_fetch(mx.ones((1, 1, 25, 64)), mx.ones((1, 1, 25, 64)))
+        mu = BatchRotatingKVCache.merge([copy.deepcopy(rc)])
+        mb = BatchRotatingKVCache.merge([copy.deepcopy(rc)])
+        yu_m, _, offu_m = attn_up(x_after, cache=mu)
+        yb_m, _, offb_m = attn_bd(x_after, cache=mb)
+        mx.eval(yu_m, yb_m, offu_m)
+        assert isinstance(offb_m, int) and offb_m == int(offu_m.item()) == 25
+        assert mx.array_equal(yu_m, yb_m).item()
+        _, _, offb_m2 = attn_bd(x_after, cache=mb)
+        assert isinstance(offb_m2, int) and offb_m2 == 26
+
+        # 4. Padded multi-row batch falls back to mx.array offset cleanly
+        pu, pb = BatchKVCache([2, 0]), BatchKVCache([2, 0])
+        x2 = mx.random.normal((2, 3, 128))
+        yu2, _, _ = attn_up(x2, cache=pu)
+        yb2, _, off2 = attn_bd(x2, cache=pb)
+        mx.eval(yu2, yb2)
+        assert isinstance(off2, mx.array) and mx.array_equal(yu2, yb2).item()
+
+    def test_router_and_shared_kv_from_cache_match_upstream(self):
+        import copy
+        import mlx.core as mx
+        from mlx_vlm.models.cache import BatchKVCache, BatchRotatingKVCache
+        from mlx_vlm.models.gemma4.language import LanguageModel, Router
+        from heylook_llm.providers.common.gemma4_runtime import (
+            _bind_router_subclass,
+            bind_gemma4_runtime,
+        )
+
+        mx.random.seed(3)
+        cfg = self._tiny_config(
+            hidden_size=64,
+            intermediate_size=64,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            num_global_key_value_heads=1,
+            head_dim=32,
+            global_head_dim=32,
+            vocab_size=64,
+            num_experts=8,
+            top_k_experts=2,
+            moe_intermediate_size=32,
+            enable_moe_block=True,
+        )
+        r_up = Router(cfg)
+        r_bd = copy.deepcopy(r_up)
+        assert _bind_router_subclass(r_bd) is True
+        xr = mx.random.normal((1, 4, 64))
+        iu, wu = r_up(xr)
+        ib, wb = r_bd(xr)
+        first_id = id(r_bd._heylook_scaled_norm_weight)
+        ib2, wb2 = r_bd(xr)
+        assert id(r_bd._heylook_scaled_norm_weight) == first_id
+        mx.eval(iu, wu, ib, wb, ib2, wb2)
+        assert mx.array_equal(iu, ib).item() and mx.array_equal(wu, wb).item()
+
+        lm_up = LanguageModel(cfg)
+        lm_bd = copy.deepcopy(lm_up)
+        wrapper = type("M", (), {"language_model": lm_bd})()
+        assert bind_gemma4_runtime(wrapper) is True
+
+        # Both unrotated and rotated BatchRotatingKVCache + BatchKVCache
+        for step_len in (4, 11):
+            c0 = BatchRotatingKVCache(6, [0])
+            c1 = BatchKVCache([0])
+            c0.update_and_fetch(
+                mx.random.normal((1, 1, step_len, 32)),
+                mx.random.normal((1, 1, step_len, 32)),
+            )
+            c1.update_and_fetch(
+                mx.random.normal((1, 1, step_len, 32)),
+                mx.random.normal((1, 1, step_len, 32)),
+            )
+            su = lm_up.shared_kv_from_cache([c0, c1])
+            sb = lm_bd.shared_kv_from_cache([c0, c1])
+            assert set(su) == set(sb)
+            for k in su:
+                assert mx.array_equal(su[k][0], sb[k][0]).item()
+                assert mx.array_equal(su[k][1], sb[k][1]).item()
+
+        # Multi-row padded fallback matches upstream
+        p0, p1 = BatchRotatingKVCache(6, [1, 0]), BatchKVCache([1, 0])
+        p0.update_and_fetch(mx.random.normal((2, 1, 4, 32)), mx.random.normal((2, 1, 4, 32)))
+        p1.update_and_fetch(mx.random.normal((2, 1, 4, 32)), mx.random.normal((2, 1, 4, 32)))
+        su_p = lm_up.shared_kv_from_cache([p0, p1])
+        sb_p = lm_bd.shared_kv_from_cache([p0, p1])
+        for k in su_p:
+            assert mx.array_equal(su_p[k][0], sb_p[k][0]).item()
+            assert mx.array_equal(su_p[k][1], sb_p[k][1]).item()
+
+    def test_bind_gemma4_drafter_survives_copy_and_hoists_masks(self, monkeypatch):
+        import copy
+        import mlx.core as mx
+        import mlx.nn as nn
+        from mlx_vlm.speculative.drafters.gemma4_assistant.config import (
+            Gemma4AssistantConfig,
+        )
+        from mlx_vlm.speculative.drafters.gemma4_assistant.gemma4_assistant import (
+            Gemma4AssistantDraftModel,
+        )
+        from mlx_vlm.speculative.drafters.gemma4_assistant import masks as drafter_masks
+        from heylook_llm.providers.common.gemma4_runtime import bind_gemma4_drafter
+
+        mx.random.seed(4)
+        text_cfg = self._tiny_config(
+            hidden_size=16,
+            intermediate_size=32,
+            num_hidden_layers=2,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            num_global_key_value_heads=1,
+            head_dim=8,
+            global_head_dim=8,
+            sliding_window=8,
+            vocab_size=32,
+            num_kv_shared_layers=2,
+            tie_word_embeddings=True,
+        )
+        d_cfg = Gemma4AssistantConfig(
+            backbone_hidden_size=16,
+            text_config=text_cfg,
+            tie_word_embeddings=True,
+            use_ordered_embeddings=False,
+        )
+        target_embed = nn.Embedding(32, 16)
+        target = type(
+            "Target",
+            (),
+            {
+                "language_model": type(
+                    "LM",
+                    (),
+                    {
+                        "config": text_cfg,
+                        "model": type(
+                            "M", (), {"embed_tokens": target_embed, "embed_scale": 1.0}
+                        )(),
+                    },
+                )()
+            },
+        )()
+
+        d_up = Gemma4AssistantDraftModel(d_cfg).bind(target)
+        d_bd = copy.deepcopy(d_up)
+        assert bind_gemma4_drafter(d_bd) is True
+
+        d_copy = copy.copy(d_bd)
+        d_copy.reset(target)
+        shared_kv = {
+            "sliding_attention": (mx.random.normal((1, 1, 6, 8)), mx.random.normal((1, 1, 6, 8))),
+            "full_attention": (mx.random.normal((1, 1, 6, 8)), mx.random.normal((1, 1, 6, 8))),
+        }
+        d_up.set_shared_kv(shared_kv, kv_offset=6, position=5, kv_valid_len=6)
+        d_copy.set_shared_kv(shared_kv, kv_offset=6, position=5, kv_valid_len=6)
+
+        hidden = mx.random.normal((1, 1, 16))
+        sampler = lambda logits: mx.argmax(logits, axis=-1)
+        toks_up = d_up.draft_block(3, hidden, None, 5, sampler, greedy=False)
+
+        calls = 0
+        orig_make_masks = drafter_masks.make_drafter_masks
+
+        def counting_make_masks(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return orig_make_masks(*args, **kwargs)
+
+        monkeypatch.setattr(drafter_masks, "make_drafter_masks", counting_make_masks)
+        toks_bd = d_copy.draft_block(3, hidden, None, 5, sampler, greedy=False)
+        mx.eval(toks_up, toks_bd)
+        assert calls == 1
+        assert mx.array_equal(toks_up, toks_bd).item()
+
+    def test_install_mtp_single_row_fast_paths_matches_upstream(self):
+        import mlx.core as mx
+        from mlx_vlm.models.cache import BatchKVCache
+        from mlx_vlm.speculative import mtp
+        from heylook_llm.providers.common import mlx_vlm_patches
+
+        mx.random.seed(5)
+        orig_walk = getattr(
+            mtp._speculative_walk_batch_deferred_greedy,
+            "_heylook_upstream",
+            mtp._speculative_walk_batch_deferred_greedy,
+        )
+        orig_pad = getattr(
+            mtp._batch_cache_left_padding,
+            "_heylook_upstream",
+            mtp._batch_cache_left_padding,
+        )
+        try:
+            mtp._speculative_walk_batch_deferred_greedy = orig_walk
+            mtp._batch_cache_left_padding = orig_pad
+
+            calls = []
+
+            class FakeLM:
+                _heylook_gemma4_runtime = True
+
+                def speculative_logits_from_hidden(self, h):
+                    calls.append(int(h.shape[1]))
+                    # Encode deterministic preferred token per time step.
+                    B, T, _ = h.shape
+                    vocab = mx.zeros((B, T, 16))
+                    # Position values from h[:, :, 0] pick argmax token index.
+                    idx = h[0, :, 0].astype(mx.int32).tolist()
+                    rows = []
+                    for tok in idx:
+                        row = [0.0] * 16
+                        row[tok % 16] = 10.0
+                        rows.append(row)
+                    return mx.array(rows)[None, :, :]
+
+            lm = FakeLM()
+            draft_tokens = mx.array([[2, 4, 6, 8]])
+            # Expect accept pos 0 (2), pos 1 (4), reject pos 2 (got 7 != 6) -> 2 accepted, [2, 4, 7]
+            hidden = mx.array([[[2.0], [4.0], [7.0], [8.0], [1.0]]])
+            greedy = lambda lp: mx.argmax(lp, axis=-1)
+
+            up_acc, up_toks = orig_walk(lm, hidden, draft_tokens, greedy, [10])
+            assert calls == [1, 1, 1]
+
+            calls.clear()
+            assert mlx_vlm_patches.install_mtp_single_row_fast_paths()
+            assert mlx_vlm_patches.install_mtp_single_row_fast_paths()
+
+            bd_acc, bd_toks = mtp._speculative_walk_batch_deferred_greedy(
+                lm, hidden, draft_tokens, greedy, [10]
+            )
+            assert calls == [5]
+            assert (bd_acc, bd_toks) == (up_acc, up_toks) == ([2], [[2, 4, 7]])
+
+            # Positioned sampler parity (row_ids / positions recorded identically).
+            class PositionedSampler:
+                def __init__(self):
+                    self.seen = []
+
+                def sample_target(self, lp, *, row_ids, positions):
+                    self.seen.append((list(row_ids), list(positions)))
+                    return mx.argmax(lp, axis=-1)
+
+            ps_up = PositionedSampler()
+            up_p = orig_walk(lm, hidden, draft_tokens, ps_up, [2], row_ids=[3], base_positions=[10])
+            ps_bd = PositionedSampler()
+            bd_p = mtp._speculative_walk_batch_deferred_greedy(
+                lm, hidden, draft_tokens, ps_bd, [2], row_ids=[3], base_positions=[10]
+            )
+            assert bd_p == up_p == ([2], [[2, 4]])
+            assert ps_bd.seen == [([3, 3, 3, 3, 3], [10, 11, 12, 13, 14])]
+
+            # Unpadded B=1 BatchKVCache skips left_padding array extraction; B=2 falls back.
+            assert mtp._batch_cache_left_padding([BatchKVCache([0])]) is None
+            pad_b2 = mtp._batch_cache_left_padding([BatchKVCache([2, 0])])
+            assert pad_b2 is not None and pad_b2.tolist() == [2, 0]
+        finally:
+            mtp._speculative_walk_batch_deferred_greedy = orig_walk
+            mtp._batch_cache_left_padding = orig_pad
