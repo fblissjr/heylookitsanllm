@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.248]
+
+### Changed
+
+- **Updated vendored frontend libraries (`scripts/vendor_frontend.py --update`).** `marked` `18.1.3` -> `18.2.0` (`frontend/js/vendor/marked.esm.js`) and `dompurify` `3.4.17` -> `3.4.18` (`frontend/js/vendor/purify.es.mjs`, `frontend/js/vendor/vendor.json`).
+
+### Verification
+
+- Verified: `tests/unit/` + `tests/contract/` (`1653 passed`), `node --test tests/e2e/embed-kit.test.mjs` (`11/11`), `scripts/vendor_frontend.py --check` (`marked` `18.2.0` and `dompurify` `3.4.18` current and matching manifest), ESM import & custom `marked` renderer check (`18.2.0` / `3.4.18`).
+- NOT run: `tests/smoke/`, `tests/eval/`, browser E2E (`e2e:render` / `e2e:chat` / `e2e:pages` pending harness migration after `v2.0.240` `puppeteer-core` removal).
+
 ## [2.0.247]
 
 ### Changed
