@@ -89,12 +89,48 @@ def build(params: dict) -> tuple[callable, list[callable]]:
     if (seed := params.get("seed")) is not None:
         mx.random.seed(seed)
 
+    temp = float(params.get("temperature", GLOBAL_SAMPLER_FLOOR["temperature"]) or 0.0)
+    top_p = float(params.get("top_p", GLOBAL_SAMPLER_FLOOR["top_p"]) or 0.0)
+    min_p = float(params.get("min_p", GLOBAL_SAMPLER_FLOOR["min_p"]) or 0.0)
+    top_k = int(params.get("top_k", GLOBAL_SAMPLER_FLOOR["top_k"]) or 0)
+
     sampler = make_sampler(
-        temp=params.get("temperature", GLOBAL_SAMPLER_FLOOR["temperature"]),
-        top_p=params.get("top_p", GLOBAL_SAMPLER_FLOOR["top_p"]),
-        min_p=params.get("min_p", GLOBAL_SAMPLER_FLOOR["min_p"]),
-        top_k=params.get("top_k", GLOBAL_SAMPLER_FLOOR["top_k"]),
+        temp=temp,
+        top_p=top_p,
+        min_p=min_p,
+        top_k=top_k,
     )
+    if temp == 0.0:
+        sampler._heylook_greedy = True
+    else:
+        from mlx_vlm.sample_utils import (
+            apply_min_p,
+            apply_top_k,
+            apply_top_p,
+            clamp_temperature,
+        )
+
+        eff_temp = clamp_temperature(temp)
+        inv_temp = 1.0 / eff_temp
+
+        def _spec_probs(logits_or_lp: mx.array, *, already_logprobs: bool = False):
+            lp = (
+                logits_or_lp
+                if already_logprobs
+                else (logits_or_lp - mx.logsumexp(logits_or_lp, axis=-1, keepdims=True))
+            )
+            if 0.0 < top_p < 1.0:
+                lp = apply_top_p(lp, top_p)
+            if min_p != 0.0:
+                lp = apply_min_p(lp, min_p, 1)
+            if top_k > 0:
+                lp = apply_top_k(lp, top_k)
+            scaled = lp.astype(mx.float32) * inv_temp
+            return mx.softmax(scaled, axis=-1), scaled
+
+        sampler._heylook_greedy = False
+        sampler._heylook_pending_draft = None
+        sampler._heylook_spec_probs = _spec_probs
 
     # An OFF knob builds NO processor. mlx-vlm's make_logits_processors adds a
     # repetition processor for any value but 0, and the floor's "off" is 1.0

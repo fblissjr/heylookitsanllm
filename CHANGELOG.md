@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.249]
+
+### Changed
+
+- **Lossless Leviathan MTP rejection sampling, hoisted 8-bit multi-token QMV kernels, and O(1) single-row rotating KV cache transactions for Gemma 4 (`31B-it` & `26B-A4B-it`).**
+  - [`providers/common/samplers.py`](src/heylook_llm/providers/common/samplers.py): `build()` tags greedy samplers (`_heylook_greedy = True` at `temp == 0.0`) and attaches `_heylook_greedy = False`, `_heylook_pending_draft = None`, and `_heylook_spec_probs(logits_or_lp, *, already_logprobs=False)` (mirroring `make_sampler` `top_p` -> `min_p` -> `top_k` filtering + temperature softmax) when `temp > 0.0`.
+  - [`providers/common/gemma4_runtime.py`](src/heylook_llm/providers/common/gemma4_runtime.py):
+    - `_HeylookGemma4DraftModel.draft_block` clears stale `_heylook_pending_draft` on entry, samples non-greedy draft tokens from `_heylook_spec_probs`, and attaches `(out_toks, q_mat)` to request-private `sampler._heylook_pending_draft`.
+    - Added `_hoisted_8bit_qmv_kernel` (`uint2` weight loads hoisted outside the inner `VERIFY_T` loop) and wired it into `gemma4_qmv_multi` and `gemma4_qmv_fused` for 8-bit projections (`MIN_QMV_OUT_ROWS = 32768`), retaining upstream kernels for 4-bit layers.
+    - Added `_FastB1RotatingTransaction` and `_bind_speculative_verify_hidden` (`_PATCH_VERIFY_HIDDEN`) in `bind_gemma4_runtime`: skips upfront full-buffer `BatchRotatingKVCache` KV array copies on unpadded `B=1` verification and commits partial prefixes (`1 <= keep <= length`) via an O(1) slice past `sliding_window`, falling back to saved-prefix replay on `keep == 0`, ragged batches, or multi-step updates.
+  - Updated [`tests/contract/test_mlxvlm_surface.py`](tests/contract/test_mlxvlm_surface.py) (`TestOwnedGemma4Runtime` additive bias coverage for `bits=[8, 4]`, `_FastB1RotatingTransaction` parity against upstream, and empirical 4,000-round Leviathan distribution & non-greedy sequential fallback tests).
+  - Synced [`tests/unit/test_gguf_non_causal_images.py`](tests/unit/test_gguf_non_causal_images.py) (`_log_messages`) and [`providers/llama_cache_witness.py`](src/heylook_llm/providers/llama_cache_witness.py) with upstream `llama.cpp` (`fc504f91d`, build 12426), where `server_prompt_cache` logs moved from `tools/server/server-context.cpp` to `server-slot-sched.cpp`.
+
+### Fixed
+
+- **Non-greedy speculative walk RNG coupling and exact-match acceptance collapse (`PATCH_MTP_B1_WALK`).**
+  - [`providers/common/mlx_vlm_patches.py`](src/heylook_llm/providers/common/mlx_vlm_patches.py): `_heylook_mtp_walk_batch` always clears `sampler._heylook_pending_draft` on entry; executes fused one-eval Leviathan rejection sampling (`(u * q_sel) >= p_sel` with residual `max(p_row - q_row, 0)` / bonus `p_K`) when matching `_heylook_spec_probs` and draft `q_probs` are present; and samples non-greedy requests without draft distributions position-by-position sequentially rather than calling `sampler(logprobs)` once across `(N, V)` (which drew a single batched categorical vector).
+
+### Verification
+
+- Verified: `tests/unit/` + `tests/contract/` (`1655 passed`), `scripts/vlm_parity_probe.py` (`ok=true`: `internal/claude/vlm_parity/gemma4_31b_v20249.json` and `internal/claude/vlm_parity/gemma4_26b_v20249.json`), `scripts/chain_probe.py` (all 5 hops `match=True`, `restored=reused` on `gemma-4-31B-it-8bit` [`internal/claude/chain_probe/chain_gemma-4-31B-it-8bit_20261116-130430.json`] and `gemma-4-26B-A4B-it-8bit` [`internal/claude/chain_probe/chain_gemma-4-26B-A4B-it-8bit_20261116-130510.json`]), live bounded throughput checks on both `gemma-4-31B-it-8bit` (+ MTP) and `gemma-4-26B-A4B-it-8bit` (+ MTP) recorded in `internal/claude/perf/gemma4_mtp_v20249_2026-11-16.md`, and `scripts/vendor_frontend.py --check` (`marked` `18.2.0` and `dompurify` `3.4.18` match manifest; `Behind: marked` [`18.2.1` available], not updated).
+- NOT run: `scripts/perf_ab.py` (deferred to avoid ambient quiet-wait stalls), `tests/smoke/`, `tests/eval/`, browser E2E (`e2e:render` / `e2e:chat` / `e2e:pages` pending harness migration after `v2.0.240` `puppeteer-core` removal).
+
 ## [2.0.248]
 
 ### Changed

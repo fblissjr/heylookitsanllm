@@ -934,6 +934,21 @@ class TestOwnedGemma4Runtime:
         mx.eval(ref_emb, got_emb)
         assert got_emb is not None and mx.array_equal(got_emb, ref_emb).item()
 
+        biased_box = nn.Module()
+        biased_box.lin = nn.Linear(k_dim, 64, bias=True)
+        biased_box.lin.update(
+            {
+                "weight": mx.random.normal((64, k_dim)).astype(mx.bfloat16),
+                "bias": mx.random.normal((64,)).astype(mx.bfloat16),
+            }
+        )
+        nn.quantize(biased_box, group_size=64, bits=bits)
+        b_lin = biased_box.lin
+        ref_biased = mx.concatenate([b_lin(x[:, t : t + 1, :]) for t in range(5)], axis=1)
+        got_biased = gemma4_qmv_multi(b_lin, x, min_out_rows=64)
+        mx.eval(ref_biased, got_biased)
+        assert got_biased is not None and mx.array_equal(got_biased, ref_biased).item()
+
         # Default threshold stands down on narrow matrices, unaligned 4-bit K, and float32 scales.
         assert gemma4_qmv_multi(lin, x) is None
         if bits == 4:
@@ -1294,3 +1309,193 @@ class TestOwnedGemma4Runtime:
         finally:
             mtp._speculative_walk_batch_deferred_greedy = orig_walk
             mtp._batch_cache_left_padding = orig_pad
+
+    def test_fast_b1_rotating_transaction_matches_upstream(self):
+        import copy
+        import mlx.core as mx
+        from mlx.utils import tree_flatten
+        from mlx_vlm.models.cache import BatchKVCache, BatchRotatingKVCache
+        from mlx_vlm.models.gemma4.language import LanguageModel
+        from heylook_llm.providers.common.gemma4_runtime import (
+            _PATCH_VERIFY_HIDDEN,
+            bind_gemma4_runtime,
+        )
+
+        mx.random.seed(19)
+        cfg = self._tiny_config(
+            hidden_size=64,
+            intermediate_size=64,
+            num_hidden_layers=2,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            num_global_key_value_heads=1,
+            head_dim=32,
+            global_head_dim=32,
+            sliding_window=8,
+            vocab_size=32,
+        )
+        lm_up = LanguageModel(cfg)
+        lm_bd = copy.deepcopy(lm_up)
+        lm_bd.load_weights(tree_flatten(lm_up.parameters()))
+        assert bind_gemma4_runtime(type("M", (), {"language_model": lm_bd})()) is True
+        assert (
+            getattr(lm_bd.speculative_verify_hidden.__func__, "_heylook_patch", None)
+            == _PATCH_VERIFY_HIDDEN
+        )
+
+        def make_caches(pad):
+            return [BatchRotatingKVCache(8, list(pad)), BatchKVCache(list(pad))]
+
+        verify_in = mx.array([[3, 7, 11, 15]])
+        followup_in = mx.array([[19, 23]])
+        for init_len in (0, 5, 7, 8, 13):
+            for keep in (0, 1, 2, 3, 4):
+                cu, cb = make_caches([0]), make_caches([0])
+                if init_len > 0:
+                    p = mx.arange(1, init_len + 1, dtype=mx.int32)[None, :] % 30
+                    lm_up(p, cache=cu)
+                    lm_bd(p, cache=cb)
+                    if init_len >= 8:
+                        step = mx.array([[5]])
+                        lm_up(step, cache=cu)
+                        lm_bd(step, cache=cb)
+                hu, _, tu = lm_up.speculative_verify_hidden(verify_in, cu)
+                hb, _, tb = lm_bd.speculative_verify_hidden(verify_in, cb)
+                mx.eval(hu, hb)
+                assert mx.array_equal(hu, hb).item()
+                if keep == 0:
+                    tu.abort()
+                    tb.abort()
+                else:
+                    tu.commit([keep])
+                    tb.commit([keep])
+                lu = lm_up.logits_from_hidden(lm_up.model(followup_in, cache=cu))
+                lb = lm_bd.logits_from_hidden(lm_bd.model(followup_in, cache=cb))
+                mx.eval(lu, lb, cu[0].offset, cb[0].offset)
+                assert int(cu[0].offset[0].item()) == int(cb[0].offset[0].item())
+                assert mx.allclose(lu, lb, atol=1e-4).item()
+
+        # Padded B=2 falls back cleanly to upstream transaction without failing.
+        cu2, cb2 = make_caches([2, 0]), make_caches([2, 0])
+        v2 = mx.array([[1, 2, 3], [4, 5, 6]])
+        h2u, _, t2u = lm_up.speculative_verify_hidden(v2, cu2)
+        h2b, _, t2b = lm_bd.speculative_verify_hidden(v2, cb2)
+        mx.eval(h2u, h2b)
+        assert mx.array_equal(h2u, h2b).item()
+        t2u.commit([2, 1])
+        t2b.commit([2, 1])
+
+    def test_leviathan_rejection_sampling_and_non_greedy_walk(self):
+        import mlx.core as mx
+        from mlx_vlm.speculative import mtp
+        from heylook_llm.providers.common import mlx_vlm_patches, samplers
+
+        mx.random.seed(123)
+        orig_walk = getattr(
+            mtp._speculative_walk_batch_deferred_greedy,
+            "_heylook_upstream",
+            mtp._speculative_walk_batch_deferred_greedy,
+        )
+        try:
+            mtp._speculative_walk_batch_deferred_greedy = orig_walk
+            assert mlx_vlm_patches.install_mtp_single_row_fast_paths()
+
+            greedy_s, _ = samplers.build({"temperature": 0.0, "top_p": 1.0, "top_k": 0})
+            assert getattr(greedy_s, "_heylook_greedy", None) is True
+            assert not hasattr(greedy_s, "_heylook_spec_probs")
+
+            sampler, _ = samplers.build(
+                {"temperature": 1.0, "top_p": 0.9, "top_k": 5, "min_p": 0.0}
+            )
+            assert getattr(sampler, "_heylook_greedy", None) is False
+            spec_probs = getattr(sampler, "_heylook_spec_probs", None)
+            assert callable(spec_probs)
+
+            target_logits = mx.array(
+                [
+                    [2.4, 2.0, 1.4, 0.8, 0.2, -0.5, -1.2, -2.0],
+                    [1.5, 2.1, 1.2, 0.4, -0.1, -0.8, -1.5, -2.5],
+                    [0.9, 1.8, 2.0, 1.1, 0.3, -0.4, -1.0, -2.0],
+                    [2.0, 1.5, 1.0, 0.5, 0.0, -0.5, -1.0, -2.0],
+                ],
+                dtype=mx.float32,
+            )
+            draft_logits = mx.array(
+                [
+                    [2.1, 2.2, 1.3, 0.7, 0.1, -0.6, -1.1, -2.1],
+                    [1.3, 2.0, 1.4, 0.5, 0.0, -0.7, -1.4, -2.4],
+                    [1.0, 1.6, 1.9, 1.2, 0.2, -0.3, -1.1, -2.2],
+                ],
+                dtype=mx.float32,
+            )
+            lp_t = target_logits - mx.logsumexp(target_logits, axis=-1, keepdims=True)
+            p_true, _ = spec_probs(lp_t, already_logprobs=True)
+            q_true, q_scaled = spec_probs(draft_logits, already_logprobs=False)
+            mx.eval(p_true, q_true, q_scaled)
+            p0 = p_true[0].tolist()
+            expected_accept0 = sum(min(a, b) for a, b in zip(p0, q_true[0].tolist()))
+            independent_match0 = sum(a * b for a, b in zip(p0, q_true[0].tolist()))
+            assert expected_accept0 > independent_match0 + 0.35
+
+            class FixedLM:
+                _heylook_gemma4_runtime = True
+
+                def speculative_logits_from_hidden(self, h):
+                    del h
+                    return target_logits[None, :, :]
+
+            lm = FixedLM()
+            n_rounds = 4000
+            counts0 = [0] * 8
+            step0_accepts = 0
+            for _ in range(n_rounds):
+                drafts = mx.random.categorical(q_scaled)[None, :].astype(mx.int32)
+                mx.eval(drafts)
+                sampler._heylook_pending_draft = (drafts, q_true)
+                acc, toks = mtp._speculative_walk_batch_deferred_greedy(
+                    lm, mx.zeros((1, 4, 4)), drafts, sampler, [4]
+                )
+                assert sampler._heylook_pending_draft is None
+                counts0[toks[0][0]] += 1
+                if acc[0] >= 1:
+                    step0_accepts += 1
+
+            empirical0 = [c / n_rounds for c in counts0]
+            max_abs_err = max(abs(a - b) for a, b in zip(empirical0, p0))
+            accept_rate0 = step0_accepts / n_rounds
+            assert max_abs_err < 0.03, (empirical0, p0)
+            assert abs(accept_rate0 - expected_accept0) < 0.035, (
+                accept_rate0,
+                expected_accept0,
+            )
+
+            # Fallback non-greedy sampler without _heylook_pending_draft must project logits once
+            # and evaluate sampler sequentially per position until rejection.
+            proj_calls = []
+
+            class CountingLM:
+                _heylook_gemma4_runtime = True
+
+                def speculative_logits_from_hidden(self, h):
+                    proj_calls.append(int(h.shape[1]))
+                    return target_logits[None, : h.shape[1], :]
+
+            sample_shapes = []
+
+            def non_greedy_no_spec(lp):
+                sample_shapes.append(tuple(lp.shape))
+                return mx.array([0] if len(sample_shapes) == 1 else [7])
+
+            non_greedy_no_spec._heylook_greedy = False
+            acc_fb, toks_fb = mtp._speculative_walk_batch_deferred_greedy(
+                CountingLM(),
+                mx.zeros((1, 4, 4)),
+                mx.array([[0, 1, 2]]),
+                non_greedy_no_spec,
+                [4],
+            )
+            assert proj_calls == [4]
+            assert sample_shapes == [(1, 8), (1, 8)]
+            assert (acc_fb, toks_fb) == ([1], [[0, 7]])
+        finally:
+            mtp._speculative_walk_batch_deferred_greedy = orig_walk

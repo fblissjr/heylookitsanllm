@@ -121,8 +121,11 @@ def _log_messages(tree: Path) -> list[str]:
     arguments: the literal of each SRV_/SLT_ call, or its argument when the
     format is a bare "%s"."""
     out = []
-    for name in ("server-task.cpp", "server-context.cpp"):
-        src = (tree / "tools/server" / name).read_text()
+    for name in ("server-task.cpp", "server-context.cpp", "server-slot-sched.cpp"):
+        path = tree / "tools/server" / name
+        if not path.exists():
+            continue
+        src = path.read_text()
         for call in re.finditer(r'(?:SRV|SLT)_[A-Z]{3}\((.*?)\);', src, re.S):
             literals = re.findall(r'"((?:[^"\\]|\\.)*)"', call.group(1))
             if not literals:

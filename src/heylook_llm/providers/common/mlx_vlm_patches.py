@@ -313,6 +313,10 @@ def _install_mtp_walk_fast_path(mtp, mx) -> bool:
         row_ids=None,
         base_positions=None,
     ):
+        pending = getattr(sampler, "_heylook_pending_draft", None)
+        if hasattr(sampler, "_heylook_pending_draft"):
+            sampler._heylook_pending_draft = None
+
         if (
             getattr(lm, "_heylook_gemma4_runtime", False)
             and getattr(draft_tokens, "ndim", 0) == 2
@@ -334,6 +338,110 @@ def _install_mtp_walk_fast_path(mtp, mx) -> bool:
                 ):
                     budget = int(budgets[0])
                     draft_list = [int(tok) for tok in draft_tokens[0].tolist()]
+                    spec_probs = (
+                        None
+                        if sample_target is not None
+                        else getattr(sampler, "_heylook_spec_probs", None)
+                    )
+                    if (
+                        callable(spec_probs)
+                        and isinstance(pending, tuple)
+                        and len(pending) == 2
+                        and getattr(pending[0], "shape", None) == draft_tokens.shape
+                        and getattr(pending[1], "ndim", 0) == 2
+                        and int(pending[1].shape[0]) == n_draft
+                    ):
+                        _, q_probs = pending
+                        draft_1d = draft_tokens[0].astype(mx.int32)
+                        with mx.stream(mtp.generation_stream):
+                            logits = mtp._mtp_logits_from_hidden(
+                                lm, target_hidden[:, :total_t, :]
+                            )
+                            if logits.ndim == 3 and logits.shape[0] == 1:
+                                logits = logits[0]
+                            logprobs = logits - mx.logsumexp(
+                                logits, axis=-1, keepdims=True
+                            )
+                            p_probs, _ = spec_probs(logprobs, already_logprobs=True)
+                            if q_probs.shape[1] == p_probs.shape[1]:
+                                p_sel = mx.take_along_axis(
+                                    p_probs[:n_draft], draft_1d[:, None], axis=-1
+                                ).squeeze(-1)
+                                q_sel = mx.take_along_axis(
+                                    q_probs, draft_1d[:, None], axis=-1
+                                ).squeeze(-1)
+                                u = mx.random.uniform(shape=(n_draft,))
+                                rej = (u * q_sel) >= p_sel
+                                rej_padded = mx.concatenate(
+                                    [rej, mx.array([True])]
+                                )
+                                acc_idx = mx.argmax(rej_padded.astype(mx.int32))
+                                q_padded = mx.concatenate(
+                                    [
+                                        q_probs,
+                                        mx.zeros(
+                                            (1, p_probs.shape[1]), dtype=p_probs.dtype
+                                        ),
+                                    ],
+                                    axis=0,
+                                )
+                                p_row = p_probs[acc_idx]
+                                q_row = q_padded[acc_idx]
+                                res = mx.maximum(p_row - q_row, 0.0)
+                                res_sum = mx.sum(res)
+                                chosen = mx.where(res_sum > 1e-12, res, p_row)
+                                log_dist = mx.where(
+                                    chosen > 0, mx.log(chosen), -mx.inf
+                                )
+                                bonus_tok = mx.random.categorical(log_dist)
+                                run_leviathan = True
+                            else:
+                                run_leviathan = False
+                        if run_leviathan:
+                            mx.eval(acc_idx, bonus_tok)
+                            accepted = int(acc_idx.item())
+                            bonus = int(bonus_tok.item())
+                            new_tokens = draft_list[:accepted]
+                            if len(new_tokens) < budget:
+                                new_tokens.append(bonus)
+                            return [accepted], [new_tokens[:budget]]
+
+                    non_greedy = (
+                        sample_target is None
+                        and (
+                            getattr(sampler, "_heylook_greedy", None) is False
+                            or "temp"
+                            in getattr(getattr(sampler, "__code__", None), "co_freevars", ())
+                        )
+                    )
+                    if non_greedy:
+                        with mx.stream(mtp.generation_stream):
+                            logits = mtp._mtp_logits_from_hidden(
+                                lm, target_hidden[:, :total_t, :]
+                            )
+                            if logits.ndim == 3 and logits.shape[0] == 1:
+                                logits = logits[0]
+                            logprobs = logits - mx.logsumexp(
+                                logits, axis=-1, keepdims=True
+                            )
+                        mx.eval(logprobs)
+                        accepted = 0
+                        new_tokens = []
+                        for pos in range(total_t):
+                            with mx.stream(mtp.generation_stream):
+                                target_token = sampler(logprobs[pos : pos + 1])
+                            mx.eval(target_token)
+                            token = int(target_token.reshape(-1).item())
+                            if pos < n_draft and token == draft_list[pos]:
+                                accepted += 1
+                                if len(new_tokens) < budget:
+                                    new_tokens.append(token)
+                                continue
+                            if len(new_tokens) < budget:
+                                new_tokens.append(token)
+                            break
+                        return [accepted], [new_tokens]
+
                     with mx.stream(mtp.generation_stream):
                         logits = mtp._mtp_logits_from_hidden(
                             lm, target_hidden[:, :total_t, :]

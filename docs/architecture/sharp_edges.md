@@ -39,7 +39,8 @@ to it, so the headings stay stable as anchors.
   [loader routing](#loader-routing), [prompt cache](#prompt-cache),
   [logits shape](#logits-processor-shape), [tokenizers](#tokenizers-and-stop-tokens),
   [reasoning parsers](#reasoning-parsers),
-  [template ladders](#template-ladders), [latency checks](#streaming-latency-checks)
+  [template ladders](#template-ladders), [latency checks](#streaming-latency-checks),
+  [MTP rejection sampling and rotating cache](#mtp-rejection-sampling-and-rotating-cache)
 - Repo conventions: [hand-copied lists](#hand-copied-constant-lists),
   [enforced rules](#enforced-rules-and-the-claude-allowlist), [docs layout](#docs-layout),
   [engine pins](#engine-pins-and-dependencies)
@@ -1881,6 +1882,43 @@ decodes slowly enough to look identical to the old delivery cap; the MoE
 Perf numbers have been honest since v1.34.1: recorded tok/s is native mlx-lm
 `generation_tps`, TTFT and tok/s exclude queue-wait (its own `queue_wait_ms`
 field), and trends are success-only.
+
+### MTP rejection sampling and rotating cache
+
+Three non-obvious failure modes surfaced while profiling Gemma 4 MTP speculative
+decoding across dense and MoE targets (`v2.0.249`, `gemma4_runtime.py`,
+`mlx_vlm_patches.py`, `samplers.py`):
+
+- **Batched `(N, V)` categorical sampling breaks per-token RNG and exact matching
+  collapses non-greedy acceptance.** Passing 2D logprobs `(N, V)` to a single-row
+  `mlx_lm` sampler evaluates `mx.random.categorical` once over row vectors instead
+  of sequential draws, desyncing acceptance whenever `temperature > 0`; meanwhile
+  exact `x_draft == x_target` rejection throws away valid high-probability drafts
+  even when draft distribution `q` agrees closely with target distribution `p`.
+  `samplers.build` therefore exposes `_heylook_greedy` and `_heylook_spec_probs`
+  (`top_p` -> `min_p` -> `top_k` -> temperature softmax), `_HeylookGemma4DraftModel.draft_block`
+  always clears stale `_heylook_pending_draft` on entry before attaching fresh
+  `(draft_tokens, q_probs)`, and `PATCH_MTP_B1_WALK` consumes and clears
+  `_heylook_pending_draft` on entry to run fused Leviathan rejection sampling
+  (`(u * q_sel) >= p_sel` with residual `max(p - q, 0)`), falling back to
+  sequential per-position `sampler(logprobs[pos:pos+1])` whenever `q_probs` are
+  absent on non-greedy requests.
+- **Rotating KV transaction deep-copies and commit kernels scale linearly past
+  `sliding_window`.** Upstream `_RotatingCacheTransaction` copied full
+  `BatchRotatingKVCache` key/value buffers before every verify pass and launched
+  upstream's `commit_rotating_prefix` copy kernel on partial acceptance once
+  `offset > max_size`. For single-row unpadded `B=1` verification with a single
+  append step of length `length`, `_FastB1RotatingTransaction`
+  (`_bind_speculative_verify_hidden` in `gemma4_runtime.py`) clones only
+  non-KV scalar/padding attributes up front and commits `1 <= keep <= length` via
+  O(1) tail slice (`cache.keys[..., :new_idx, :]` + index updates), aborting and
+  replaying the saved prefix only on `keep == 0`, ragged batches, or multi-step
+  updates.
+- **Contiguous-output assumption when fusing QKV.** Splitting a concatenated QKV
+  projection along trailing axis `-1` produces non-contiguous strided views that
+  force implicit Metal copy kernels before `.reshape(B, T, H, D)`, adding overhead
+  rather than saving memory traffic. Keep separate Q/K/V projections unless the
+  kernel writes disjoint contiguous head slices directly.
 
 ## Repo conventions
 

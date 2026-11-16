@@ -34,7 +34,7 @@ from dataclasses import dataclass, replace
 from typing import Optional
 
 # Log lines, keyed on llama-server's own format strings (tools/server/
-# server-task.cpp and server-context.cpp). `search`, not `match`: the log
+# server-task.cpp, server-context.cpp, and server-slot-sched.cpp). `search`, not `match`: the log
 # prefix ("srv  update: ", timestamps, colour) varies with build flags.
 # Pinned against the build tree by test_cache_log_patterns_match_the_build.
 LOG_PATTERNS = (

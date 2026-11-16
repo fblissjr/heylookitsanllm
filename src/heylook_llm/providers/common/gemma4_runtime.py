@@ -21,6 +21,7 @@ maintaining a fork of mlx-vlm:
   positions free of ``.item()`` syncs across ``copy()``.
 """
 
+from functools import lru_cache
 import inspect
 import logging
 from typing import Any, Optional
@@ -41,6 +42,129 @@ _DRAFTER_CLASSES: dict[type, type] = {}
 
 _PATCH_SHARED_KV = "heylook#gemma4-shared-kv"
 _PATCH_LOGITS = "heylook#gemma4-logits"
+_PATCH_VERIFY_HIDDEN = "heylook#gemma4-verify-hidden"
+
+
+@lru_cache(maxsize=None)
+def _hoisted_8bit_qmv_kernel(n_sizes: Optional[tuple[int, ...]] = None):
+    """Compiled uint2-hoisted 8-bit multi-token QMV kernel (single or fused)."""
+    import mlx.core as mx
+
+    header = r"""
+    using namespace metal;
+    constant constexpr int SIMD_SIZE = 32;
+    constant constexpr int VALUES_PER_THREAD = 8;
+    constant constexpr int BLOCK_SIZE = 256;
+    constant constexpr int RESULTS_PER_SIMDGROUP = 4;
+    constant constexpr int NUM_SIMDGROUPS = 2;
+    constant constexpr int BN = 8;
+    """
+    coords = r"""
+    uint n_tile = threadgroup_position_in_grid.y;
+    uint b_idx = threadgroup_position_in_grid.z;
+    uint simd_gid = simdgroup_index_in_threadgroup;
+    uint simd_lid = thread_index_in_simdgroup;
+    int out_row = int(n_tile) * BN + int(simd_gid) * RESULTS_PER_SIMDGROUP;
+    int local_out = out_row;
+    """
+    if n_sizes is None:
+        input_names = ["x", "w", "scales", "biases"]
+        sel = coords + r"""
+        const device uint* sel_w = (const device uint*)w;
+        const device T* sel_s = scales;
+        const device T* sel_b = biases;
+        """
+    else:
+        input_names = ["x"]
+        for index in range(len(n_sizes)):
+            input_names.extend([f"w{index}", f"scales{index}", f"biases{index}"])
+        branches = []
+        offset = int(n_sizes[0])
+        for index, n_size in enumerate(n_sizes[1:], start=1):
+            branches.append(f"""
+            if (out_row >= {offset}) {{
+                local_out = out_row - {offset};
+                sel_w = (const device uint*)w{index};
+                sel_s = scales{index};
+                sel_b = biases{index};
+            }}""")
+            offset += int(n_size)
+        sel = coords + f"""
+        const device uint* sel_w = (const device uint*)w0;
+        const device T* sel_s = scales0;
+        const device T* sel_b = biases0;
+        {"".join(branches)}
+        """
+    source = sel + r"""
+    int in_vec_u32 = K_SIZE / 4;
+    int in_vec_g = K_SIZE / GS;
+    const device uint* ws = sel_w + local_out * in_vec_u32 + int(simd_lid) * 2;
+    const device T* sc = sel_s + local_out * in_vec_g + int(simd_lid) / (GS / VALUES_PER_THREAD);
+    const device T* bs = sel_b + local_out * in_vec_g + int(simd_lid) / (GS / VALUES_PER_THREAD);
+    const device T* xk = x + int(b_idx) * VERIFY_T * K_SIZE + int(simd_lid) * VALUES_PER_THREAD;
+
+    float result[VERIFY_T][RESULTS_PER_SIMDGROUP];
+    for (int t = 0; t < VERIFY_T; ++t) {
+        for (int r = 0; r < RESULTS_PER_SIMDGROUP; ++r) {
+            result[t][r] = 0.0f;
+        }
+    }
+
+    for (int k = 0; k < K_SIZE; k += BLOCK_SIZE) {
+        float x_reg[VERIFY_T][8];
+        float sums[VERIFY_T];
+        for (int t = 0; t < VERIFY_T; ++t) {
+            const device T* xt = xk + t * K_SIZE;
+            float s0 = 0.0f;
+            #pragma unroll
+            for (int i = 0; i < 8; ++i) {
+                float v = float(xt[i]);
+                x_reg[t][i] = v;
+                s0 += v;
+            }
+            sums[t] = s0;
+        }
+        #pragma unroll
+        for (int r = 0; r < RESULTS_PER_SIMDGROUP; ++r) {
+            uint2 packed = *(const device uint2*)(ws + r * in_vec_u32);
+            uchar4 b0 = as_type<uchar4>(packed.x);
+            uchar4 b1 = as_type<uchar4>(packed.y);
+            float w0f = float(b0.x), w1f = float(b0.y), w2f = float(b0.z), w3f = float(b0.w);
+            float w4f = float(b1.x), w5f = float(b1.y), w6f = float(b1.z), w7f = float(b1.w);
+            float s = float(sc[r * in_vec_g]);
+            float b = float(bs[r * in_vec_g]);
+            #pragma unroll
+            for (int t = 0; t < VERIFY_T; ++t) {
+                float acc = w0f * x_reg[t][0] + w1f * x_reg[t][1] + w2f * x_reg[t][2] + w3f * x_reg[t][3]
+                          + w4f * x_reg[t][4] + w5f * x_reg[t][5] + w6f * x_reg[t][6] + w7f * x_reg[t][7];
+                result[t][r] += s * acc + sums[t] * b;
+            }
+        }
+        ws += BLOCK_SIZE / 4;
+        sc += BLOCK_SIZE / GS;
+        bs += BLOCK_SIZE / GS;
+        xk += BLOCK_SIZE;
+    }
+
+    for (int r = 0; r < RESULTS_PER_SIMDGROUP; ++r) {
+        int n = out_row + r;
+        for (int t = 0; t < VERIFY_T; ++t) {
+            float val = simd_sum(result[t][r]);
+            if (simd_lid == 0) {
+                int out_idx = (int(b_idx) * VERIFY_T + t) * N_SIZE + n;
+                y[out_idx] = T(val);
+            }
+        }
+    }
+    """
+    tag = "single" if n_sizes is None else "fused_" + "_".join(str(n) for n in n_sizes)
+    return mx.fast.metal_kernel(
+        name=f"heylook_hoisted8_qmv_{tag}",
+        input_names=input_names,
+        output_names=["y"],
+        header=header,
+        source=source,
+    )
 
 
 def _is_mock(obj: Any) -> bool:
@@ -115,10 +239,6 @@ def gemma4_qmv_multi(
     """Run split-K multi-token QMV for eligible affine 4/8-bit layers and tied heads."""
     if not _can_run_qmv(x):
         return None
-    try:
-        from mlx_vlm.models.quantized_verifier import _target_verify_qmv_kernel
-    except ImportError:
-        return None
     import mlx.core as mx
 
     batch, verify_t, k_in = (int(x.shape[0]), int(x.shape[1]), int(x.shape[2]))
@@ -129,17 +249,33 @@ def gemma4_qmv_multi(
     if n_size < min_out_rows:
         return None
 
-    kernel = _target_verify_qmv_kernel(
-        bits, group_size, x.dtype, verify_t, k_size, n_size
-    )
-    out = kernel(
-        inputs=[mx.contiguous(x), weight, scales, biases],
-        template=[
+    if bits == 8:
+        kernel = _hoisted_8bit_qmv_kernel()
+        template = [
             ("T", x.dtype),
             ("VERIFY_T", verify_t),
             ("K_SIZE", k_size),
             ("N_SIZE", n_size),
-        ],
+            ("GS", group_size),
+        ]
+    else:
+        try:
+            from mlx_vlm.models.quantized_verifier import _target_verify_qmv_kernel
+        except ImportError:
+            return None
+        kernel = _target_verify_qmv_kernel(
+            bits, group_size, x.dtype, verify_t, k_size, n_size
+        )
+        template = [
+            ("T", x.dtype),
+            ("VERIFY_T", verify_t),
+            ("K_SIZE", k_size),
+            ("N_SIZE", n_size),
+        ]
+
+    out = kernel(
+        inputs=[mx.contiguous(x), weight, scales, biases],
+        template=template,
         grid=(32, 2 * (n_size // 8), batch),
         threadgroup=(32, 2, 1),
         output_shapes=[(batch, verify_t, n_size)],
@@ -155,10 +291,6 @@ def gemma4_qmv_fused(
 ):
     """Run fused split-K multi-token QMV over 2-4 sibling affine quantized projections."""
     if not (2 <= len(linears) <= 4) or not _can_run_qmv(x):
-        return None
-    try:
-        from mlx_vlm.models.quantized_verifier import _target_verify_fused_qmv_kernel
-    except ImportError:
         return None
     import mlx.core as mx
     import mlx.nn as nn
@@ -181,20 +313,36 @@ def gemma4_qmv_fused(
     if total_n < min_out_rows:
         return None
 
-    kernel = _target_verify_fused_qmv_kernel(
-        bits0, gs0, x.dtype, verify_t, k_in, n_sizes
-    )
+    if bits0 == 8:
+        kernel = _hoisted_8bit_qmv_kernel(n_sizes)
+        template = [
+            ("T", x.dtype),
+            ("VERIFY_T", verify_t),
+            ("K_SIZE", k_in),
+            ("N_SIZE", total_n),
+            ("GS", gs0),
+        ]
+    else:
+        try:
+            from mlx_vlm.models.quantized_verifier import _target_verify_fused_qmv_kernel
+        except ImportError:
+            return None
+        kernel = _target_verify_fused_qmv_kernel(
+            bits0, gs0, x.dtype, verify_t, k_in, n_sizes
+        )
+        template = [
+            ("T", x.dtype),
+            ("VERIFY_T", verify_t),
+            ("K_SIZE", k_in),
+            ("N_SIZE", total_n),
+        ]
+
     inputs = [mx.contiguous(x)]
     for _, _, _, _, weight, scales, biases in specs:
         inputs.extend((weight, scales, biases))
     out = kernel(
         inputs=inputs,
-        template=[
-            ("T", x.dtype),
-            ("VERIFY_T", verify_t),
-            ("K_SIZE", k_in),
-            ("N_SIZE", total_n),
-        ],
+        template=template,
         grid=(32, 2 * (total_n // 8), batch),
         threadgroup=(32, 2, 1),
         output_shapes=[(batch, verify_t, total_n)],
@@ -580,6 +728,161 @@ def _bind_shared_kv_from_cache(lm) -> bool:
     return True
 
 
+class _FastB1RotatingTransaction:
+    """Zero-copy single-row BatchRotatingKVCache transaction for N > 1 verify."""
+
+    def __init__(self, cache, length: int):
+        import mlx.core as mx
+
+        self.cache = cache
+        self.length = int(length)
+        self.update = cache.update_and_fetch
+        if "update_and_fetch" in cache.__dict__:
+            raise RuntimeError("A rotating cache transaction is already active.")
+        self.original = {
+            name: (
+                mx.array(value)
+                if isinstance(value, mx.array) and name not in ("keys", "values")
+                else value
+            )
+            for name, value in cache.__dict__.items()
+        }
+        self._updates = []
+        cache.update_and_fetch = self
+
+    def __call__(self, keys, values):
+        self._updates.append((keys, values))
+        return self.update(keys, values)
+
+    def validate(self, lengths):
+        if len(set(lengths)) > 1:
+            raise RuntimeError("This rotating cache requires uniform acceptance.")
+
+    def abort(self):
+        self.cache.__dict__.clear()
+        self.cache.__dict__.update(self.original)
+        self._updates.clear()
+
+    def commit(self, lengths, length):
+        import mlx.core as mx
+
+        cache = self.cache
+        if "update_and_fetch" in self.original:
+            cache.update_and_fetch = self.original["update_and_fetch"]
+        else:
+            cache.__dict__.pop("update_and_fetch", None)
+        keep = int(lengths[0]) if lengths else 0
+        if (
+            len(lengths) == 1
+            and 1 <= keep <= length
+            and len(self._updates) == 1
+            and int(self._updates[0][0].shape[2]) == length
+        ):
+            drop = length - keep
+            if drop > 0:
+                new_idx = cache._idx - drop
+                cache.keys = cache.keys[..., :new_idx, :]
+                cache.values = cache.values[..., :new_idx, :]
+                cache._idx = new_idx
+                cache._offset -= drop
+                cache.offset = cache.offset - drop
+                cache.keys = mx.depends(cache.keys, (cache.left_padding, cache.offset))
+            self._updates.clear()
+            return
+        updates = self._updates[:]
+        self.abort()
+        if keep <= 0:
+            return
+        ragged = len(set(lengths)) > 1
+        if ragged:
+            cache.prepare(
+                lengths=lengths,
+                right_padding=[max(lengths) - value for value in lengths],
+            )
+        rem = max(lengths)
+        for keys, values in updates:
+            count = min(rem, int(keys.shape[2]))
+            if count:
+                cache.update_and_fetch(keys[..., :count, :], values[..., :count, :])
+                rem -= count
+            if not rem:
+                break
+        if ragged:
+            cache.finalize()
+
+
+def _bind_speculative_verify_hidden(lm) -> bool:
+    import types
+
+    current = getattr(lm, "speculative_verify_hidden", None)
+    if getattr(getattr(current, "__func__", None), "_heylook_patch", None) == _PATCH_VERIFY_HIDDEN:
+        return True
+    if not callable(current) or tuple(inspect.signature(current).parameters) != (
+        "inputs",
+        "cache",
+    ):
+        return False
+    try:
+        from mlx_vlm.models.cache import BatchRotatingKVCache
+        from mlx_vlm.speculative import cache_state as cs
+    except ImportError:
+        return False
+
+    upstream = current
+
+    def speculative_verify_hidden(self, inputs, cache):
+        length = int(inputs.shape[1]) if getattr(inputs, "ndim", 0) == 2 else 0
+        if (
+            getattr(inputs, "ndim", 0) == 2
+            and int(inputs.shape[0]) == 1
+            and length > 1
+        ):
+            leaves = tuple({id(c): c for c in cs.iter_leaf_caches(cache or ())}.values())
+            if all(
+                not isinstance(c, BatchRotatingKVCache)
+                or (
+                    type(c) is BatchRotatingKVCache
+                    and getattr(c, "_lengths", None) is None
+                    and "update_and_fetch" not in c.__dict__
+                    and _is_unpadded_single_row_batch_cache(c)
+                )
+                for c in leaves
+            ):
+                entries = []
+                positions = {}
+                tx = cs.SpeculativeCacheTransaction(entries, positions, leaves, length)
+                shared_kv = {}
+                try:
+                    for c in leaves:
+                        start = getattr(c, "start_speculation", None)
+                        if callable(start):
+                            entries.append((c, start(length)))
+                        elif type(c) is BatchRotatingKVCache:
+                            tx._rotating[id(c)] = _FastB1RotatingTransaction(c, length)
+                        elif isinstance(c, cs.RotatingKVCache):
+                            tx._rotating[id(c)] = cs._RotatingCacheTransaction(c)
+                        else:
+                            rp = cs._cache_position_reader(c)
+                            if rp is not None and callable(getattr(c, "trim", None)):
+                                positions[id(c)] = (c, rp, rp())
+                    hidden = self.model(
+                        inputs,
+                        cache=cache,
+                        shared_kv_sink=shared_kv,
+                        skip_final_norm=True,
+                    )
+                    return hidden, shared_kv, tx
+                except BaseException:
+                    tx.abort()
+                    raise
+        return upstream(inputs, cache)
+
+    setattr(speculative_verify_hidden, "_heylook_patch", _PATCH_VERIFY_HIDDEN)
+    setattr(speculative_verify_hidden, "_heylook_upstream", upstream)
+    lm.speculative_verify_hidden = types.MethodType(speculative_verify_hidden, lm)
+    return True
+
+
 def bind_gemma4_runtime(
     model, *, min_out_rows: int = MIN_QMV_OUT_ROWS
 ) -> bool:
@@ -600,6 +903,7 @@ def bind_gemma4_runtime(
     layers_ok = bind_gemma4_text_layers(text_model, min_out_rows=min_out_rows)
     logits_ok = _bind_logits_from_hidden(lm, min_out_rows=min_out_rows)
     kv_ok = _bind_shared_kv_from_cache(lm)
+    verify_ok = _bind_speculative_verify_hidden(lm)
     if not (logits_ok and kv_ok):
         logging.warning(
             "gemma4 runtime fast path stood down on language_model (logits=%s, shared_kv=%s)",
@@ -607,7 +911,7 @@ def bind_gemma4_runtime(
             kv_ok,
         )
     lm._heylook_gemma4_runtime = bool(logits_ok)
-    return bool(layers_ok or logits_ok or kv_ok)
+    return bool(layers_ok or logits_ok or kv_ok or verify_ok)
 
 
 def _drafter_looks_compatible(drafter) -> bool:
@@ -685,6 +989,8 @@ def bind_gemma4_drafter(
                 token_dtype: mx.Dtype = mx.int32,
                 greedy: bool = False,
             ) -> mx.array:
+                if hasattr(sampler, "_heylook_pending_draft"):
+                    sampler._heylook_pending_draft = None
                 pos = self._position
                 is_single_pos = isinstance(pos, int) or getattr(pos, "shape", None) == (1,)
                 is_single_bonus = (
@@ -719,9 +1025,15 @@ def bind_gemma4_drafter(
                 )
                 h_prev = hidden
                 tokens = []
+                q_rows = []
                 masks = None
                 sliding_window = self.config.text_config.sliding_window
                 kv_valid_len = self._kv_valid_len
+                spec_probs = (
+                    None if greedy else getattr(sampler, "_heylook_spec_probs", None)
+                )
+                if not callable(spec_probs):
+                    spec_probs = None
 
                 for _ in range(block_size - 1):
                     tok_embed = self._input_embed(tok) * self._input_embed_scale
@@ -757,10 +1069,24 @@ def bind_gemma4_drafter(
                             if self._lm_head_fn is not None
                             else self.model.embed_tokens.as_linear(h)
                         )
-                        tok = sampler(logits)
+                        if spec_probs is not None:
+                            q_p, q_scaled = spec_probs(
+                                logits[:, 0, :], already_logprobs=False
+                            )
+                            tok = mx.random.categorical(q_scaled)[:, None].astype(
+                                token_dtype
+                            )
+                            q_rows.append(q_p)
+                        else:
+                            tok = sampler(logits)
                     tokens.append(tok)
 
-                return mx.concatenate(tokens, axis=1)
+                out_toks = mx.concatenate(tokens, axis=1)
+                if q_rows:
+                    q_mat = mx.concatenate(q_rows, axis=0)
+                    mx.async_eval(q_mat)
+                    sampler._heylook_pending_draft = (out_toks, q_mat)
+                return out_toks
 
         _HeylookGemma4DraftModel.__name__ = base_cls.__name__
         _HeylookGemma4DraftModel.__qualname__ = base_cls.__qualname__
