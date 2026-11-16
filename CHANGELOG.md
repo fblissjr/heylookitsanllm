@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.251] - 2026-11-16
+
+### Changed
+- **Speculative decoding UI & contract copy**: Updated the three backend/spec descriptions rendered by the Models config editor and Engine panel so they match `v2.0.250` MTP penalty support:
+  - [`MLXProvider._spec_in_force`](src/heylook_llm/providers/mlx_provider.py) distinguishes `kind == "mtp"` (`structured output, logit bias or prompts past draft_max_context run without it (penalties and thinking budgets draft)`) from non-MTP drafters (`dflash`, where penalties still run without it).
+  - [`MLXModelConfig.draft_model_path`](src/heylook_llm/config.py) `/v1/admin/model-options` help text notes that `presence_penalty`, `repetition_penalty`, and a thinking budget draft on MTP drafters, while structured output, logit bias, penalties on non-MTP drafters, and prompts past `draft_max_context` run without drafting.
+  - [`docs/frontend_v3_spec.md`](docs/frontend_v3_spec.md) §4 `speculative` note mirrors the updated MLX drafting rules.
+- Added unit coverage in [`tests/unit/test_model_registry.py`](tests/unit/test_model_registry.py) (`TestSpeculativeReport.test_mlx_spec_in_force_distinguishes_mtp_from_non_mtp`).
+
+### Verification
+- `uv run pytest tests/unit/ tests/contract/ -q`: `1659 passed`.
+- `uv run python scripts/vendor_frontend.py --check` and `uv run python scripts/check_version_sync.py`: clean.
+- `NOT run`: `scripts/perf_ab.py`, `tests/smoke/`, `tests/eval/`, `tests/e2e`.
+
 ## [2.0.250] - 2026-11-16
 
 ### Changed

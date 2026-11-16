@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-11-16, v2.0.250, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
+Last updated: 2026-11-16, v2.0.251, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md) (triaged 2026-09-25 and refreshed 2026-10-30;
@@ -16,6 +16,7 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
+| v2.0.251 unit + contract (`pytest tests/unit/ tests/contract/`) & static/sync guards | `1659 passed`; `scripts/vendor_frontend.py --check` & `scripts/check_version_sync.py` clean. NOT run: `scripts/perf_ab.py`, `tests/smoke/`, `tests/eval/`, `tests/e2e` | 2026-11-16 |
 | v2.0.250 unit + contract (`pytest tests/unit/ tests/contract/`) | `1658 passed` | 2026-11-16 |
 | v2.0.250 `scripts/chain_probe.py --model gemma-4-26B-A4B-it-8bit` | `5/5` hops `match=True`, `restored=reused` (`internal/claude/chain_probe/chain_gemma-4-26B-A4B-it-8bit_20261116-145810.json`) | 2026-11-16 |
 | v2.0.250 live GPU checks (MTP + penalties on `31B`, `26B-A4B`, `ukisai_Swift-1.5-Qwen3.8-27b-mlx`) | Greedy & stochastic parity verified (`internal/claude/perf/gemma4_mtp_v20250_2026-11-16.md`) | 2026-11-16 |

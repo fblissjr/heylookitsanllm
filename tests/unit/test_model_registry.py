@@ -478,3 +478,24 @@ class TestSpeculativeReport:
         provider._proc = None  # nothing real to stop at teardown: the spawn was fake
         assert (fact.value, fact.provenance) == (in_force, "observed")
         assert why in fact.source
+
+    def test_mlx_spec_in_force_distinguishes_mtp_from_non_mtp(self, tmp_path):
+        from heylook_llm.providers.mlx_provider import MLXProvider
+
+        model = tmp_path / "m"
+        drafter = tmp_path / "m-drafter"
+        provider = MLXProvider("spec-mlx-m", {
+            "model_path": str(model),
+            "draft_model_path": str(drafter),
+        }, False)
+
+        provider._draft = (object(), "mtp")
+        mtp_fact = provider._spec_in_force()
+        assert (mtp_fact.value, mtp_fact.provenance) == (True, "observed")
+        assert "penalties and thinking budgets draft" in mtp_fact.source
+        assert "structured output, logit bias or prompts past draft_max_context" in mtp_fact.source
+
+        provider._draft = (object(), "dflash")
+        dflash_fact = provider._spec_in_force()
+        assert (dflash_fact.value, dflash_fact.provenance) == (True, "observed")
+        assert "penalty, logit bias, structured output or a prompt past draft_max_context runs without it" in dflash_fact.source

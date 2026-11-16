@@ -1169,9 +1169,17 @@ class MLXProvider(BaseProvider):
             where = (f"built-in {kind} head"
                      if draft_path == model_path
                      else f"{kind} drafter {draft_path.name}")
-            return Fact(value=True, provenance="observed", source=(
-                f"{where} loaded; a request with a penalty, logit bias or structured "
-                f"output runs without it"))
+            if kind == "mtp":
+                skipped_note = (
+                    "structured output, logit bias or prompts past draft_max_context "
+                    "run without it (penalties and thinking budgets draft)"
+                )
+            else:
+                skipped_note = (
+                    "a request with a penalty, logit bias, structured output or a "
+                    "prompt past draft_max_context runs without it"
+                )
+            return Fact(value=True, provenance="observed", source=f"{where} loaded; {skipped_note}")
         return Fact(value=False, provenance="observed",
                     source=self.drafter_skipped or "loaded without a drafter")
 
