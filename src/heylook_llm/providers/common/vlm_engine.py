@@ -378,21 +378,29 @@ def release_prefill(bg) -> None:
 def drafting_blocker(
     processors: list,
     *,
+    draft_kind: Optional[str] = None,
     prompt_tokens: int = 0,
     draft_max_context: Optional[int] = None,
 ) -> Optional[str]:
     """Why this request cannot draft, or None when it can.
 
     mlx-vlm's speculative loop (``SpeculativeGenerationBatch``) takes no
-    logits processors, so a request carrying one (a penalty, a logit bias,
-    structured output) runs without its drafter rather than silently losing
-    it. A thinking budget is not a blocker: the speculative loop applies it
-    (mlx-vlm#2641). Neither is sampling: every emitted token is the target's
-    own sample, and a draft is kept only where it equals it. A configured
-    ``draft_max_context`` skips drafting per request once the rendered prompt
-    exceeds that token count, without reloading the model."""
+    logits processors, so stateful or non-MTP-safe processors (structured
+    output, custom logit bias, non-MTP drafters) run without the drafter
+    rather than silently losing constraints. Stateless generated-token
+    penalty processors tagged ``_heylook_mtp_safe`` (``presence_penalty``,
+    ``repetition_penalty``) draft when ``draft_kind == "mtp"`` and execute
+    per verification position inside ``PATCH_MTP_B1_WALK``. A thinking
+    budget drafts directly (``mlx-vlm#2641``), non-greedy MTP sampling uses
+    lossless rejection sampling or sequential per-position draws, and
+    ``draft_max_context`` skips drafting once the rendered prompt exceeds
+    that token count."""
     if processors:
-        return "a logits processor (penalty, logit bias or structured output)"
+        if not (
+            draft_kind == "mtp"
+            and all(getattr(p, "_heylook_mtp_safe", False) for p in processors)
+        ):
+            return "a logits processor (structured output, logit bias or non-MTP drafter)"
     if draft_max_context is not None and prompt_tokens > draft_max_context:
         return f"prompt length ({prompt_tokens}) exceeds draft_max_context ({draft_max_context})"
     return None
@@ -485,7 +493,10 @@ def generate(
     drafting = False
     if draft is not None:
         blocker = drafting_blocker(
-            active, prompt_tokens=n, draft_max_context=draft_max_context
+            active,
+            draft_kind=draft[1],
+            prompt_tokens=n,
+            draft_max_context=draft_max_context,
         )
         if blocker is None:
             drafting = True
@@ -493,6 +504,12 @@ def generate(
                              draft_block_size=draft_block_size)
         else:
             logging.debug(f"{model_id}: not drafting this request: {blocker}")
+    mtp_gen_tokens: Optional[list[int]] = None
+    if drafting and active:
+        mtp_gen_tokens = []
+        raw_procs = [getattr(p, "_heylook_raw_processor", p) for p in active]
+        sampler._heylook_mtp_penalties = (raw_procs, mtp_gen_tokens)
+        bg_kwargs["greedy_sampling"] = False
     bg = BatchGenerator(model.language_model, processor, **bg_kwargs)
     detok = None
     salt, boundaries = None, []
@@ -511,8 +528,9 @@ def generate(
         gen_kwargs = {**data, **{k: v for k, v in embed.to_dict().items() if v is not None}}
         if apc_manager is not None:
             salt = gen_kwargs["_apc_semantic_hash"] = semantic_hash(raw_inputs, model, processor)
+        insert_processors = [[]] if mtp_gen_tokens is not None else [active]
         (uid,) = bg.insert([prompt_list], max_tokens=max_tokens, prompt_kwargs=[gen_kwargs],
-                           logits_processors=[active],
+                           logits_processors=insert_processors,
                            thinking_budget_criteria=[thinking_budget])
 
         if detokenizer is not None:
@@ -608,6 +626,8 @@ def generate(
                 seen_token = True
             if not toks and finish is None:
                 continue
+            if mtp_gen_tokens is not None and toks:
+                mtp_gen_tokens.extend(toks)
             if finish == "stop" and generated + len(toks) < max_tokens:
                 bg.remove(uid)
             # One chunk per token, a drafting round included: a chunk's
@@ -646,6 +666,8 @@ def generate(
             if finish is not None:
                 return
     finally:
+        if hasattr(sampler, "_heylook_mtp_penalties"):
+            sampler._heylook_mtp_penalties = None
         if salt is not None and boundaries:
             refresh_snapshots(apc_manager, prompt_list, boundaries, salt)
         release_prefill(bg)

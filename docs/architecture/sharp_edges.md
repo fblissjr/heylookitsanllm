@@ -1919,6 +1919,38 @@ decoding across dense and MoE targets (`v2.0.249`, `gemma4_runtime.py`,
   force implicit Metal copy kernels before `.reshape(B, T, H, D)`, adding overhead
   rather than saving memory traffic. Keep separate Q/K/V projections unless the
   kernel writes disjoint contiguous head slices directly.
+- **Cross-family `bind_mtp_drafter` and `_seed_token` capture.** Non-Gemma MTP
+  drafters (`qwen3_5_mtp`, `glm_moe_dsa_mtp`, `ernie5_5_mtp`, `inkling_mtp`) do
+  not use `_HeylookGemma4DraftModel`. `mlx_vlm_patches.bind_mtp_drafter` wraps
+  each loaded `kind == "mtp"` drafter instance via a cached dynamic subclass so
+  `prefill_from_target_hidden`, `accept_verified_tokens`,
+  `accept_verified_tokens_batch`, and `draft_block` capture `_seed_token` and
+  per-step draft distributions into `_heylook_pending_draft`, enabling universal
+  single-row `PATCH_MTP_B1_WALK` Leviathan rejection sampling across all MTP
+  architectures even without `_heylook_gemma4_runtime`.
+- **Per-position stateless MTP penalties (`_heylook_mtp_safe`) vs. stateful
+  blocking.** Because `SpeculativeGenerationBatch` takes no `logits_processors`,
+  forwarding `repetition_penalty` and `presence_penalty` (`_heylook_mtp_safe`,
+  preserved through `generation_core.generated_only`) requires evaluating each
+  penalty sequentially against `gen_history + draft_list[:pos]` at every verify
+  and resampling position `pos` inside `_apply_mtp_penalties` / `PATCH_MTP_B1_WALK`
+  (with `bg_kwargs["greedy_sampling"] = False` while `_heylook_greedy` keeps
+  greedy semantics intact). Stateful or structured processors (grammars, JSON
+  schemas, regexes, logit biases) and non-MTP drafters remain gated off by
+  `vlm_engine.drafting_blocker`.
+- **Axis-2 slack buffering on `BatchRotatingKVCache` regresses SDPA and triggers
+  CoW.** Extending `BatchRotatingKVCache` past `sliding_window` with an
+  in-memory slack tail so `keys[..., win_start:_idx, :]` slices inside attention
+  forces implicit contiguous copies in `mx.fast.scaled_dot_product_attention`
+  across sliding and drafter layers and triggers MLX copy-on-write copies when
+  `shared_kv_sink` views alias the buffer, losing to `_FastB1RotatingTransaction`'s
+  O(1) tail-slice prefix commits (measurement in
+  `internal/claude/perf/gemma4_mtp_v20250_2026-11-16.md`).
+- **Default `draft_block_size = 4` stays optimal on MoE (`gemma-4-26B-A4B-it-8bit`).**
+  Raising `block_size` into `5..7` crosses the 4-row `SwitchGLU` `gather_qmm`
+  tiling boundary across MoE layers, slowing short and medium prompts without
+  offsetting acceptance gains (sweep recorded locally in
+  `internal/claude/perf/gemma4_mtp_v20250_2026-11-16.md`).
 
 ## Repo conventions
 

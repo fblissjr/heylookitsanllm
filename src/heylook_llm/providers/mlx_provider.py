@@ -27,7 +27,7 @@ from .common.gemma4_vision import bind_position_gather, trim_visual_padding
 from .common.vlm_inputs import (
     carry_message_extras, continue_from_generation_prompt, thinking_for_template)
 from .common.generation_core import continuation_detokenizer, detokenizer_source
-from .common import vlm_engine
+from .common import mlx_vlm_patches, vlm_engine
 from .common.batch_vision import BatchVisionProcessor
 from .common.vision_feature_cache import VisionFeatureCache, image_content_key
 from .common.loader_routing import resolve_serves_vision, read_model_type
@@ -1373,6 +1373,8 @@ class MLXProvider(BaseProvider):
             drafter, kind = load_drafter(str(Path(str(path)).expanduser()))
             validate_drafter_compatibility(self.model, drafter, kind)
             bind_gemma4_drafter(drafter)
+            if kind == "mtp":
+                mlx_vlm_patches.bind_mtp_drafter(drafter)
         except Exception as e:  # noqa: BLE001 - any failure means serve without it
             self.drafter_skipped = f"drafter {name} not used: {e}"
             logging.warning(f"{self.model_id}: speculative decoding off: {self.drafter_skipped}")

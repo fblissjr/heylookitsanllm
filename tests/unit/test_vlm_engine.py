@@ -125,7 +125,8 @@ def _run(monkeypatch, script, **kw):
     ids = mx.array([[1, 2, 3]])
     chunks = list(vlm_engine.generate(
         model=model, processor=None, apc_manager=None, input_ids=ids,
-        raw_inputs={"input_ids": ids}, sampler=None, processors=kw.pop("processors", []),
+        raw_inputs={"input_ids": ids}, sampler=kw.pop("sampler", None),
+        processors=kw.pop("processors", []),
         stop_tokens=kw.pop("stop_tokens", [99]), max_tokens=8,
         detokenizer=_FakeDetok(), **kw))
     return chunks, made[0]
@@ -145,9 +146,8 @@ def test_a_token_the_engine_stops_on_is_never_text(monkeypatch):
 def test_a_drafting_round_ends_at_a_stop_and_counts_its_kept_drafts(monkeypatch):
     """With a drafter, next() delivers a whole round. Reply text ends at the
     first stop, one only heylook's set holds included, and the report counts
-    each round's kept drafts (its tokens less the target's own). A request
-    carrying a logits processor never drafts: mlx-vlm's speculative loop
-    would drop it. A thinking budget drafts: that loop applies it."""
+    each round's kept drafts (its tokens less the target's own). Untagged
+    processors (structured output) never draft; thinking budgets do."""
     from heylook_llm.providers.common.vlm_engine import drafting_blocker
 
     resp = lambda tok, fin=None: SimpleNamespace(uid=0, token=tok, finish_reason=fin)
@@ -162,7 +162,67 @@ def test_a_drafting_round_ends_at_a_stop_and_counts_its_kept_drafts(monkeypatch)
     _, bg = _run(monkeypatch, [([], [resp(5, "stop")])], draft=("drafter", "mtp"),
                  processors=[lambda tokens, logits: logits])
     assert "draft_model" not in bg.kwargs
-    assert drafting_blocker([lambda tokens, logits: logits]) and drafting_blocker([]) is None
+    assert drafting_blocker([lambda tokens, logits: logits], draft_kind="mtp")
+    assert drafting_blocker([], draft_kind="mtp") is None
+
+
+@pytest.mark.unit
+def test_mtp_safe_penalties_draft_on_mtp_and_track_generated_history(monkeypatch):
+    """MTP-safe stateless penalties stay drafted on draft_kind='mtp', force the
+    MTP walk path, record generated tokens onto _heylook_mtp_penalties, and
+    clean up on exit while still blocking dflash or mixed structured output."""
+    from heylook_llm.providers.common import samplers
+    from heylook_llm.providers.common.generation_core import generated_only
+    from heylook_llm.providers.common.vlm_engine import drafting_blocker
+
+    sampler, procs = samplers.build({
+        "temperature": 0.0,
+        "presence_penalty": 1.2,
+        "repetition_penalty": 1.15,
+    })
+    scoped = generated_only(procs)
+    assert drafting_blocker(scoped, draft_kind="mtp") is None
+    assert drafting_blocker(scoped, draft_kind="dflash") is not None
+    assert drafting_blocker(scoped + [lambda tokens, logits: logits], draft_kind="mtp") is not None
+
+    recorded = []
+
+    class CapturingBG(_FakeBatchGenerator):
+        def next(self):
+            recorded.append(
+                (getattr(sampler, "_heylook_mtp_penalties", None)[1][:]
+                 if getattr(sampler, "_heylook_mtp_penalties", None) else None)
+            )
+            return super().next()
+
+    ar = importlib.import_module("mlx_vlm.generate.ar")
+    made = []
+    _FakeBatchGenerator.script = [
+        ([], [SimpleNamespace(uid=0, token=5, finish_reason=None)]),
+        ([], [SimpleNamespace(uid=0, token=6, finish_reason=None),
+              SimpleNamespace(uid=0, token=7, finish_reason=None),
+              SimpleNamespace(uid=0, token=99, finish_reason="stop")]),
+    ]
+    monkeypatch.setattr(ar, "BatchGenerator",
+                        lambda *a, **k: made.append(CapturingBG(**k)) or made[-1])
+    model = SimpleNamespace(
+        language_model=None,
+        get_input_embeddings=lambda *a, **k: SimpleNamespace(to_dict=lambda: {}))
+    ids = mx.array([[1, 2, 3]])
+
+    from heylook_llm.providers.common import vlm_engine
+
+    chunks = list(vlm_engine.generate(
+        model=model, processor=None, apc_manager=None, input_ids=ids,
+        raw_inputs={"input_ids": ids}, sampler=sampler, processors=procs,
+        stop_tokens=[99], max_tokens=8, greedy=True,
+        detokenizer=_FakeDetok(), draft=("drafter", "mtp")))
+
+    assert (made[0].kwargs["draft_model"], made[0].kwargs["draft_kind"]) == ("drafter", "mtp")
+    assert made[0].kwargs["greedy_sampling"] is False
+    assert [c.token for c in chunks] == [5, 6, 7]
+    assert recorded == [[], [5]]
+    assert getattr(sampler, "_heylook_mtp_penalties", None) is None
 
 
 @pytest.mark.unit

@@ -991,6 +991,7 @@ def bind_gemma4_drafter(
             ) -> mx.array:
                 if hasattr(sampler, "_heylook_pending_draft"):
                     sampler._heylook_pending_draft = None
+                eff_greedy = bool(greedy or getattr(sampler, "_heylook_greedy", False))
                 pos = self._position
                 is_single_pos = isinstance(pos, int) or getattr(pos, "shape", None) == (1,)
                 is_single_bonus = (
@@ -1012,7 +1013,7 @@ def bind_gemma4_drafter(
                         block_size,
                         sampler,
                         token_dtype=token_dtype,
-                        greedy=greedy,
+                        greedy=eff_greedy,
                     )
 
                 del cache
@@ -1030,7 +1031,9 @@ def bind_gemma4_drafter(
                 sliding_window = self.config.text_config.sliding_window
                 kv_valid_len = self._kv_valid_len
                 spec_probs = (
-                    None if greedy else getattr(sampler, "_heylook_spec_probs", None)
+                    None
+                    if eff_greedy
+                    else getattr(sampler, "_heylook_spec_probs", None)
                 )
                 if not callable(spec_probs):
                     spec_probs = None
@@ -1059,7 +1062,7 @@ def bind_gemma4_drafter(
                         )
                     h = self.model.norm(h)
                     h_prev = self.post_projection(h)
-                    if greedy and self.masked_embedding is not None:
+                    if eff_greedy and self.masked_embedding is not None:
                         tok = self.masked_embedding.argmax(
                             h, self.model.embed_tokens.weight
                         )

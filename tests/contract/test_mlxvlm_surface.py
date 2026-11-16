@@ -517,11 +517,11 @@ class TestSpeculativeSurface:
         for name in ("get_mtp_splitter", "detect_mtp_splitter"):
             assert callable(getattr(mtp_split, name)), name
         assert isinstance(mtp_split.MTP_SPLITTERS, dict)
-        # vlm_engine.drafting_blocker keeps a request with logits processors
-        # off the drafter because this batch takes none. When it does, the
-        # blocker is dead weight. A thinking budget drafts because the batch
-        # takes one (mlx-vlm#2641); if that goes, the blocker needs its rule
-        # back or a budget is dropped without a word.
+        # SpeculativeGenerationBatch takes no logits_processors natively, so
+        # vlm_engine.drafting_blocker keeps stateful/structured processors and
+        # non-MTP drafters off the drafter while allowing MTP-safe stateless
+        # penalties inside PATCH_MTP_B1_WALK. A thinking budget drafts because
+        # the batch takes thinking_budget_criteria (mlx-vlm#2641).
         spec = inspect.signature(SpeculativeGenerationBatch.__init__).parameters
         assert "logits_processors" not in spec, (
             "mlx-vlm's speculative batch now takes logits_processors: drop "
@@ -1497,5 +1497,238 @@ class TestOwnedGemma4Runtime:
             assert proj_calls == [4]
             assert sample_shapes == [(1, 8), (1, 8)]
             assert (acc_fb, toks_fb) == ([1], [[0, 7]])
+        finally:
+            mtp._speculative_walk_batch_deferred_greedy = orig_walk
+
+    def test_bind_mtp_drafter_and_non_gemma_leviathan_walk(self):
+        import copy
+        from types import SimpleNamespace
+
+        import mlx.core as mx
+        import mlx.nn as nn
+        from mlx_vlm.speculative import mtp
+        from mlx_vlm.speculative.drafters.mtp_base import AutoregressiveMTPDraftModel
+        from heylook_llm.providers.common import mlx_vlm_patches, samplers
+
+        mx.random.seed(7)
+        target_logits = mx.array(
+            [
+                [2.3, 1.9, 1.3, 0.7, 0.1, -0.6, -1.2, -2.0],
+                [1.4, 2.0, 1.1, 0.4, -0.2, -0.8, -1.5, -2.4],
+                [0.9, 1.7, 2.1, 1.0, 0.2, -0.4, -1.0, -2.0],
+                [1.8, 1.4, 1.0, 0.5, 0.0, -0.5, -1.0, -2.0],
+            ],
+            dtype=mx.float32,
+        )
+        draft_logits = mx.array(
+            [
+                [2.0, 2.1, 1.2, 0.6, 0.0, -0.7, -1.1, -2.1],
+                [1.2, 1.9, 1.3, 0.5, 0.1, -0.7, -1.4, -2.3],
+                [1.0, 1.5, 1.8, 1.1, 0.2, -0.3, -1.1, -2.2],
+            ],
+            dtype=mx.float32,
+        )
+
+        class _FakeMTPCache:
+            def __init__(self):
+                self.offset = 0
+
+            def trim(self, n):
+                self.offset = max(0, self.offset - int(n))
+
+        class _FakeAutoregressiveMTP(AutoregressiveMTPDraftModel):
+            def make_cache(self):
+                return [_FakeMTPCache()]
+
+            def _forward_hidden(self, token_embed, hidden, tokens, caches):
+                del token_embed, tokens
+                steps = int(hidden.shape[1])
+                step_offset = max(0, min(caches[0].offset, 2))
+                caches[0].offset += steps
+                return (
+                    mx.zeros((1, steps, 4), dtype=mx.float32) + step_offset,
+                    mx.zeros((1, steps, 4), dtype=mx.float32),
+                )
+
+            def _set_seed_from_hidden(self, hidden, sampler, greedy):
+                logits = draft_logits[0:1][None, :, :]
+                self._seed_token = (
+                    mx.argmax(logits, axis=-1) if greedy else sampler(logits)
+                )
+                self._seed_hidden = hidden
+
+            def _forward_tokens(self, tokens, hidden, token_dtype):
+                del tokens
+                caches = self._cache
+                caches[0].offset += 1
+                idx = min(max(self._round_appended + 1, 1), 2)
+                return mx.array([[[idx]]], dtype=mx.float32), hidden
+
+        drafter = _FakeAutoregressiveMTP(SimpleNamespace(block_size=4))
+        drafter._lm_head_fn = (
+            lambda h: draft_logits[int(h[0, 0, 0].item()) : int(h[0, 0, 0].item()) + 1][
+                None, :, :
+            ]
+        )
+        target = SimpleNamespace(
+            language_model=SimpleNamespace(
+                model=SimpleNamespace(embed_tokens=nn.Embedding(8, 4)),
+                lm_head=lambda h: target_logits[: int(h.shape[1])][None, :, :],
+            )
+        )
+
+        assert mlx_vlm_patches.bind_mtp_drafter(drafter)
+        copied = copy.copy(drafter)
+        copied.reset(target)
+        assert getattr(copied, "_heylook_mtp_drafter", False)
+
+        orig_walk = getattr(
+            mtp._speculative_walk_batch_deferred_greedy,
+            "_heylook_upstream",
+            mtp._speculative_walk_batch_deferred_greedy,
+        )
+        try:
+            mtp._speculative_walk_batch_deferred_greedy = orig_walk
+            assert mlx_vlm_patches.install_mtp_single_row_fast_paths()
+
+            sampler, _ = samplers.build(
+                {"temperature": 0.9, "top_p": 0.95, "top_k": 5, "min_p": 0.0}
+            )
+            spec_probs = sampler._heylook_spec_probs
+            lp_t = target_logits - mx.logsumexp(target_logits, axis=-1, keepdims=True)
+            p_true, _ = spec_probs(lp_t, already_logprobs=True)
+            mx.eval(p_true)
+            p0 = p_true[0].tolist()
+
+            # Deliberately plain LM without _heylook_gemma4_runtime
+            plain_lm = SimpleNamespace(
+                speculative_logits_from_hidden=lambda h: target_logits[: int(h.shape[1])][
+                    None, :, :
+                ]
+            )
+
+            # Prefill sets _seed_token + _heylook_seed_q (used as slot 0 of round 1)
+            copied.prefill_from_target_hidden(
+                mx.array([[1, 2]], dtype=mx.int32),
+                mx.zeros((1, 2, 4), dtype=mx.float32),
+                0,
+                sampler,
+                mx.int32,
+                greedy=False,
+            )
+            assert copied._heylook_seed_q is not None
+            assert getattr(sampler, "_heylook_captured_q", None) is None
+
+            n_rounds = 3000
+            counts0 = [0] * 8
+            for _ in range(n_rounds):
+                drafts = copied.draft_block(
+                    0,
+                    mx.zeros((1, 1, 4), dtype=mx.float32),
+                    None,
+                    4,
+                    sampler,
+                    mx.int32,
+                    greedy=False,
+                )
+                assert getattr(sampler, "_heylook_captured_q", None) is None
+                pending = getattr(sampler, "_heylook_pending_draft", None)
+                assert pending is not None and pending[1].shape == (3, 8)
+                acc, toks = mtp._speculative_walk_batch_deferred_greedy(
+                    plain_lm, mx.zeros((1, 4, 4)), drafts, sampler, [4]
+                )
+                assert sampler._heylook_pending_draft is None
+                counts0[toks[0][0]] += 1
+                copied.accept_verified_tokens(
+                    mx.zeros((1, 4, 4), dtype=mx.float32),
+                    drafts,
+                    acc[0],
+                    toks[0],
+                    sampler,
+                    mx.int32,
+                    greedy=False,
+                )
+
+            empirical0 = [c / n_rounds for c in counts0]
+            assert max(abs(a - b) for a, b in zip(empirical0, p0)) < 0.035, (
+                empirical0,
+                p0,
+            )
+        finally:
+            mtp._speculative_walk_batch_deferred_greedy = orig_walk
+
+    def test_mtp_walk_applies_penalties_per_position_greedy_and_stochastic(self):
+        import mlx.core as mx
+        from mlx_vlm.speculative import mtp
+        from heylook_llm.providers.common import mlx_vlm_patches, samplers
+
+        orig_walk = getattr(
+            mtp._speculative_walk_batch_deferred_greedy,
+            "_heylook_upstream",
+            mtp._speculative_walk_batch_deferred_greedy,
+        )
+        try:
+            mtp._speculative_walk_batch_deferred_greedy = orig_walk
+            assert mlx_vlm_patches.install_mtp_single_row_fast_paths()
+
+            # Unpenalized argmax at pos 0, 1, 2, 3 would pick [1, 2, 3, 4].
+            # gen_history=[1], draft=[2, 3, 0].
+            # With strong penalties:
+            # - pos 0 sees hist=[1] -> token 1 penalized -> argmax shifts to 2 (matches draft[0]=2)
+            # - pos 1 sees hist=[1, 2] -> token 2 penalized -> argmax shifts to 3 (matches draft[1]=3)
+            # - pos 2 sees hist=[1, 2, 3] -> token 3 penalized -> argmax shifts to 4 (rejects draft[2]=0)
+            target_logits = mx.array(
+                [
+                    [-5.0, 5.0, 4.2, -5.0, -5.0, -5.0],
+                    [-5.0, -5.0, 5.0, 4.2, -5.0, -5.0],
+                    [-5.0, -5.0, -5.0, 5.0, 4.2, -5.0],
+                    [-5.0, -5.0, -5.0, -5.0, 5.0, 1.0],
+                ],
+                dtype=mx.float32,
+            )
+
+            class PenLM:
+                def speculative_logits_from_hidden(self, h):
+                    del h
+                    return target_logits[None, :, :]
+
+            sampler, procs = samplers.build(
+                {"temperature": 0.0, "presence_penalty": 2.0, "repetition_penalty": 1.5}
+            )
+            sampler._heylook_mtp_penalties = (procs, [1])
+            acc, toks = mtp._speculative_walk_batch_deferred_greedy(
+                PenLM(),
+                mx.zeros((1, 4, 4)),
+                mx.array([[2, 3, 0]], dtype=mx.int32),
+                sampler,
+                [8],
+            )
+            assert (acc, toks) == ([2], [[2, 3, 4]])
+
+            # Stochastic path (Leviathan): same penalties block token 1 at pos 0.
+            st_sampler, st_procs = samplers.build(
+                {"temperature": 0.05, "presence_penalty": 2.0, "repetition_penalty": 1.5}
+            )
+            st_sampler._heylook_mtp_penalties = (st_procs, [1])
+            q_probs = mx.array(
+                [
+                    [0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                ],
+                dtype=mx.float32,
+            )
+            st_sampler._heylook_pending_draft = (
+                mx.array([[2, 3, 0]], dtype=mx.int32),
+                q_probs,
+            )
+            acc_s, toks_s = mtp._speculative_walk_batch_deferred_greedy(
+                PenLM(),
+                mx.zeros((1, 4, 4)),
+                mx.array([[2, 3, 0]], dtype=mx.int32),
+                st_sampler,
+                [8],
+            )
+            assert (acc_s, toks_s) == ([2], [[2, 3, 4]])
         finally:
             mtp._speculative_walk_batch_deferred_greedy = orig_walk

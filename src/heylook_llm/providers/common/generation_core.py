@@ -142,6 +142,10 @@ def generated_only(processors):
             if prompt_len is None:
                 prompt_len = len(tokens)
             return processor(tokens[prompt_len:], logits)
+
+        if getattr(processor, "_heylook_mtp_safe", False):
+            scoped._heylook_mtp_safe = True
+            scoped._heylook_raw_processor = processor
         return scoped
 
     return [scope(p) for p in processors]

@@ -58,6 +58,307 @@ MTP_WALK_PARAMS = (
 )
 MTP_LEFT_PADDING_PARAMS = ("prompt_cache",)
 MTP_QMV_MAX_T = 8
+_MTP_DRAFTER_CLASSES: dict[type, type] = {}
+
+
+def _method_accepts_greedy(cls: type, method_name: str) -> bool:
+    fn = getattr(cls, method_name, None)
+    if not callable(fn):
+        return False
+    try:
+        return "greedy" in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def _with_effective_greedy(
+    args: tuple,
+    kwargs: dict,
+    sampler,
+    greedy_pos_index: int,
+    accepts_greedy: bool,
+):
+    has_pos = len(args) > greedy_pos_index
+    arg_greedy = bool(args[greedy_pos_index]) if has_pos else bool(kwargs.get("greedy", False))
+    eff_greedy = bool(arg_greedy or getattr(sampler, "_heylook_greedy", False))
+    if eff_greedy:
+        if has_pos:
+            args = (*args[:greedy_pos_index], True, *args[greedy_pos_index + 1 :])
+        elif accepts_greedy:
+            kwargs["greedy"] = True
+    return eff_greedy, args, kwargs
+
+
+def _run_with_q_capture(sampler, fn, *args, **kwargs):
+    if isinstance(getattr(sampler, "_heylook_captured_q", None), list):
+        return fn(*args, **kwargs), None
+    buf = []
+    sampler._heylook_captured_q = buf
+    try:
+        out = fn(*args, **kwargs)
+    finally:
+        sampler._heylook_captured_q = None
+    return out, buf
+
+
+def bind_mtp_drafter(drafter) -> bool:
+    """Bind cross-family non-greedy distribution capture onto an MTP drafter.
+
+    Gemma 4 assistant drafters are handled by ``gemma4_runtime.bind_gemma4_drafter``;
+    this dynamic per-instance subclass handles every other ``mtp`` drafter (such
+    as Qwen 3.5/3.8, ERNIE, GLM, Inkling) so single-row speculative rounds run
+    Leviathan rejection sampling via ``sampler._heylook_pending_draft``.
+    Survives ``copy.copy(draft)`` in ``MTPBatch.__init__``.
+    """
+    if drafter is None or "unittest.mock" in type(drafter).__module__:
+        return False
+    if ".gemma4_assistant." in type(drafter).__module__:
+        return False
+    if getattr(drafter, "_heylook_mtp_drafter", False):
+        return True
+
+    base_cls = type(drafter)
+    draft_fn = getattr(base_cls, "draft_block", None)
+    reset_fn = getattr(base_cls, "reset", None)
+    if not (callable(draft_fn) and callable(reset_fn)):
+        return False
+    try:
+        params = tuple(inspect.signature(draft_fn).parameters)
+    except (TypeError, ValueError):
+        return False
+    if params[:6] != (
+        "self",
+        "last_bonus",
+        "hidden",
+        "cache",
+        "block_size",
+        "sampler",
+    ):
+        logging.warning(
+            "mtp drafter distribution capture stood down: unexpected draft_block signature"
+        )
+        return False
+
+    sub_cls = _MTP_DRAFTER_CLASSES.get(base_cls)
+    if sub_cls is None:
+        has_prefill = callable(getattr(base_cls, "prefill_from_target_hidden", None))
+        has_accept = callable(getattr(base_cls, "accept_verified_tokens", None))
+        has_accept_batch = callable(getattr(base_cls, "accept_verified_tokens_batch", None))
+        has_abort = callable(getattr(base_cls, "abort_draft_round", None))
+
+        prefill_greedy = _method_accepts_greedy(base_cls, "prefill_from_target_hidden")
+        accept_greedy = _method_accepts_greedy(base_cls, "accept_verified_tokens")
+        accept_batch_greedy = _method_accepts_greedy(base_cls, "accept_verified_tokens_batch")
+        draft_greedy = _method_accepts_greedy(base_cls, "draft_block")
+
+        attrs: dict = {}
+
+        def reset(self, *args, **kwargs):
+            self._heylook_seed_q = None
+            return base_cls.reset(self, *args, **kwargs)
+
+        attrs["reset"] = reset
+
+        if has_abort:
+
+            def abort_draft_round(self, *args, **kwargs):
+                self._heylook_seed_q = None
+                return base_cls.abort_draft_round(self, *args, **kwargs)
+
+            attrs["abort_draft_round"] = abort_draft_round
+
+        if has_prefill:
+
+            def prefill_from_target_hidden(
+                self, input_ids, hidden, bonus_token, sampler, *args, **kwargs
+            ):
+                eff_greedy, args, kwargs = _with_effective_greedy(
+                    args, kwargs, sampler, 1, prefill_greedy
+                )
+                if (
+                    not eff_greedy
+                    and getattr(hidden, "shape", (0,))[0] == 1
+                    and callable(getattr(sampler, "_heylook_spec_probs", None))
+                ):
+                    out, buf = _run_with_q_capture(
+                        sampler,
+                        base_cls.prefill_from_target_hidden,
+                        self,
+                        input_ids,
+                        hidden,
+                        bonus_token,
+                        sampler,
+                        *args,
+                        **kwargs,
+                    )
+                    if buf is not None:
+                        self._heylook_seed_q = buf[-1] if len(buf) == 1 else None
+                    return out
+                if not isinstance(getattr(sampler, "_heylook_captured_q", None), list):
+                    self._heylook_seed_q = None
+                return base_cls.prefill_from_target_hidden(
+                    self, input_ids, hidden, bonus_token, sampler, *args, **kwargs
+                )
+
+            attrs["prefill_from_target_hidden"] = prefill_from_target_hidden
+
+        if has_accept:
+
+            def accept_verified_tokens(
+                self, verify_hidden, draft_tokens, accepted, new_tokens, sampler, *args, **kwargs
+            ):
+                eff_greedy, args, kwargs = _with_effective_greedy(
+                    args, kwargs, sampler, 1, accept_greedy
+                )
+                if (
+                    not eff_greedy
+                    and getattr(verify_hidden, "shape", (0,))[0] == 1
+                    and callable(getattr(sampler, "_heylook_spec_probs", None))
+                ):
+                    out, buf = _run_with_q_capture(
+                        sampler,
+                        base_cls.accept_verified_tokens,
+                        self,
+                        verify_hidden,
+                        draft_tokens,
+                        accepted,
+                        new_tokens,
+                        sampler,
+                        *args,
+                        **kwargs,
+                    )
+                    if buf is not None:
+                        self._heylook_seed_q = buf[-1] if len(buf) == 1 else None
+                    return out
+                if not isinstance(getattr(sampler, "_heylook_captured_q", None), list):
+                    self._heylook_seed_q = None
+                return base_cls.accept_verified_tokens(
+                    self, verify_hidden, draft_tokens, accepted, new_tokens, sampler, *args, **kwargs
+                )
+
+            attrs["accept_verified_tokens"] = accept_verified_tokens
+
+        if has_accept_batch:
+
+            def accept_verified_tokens_batch(
+                self, verify_hidden, draft_tokens, accepted, new_tokens, sampler, *args, **kwargs
+            ):
+                eff_greedy, args, kwargs = _with_effective_greedy(
+                    args, kwargs, sampler, 1, accept_batch_greedy
+                )
+                if (
+                    not eff_greedy
+                    and len(accepted) == 1
+                    and callable(getattr(sampler, "_heylook_spec_probs", None))
+                ):
+                    out, buf = _run_with_q_capture(
+                        sampler,
+                        base_cls.accept_verified_tokens_batch,
+                        self,
+                        verify_hidden,
+                        draft_tokens,
+                        accepted,
+                        new_tokens,
+                        sampler,
+                        *args,
+                        **kwargs,
+                    )
+                    if buf is not None:
+                        self._heylook_seed_q = buf[-1] if len(buf) == 1 else None
+                    return out
+                if not isinstance(getattr(sampler, "_heylook_captured_q", None), list):
+                    self._heylook_seed_q = None
+                return base_cls.accept_verified_tokens_batch(
+                    self, verify_hidden, draft_tokens, accepted, new_tokens, sampler, *args, **kwargs
+                )
+
+            attrs["accept_verified_tokens_batch"] = accept_verified_tokens_batch
+
+        def draft_block(
+            self, last_bonus, hidden, cache, block_size, sampler, *args, **kwargs
+        ):
+            import mlx.core as mx
+
+            if hasattr(sampler, "_heylook_pending_draft"):
+                sampler._heylook_pending_draft = None
+            eff_greedy, args, kwargs = _with_effective_greedy(
+                args, kwargs, sampler, 1, draft_greedy
+            )
+            spec_probs = (
+                None if eff_greedy else getattr(sampler, "_heylook_spec_probs", None)
+            )
+            had_seed = (
+                getattr(self, "_seed_token", None) is not None
+                and getattr(self, "_seed_hidden", None) is not None
+            )
+            seed_q = getattr(self, "_heylook_seed_q", None)
+            self._heylook_seed_q = None
+            if (
+                not callable(spec_probs)
+                or getattr(hidden, "shape", (0,))[0] != 1
+                or int(block_size) <= 1
+            ):
+                return base_cls.draft_block(
+                    self, last_bonus, hidden, cache, block_size, sampler, *args, **kwargs
+                )
+
+            out_toks, buf = _run_with_q_capture(
+                sampler,
+                base_cls.draft_block,
+                self,
+                last_bonus,
+                hidden,
+                cache,
+                block_size,
+                sampler,
+                *args,
+                **kwargs,
+            )
+            if buf is None:
+                return out_toks
+            if had_seed:
+                q_rows = ([seed_q] + buf) if seed_q is not None else []
+            else:
+                q_rows = buf
+            if (
+                getattr(out_toks, "ndim", 0) == 2
+                and int(out_toks.shape[0]) == 1
+                and len(q_rows) == int(out_toks.shape[1])
+                and int(out_toks.shape[1]) > 0
+            ):
+                q_mat = mx.concatenate(q_rows, axis=0)
+                mx.async_eval(q_mat)
+                sampler._heylook_pending_draft = (out_toks, q_mat)
+            return out_toks
+
+        attrs["draft_block"] = draft_block
+        sub_cls = type(base_cls.__name__, (base_cls,), attrs)
+        sub_cls.__qualname__ = base_cls.__qualname__
+        sub_cls.__module__ = base_cls.__module__
+        _MTP_DRAFTER_CLASSES[base_cls] = sub_cls
+
+    drafter.__class__ = sub_cls
+    drafter._heylook_seed_q = None
+    drafter._heylook_mtp_drafter = True
+    return True
+
+
+def _apply_mtp_penalties(mx, logits_2d, draft_list: list[int], mtp_penalties):
+    if not (isinstance(mtp_penalties, tuple) and len(mtp_penalties) == 2):
+        return logits_2d
+    raw_procs, gen_history = mtp_penalties
+    if not raw_procs:
+        return logits_2d
+    rows = []
+    for pos in range(int(logits_2d.shape[0])):
+        hist = gen_history + draft_list[:pos]
+        row = logits_2d[pos : pos + 1]
+        if hist:
+            tok_arr = mx.array(hist, dtype=mx.int32)
+            for proc in raw_procs:
+                row = proc(tok_arr, row)
+        rows.append(row)
+    return mx.concatenate(rows, axis=0)
 
 _PACKED_KERNEL_SOURCE = r"""
     constexpr int lanes_per_row = 4;
@@ -318,15 +619,14 @@ def _install_mtp_walk_fast_path(mtp, mx) -> bool:
             sampler._heylook_pending_draft = None
 
         if (
-            getattr(lm, "_heylook_gemma4_runtime", False)
-            and getattr(draft_tokens, "ndim", 0) == 2
+            getattr(draft_tokens, "ndim", 0) == 2
             and draft_tokens.shape[0] == 1
             and getattr(target_hidden, "ndim", 0) == 3
             and target_hidden.shape[0] == 1
         ):
             n_draft = int(draft_tokens.shape[1])
             total_t = n_draft + 1
-            if 2 <= total_t <= MTP_QMV_MAX_T and target_hidden.shape[1] >= total_t:
+            if total_t >= 2 and target_hidden.shape[1] >= total_t:
                 positioned = bool(mtp._sampler_supports_positioned_target(sampler))
                 sample_target = (
                     getattr(sampler, "sample_target", None) if positioned else None
@@ -338,6 +638,7 @@ def _install_mtp_walk_fast_path(mtp, mx) -> bool:
                 ):
                     budget = int(budgets[0])
                     draft_list = [int(tok) for tok in draft_tokens[0].tolist()]
+                    mtp_penalties = getattr(sampler, "_heylook_mtp_penalties", None)
                     spec_probs = (
                         None
                         if sample_target is not None
@@ -359,6 +660,9 @@ def _install_mtp_walk_fast_path(mtp, mx) -> bool:
                             )
                             if logits.ndim == 3 and logits.shape[0] == 1:
                                 logits = logits[0]
+                            logits = _apply_mtp_penalties(
+                                mx, logits, draft_list, mtp_penalties
+                            )
                             logprobs = logits - mx.logsumexp(
                                 logits, axis=-1, keepdims=True
                             )
@@ -410,8 +714,15 @@ def _install_mtp_walk_fast_path(mtp, mx) -> bool:
                         sample_target is None
                         and (
                             getattr(sampler, "_heylook_greedy", None) is False
-                            or "temp"
-                            in getattr(getattr(sampler, "__code__", None), "co_freevars", ())
+                            or (
+                                getattr(sampler, "_heylook_greedy", None) is not True
+                                and "temp"
+                                in getattr(
+                                    getattr(sampler, "__code__", None),
+                                    "co_freevars",
+                                    (),
+                                )
+                            )
                         )
                     )
                     if non_greedy:
@@ -421,6 +732,9 @@ def _install_mtp_walk_fast_path(mtp, mx) -> bool:
                             )
                             if logits.ndim == 3 and logits.shape[0] == 1:
                                 logits = logits[0]
+                            logits = _apply_mtp_penalties(
+                                mx, logits, draft_list, mtp_penalties
+                            )
                             logprobs = logits - mx.logsumexp(
                                 logits, axis=-1, keepdims=True
                             )
@@ -448,6 +762,9 @@ def _install_mtp_walk_fast_path(mtp, mx) -> bool:
                         )
                         if logits.ndim == 3 and logits.shape[0] == 1:
                             logits = logits[0]
+                        logits = _apply_mtp_penalties(
+                            mx, logits, draft_list, mtp_penalties
+                        )
                         logprobs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
                         if sample_target is not None:
                             positions = [

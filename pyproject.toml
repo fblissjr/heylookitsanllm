@@ -118,7 +118,7 @@ override-dependencies = ["transformers>=5.15.0"]
 # commit message; no CHANGELOG entry. Exact 40-char commit pins commit cleanly
 # without an override env var; floating branch/tag refs and local paths still
 # require HEYLOOK_ALLOW_CHANNEL_COMMIT=1. `mlx` itself is a PyPI release.
-mlx-vlm = { git = "https://github.com/Neywa-Labs/mlx-vlm", rev = "e267ccf740b8b9dfc4529665b5efd8b9e1eff187" }
+mlx-vlm = { git = "https://github.com/Neywa-Labs/mlx-vlm", rev = "d204e74b7a4f529b0233b6d655e96348a3585853" }
 
 # ── Pytest ──────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]

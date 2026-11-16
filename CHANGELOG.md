@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.250] - 2026-11-16
+
+### Changed
+- **Cross-family MLX MTP Leviathan rejection sampling**: `mlx_vlm_patches.bind_mtp_drafter(drafter)` wraps every loaded `kind == "mtp"` drafter (`MLXProvider._load_drafter`) with a dynamic subclass capturing `_seed_token` and per-step `draft_block` distributions into `_heylook_pending_draft`. `PATCH_MTP_B1_WALK` removes the Gemma-4-only guard and `MTP_QMV_MAX_T` cap so non-greedy single-row speculative requests across all MTP families (live-verified on `ukisai_Swift-1.5-Qwen3.8-27b-mlx` + `qwen3_5_mtp`) use lossless Leviathan rejection sampling (`tests/contract/test_mlxvlm_surface.py`).
+- **Stateless penalties in MTP drafting**: `samplers.make_presence_penalty_processor` and `samplers.build` mark stateless generated-token penalty processors `_heylook_mtp_safe = True` (preserved by `generation_core.generated_only`), and `vlm_engine.drafting_blocker` allows them when `draft_kind == "mtp"` while keeping stateful/structured logits processors (`grammar`, schemas, `logit_bias`) and non-MTP drafters undrafted. `vlm_engine.generate` tracks `mtp_gen_tokens`, forwards `_heylook_mtp_penalties` on `PATCH_MTP_B1_WALK` with `greedy_sampling=False` (preserving greedy drafting/sampling via `_heylook_greedy` and capturing stochastic `q_p` into `_heylook_captured_q`), and evaluates penalties per verify/resampling position against `gen_history + draft_list[:pos]` (`_apply_mtp_penalties`).
+- **Evaluated & retained defaults**: Benchmarked an axis-2 slack-buffered `BatchRotatingKVCache` past `sliding_window` on `gemma-4-31B-it-8bit` (exact greedy parity, but regresses decode from SDPA contiguous copies and `shared_kv_sink` CoW) and swept `draft_block_size` across `4..7` on `gemma-4-26B-A4B-it-8bit` (larger blocks cross MoE `SwitchGLU` `gather_qmm` tiling boundaries), keeping `v2.0.249`'s `_FastB1RotatingTransaction` and default `block_size = 4` (local measurements in `internal/claude/perf/gemma4_mtp_v20250_2026-11-16.md`).
+- **Dependencies & docs**: Updated `mlx-vlm` pin in `pyproject.toml` + `uv.lock` from `e267ccf740b8b9dfc4529665b5efd8b9e1eff187` to `d204e74b7a4f529b0233b6d655e96348a3585853`; updated `.claude/rules/mlx.md`, `docs/architecture/sharp_edges.md`, and `docs/wiki/performance_optimizations.md` (replacing stale `DraftTuner` doc with upstream `_effective_mtp_block_size`).
+
+### Verification
+- `uv run pytest tests/unit/ tests/contract/ -q`: `1658 passed`.
+- `uv run python scripts/chain_probe.py --model gemma-4-26B-A4B-it-8bit`: `5/5` hops `match=True`, `restored=reused`, `cause=None` (`internal/claude/chain_probe/chain_gemma-4-26B-A4B-it-8bit_20261116-145810.json`).
+- Live `ModelRouter` + `ChatRequest` GPU checks (`seed=42`) on `gemma-4-31B-it-8bit`, `gemma-4-26B-A4B-it-8bit`, and `ukisai_Swift-1.5-Qwen3.8-27b-mlx`: `internal/claude/perf/gemma4_mtp_v20250_2026-11-16.md`.
+- `scripts/vendor_frontend.py --check` and `scripts/check_version_sync.py`: clean.
+- `NOT run`: `scripts/perf_ab.py`, `tests/smoke/` (`mlx-text`, `mlx-vision`, `gguf`; Phase 3 thinking depth on both MLX arms still requires pinning the depth-capable models named in `tests/smoke/README.md`), `tests/eval/`, and browser E2E (`tests/e2e`, pending harness migration after `v2.0.240`).
+
 ## [2.0.249]
 
 ### Changed

@@ -69,6 +69,7 @@ def make_presence_penalty_processor(penalty: float):
             return logits
         return _apply_presence_penalty(logits, tokens, penalty)
 
+    processor._heylook_mtp_safe = True
     return processor
 
 
@@ -94,14 +95,16 @@ def build(params: dict) -> tuple[callable, list[callable]]:
     min_p = float(params.get("min_p", GLOBAL_SAMPLER_FLOOR["min_p"]) or 0.0)
     top_k = int(params.get("top_k", GLOBAL_SAMPLER_FLOOR["top_k"]) or 0)
 
-    sampler = make_sampler(
+    base_sampler = make_sampler(
         temp=temp,
         top_p=top_p,
         min_p=min_p,
         top_k=top_k,
     )
     if temp == 0.0:
+        sampler = base_sampler
         sampler._heylook_greedy = True
+        sampler._heylook_mtp_penalties = None
     else:
         from mlx_vlm.sample_utils import (
             apply_min_p,
@@ -128,8 +131,23 @@ def build(params: dict) -> tuple[callable, list[callable]]:
             scaled = lp.astype(mx.float32) * inv_temp
             return mx.softmax(scaled, axis=-1), scaled
 
+        def sampler(x: mx.array) -> mx.array:
+            captured = getattr(sampler, "_heylook_captured_q", None)
+            if isinstance(captured, list):
+                is_col3 = getattr(x, "ndim", 0) == 3 and x.shape[1] == 1
+                flat = x[:, 0, :] if is_col3 else x
+                q_p, q_scaled = _spec_probs(flat, already_logprobs=False)
+                tok = mx.random.categorical(q_scaled)
+                if is_col3:
+                    tok = tok[:, None]
+                captured.append(q_p)
+                return tok
+            return base_sampler(x)
+
         sampler._heylook_greedy = False
         sampler._heylook_pending_draft = None
+        sampler._heylook_captured_q = None
+        sampler._heylook_mtp_penalties = None
         sampler._heylook_spec_probs = _spec_probs
 
     # An OFF knob builds NO processor. mlx-vlm's make_logits_processors adds a
@@ -149,5 +167,8 @@ def build(params: dict) -> tuple[callable, list[callable]]:
     presence_penalty = params.get("presence_penalty", GLOBAL_SAMPLER_FLOOR["presence_penalty"])
     if presence_penalty > 0.0:
         processors.append(make_presence_penalty_processor(presence_penalty))
+
+    for proc in processors:
+        proc._heylook_mtp_safe = True
 
     return sampler, processors
