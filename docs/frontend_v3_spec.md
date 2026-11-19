@@ -770,8 +770,8 @@ cache, thinking, speculative, decoding, image, steering}`.
   auto-resolves to 256 on recurrent and sliding-window models). MLX (v2.0.86, mlx-vlm's prefix cache):
   `reuse`, `reuse_mode` (`checkpoints` for hybrid and sliding-window models, else the
   block mode), `image_reuse` (true on checkpoint models), `checkpoint_interval`,
-  `checkpoint_captures` (snapshots one request takes near its end, plus one at the end
-  of a leading system prompt), `checkpoint_entries` (snapshots kept across requests,
+  `checkpoint_captures` (near-end, coarse interior, and system-prompt snapshots one request
+  takes), `checkpoint_entries` (snapshots kept across requests,
   under the byte budget), `memory_budget_bytes` (`vlm_engine.APC_MEMORY_SHARE` of the
   Metal working set, v2.0.252; `APC_MEMORY_MAX_GB` in the server's environment overrides it), `disk`
   (false); `reuse_mode`, `image_reuse` and `memory_budget_bytes` are `unknown` until

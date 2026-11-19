@@ -58,11 +58,16 @@ APC_CHECKPOINT_CAPTURES = 3
 # number on both (its checkpoint_entries), so at the spike's setting every
 # request evicted the last conversation's states and a new chat never found
 # its system prompt. The store's byte budget (APC_MEMORY_SHARE) also bounds
-# it. Measured 2026-09-24 (sweep in
-# internal/claude/improve/archive/runs-2026-09-24): mlx-vlm re-counts every retained
-# snapshot's bytes several times per request, so each entry costs every
-# request a little CPU; this keeps a few conversations' snapshots.
-APC_CHECKPOINT_ENTRIES = 16
+# it. Under APC_MEMORY_SHARE = 0.25 on 31B, 16 entries bound at roughly half
+# the byte budget (~4 conversations); 32 keeps ~8+ conversations and multiple
+# system prompts warm while still bounded by APC_MEMORY_SHARE and live headroom.
+APC_CHECKPOINT_ENTRIES = 32
+# Coarse interior checkpoints so long user_only prompts or shared user-side
+# preambles (without a system boundary) hit on the second request instead of
+# waiting for the third. Power-of-2 stride doubling keeps interior points
+# aligned across prompts of different lengths while bounding snapshot count.
+APC_INTERIOR_STRIDE_TOKENS = 1024
+APC_INTERIOR_MAX_CAPTURES = 4
 # The store's byte budget, as a share of the Metal working set. mlx-vlm's own
 # is min(8 GiB, a tenth of the working set) for every model, but a snapshot
 # is a copy of every layer's cache, so its size follows the model's KV layout:
@@ -118,7 +123,9 @@ def make_apc_manager():
 
 def capture_lengths(final: int, *, interval: int, block_size: int, captures: int,
                     min_tokens: int, boundaries: Iterable[int] = (),
-                    adjust=lambda n: n) -> list[int]:
+                    adjust=lambda n: n,
+                    interior_stride: int = 0,
+                    interior_max: int = 0) -> list[int]:
     """The prompt lengths one request snapshots on a checkpoint model.
 
     mlx-vlm's own rule (``APCCoordinator.checkpoint_lengths``) with its
@@ -127,22 +134,42 @@ def capture_lengths(final: int, *, interval: int, block_size: int, captures: int
     before it, which a follow-up restores when it diverges inside the
     previous reply. Plus ``boundaries``: prefix lengths other requests will
     share (the end of the system prompt), so a new conversation restores
-    them. ``adjust`` moves a length to where the rest of the prompt is text
-    only (mlx-vlm's media rule); lengths outside ``[min_tokens, final)`` are
-    dropped. Pure: no MLX."""
+    them. When ``interior_stride`` > 0, adds coarse interior grid points
+    (doubling stride if needed to stay within ``interior_max`` captures) so
+    long ``user_only`` prompts hit on the second request. ``adjust`` moves
+    a length to where the rest of the prompt is text only (mlx-vlm's media
+    rule); lengths outside ``[min_tokens, final)`` are dropped. Pure: no MLX."""
     lengths = {final}
     candidates = list(boundaries)
-    if interval > 0 and captures > 1:
-        interval = ((interval + block_size - 1) // block_size) * block_size
-        last = ((final - 1) // interval) * interval
-        first = max(interval, last - (captures - 2) * interval)
-        candidates.extend(range(first, last + 1, interval))
+    eff_interval = ((interval + block_size - 1) // block_size) * block_size if interval > 0 else 0
+    near_end: list[int] = []
+    if eff_interval > 0 and captures > 1:
+        last = ((final - 1) // eff_interval) * eff_interval
+        first = max(eff_interval, last - (captures - 2) * eff_interval)
+        near_end = list(range(first, last + 1, eff_interval))
+        candidates.extend(near_end)
     for n in candidates:
         if n < min_tokens:
             continue
         n = adjust(n)
         if min_tokens <= n < final:
             lengths.add(n)
+    if interior_stride > 0:
+        step = ((interior_stride + block_size - 1) // block_size) * block_size
+        span = min(near_end) if near_end else final
+        if interior_max > 0:
+            while step > 0 and (span - 1) // step > interior_max:
+                step *= 2
+        if step > 0:
+            for raw in range(step, span, step):
+                if raw < min_tokens:
+                    continue
+                n = adjust(raw)
+                if not (min_tokens <= n < final):
+                    continue
+                if eff_interval > 0 and any(abs(n - k) < eff_interval for k in lengths):
+                    continue
+                lengths.add(n)
     return sorted(lengths)
 
 
@@ -249,6 +276,31 @@ def install_media_token_ids(bg: Any, model: Any, processor: Any = None) -> bool:
     return True
 
 
+def _longest_cached_prefix_leq(apc_manager, token_ids, extra_hash: int, limit: int) -> int:
+    """Length of the longest stored exact-cache prefix <= ``limit`` matching ``token_ids``."""
+    store = getattr(apc_manager, "_exact_cache", None)
+    if not store or limit <= 0:
+        return 0
+    tokens = tuple(int(t) for t in token_ids[:limit])
+    lock = getattr(apc_manager, "lock", None)
+
+    def _scan() -> int:
+        best = 0
+        for entry in store.values():
+            if getattr(entry, "extra_hash", None) != extra_hash:
+                continue
+            stored = getattr(entry, "token_ids", ())
+            m = len(stored)
+            if best < m <= limit and tokens[:m] == stored:
+                best = m
+        return best
+
+    if lock is not None:
+        with lock:
+            return _scan()
+    return _scan()
+
+
 def install_capture_policy(bg, boundaries: Iterable[int]) -> None:
     """Replace this generator's checkpoint capture rule with heylook's
     (``capture_lengths``). The coordinator is built per generator
@@ -266,13 +318,31 @@ def install_capture_policy(bg, boundaries: Iterable[int]) -> None:
         if final <= 0:
             return []
         mgr = coord.manager
-        stable = mgr.checkpoint_prefix_length(token_ids, extra_hash=extra_hash)
-        return capture_lengths(
+        adjust_fn = lambda n: adjust_prefix_to_text_suffix_boundary(
+            token_ids, n, media_token_ids, max_prefix_tokens=final)
+        base_bounds = [b for b in (*bounds, stable_prefix_len) if b > 0]
+        base_lengths = capture_lengths(
             final, interval=mgr.checkpoint_interval_tokens, block_size=mgr.block_size,
             captures=APC_CHECKPOINT_CAPTURES, min_tokens=mgr.exact_cache_min_tokens,
-            boundaries=(*bounds, stable_prefix_len, stable),
-            adjust=lambda n: adjust_prefix_to_text_suffix_boundary(
-                token_ids, n, media_token_ids, max_prefix_tokens=final))
+            boundaries=base_bounds, adjust=adjust_fn,
+            interior_stride=APC_INTERIOR_STRIDE_TOKENS,
+            interior_max=APC_INTERIOR_MAX_CAPTURES,
+        )
+        stable = mgr.checkpoint_prefix_length(token_ids, extra_hash=extra_hash)
+        if stable >= mgr.exact_cache_min_tokens:
+            adj_stable = adjust_fn(stable)
+            if mgr.exact_cache_min_tokens <= adj_stable < final:
+                eff_interval = (
+                    ((mgr.checkpoint_interval_tokens + mgr.block_size - 1) // mgr.block_size) * mgr.block_size
+                    if mgr.checkpoint_interval_tokens > 0
+                    else 0
+                )
+                prev_planned = max((k for k in base_lengths if k <= adj_stable), default=0)
+                prev_cached = _longest_cached_prefix_leq(mgr, token_ids, extra_hash, adj_stable)
+                prev = max(prev_planned, prev_cached)
+                if eff_interval <= 0 or prev == 0 or (adj_stable - prev) >= eff_interval:
+                    return sorted({*base_lengths, adj_stable})
+        return base_lengths
 
     coord.checkpoint_lengths = lengths
 

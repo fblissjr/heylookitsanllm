@@ -283,8 +283,9 @@ def _cache_static() -> dict:
                                     source="vlm_engine.APC_CHECKPOINT_INTERVAL_TOKENS"),
         "checkpoint_captures": Fact(value=vlm_engine.APC_CHECKPOINT_CAPTURES, provenance="derived",
                                     source=("vlm_engine.APC_CHECKPOINT_CAPTURES: snapshots per request "
-                                            "near the prompt end, plus one where a leading system "
-                                            "prompt ends, found from the template in force")),
+                                            "near the prompt end, plus coarse interior checkpoints "
+                                            "(vlm_engine.APC_INTERIOR_STRIDE_TOKENS / APC_INTERIOR_MAX_CAPTURES) "
+                                            "and one where a leading system prompt ends, found from the template in force")),
         "checkpoint_entries": Fact(value=vlm_engine.APC_CHECKPOINT_ENTRIES, provenance="derived",
                                    source=("vlm_engine.APC_CHECKPOINT_ENTRIES: snapshots kept across "
                                            "requests; on long prompts the byte budget can evict "

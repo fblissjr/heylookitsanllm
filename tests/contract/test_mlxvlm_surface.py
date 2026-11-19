@@ -414,12 +414,14 @@ class TestVlmEngineSurface:
 
         # Verify install_capture_policy's replacement accepts every parameter
         # APCCoordinator.checkpoint_lengths takes (including extra_hash and
-        # stable_prefix_len) and includes observed/passed prefix boundaries.
-        mgr = SimpleNamespace(checkpoint_interval_tokens=64, _exact_cache_max=16,
+        # stable_prefix_len), retains real boundaries >= interval apart, skips
+        # <64-token micro-deltas, and adds coarse interior checkpoints.
+        stable_val = 220
+        mgr = SimpleNamespace(checkpoint_interval_tokens=64, _exact_cache_max=32,
                               disk=None, block_size=16, exact_cache_min_tokens=16,
-                              checkpoint_prefix_length=lambda *_a, **_kw: 48)
+                              checkpoint_prefix_length=lambda *_a, **_kw: stable_val)
         coord = SimpleNamespace(enabled=True, is_checkpoint=True, manager=mgr,
-                                checkpoint_len=lambda ids, media: 200)
+                                checkpoint_len=lambda ids, media: 400)
         bg = SimpleNamespace(apc=coord)
         install_capture_policy(bg, [32])
         expected_params = [
@@ -427,8 +429,27 @@ class TestVlmEngineSurface:
             if name != "self"
         ]
         assert list(inspect.signature(coord.checkpoint_lengths).parameters) == expected_params
-        got = coord.checkpoint_lengths(list(range(201)), set(), extra_hash=7, stable_prefix_len=24)
-        assert 24 in got and 32 in got and 48 in got and 200 in got
+        got = coord.checkpoint_lengths(list(range(401)), set(), extra_hash=7, stable_prefix_len=128)
+        assert 32 in got and 128 in got and 220 in got and 400 in got
+        stable_val = 48  # 48 - 32 = 16 < 64: suppressed as micro-delta
+        got_micro = coord.checkpoint_lengths(list(range(401)), set(), extra_hash=7)
+        assert 32 in got_micro and 48 not in got_micro
+        coord_long = SimpleNamespace(
+            enabled=True,
+            is_checkpoint=True,
+            manager=SimpleNamespace(
+                checkpoint_interval_tokens=64,
+                _exact_cache_max=32,
+                disk=None,
+                block_size=16,
+                exact_cache_min_tokens=16,
+                checkpoint_prefix_length=lambda *_a, **_kw: 0,
+            ),
+            checkpoint_len=lambda ids, media: 2174,
+        )
+        bg_long = SimpleNamespace(apc=coord_long)
+        install_capture_policy(bg_long, [])
+        assert 1024 in coord_long.checkpoint_lengths(list(range(2175)), set())
 
         # ... and the generator builds its coordinator per instance and asks
         # it (not a module function) for the lengths, so the override binds.
@@ -654,6 +675,186 @@ class TestCarriedPatches:
             assert mlx_vlm_patches.install_gated_delta_packed_kernel()
         finally:
             gd.gated_delta_kernel = orig
+
+    def test_store_checkpoint_carry_trims_rotating_and_preserves_semantics(self, caplog):
+        """PATCH_STORE_CHECKPOINT binds per checkpoint generator (drafted and
+        undrafted), trims RotatingKVCache/BatchRotatingKVCache to max_size,
+        avoids double copy, and falls back or stands down cleanly."""
+        import logging
+        from types import SimpleNamespace
+
+        import mlx.core as mx
+        from mlx_vlm import apc as _apc
+        from mlx_vlm.apc_coordinator import APCCoordinator
+        from mlx_vlm.generate.ar import PromptProcessingBatch
+        from mlx_vlm.models.cache import (
+            ArraysCache,
+            BatchKVCache,
+            BatchRotatingKVCache,
+            KVCache,
+            RotatingKVCache,
+        )
+        from heylook_llm.providers.common import mlx_vlm_patches
+
+        # Pin upstream call sites that invoke APCCoordinator.store_checkpoint.
+        assert f"coordinator.{mlx_vlm_patches.STORE_CHECKPOINT}(" in inspect.getsource(
+            PromptProcessingBatch._store_apc_exact_checkpoints
+        )
+        assert f"self.{mlx_vlm_patches.STORE_CHECKPOINT}(" in inspect.getsource(
+            APCCoordinator.commit
+        )
+
+        # Stand-down check on altered signature.
+        bad_coord = SimpleNamespace(store_checkpoint=lambda wrong: False)
+        with caplog.at_level(logging.WARNING):
+            assert not mlx_vlm_patches._patch_store_checkpoint(bad_coord)
+        assert any(mlx_vlm_patches.PATCH_STORE_CHECKPOINT in r.message for r in caplog.records)
+
+        class_method = APCCoordinator.__dict__[mlx_vlm_patches.STORE_CHECKPOINT]
+        model = SimpleNamespace(make_cache=lambda: [RotatingKVCache(max_size=8), KVCache()])
+
+        def make_mgr():
+            return _apc.APCManager(num_blocks=8, block_size=16, disk=None, overrides={"checkpoint_entries": 8})
+
+        # Binds on BOTH undrafted and drafted checkpoint generators without mutating class.
+        mgr_u = make_mgr()
+        bg_u = SimpleNamespace(apc=mgr_u.coordinator(model), model=model, kv_bits=None,
+                               draft_model=None, draft_kind=None)
+        assert mlx_vlm_patches.apply_to(bg_u) is True
+        assert getattr(bg_u.apc.store_checkpoint, "_heylook_patch", None) == mlx_vlm_patches.PATCH_STORE_CHECKPOINT
+
+        mgr_d = make_mgr()
+        bg_d = SimpleNamespace(apc=mgr_d.coordinator(model), model=model, kv_bits=None,
+                               draft_model=object(), draft_kind="mtp")
+        # apply_to still returns False when #2356 does not bind (drafting), while
+        # still patching store_checkpoint on the checkpoint coordinator.
+        assert mlx_vlm_patches.apply_to(bg_d) is False
+        assert getattr(bg_d.apc.store_checkpoint, "_heylook_patch", None) == mlx_vlm_patches.PATCH_STORE_CHECKPOINT
+        assert APCCoordinator.__dict__[mlx_vlm_patches.STORE_CHECKPOINT] is class_method
+
+        # 1. RotatingKVCache (keep=0) & BatchRotatingKVCache (B=1, left_padding=[0]):
+        # 14 keys with max_size=8, offset=20 -> trims to trailing 8, offset=20, _idx=8.
+        base_k = mx.broadcast_to(mx.arange(14, dtype=mx.float32).reshape(1, 1, 14, 1), (1, 1, 14, 4))
+        base_v = base_k + 100.0
+        mx.eval(base_k, base_v)
+
+        def make_rot(*, keep=0):
+            r = RotatingKVCache(max_size=8, keep=keep)
+            r.keys = mx.array(base_k)
+            r.values = mx.array(base_v)
+            r.offset = 20
+            r._idx = 14
+            return r
+
+        rot = make_rot(keep=0)
+        kv = KVCache()
+        kv.keys = mx.ones((1, 1, 20, 4))
+        kv.values = kv.keys * 2
+        kv.offset = 20
+
+        tokens_u = list(range(20))
+        assert bg_u.apc.store_checkpoint(tokens_u, [rot, kv])
+        stored_u = mgr_u._exact_cache[next(iter(mgr_u._exact_cache))].prompt_cache
+        assert stored_u[0].keys.shape == (1, 1, 8, 4)
+        assert mx.array_equal(stored_u[0].keys, base_k[..., -8:, :])
+        assert mx.array_equal(stored_u[0].values, base_v[..., -8:, :])
+        assert (stored_u[0].offset, stored_u[0]._idx) == (20, 8)
+        # Detached from source mutation.
+        rot.keys = rot.keys * 0.0
+        assert mx.array_equal(stored_u[0].keys, base_k[..., -8:, :])
+
+        # BatchRotatingKVCache + BatchKVCache single-row store.
+        brot = BatchRotatingKVCache(max_size=8, left_padding=[0])
+        brot.keys = mx.array(base_k)
+        brot.values = mx.array(base_v)
+        brot.offset = mx.array([20])
+        brot._idx = 14
+        brot._offset = 20
+        bkv = BatchKVCache(left_padding=[0])
+        bkv.keys = mx.ones((1, 1, 24, 4))  # step-padded beyond _idx=20
+        bkv.values = bkv.keys * 3
+        bkv.offset = mx.array([20])
+        bkv._idx = 20
+        assert bg_d.apc.store_checkpoint(tokens_u, [brot, bkv])
+        stored_d = mgr_d._exact_cache[next(iter(mgr_d._exact_cache))].prompt_cache
+        assert isinstance(stored_d[0], RotatingKVCache)
+        assert isinstance(stored_d[1], KVCache)
+        assert stored_d[0].keys.shape == (1, 1, 8, 4)
+        assert mx.array_equal(stored_d[0].keys, base_k[..., -8:, :])
+        assert mx.array_equal(stored_d[0].values, base_v[..., -8:, :])
+        assert (stored_d[0].offset, stored_d[0]._idx) == (20, 8)
+        assert stored_d[1].keys.shape == (1, 1, 20, 4)
+        assert stored_d[1].offset == 20
+
+        # 2. RotatingKVCache with keep=2 preserves 2 sink tokens + trailing 6 tokens.
+        rot_keep = make_rot(keep=2)
+        mgr_k = make_mgr()
+        bg_k = SimpleNamespace(apc=mgr_k.coordinator(model), model=model, kv_bits=None,
+                               draft_model=None, draft_kind=None)
+        mlx_vlm_patches.apply_to(bg_k)
+        assert bg_k.apc.store_checkpoint(tokens_u, [rot_keep])
+        stored_k = mgr_k._exact_cache[next(iter(mgr_k._exact_cache))].prompt_cache[0]
+        expected_keep = mx.concatenate([base_k[..., :2, :], base_k[..., -6:, :]], axis=2)
+        assert stored_k.keys.shape == (1, 1, 8, 4)
+        assert mx.array_equal(stored_k.keys, expected_keep)
+        assert (stored_k.offset, stored_k._idx, stored_k.keep) == (20, 8, 2)
+
+        # 3. Bit-exact equivalence after restore across BatchRotatingKVCache.merge,
+        # direct S=1 _update_in_place, and direct S=3 _update_concat.
+        untrimmed_ref = make_rot(keep=0)
+        restored_hit = mgr_u.lookup_exact_cache(tokens_u + [999])[0][0]
+        m_trim = BatchRotatingKVCache.merge([restored_hit])
+        m_untrim = BatchRotatingKVCache.merge([untrimmed_ref])
+        assert mx.array_equal(m_trim.keys, m_untrim.keys)
+        assert mx.array_equal(m_trim.values, m_untrim.values)
+        assert m_trim.offset.tolist() == m_untrim.offset.tolist()
+        assert (m_trim._idx, m_trim._offset) == (m_untrim._idx, m_untrim._offset)
+
+        k1 = mx.full((1, 1, 1, 4), 77.0, dtype=mx.float32)
+        v1 = mx.full((1, 1, 1, 4), 88.0, dtype=mx.float32)
+        r_trim_1 = mgr_u.lookup_exact_cache(tokens_u + [999])[0][0]
+        r_untrim_1 = make_rot(keep=0)
+        out_t1 = r_trim_1.update_and_fetch(k1, v1)
+        out_u1 = r_untrim_1.update_and_fetch(k1, v1)
+        assert mx.array_equal(out_t1[0], out_u1[0]) and mx.array_equal(out_t1[1], out_u1[1])
+        assert (r_trim_1.offset, r_trim_1._idx) == (r_untrim_1.offset, r_untrim_1._idx)
+
+        k3 = mx.full((1, 1, 3, 4), 55.0, dtype=mx.float32)
+        v3 = mx.full((1, 1, 3, 4), 66.0, dtype=mx.float32)
+        r_trim_3 = mgr_u.lookup_exact_cache(tokens_u + [999])[0][0]
+        r_untrim_3 = make_rot(keep=0)
+        out_t3 = r_trim_3.update_and_fetch(k3, v3)
+        out_u3 = r_untrim_3.update_and_fetch(k3, v3)
+        assert mx.array_equal(out_t3[0], out_u3[0]) and mx.array_equal(out_t3[1], out_u3[1])
+        assert (r_trim_3.offset, r_trim_3._idx) == (r_untrim_3.offset, r_untrim_3._idx)
+
+        # 4. ArraysCache + BatchKVCache single-row store detaches cleanly.
+        arr = ArraysCache(2)
+        arr.cache = [mx.ones((1, 2, 4)), mx.ones((1, 1, 4)) * 2]
+        assert bg_u.apc.store_checkpoint(tokens_u, [arr, BatchKVCache([0])])
+        stored_arr = mgr_u._exact_cache[next(reversed(mgr_u._exact_cache))].prompt_cache[0]
+        arr.cache[0] = arr.cache[0] * 0.0
+        assert mx.array_equal(stored_arr.cache[0], mx.ones((1, 2, 4)))
+
+        # 5. Fallback to upstream on batch_idx=1, B=2, and rotated=True.
+        fallback_calls = []
+        custom_coord = SimpleNamespace(
+            enabled=True,
+            is_checkpoint=True,
+            manager=make_mgr(),
+            store_checkpoint=lambda token_ids, prompt_cache, *, extra_hash=0, batch_idx=None: (
+                fallback_calls.append(batch_idx) or True
+            ),
+        )
+        assert mlx_vlm_patches._patch_store_checkpoint(custom_coord)
+        assert custom_coord.store_checkpoint(tokens_u, [rot, kv], batch_idx=1) is True
+        b2 = BatchKVCache([0, 0])
+        assert custom_coord.store_checkpoint(tokens_u, [b2], batch_idx=0) is True
+        brot_rot = BatchRotatingKVCache(max_size=8, left_padding=[0])
+        brot_rot.keys, brot_rot.values = mx.array(base_k), mx.array(base_v)
+        brot_rot.offset, brot_rot._idx, brot_rot.rotated = mx.array([20]), 8, True
+        assert custom_coord.store_checkpoint(tokens_u, [brot_rot], batch_idx=0) is True
+        assert fallback_calls == [1, 0, 0]
 
 
 

@@ -342,3 +342,82 @@ def test_abort_event_end_reasoning_signals_and_pops():
     assert called == [True]
     abort.clear()
     assert abort.pop_end_reasoning() is False
+
+
+@pytest.mark.unit
+def test_capture_lengths_coarse_interior_checkpoints():
+    """Coarse interior checkpoints cover user_only prefixes on request 2 while
+    doubling stride to cap snapshot count and skipping points near boundaries."""
+    from heylook_llm.providers.common.vlm_engine import capture_lengths
+
+    base = dict(interval=64, block_size=16, captures=3, min_tokens=16,
+                interior_stride=1024, interior_max=4)
+
+    # Short prompt: no interior points below 1024.
+    assert capture_lengths(500, **base) == [384, 448, 500]
+    # ~2.2K user_only prompt: adds 1024 interior before near-end [2048, 2112, 2174].
+    assert capture_lengths(2174, **base) == [1024, 2048, 2112, 2174]
+    # ~3.5K prompt: adds 1024, 2048, 3072.
+    assert capture_lengths(3500, **base) == [1024, 2048, 3072, 3392, 3456, 3500]
+    # ~5.5K prompt: span 5376 > 4*1024 -> stride doubles to 2048 -> adds 2048, 4096.
+    assert capture_lengths(5492, **base) == [2048, 4096, 5376, 5440, 5492]
+    # ~16K prompt: stride doubles twice to 4096 -> adds 4096, 8192, 12288.
+    assert capture_lengths(16000, **base) == [4096, 8192, 12288, 15872, 15936, 16000]
+    # Skips interior point within < interval of an explicit boundary.
+    got = capture_lengths(3500, boundaries=[1000], **base)
+    assert 1000 in got and 1024 not in got and 2048 in got and 3072 in got
+
+
+@pytest.mark.unit
+def test_install_capture_policy_directional_micro_delta_guard():
+    """Observed divergence `stable` is dropped when within <64 tokens AFTER a
+    covered prefix, while an EARLIER `stable` or one >=64 tokens ahead is kept."""
+    from collections import OrderedDict
+    import threading
+    from types import SimpleNamespace
+
+    from heylook_llm.providers.common.vlm_engine import install_capture_policy
+
+    def run_policy(*, final, bounds, stable, cached_lengths=()):
+        store = OrderedDict(
+            (i, SimpleNamespace(token_ids=tuple(range(length)), extra_hash=7))
+            for i, length in enumerate(cached_lengths)
+        )
+        mgr = SimpleNamespace(
+            checkpoint_interval_tokens=64,
+            _exact_cache_max=32,
+            disk=None,
+            block_size=16,
+            exact_cache_min_tokens=16,
+            _exact_cache=store,
+            lock=threading.RLock(),
+            checkpoint_prefix_length=lambda *_a, **_kw: stable,
+        )
+        coord = SimpleNamespace(
+            enabled=True,
+            is_checkpoint=True,
+            manager=mgr,
+            checkpoint_len=lambda ids, media: final,
+        )
+        bg = SimpleNamespace(apc=coord)
+        install_capture_policy(bg, bounds)
+        return coord.checkpoint_lengths(list(range(final + 1)), set(), extra_hash=7)
+
+    # +2 micro-delta past system prompt 2234 is suppressed.
+    got = run_policy(final=5492, bounds=[2234], stable=2236)
+    assert 2234 in got and 2236 not in got
+
+    # +13 micro-delta past 1469 is suppressed; +401 real shared prefix is kept.
+    got_13 = run_policy(final=2500, bounds=[1469], stable=1482)
+    assert 1469 in got_13 and 1482 not in got_13
+    got_401 = run_policy(final=2500, bounds=[1469], stable=1870)
+    assert 1469 in got_401 and 1870 in got_401
+
+    # Directional check: stable=100 is <64 before near-end 128, with nothing <= 100,
+    # so 100 MUST still be kept (a later checkpoint cannot restore an earlier divergence).
+    got_earlier = run_policy(final=250, bounds=[], stable=100)
+    assert 100 in got_earlier and 128 in got_earlier
+
+    # Micro-delta (+48) past an already-cached prefix in _exact_cache is suppressed.
+    got_cached = run_policy(final=5600, bounds=[], stable=5488, cached_lengths=(5440,))
+    assert 5488 not in got_cached

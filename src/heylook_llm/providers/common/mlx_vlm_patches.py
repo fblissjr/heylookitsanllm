@@ -38,6 +38,10 @@ PATCH_2356 = "mlx-vlm#2356"
 RESTORE_MERGE = "_merge_and_release_cache_rows"
 MERGE_ROWS_PARAMS = ("picks", "prefix_lens", "kv_quant_config")  # bound method
 
+PATCH_STORE_CHECKPOINT = "heylook#apc-trim-rotating-store"
+STORE_CHECKPOINT = "store_checkpoint"
+STORE_CHECKPOINT_PARAMS = ("token_ids", "prompt_cache", "extra_hash", "batch_idx")
+
 # Packed 8-row Gated DeltaNet Metal kernel (_make_gated_delta_packed_kernel)
 # for scalar-gated Dk=128, Dv % 8 == 0 multi-token recurrence in shared
 # mlx_vlm/models/gated_delta.py (qwen3_next, kimi_linear, lfm3). Stands down
@@ -584,6 +588,188 @@ def _patch_merge_rows(coord) -> bool:
     return True
 
 
+def _single_row_trimmed_views(prompt_cache, batch_idx):
+    """Build single-row cache views with rotating layers trimmed to ``max_size``.
+
+    Avoids both the redundant intermediate copy in upstream batch extraction
+    (``extract_prompt_cache_from_batch`` + ``store_exact_cache``) and serial
+    per-layer host syncs, while dropping chunk-boundary overshoot past
+    ``max_size`` that ``BatchRotatingKVCache.merge`` never reads back.
+    Returns ``None`` on any unsupported layout so the caller falls through to
+    upstream.
+    """
+    if not prompt_cache or batch_idx not in (None, 0):
+        return None
+    import mlx.core as mx
+    from mlx_vlm.models.cache import (
+        ArraysCache,
+        BatchKVCache,
+        BatchRotatingKVCache,
+        KVCache,
+        RotatingKVCache,
+    )
+
+    meta_arrays = []
+    for c in prompt_cache:
+        t = type(c)
+        if t is RotatingKVCache:
+            max_size = int(getattr(c, "max_size", 0) or 0)
+            keep = int(getattr(c, "keep", 0) or 0)
+            if max_size <= 0 or keep < 0 or keep >= max_size:
+                return None
+            if c.keys is not None and int(c.keys.shape[0]) != 1:
+                return None
+        elif t is KVCache:
+            if c.keys is not None and int(c.keys.shape[0]) != 1:
+                return None
+        elif t is BatchRotatingKVCache:
+            max_size = int(getattr(c, "max_size", 0) or 0)
+            if (
+                max_size <= 0
+                or getattr(c, "keep", 0)
+                or not c.is_single_row()
+                or getattr(c, "_lengths", None) is not None
+                or getattr(c, "rotated", False)
+            ):
+                return None
+            if c.keys is not None:
+                if (
+                    getattr(c.left_padding, "shape", None) != (1,)
+                    or getattr(c.offset, "shape", None) != (1,)
+                ):
+                    return None
+                if isinstance(c.left_padding, mx.array):
+                    meta_arrays.append(c.left_padding)
+                if isinstance(c.offset, mx.array):
+                    meta_arrays.append(c.offset)
+        elif t is BatchKVCache:
+            if (
+                int(getattr(c.offset, "size", 0)) != 1
+                or getattr(c, "_right_padding", None) is not None
+            ):
+                return None
+            if c.keys is not None:
+                if getattr(c.left_padding, "shape", None) != (1,):
+                    return None
+                if isinstance(c.left_padding, mx.array):
+                    meta_arrays.append(c.left_padding)
+        elif t is ArraysCache:
+            if c.batch_size != 1 or getattr(c, "is_speculating", False):
+                return None
+        else:
+            return None
+
+    if meta_arrays:
+        mx.eval(meta_arrays)
+
+    views = []
+    for c in prompt_cache:
+        t = type(c)
+        if t is RotatingKVCache:
+            if c.keys is None or c.values is None:
+                views.append(c)
+                continue
+            ordered_k = c._temporal_order(c.keys)
+            ordered_v = c._temporal_order(c.values)
+            max_size = int(c.max_size)
+            ordered_len = int(ordered_k.shape[2])
+            if ordered_len > max_size:
+                keep = int(c.keep)
+                v = RotatingKVCache(max_size=max_size, keep=keep)
+                if keep == 0:
+                    v.keys = ordered_k[..., -max_size:, :]
+                    v.values = ordered_v[..., -max_size:, :]
+                else:
+                    trim_size = ordered_len - max_size
+                    v.keys = c._trim(trim_size, ordered_k)
+                    v.values = c._trim(trim_size, ordered_v)
+                v.offset = int(c.offset)
+                v._idx = int(v.keys.shape[2])
+                views.append(v)
+            else:
+                views.append(c)
+        elif t is KVCache:
+            views.append(c)
+        elif t is BatchRotatingKVCache:
+            max_size = int(c.max_size)
+            v = RotatingKVCache(max_size=max_size)
+            if c.keys is not None and c.values is not None:
+                padding = max(0, int(c.left_padding[0].item()))
+                offset = int(c.offset[0].item())
+                end = int(c._idx)
+                if end > int(c.keys.shape[2]) or padding > end:
+                    return None
+                start = max(padding, end - max_size)
+                v.keys = c.keys[0:1, :, start:end, :]
+                v.values = c.values[0:1, :, start:end, :]
+                v.offset = offset
+                v._idx = end - start
+            views.append(v)
+        elif t is BatchKVCache:
+            v = KVCache()
+            if c.keys is not None and c.values is not None:
+                padding = int(c.left_padding[0].item())
+                end = int(c._idx)
+                if padding < 0 or end > int(c.keys.shape[2]) or padding > end:
+                    return None
+                v.keys = c.keys[0:1, :, padding:end, :]
+                v.values = c.values[0:1, :, padding:end, :]
+                v.offset = end - padding
+            views.append(v)
+        elif t is ArraysCache:
+            v = ArraysCache(len(c.cache))
+            v.cache = [arr[0:1] if arr is not None else None for arr in c.cache]
+            views.append(v)
+    return views
+
+
+def _patch_store_checkpoint(coord) -> bool:
+    upstream = getattr(coord, STORE_CHECKPOINT, None)
+    if getattr(upstream, "_heylook_patch", None) == PATCH_STORE_CHECKPOINT:
+        return True
+    if (
+        upstream is None
+        or tuple(inspect.signature(upstream).parameters) != STORE_CHECKPOINT_PARAMS
+    ):
+        logging.warning(
+            "%s carry not applied: APCCoordinator.%s is gone or its signature changed",
+            PATCH_STORE_CHECKPOINT,
+            STORE_CHECKPOINT,
+        )
+        return False
+
+    def store_checkpoint(
+        token_ids,
+        prompt_cache,
+        *,
+        extra_hash: int = 0,
+        batch_idx=None,
+    ) -> bool:
+        if not coord.enabled or not coord.is_checkpoint:
+            return False
+        if getattr(coord.manager, "disk", None) is not None:
+            return upstream(
+                token_ids, prompt_cache, extra_hash=extra_hash, batch_idx=batch_idx
+            )
+        try:
+            views = _single_row_trimmed_views(prompt_cache, batch_idx)
+            if views is not None:
+                return coord.manager.store_exact_cache(
+                    token_ids, views, extra_hash=extra_hash
+                )
+        except (AttributeError, KeyError, TypeError, IndexError, ValueError) as exc:
+            logging.warning("%s fell through to upstream: %r", PATCH_STORE_CHECKPOINT, exc)
+        return upstream(
+            token_ids, prompt_cache, extra_hash=extra_hash, batch_idx=batch_idx
+        )
+
+    store_checkpoint.__doc__ = upstream.__doc__
+    setattr(store_checkpoint, "_heylook_patch", PATCH_STORE_CHECKPOINT)
+    setattr(store_checkpoint, "_heylook_upstream", upstream)
+    setattr(coord, STORE_CHECKPOINT, store_checkpoint)
+    return True
+
+
 def _install_mtp_walk_fast_path(mtp, mx) -> bool:
     current = getattr(mtp, "_speculative_walk_batch_deferred_greedy", None)
     if current is None:
@@ -863,6 +1049,10 @@ def apply_to(bg) -> bool:
     install_gated_delta_packed_kernel()
     install_mtp_single_row_fast_paths()
     coord = getattr(bg, "apc", None)
-    if coord is None or not plain_single_row_generator(bg):
+    if coord is None:
+        return False
+    if getattr(coord, "enabled", False) and getattr(coord, "is_checkpoint", False):
+        _patch_store_checkpoint(coord)
+    if not plain_single_row_generator(bg):
         return False
     return _patch_merge_rows(coord)

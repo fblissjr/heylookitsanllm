@@ -131,3 +131,78 @@ def test_depth_reaches_the_template_through_the_vision_path():
         enable_thinking=True, depth={"reasoning_strength": "low"})
     assert has_images and len(images) == 1
     assert "Reasoning strength: low." in prompt
+
+
+@pytest.mark.unit
+def test_vision_strategy_derives_system_prefix_with_depth(monkeypatch, caplog):
+    """VLMVisionStrategy._system_prefixes must call vlm_apply_chat_template with
+    `depth=` (not `reasoning_effort=`), otherwise _system_prefixes silently caches
+    None and every vision request with a system prompt misses its system boundary."""
+    import base64
+    import io
+    import logging
+    from types import SimpleNamespace
+
+    import mlx.core as mx
+    from PIL import Image
+
+    from heylook_llm.config import ChatRequest
+    from heylook_llm.providers import mlx_provider
+    from heylook_llm.providers.common import vlm_engine
+    from heylook_llm.providers.common.template_info import ModelTemplateInfo
+
+    png = io.BytesIO()
+    Image.new("RGB", (4, 4), "red").save(png, format="PNG")
+    url = "data:image/png;base64," + base64.b64encode(png.getvalue()).decode()
+
+    template_body = (_TEMPLATES / "muse_glimmer.jinja").read_text()
+    proc = _processor("muse_glimmer.jinja")
+    cfg = FakeConfig()
+    model = SimpleNamespace(config=cfg)
+    info = ModelTemplateInfo(chat_template=template_body)
+
+    def fake_prepare_inputs(_processor_arg, images=None, prompts="", **_kwargs):
+        ids = mx.array([[ord(ch) for ch in prompts]])
+        out = {"input_ids": ids}
+        if images:
+            out["pixel_values"] = mx.zeros((len(images), 1, 1, 3))
+        return out
+
+    captured = {}
+
+    def fake_vlm_generate(**kwargs):
+        captured["shared_prefixes"] = kwargs.get("shared_prefixes")
+        yield SimpleNamespace(text="ok", token=1, finish_reason="stop")
+
+    monkeypatch.setattr(mlx_provider, "vlm_prepare_inputs", fake_prepare_inputs)
+    monkeypatch.setattr(vlm_engine, "generate", fake_vlm_generate)
+
+    strategy = mlx_provider.VLMVisionStrategy(template_info=info, model_id="test-vlm")
+    req = ChatRequest.model_validate({
+        "model": "test-vlm",
+        "max_tokens": 8,
+        "reasoning_effort": "low",
+        "messages": [
+            {"role": "system", "content": "Be brief and careful."},
+            {"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": url}},
+                {"type": "text", "text": "describe this"},
+            ]},
+        ],
+    })
+    eff = {
+        "max_tokens": 8,
+        "temperature": 0.0,
+        "enable_thinking": True,
+        "reasoning_effort": "low",
+    }
+
+    with caplog.at_level(logging.INFO):
+        chunks = list(strategy.generate(req, eff, model, proc))
+
+    assert [c.text for c in chunks] == ["ok"]
+    assert captured["shared_prefixes"] and len(captured["shared_prefixes"][0]) > 0
+    prefix_str = "".join(chr(t) for t in captured["shared_prefixes"][0])
+    assert "Be brief and careful." in prefix_str
+    assert "Reasoning strength: low." in prefix_str
+    assert not any("System-prompt checkpoint not derived" in r.message for r in caplog.records)

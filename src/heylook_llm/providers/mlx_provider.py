@@ -772,11 +772,12 @@ class VLMVisionStrategy:
         # image: it is an assistant turn, and _non_user_image_roles has
         # already refused media anywhere but a user turn.
         resume = _thinking_resume(request)
+        depth = _depth_kwargs(effective_request, self.template_info)
         images, formatted_prompt, _, _ = self._prepare_vlm_inputs_parallel(
             request.messages[:-1] if resume is not None else request.messages,
             processor, model.config,
             enable_thinking=True if resume is not None else _resolve_enable_thinking(effective_request),
-            depth=_depth_kwargs(effective_request, self.template_info),
+            depth=depth,
             continue_final_message=request.is_continuation() and resume is None,
         )
         if resume is not None:
@@ -833,7 +834,8 @@ class VLMVisionStrategy:
             self._system_prefixes, request, (enable_thinking, reasoning_effort),
             lambda msgs: vlm_apply_chat_template(
                 processor, model.config, msgs, num_images=0,
-                enable_thinking=enable_thinking, reasoning_effort=reasoning_effort),
+                enable_thinking=enable_thinking, depth=depth,
+                model_id=self.model_id),
             processor)
         yield from vlm_engine.generate(
             model=model, processor=processor,
