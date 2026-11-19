@@ -43,6 +43,7 @@ Summary of what shipped for converted Gemma 4 Dense (`31B-it`) + MoE (`26B-A4B-i
 - [x] **MLX prefix-cache byte budget sized per machine, not mlx-vlm's fixed cap (`v2.0.252`, `vlm_engine.APC_MEMORY_SHARE`).** The 31B's snapshots filled mlx-vlm's cap with about one request, so going back to an earlier chat re-prefilled it while the 26B-A4B restored (`internal/claude/perf/apc_budget_gemma4_2026-11-19/`).
 - [ ] **Trim sliding-layer snapshots to the window before APC stores them.** A snapshot taken at a prefill chunk boundary keeps the window plus most of the chunk (`RotatingKVCache._update_concat`), and a restore reads only the last window's worth (`BatchRotatingKVCache.merge`; reasoned from code, not measured), so those snapshots carry budget that is never used, worst on the 31B (records in `internal/claude/perf/apc_budget_gemma4_2026-11-19/`, the `rot_keys` field). An mlx-vlm change, or a carry in `mlx_vlm_patches.py`; keep at least `max_size` tokens (a buffer shorter than the window breaks `_update_in_place` growth on a one-token tail) and run `chain_probe.py` on both gemma-4 models.
 - [ ] **Unexplained 31B stalls outside generation time (2026-11-19 API benchmark, runs 10-12).** Wall time minus `generation_duration_ms` jumped well above the warm baseline only on the 31B, right after a long generation; that gap includes `queue_wait_ms` (`perf_collector.py`). Needs a replay of that sequence before any cause is named.
+- [ ] **Each loaded MLX model gets its own `APC_MEMORY_SHARE` of the working set (`v2.0.252`).** Moot at `max_loaded_models = 1` (the default). Above 1, one model's idle store keeps its memory until that model unloads or `monitoring_api.clear_caches` runs: APC checks headroom only on its own saves and restores, so nothing shrinks it when another model loads. Untested. Options: divide the share by `max_loaded_models`, or clear idle stores before a load.
 - [ ] **Still pending upstream release -- `mlx >= 0.32.5` core upgrade (Track 1.3).** Re-run Gemma 4 decode and MTP verify benchmarks once `0.32.5+` ships on PyPI (`mlx#4719`, `mlx#4723`, `mlx#4734`).
 
 ### Track 2: Engine Runtime, Mid-Stream Thinking Control, & Caching (`docs/project/plan_runtime_visibility.md`)
@@ -736,14 +737,21 @@ open; each names what would settle it.
   which models advertise vision. Done when an import failure is
   distinguished from an unregistered model_type, or the docs stop claiming
   the stronger guarantee.
-- [ ] **The override validator accepts gguf templates llama-server cannot run**
-  (P3, 2026-11-19): `chat_template_files.validate` renders with jinja2, which
-  has every Python string method, while llama-server's own engine lacks some
-  (`isalpha` at b04489040; sharp_edges "gguf chat template ladder"). The
-  Qwen3.8 27B GGUF sidecars' `/word` block would have passed validation and
-  then been a 500 on the first slash command. Done when a gguf override is
-  rendered through a resident llama-server's `/apply-template` before it is
-  written, or the editor says that validation is jinja2's.
+- [ ] **Nothing warns about a gguf template that calls a method llama-server's
+  engine lacks** (P3, 2026-11-19; sharp_edges "gguf chat template ladder").
+  The owner's Qwen3.8 27B sidecar called `.isalpha()` and was a 500 on every
+  `/word` message. Three gaps, each enough on its own: the override validator
+  (`chat_template_files.validate`) renders with jinja2, which has every Python
+  string method; its probe shapes would not reach a branch like that one
+  anyway; and it only sees override writes, while this was a hand-written
+  sidecar. llama-server's `/apply-template` cannot fill in: it renders only the
+  template the process was spawned with (`meta->chat_params`). What would
+  work: a static scan (jinja2's parser, every `x.method(...)` call) against
+  the build's engine built-ins, as a table pinned to the built tree's
+  `common/jinja/value.cpp` by a test (the `NON_CAUSAL_IMAGE_PROJECTORS`
+  pattern), warned at spawn for whichever rung wins and disclosed by the
+  validator on gguf writes. Cheaper, narrower: upstream the missing string
+  methods to llama.cpp.
 
 ## Chat reliability (2026-08-13, plan: `plan_chat_orchestration.md`)
 
