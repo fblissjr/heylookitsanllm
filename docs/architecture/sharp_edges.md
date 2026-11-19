@@ -119,7 +119,11 @@ the operator-override validator (`chat_template_files.py`) renders with
 jinja2 too, so neither would have caught it. The fix was one line in that
 file: `.lower() != .upper()` tests for a letter with methods both engines
 have. To trust a template on gguf, render it through llama-server's
-`/apply-template` with input that reaches each branch.
+`/apply-template` with input that reaches each branch. Since v2.0.254 a
+static scan (`chat_template_files.llama_engine_gaps`) names such calls by
+line, at every spawn and on every template-editor read; it reads the syntax
+tree, so the branch need not be reached. Its table of the engine's methods
+is pinned to the build by a unit test.
 
 A sidecar beside a GGUF is not necessarily the publisher's: GGUF repos embed
 their template, and this one was the owner's, copied into several model

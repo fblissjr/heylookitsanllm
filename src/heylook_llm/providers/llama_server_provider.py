@@ -1488,6 +1488,19 @@ class LlamaServerProvider(BaseProvider):
             + (f" ({resolved_template})" if resolved_template else "")
             + f" sha256={body_hash}"
         )
+        # Whichever rung won, say now if the body calls a method llama.cpp's
+        # template engine lacks: that is a 500 only on the request whose input
+        # reaches the call, so nothing else would surface it before a user does
+        # (sharp_edges "gguf chat template ladder"). Never blocks a spawn.
+        if not self.embedding and self.loaded_chat_template:
+            from ..chat_template_files import llama_engine_gaps
+            gaps = llama_engine_gaps(self.loaded_chat_template)
+            if gaps:
+                logging.warning(
+                    f"[GGUF] {self.model_id}: the chat template ({template_origin}) calls "
+                    f"methods llama-server's template engine does not implement: "
+                    f"{'; '.join(gaps)}. A request whose input reaches one fails with a 500."
+                )
 
         # Subprocess output honors the file-logging master switch: at
         # observability_level=off (the default) NOTHING is written under

@@ -588,6 +588,56 @@ def prefix_stability(body: Optional[str]) -> tuple[Optional[bool], str]:
     return True, "each turn's prompt extends the previous one's"
 
 
+# Every method llama.cpp's own template engine (common/jinja) implements on any
+# value type: the union of the per-type get_builtins() maps in
+# common/jinja/value.cpp. llama-server renders with that engine, not jinja2, and
+# `obj.name` resolves to a built-in of obj's type, so a template calling a
+# Python method outside this set fails as a 500 -- and only on the input that
+# reaches the call (an owner template's `.isalpha()`, 2026-11-19; sharp_edges
+# "gguf chat template ladder"). Hand-copied from the build, table plus test, as
+# the other build tables are: test_jinja_method_table_matches_the_build pins it.
+LLAMA_JINJA_METHODS = frozenset({
+    "abs", "append", "capitalize", "default", "dictsort", "endswith", "first",
+    "float", "format", "get", "indent", "int", "items", "join", "keys", "last",
+    "length", "list", "lower", "lstrip", "map", "max", "min", "pop", "reject",
+    "rejectattr", "replace", "reverse", "rsplit", "rstrip", "safe", "select",
+    "selectattr", "slice", "sort", "split", "startswith", "string", "strip",
+    "sum", "title", "tojson", "truncate", "unique", "upper", "values", "wordcount",
+})
+
+
+@lru_cache(maxsize=64)
+def llama_engine_gaps(body: Optional[str]) -> Optional[tuple[str, ...]]:
+    """The method calls in ``body`` that llama-server's template engine cannot
+    run, one entry per method (``.isalpha() at line 92``). Empty when there are
+    none; None when the body does not parse here, so nothing can be said.
+
+    Static on purpose: rendering only reaches the branches its inputs reach,
+    which is how this class of bug hid -- the call sat inside a branch only a
+    `/word` in the last user message enters. The union over value types is
+    loose by design: a name the engine has on SOME type passes wherever it is
+    called, so empty means "no call to a method the engine lacks outright",
+    not "llama-server renders this". Filters and tests are not checked.
+    """
+    if not body:
+        return ()
+    env = _engine_environment()
+    if env is None:
+        return None
+    from jinja2 import nodes
+    try:
+        tree = env.parse(body)
+    except Exception:
+        return None
+    lines: dict[str, set[int]] = {}
+    for call in tree.find_all(nodes.Call):
+        if isinstance(call.node, nodes.Getattr) and call.node.attr not in LLAMA_JINJA_METHODS:
+            lines.setdefault(call.node.attr, set()).add(call.lineno)
+    return tuple(
+        f".{name}() at line{'s' if len(at) > 1 else ''} {', '.join(map(str, sorted(at)))}"
+        for name, at in sorted(lines.items()))
+
+
 def validate(body: str, *, provider: str, config: dict) -> list[str]:
     """Raise TemplateWriteRefused unless ``body`` compiles AND renders.
 

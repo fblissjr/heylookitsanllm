@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.254] - 2026-11-19
+
+### Added
+- **gguf: a template call llama-server cannot run is named before a user hits it.** llama-server renders with llama.cpp's own template engine, which lacks some Python methods, and a call to one is a 500 only on the request whose input reaches it (the owner's Qwen3.8 27B `/word` template, v2.0.253). [`chat_template_files.llama_engine_gaps`](src/heylook_llm/chat_template_files.py) scans a template's syntax tree for method calls outside `LLAMA_JINJA_METHODS` (the union of the build's per-type `get_builtins()` maps) and names each with its line. [`LlamaServerProvider.load_model`](src/heylook_llm/providers/llama_server_provider.py) logs it as a warning at every spawn, whichever rung won; `GET`/`PUT /v1/admin/models/{id}/chat-template` return it as `engine_gaps` (gguf only, every read), and the template editor shows it beside the existing notes (`frontend/js/model-config.js`). Not checked: filters and tests.
+- Docs: `docs/frontend_v3_spec.md` §4 (`engine_gaps`), `docs/wiki/llama_server_build_and_spawn.md`, `docs/architecture/sharp_edges.md` ("gguf chat template ladder"), `.claude/rules/gguf.md`, `docs/project/TODO.md` (item closed).
+
+### Verification
+- `uv run pytest tests/unit/ tests/contract/ -q`: `1663 passed`. New: `test_llama_engine_gaps_finds_calls_no_render_reaches`, `test_jinja_method_table_matches_the_build` (ran against the build tree, not skipped), `test_a_template_call_llama_server_lacks_warns_at_spawn`, `test_a_call_llama_server_lacks_is_reported_on_write_and_read`.
+- The scan over every local `*.jinja*` under the model folders: the 12 flagged are exactly the pre-fix backups of the owner's template, at the `isalpha` lines; the other 23 are clean, none unparsed. Over the 15 templates embedded in local GGUF files: 14 clean, 1 does not parse in heylook's jinja2 environment (reported as null, not warned).
+- `bun build frontend/js/model-config.js`: builds. `bun run e2e:pages`: could not run; the harness has had no browser driver since v2.0.240 (`launchBrowser` throws "pending migration"), so the editor note is unchecked in a browser.
+- `NOT run`: `tests/smoke/` (v2.0.253 ran it on this release's engine code; nothing here touches generation), `scripts/perf_ab.py`, `tests/eval/`, `scripts/vendor_frontend.py --check`.
+
 ## [2.0.253] - 2026-11-19
 
 ### Fixed

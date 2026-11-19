@@ -1986,6 +1986,14 @@ class ChatTemplateResponse(BaseModel):
                      "re-processes history, `prefix_note` says where; null = could "
                      "not be told. A warning, never a refusal."))
     prefix_note: Optional[str] = None
+    engine_gaps: Optional[List[str]] = Field(
+        default=None,
+        description=("gguf only: method calls in `template` that llama-server's own "
+                     "template engine does not implement (`.isalpha() at line 92`). "
+                     "Each is a 500 on any request whose input reaches it, and only "
+                     "then, so a template can look fine until one does. A static "
+                     "scan, on every read. [] = none found; null = not a gguf model, "
+                     "or the template does not parse. A warning, never a refusal."))
     sources: List[Dict[str, Any]] = Field(
         default_factory=list,
         description=("Every copy of the template present for this model (plan W3), "

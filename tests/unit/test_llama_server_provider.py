@@ -387,6 +387,19 @@ class TestSpawnEnvironment:
         # wraps negative and residency turns off entirely.
         assert 0 < LlamaServerProvider.METAL_RESIDENCY_KEEP_ALIVE_S < (2**31 - 1) // 200
 
+    def test_a_template_call_llama_server_lacks_warns_at_spawn(
+            self, tmp_path, monkeypatch, caplog):
+        # The owner's /word sidecar (2026-11-19) was a 500 only on a slash
+        # command, so nothing surfaced it until a user typed one. The spawn is
+        # where every rung's body passes, sidecar included.
+        import logging as _logging
+        (tmp_path / "chat_template.jinja").write_text(
+            "{% for m in messages %}{% if m.content[:1].isalpha() %}"
+            "{{ m.content }}{% endif %}{% endfor %}")
+        with caplog.at_level(_logging.WARNING):
+            self._spawn_env(tmp_path, monkeypatch)
+        assert any(".isalpha() at line 1" in r.getMessage() for r in caplog.records)
+
 
 # ---------------------------------------------------------------------------
 # Sleep/wake timeout

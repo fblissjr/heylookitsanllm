@@ -30,6 +30,23 @@ def test_prefix_stability_flags_what_costs_every_turn_its_cache():
     assert prefix_stability(None)[0] is None
 
 
+def test_llama_engine_gaps_finds_calls_no_render_reaches():
+    """The owner's /word block (2026-11-19): `.isalpha()` sat in a branch only
+    a slash command enters, so rendering never reached it. The scan names it
+    by line anyway, passes the fix built from methods the engine has, and says
+    nothing (None) about a body it cannot parse."""
+    from heylook_llm.chat_template_files import llama_engine_gaps
+
+    broken = ("{%- for w in messages[-1].content.split() %}\n"
+              "{%- if w.startswith('/') and w[1:2].isalpha() %}{{ w }}{% endif %}\n"
+              "{%- endfor %}")
+    assert llama_engine_gaps(broken) == (".isalpha() at line 2",)
+    fixed = broken.replace("w[1:2].isalpha()", "w[1:2].lower() != w[1:2].upper()")
+    assert llama_engine_gaps(fixed) == ()
+    assert llama_engine_gaps(_CHATML) == ()
+    assert llama_engine_gaps("{% for m in messages %}") is None
+
+
 def test_template_sources_mark_download_state_and_in_force(tmp_path):
     """Plan W3: each copy says where it came from. A file whose bytes still
     hash to huggingface_hub's download record (a small file's etag is its git

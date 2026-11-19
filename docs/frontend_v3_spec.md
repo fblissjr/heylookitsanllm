@@ -928,7 +928,7 @@ as long as a scan takes; other requests keep flowing meanwhile.
 
 **Chat template** (v2.0.22). `GET /v1/admin/models/{id}/chat-template` →
 `{model_id, provider, template, origin, override_present, override_path,
-writable, inert_reason, override_template, stale, prefix_stable, prefix_note, sources, notes}`. It reads FILES (and, for gguf, the GGUF header),
+writable, inert_reason, override_template, stale, prefix_stable, prefix_note, engine_gaps, sources, notes}`. It reads FILES (and, for gguf, the GGUF header),
 never a running process, so it answers for models that are NOT resident — the prompt
 format a model will load with is the thing worth seeing before loading it.
 `origin` is the ladder rung that won, the same phrase the load log prints.
@@ -946,6 +946,12 @@ loaded, which is NOT the same as `false`** — render the two differently.
 previous one's, as a prompt cache needs; `false` means every turn re-processes history
 and `prefix_note` says where, `null` means it could not be told. It is a warning, never a
 refusal, and the same answer rides `engine.template.prefix_stable`.
+`engine_gaps` (v2.0.254, gguf only) lists the method calls in `template` that
+llama-server's own template engine does not implement, as `.isalpha() at line 92`. Each is
+a 500 on any request whose input reaches it, and only then, so it is a static scan
+(`chat_template_files.llama_engine_gaps`) on every read. `[]` means none found, `null`
+means not a gguf model or a template that does not parse. A warning, never a refusal;
+the spawn logs the same warning for whichever rung won.
 `sources` (v2.0.99, plan W3) lists every copy of the template present, in ladder order:
 `{source, file, sha256, in_force, provenance, download_commit, prefix_stable, prefix_note,
 thinking, template}`. `provenance` is `downloaded` (the bytes still hash to huggingface_hub's

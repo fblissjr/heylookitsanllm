@@ -98,6 +98,16 @@ class TestChatTemplateRoutes:
         assert not (model_dir / HEYLOOK_TEMPLATE_FILENAME).exists()
         assert client.get(URL).json()["override_present"] is False
 
+    def test_a_call_llama_server_lacks_is_reported_on_write_and_read(self, client, model_dir):
+        """engine_gaps rides every read, not only the write: the template that
+        needed it (2026-11-19) was a hand-written sidecar no write ever saw."""
+        assert client.get(URL).json()["engine_gaps"] == []
+        lacking = "{% for m in messages %}{% if m.content.isalpha() %}{{ m.content }}{% endif %}{% endfor %}"
+        put = client.put(URL, json={"template": lacking})
+        assert put.status_code == 200, put.text
+        assert put.json()["engine_gaps"] == [".isalpha() at line 1"]
+        assert client.get(URL).json()["engine_gaps"] == [".isalpha() at line 1"]
+
     def test_delete_without_an_override_is_404_not_a_silent_success(
         self, client, model_dir
     ):

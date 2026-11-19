@@ -737,21 +737,13 @@ open; each names what would settle it.
   which models advertise vision. Done when an import failure is
   distinguished from an unregistered model_type, or the docs stop claiming
   the stronger guarantee.
-- [ ] **Nothing warns about a gguf template that calls a method llama-server's
-  engine lacks** (P3, 2026-11-19; sharp_edges "gguf chat template ladder").
-  The owner's Qwen3.8 27B sidecar called `.isalpha()` and was a 500 on every
-  `/word` message. Three gaps, each enough on its own: the override validator
-  (`chat_template_files.validate`) renders with jinja2, which has every Python
-  string method; its probe shapes would not reach a branch like that one
-  anyway; and it only sees override writes, while this was a hand-written
-  sidecar. llama-server's `/apply-template` cannot fill in: it renders only the
-  template the process was spawned with (`meta->chat_params`). What would
-  work: a static scan (jinja2's parser, every `x.method(...)` call) against
-  the build's engine built-ins, as a table pinned to the built tree's
-  `common/jinja/value.cpp` by a test (the `NON_CAUSAL_IMAGE_PROJECTORS`
-  pattern), warned at spawn for whichever rung wins and disclosed by the
-  validator on gguf writes. Cheaper, narrower: upstream the missing string
-  methods to llama.cpp.
+- [x] **Warn about a gguf template that calls a method llama-server's engine lacks
+  -- DONE v2.0.254** (2026-11-19): `chat_template_files.llama_engine_gaps`, a static
+  scan of method calls against `LLAMA_JINJA_METHODS` (pinned to the build's
+  `common/jinja/value.cpp` by `test_jinja_method_table_matches_the_build`), warned
+  at spawn for whichever rung wins and reported as `engine_gaps` on every
+  template-editor read. Still open: filters and tests are not checked, and a name
+  the engine has on some type passes on any type.
 
 ## Chat reliability (2026-08-13, plan: `plan_chat_orchestration.md`)
 

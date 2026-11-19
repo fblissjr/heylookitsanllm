@@ -501,7 +501,10 @@ def _template_view(request: Request, model_id: str):
     stable, note = chat_template_files.prefix_stability(view.template)
     sources = chat_template_files.template_sources(
         model_id, model.provider, config_dict(model.config), view.template)
+    gaps = (chat_template_files.llama_engine_gaps(view.template)
+            if model.provider == "gguf" else None)
     return ChatTemplateResponse(**asdict(view), prefix_stable=stable, prefix_note=note,
+                                engine_gaps=None if gaps is None else list(gaps),
                                 sources=sources)
 
 

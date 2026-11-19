@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-11-19, v2.0.253, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
+Last updated: 2026-11-19, v2.0.254, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md) (triaged 2026-09-25 and refreshed 2026-10-30;
@@ -16,6 +16,7 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
+| v2.0.254 gguf template engine-gap scan (`chat_template_files.llama_engine_gaps`) | unit + contract `1663 passed` (four new, the build pin ran against the build tree); scan over local templates: only the owner's pre-fix backups flagged, 14 of 15 embedded GGUF templates clean, 1 unparsed. NOT run: browser E2E (harness pending migration since v2.0.240), `tests/smoke/`, `scripts/perf_ab.py`, `tests/eval/` | 2026-11-19 |
 | v2.0.253 live smoke (all three arms) and `gguf_probe.py` fix | `tests/smoke/run.py` `PASS 93/93`, `6 skipped` (mlx-text, mlx-vision, gguf covered; thinking depth uncovered on both MLX arms, depth-capable models not pinned), on v2.0.252's engine code; unit + contract `1659 passed`; `gguf_probe.py` with a `/word` prompt on a Qwen3.8 27B GGUF: a 500 before the template fix, both generations after. NOT run: `scripts/perf_ab.py`, `tests/eval/`, `tests/e2e` | 2026-11-19 |
 | v2.0.252 APC byte budget (`vlm_engine.APC_MEMORY_SHARE`) | unit + contract `1659 passed`; `chain_probe.py --model gemma-4-31B-it-8bit` `5/5` hops `match=True`, `restored=reused` (`internal/claude/chain_probe/chain_gemma-4-31B-it-8bit_20261119-134452.json`); APC occupancy probe before/after on both gemma-4 models (`internal/claude/perf/apc_budget_gemma4_2026-11-19/`). NOT run: `scripts/perf_ab.py`, `tests/smoke/`, `tests/eval/`, `tests/e2e` | 2026-11-19 |
 | v2.0.251 unit + contract (`pytest tests/unit/ tests/contract/`) & static/sync guards | `1659 passed`; `scripts/vendor_frontend.py --check` & `scripts/check_version_sync.py` clean. NOT run: `scripts/perf_ab.py`, `tests/smoke/`, `tests/eval/`, `tests/e2e` | 2026-11-16 |

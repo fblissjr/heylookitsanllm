@@ -101,6 +101,23 @@ def test_non_causal_table_matches_the_build():
 
 
 @pytest.mark.unit
+def test_jinja_method_table_matches_the_build():
+    """chat_template_files.LLAMA_JINJA_METHODS is the union of the build's
+    per-type get_builtins() maps (llama-server's template engine); a build
+    that adds or drops a method must move the table with it."""
+    from heylook_llm.chat_template_files import LLAMA_JINJA_METHODS
+
+    src = (_build_tree() / "common/jinja/value.cpp").read_text()
+    bodies = re.findall(r"const func_builtins & value_\w+_t::get_builtins\(\) const \{(.*?)\n\}\n",
+                        src, re.S)
+    assert bodies, "no get_builtins() maps found in common/jinja/value.cpp"
+    found = {name for body in bodies for name in re.findall(r'^ {8}\{"(\w+)",', body, re.M)}
+    assert found == set(LLAMA_JINJA_METHODS), (
+        f"the build's template engine changed (added {sorted(found - LLAMA_JINJA_METHODS)}, "
+        f"dropped {sorted(LLAMA_JINJA_METHODS - found)}); update LLAMA_JINJA_METHODS")
+
+
+@pytest.mark.unit
 def test_spec_rule_matches_the_build():
     """gguf_metadata.spec_type_from_gguf is a copy of llama.cpp's
     common_speculative_types_from_gguf; the pieces of that rule it copies must

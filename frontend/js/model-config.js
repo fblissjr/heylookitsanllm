@@ -299,6 +299,15 @@ function refusalNote(view) {
 // The server's prefix-stability lint (plan W3): a template whose next turn
 // does not extend this turn's prompt costs every turn its prompt cache.
 // A warning, never a block: the template still works, just slowly.
+function engineGapNote(view) {
+  // gguf only: method calls llama-server's own template engine lacks. Each is
+  // a 500 only on the request whose input reaches it, so the template looks
+  // fine until then -- which is why the server reports it on every read.
+  const gaps = view?.engine_gaps ?? [];
+  if (!gaps.length) return '';
+  return ` llama-server cannot run part of this template, and a request that reaches it fails: ${gaps.join('; ')}.`;
+}
+
 function stabilityNote(view) {
   if (view?.prefix_stable !== false) return '';
   return ` This template breaks multi-turn prompt caching: ${view.prefix_note}.`;
@@ -431,15 +440,15 @@ function buildChatTemplatePanel({ model, draft, onDraftChange }) {
     } else if (view.stale) {
       // stale is null for an unloaded model, which is NOT "up to date" --
       // only an explicit true means the running process differs from disk.
-      say(`Edited since this model loaded. Reload it to apply.${refusalNote(view)}${stabilityNote(view)}`, 'warn');
-    } else if (refusalNote(view) || stabilityNote(view)) {
+      say(`Edited since this model loaded. Reload it to apply.${refusalNote(view)}${engineGapNote(view)}${stabilityNote(view)}`, 'warn');
+    } else if (refusalNote(view) || engineGapNote(view) || stabilityNote(view)) {
       // A write that SUCCEEDED can still have installed a template that raises
       // on shapes this app sends. The server validated and told us which; if
       // nothing paints that, the operator sees "saved", reloads, and every
       // conversation carrying a system prompt 500s from llama-server turning a
       // raised jinja exception into one. This was computed, returned, and
       // rendered nowhere.
-      say(`${refusalNote(view) ? 'Saved.' : ''}${refusalNote(view)}${stabilityNote(view)}`.trim(), 'warn');
+      say(`${refusalNote(view) ? 'Saved.' : ''}${refusalNote(view)}${engineGapNote(view)}${stabilityNote(view)}`.trim(), 'warn');
     } else {
       say('');
     }
