@@ -106,6 +106,27 @@ raised jinja exception is a 500 from llama-server. Both still reject a system
 message appearing mid-conversation, so "unsloth's is permissive" is false in
 general: try the shape, do not assume it.
 
+llama-server's template engine is llama.cpp's own (`common/jinja`; minja is
+no longer vendored), not jinja2, and it implements a subset of Python's string
+methods. A template that calls a missing one fails only on the inputs that
+reach the call (2026-11-19, build b04489040): the owner's own Qwen3.8 27B
+sidecar template has a block that turns a `/word` in the last user message
+into a tool, and it tested the word's first letter with `.isalpha()`, which
+the engine lacks. Every message with a `/word` was a 500 and every other
+message rendered, so the template looked fine until a user typed a slash
+command. The same template renders on MLX, where jinja2 has the method, and
+the operator-override validator (`chat_template_files.py`) renders with
+jinja2 too, so neither would have caught it. The fix was one line in that
+file: `.lower() != .upper()` tests for a letter with methods both engines
+have. To trust a template on gguf, render it through llama-server's
+`/apply-template` with input that reaches each branch.
+
+A sidecar beside a GGUF is not necessarily the publisher's: GGUF repos embed
+their template, and this one was the owner's, copied into several model
+folders. The first fix took it for vendor content and wrote an operator
+override, which would have silently shadowed every later edit to the owner's
+file. Ask whose a sidecar is before routing a fix around it.
+
 ### gguf context allocation
 
 (v1.79.61) `ctx_size` absent means llama-server's `-c 0`, i.e. the model's

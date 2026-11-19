@@ -171,6 +171,11 @@ def run_gen(p, args, label: str, extra: dict) -> tuple:
         **({} if args.min_p is None else {"min_p": args.min_p}),
         **extra})))
     final = chunks[-1]
+    # The cache and speculative reports ride whichever chunk the engine stamps
+    # them on (GenerationChunk docstring); latch the latest, as
+    # perf_collector.ChunkTelemetry.absorb does, rather than read the last chunk.
+    cache = next((c.cache for c in reversed(chunks) if c.cache is not None), None)
+    spec = next((c.spec for c in reversed(chunks) if c.spec is not None), None)
     thinking = sum(len(c.thinking or "") for c in chunks)
     # prompt= is load-bearing, not decoration: without it a SILENTLY TRUNCATED
     # prompt (ctx smaller than the input) looks like a legitimate fast run, and
@@ -178,12 +183,13 @@ def run_gen(p, args, label: str, extra: dict) -> tuple:
     print(f"[probe] {label}: {time.time()-t:.1f}s | prompt={final.prompt_tokens} "
           f"| gen={final.generation_tokens} tok "
           f"@ {final.generation_tps:.1f} tok/s | thinking={thinking} ch | "
-          f"cached={final.cached_tokens} | draft={final.draft_accepted}/{final.draft_tokens}")
+          f"cached={cache.cached_tokens if cache else 'n/a'} | "
+          f"draft={f'{spec.accepted}/{spec.drafted}' if spec else 'n/a'}")
     # THINKING COUNTS AS OUTPUT for the A/B comparison. Comparing `text` alone
     # silently reports "no effect" for any model that spends the whole budget
     # reasoning: both arms come back empty and two empty strings are equal.
     # That is a false negative on the one check the A/B exists to make.
-    return final, "".join((c.thinking or "") + (c.text or "") for c in chunks)
+    return final, spec, "".join((c.thinking or "") + (c.text or "") for c in chunks)
 
 
 def apply_template(base: str, kwargs: dict | None) -> str:
@@ -318,11 +324,11 @@ def main() -> None:
             for label, scale in (("lora-off", 0.0), ("lora-on", 1.0)):
                 set_lora_scales(base, n, scale)
                 runs[label] = run_gen(p, args, label, {})
-            off_f, off_text = runs["lora-off"]
-            on_f, on_text = runs["lora-on"]
+            off_f, off_spec, off_text = runs["lora-off"]
+            on_f, on_spec, on_text = runs["lora-on"]
 
-            def acc(f) -> float | None:
-                return f.draft_accepted / f.draft_tokens * 100 if f.draft_tokens else None
+            def acc(spec) -> float | None:
+                return spec.accepted / spec.drafted * 100 if spec and spec.drafted else None
 
             def fmt(v) -> str:
                 return "n/a" if v is None else f"{v:.1f}%"
@@ -331,7 +337,7 @@ def main() -> None:
                      f"{(on_f.generation_tps - off_f.generation_tps) / off_f.generation_tps * 100:+.1f}%")
             print(f"[probe] A/B tok/s: off={off_f.generation_tps:.1f} "
                   f"on={on_f.generation_tps:.1f} ({delta})")
-            a_off, a_on = acc(off_f), acc(on_f)
+            a_off, a_on = acc(off_spec), acc(on_spec)
             if a_off is not None or a_on is not None:
                 print(f"[probe] A/B draft acceptance: off={fmt(a_off)} on={fmt(a_on)}"
                       "  (a collapse means the draft path is UNADAPTED)")

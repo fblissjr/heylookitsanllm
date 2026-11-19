@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.253] - 2026-11-19
+
+### Fixed
+- **`scripts/gguf_probe.py` generation step, broken since v2.0.78.** It read `cached_tokens`, `draft_accepted` and `draft_tokens` off the last `GenerationChunk`, and those moved into the per-request `cache` and `spec` reports in v2.0.78, so every run that generated ended in an `AttributeError` after the template checks. `run_gen` now latches the latest `CacheReport` and `SpecReport` from the chunks (as `perf_collector.ChunkTelemetry.absorb` does), and `--lora-ab` reads draft acceptance from the `SpecReport`.
+- Docs: llama-server's template engine is llama.cpp's own and lacks some Python string methods. The owner's Qwen3.8 27B sidecar template's `/word` block called `.isalpha()`, so any user message with a slash command was a 500 from llama-server, while MLX (jinja2) rendered it. Fixed in the owner's template files (local, not tracked): one line now tests `.lower() != .upper()`. Recorded in `docs/architecture/sharp_edges.md` ("gguf chat template ladder", including that a sidecar beside a GGUF may be the owner's, not the publisher's) and `.claude/rules/gguf.md`; `docs/project/TODO.md` (open: the override validator renders with jinja2, so it would accept such a template).
+
+### Verification
+- `uv run python scripts/gguf_probe.py <qwen3.8 27b gguf dir> --prompt "Please run /review on this file." --max-tokens 16`: before the fix, `HTTP Error 500` with `Callee is not a function: got Undefined (hint: 'isalpha')`; after it, both generations ran and the probe printed its `cached=` and `draft=` fields.
+- A scratch render check through the probe's own provider and llama-server's `/apply-template` on the fixed sidecar: `/review` still becomes a tool; a message without a slash, a `/2026` and a `/tmp/x` path add none. The same three cases pass through transformers' `apply_chat_template` (the MLX path) on both of the owner's template variants.
+- `uv run python tests/smoke/run.py --server <isolated dev server>`: `PASS 93/93 checks`, `6 skipped`, all three arms covered (mlx-text `Qwen3-0.6B-8bit-mlx`, mlx-vision `Qwen3.5-0.8B-MLX-8bit`, gguf a Qwen3.8 27B GGUF build, run while a then-temporary override held the same fixed template body). This is the smoke run v2.0.252 left uncovered; the engine code is v2.0.252's. Unmet Phase 3 precondition: thinking depth is uncovered on both MLX arms (the depth-capable models were not pinned).
+- `uv run pytest tests/unit/ tests/contract/ -q`: `1659 passed`.
+- `NOT run`: `scripts/perf_ab.py` (no speed claim), `tests/eval/`, `tests/e2e`, `scripts/vendor_frontend.py --check`.
+
 ## [2.0.252] - 2026-11-19
 
 ### Fixed

@@ -736,6 +736,14 @@ open; each names what would settle it.
   which models advertise vision. Done when an import failure is
   distinguished from an unregistered model_type, or the docs stop claiming
   the stronger guarantee.
+- [ ] **The override validator accepts gguf templates llama-server cannot run**
+  (P3, 2026-11-19): `chat_template_files.validate` renders with jinja2, which
+  has every Python string method, while llama-server's own engine lacks some
+  (`isalpha` at b04489040; sharp_edges "gguf chat template ladder"). The
+  Qwen3.8 27B GGUF sidecars' `/word` block would have passed validation and
+  then been a 500 on the first slash command. Done when a gguf override is
+  rendered through a resident llama-server's `/apply-template` before it is
+  written, or the editor says that validation is jinja2's.
 
 ## Chat reliability (2026-08-13, plan: `plan_chat_orchestration.md`)
 
