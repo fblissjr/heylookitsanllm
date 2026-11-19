@@ -1714,6 +1714,28 @@ found, each silent:
   premise: `chain_probe.py` made its "fresh" run fresh by sending one
   unrelated request, which no longer evicts anything, so it clears the cache
   instead and fails if a fresh run reports reuse.
+- **The byte budget was mlx-vlm's, one size for every model.** "Bounded first
+  by the byte budget" above was reasoned, and on gemma-4 it was wrong for one
+  model and right for the other. mlx-vlm caps the store at
+  `min(8 GiB, a tenth of the working set)`, and a checkpoint is a copy of
+  every layer's cache, so a dense model with four times a MoE model's KV per
+  token (gemma-4 31B vs 26B-A4B: twice the sliding layers at twice the KV
+  heads) filled the cap with about one request's snapshots while the MoE
+  model reached the entry count. Going back to an earlier chat restored only
+  the system prompt on the dense model and re-prefilled the rest, at its much
+  slower prefill (found 2026-11-19 from another agent's API benchmark, where
+  the 31B also lost small reuses the 26B kept; [measured]
+  `internal/claude/perf/apc_budget_gemma4_2026-11-19/`, probe script
+  alongside). heylook now passes its own budget, `APC_MEMORY_SHARE` of the
+  working set, which is safe because APC checks live headroom against its
+  reserve before every store and restore; `APC_MEMORY_MAX_GB` in the
+  environment still wins. `test_apc_takes_our_overrides_and_no_disk` fails if
+  the override stops reaching mlx-vlm, which would put every model back on
+  the 8 GiB cap with nothing else failing. Still open: a sliding-layer
+  snapshot keeps the window plus most of the last prefill chunk
+  (`RotatingKVCache._update_concat`), and a restore reads only the last
+  window's worth (`BatchRotatingKVCache.merge`), so chunk-boundary snapshots
+  carry budget that is never used (TODO.md).
 - **The detokenizer.** mlx-vlm's BPE streaming detokenizer flushes only on a
   token that starts with a space, so a count, code or CJK text arrived in one
   lump at the end; the engine streams through mlx-lm's (vendored in stage 3

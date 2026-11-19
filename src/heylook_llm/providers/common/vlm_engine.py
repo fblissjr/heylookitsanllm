@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import os
 import time
 from typing import Any, Generator, Iterable, Optional
 
@@ -56,23 +57,63 @@ APC_CHECKPOINT_CAPTURES = 3
 # How many snapshots the store keeps across requests. mlx-vlm spends one
 # number on both (its checkpoint_entries), so at the spike's setting every
 # request evicted the last conversation's states and a new chat never found
-# its system prompt. The store's byte budget (APCManager.memory_max_bytes)
-# also bounds it; that it binds before this count on long contexts is
-# reasoned from snapshot sizes, not measured. Measured 2026-09-24 (sweep in
+# its system prompt. The store's byte budget (APC_MEMORY_SHARE) also bounds
+# it. Measured 2026-09-24 (sweep in
 # internal/claude/improve/archive/runs-2026-09-24): mlx-vlm re-counts every retained
 # snapshot's bytes several times per request, so each entry costs every
 # request a little CPU; this keeps a few conversations' snapshots.
 APC_CHECKPOINT_ENTRIES = 16
+# The store's byte budget, as a share of the Metal working set. mlx-vlm's own
+# is min(8 GiB, a tenth of the working set) for every model, but a snapshot
+# is a copy of every layer's cache, so its size follows the model's KV layout:
+# on a dense model with four times the KV per token of a MoE one (gemma-4 31B
+# vs 26B-A4B) the 8 GiB held about one request's snapshots, and going back to
+# an earlier chat re-prefilled it on the dense model only (measured
+# 2026-11-19, internal/claude/perf/apc_budget_gemma4_2026-11-19/). At this
+# share APC_CHECKPOINT_ENTRIES binds first at ordinary prompt lengths. A
+# larger budget cannot run the machine out of memory: APC still checks live
+# headroom against its reserve before every store and restore and evicts to
+# keep it (APCManager._make_room). What it costs is what an idle store holds.
+# Never below mlx-vlm's own default, since the share exceeds a tenth.
+APC_MEMORY_SHARE = 0.25
+# mlx-vlm's own override; when it is set, heylook leaves the budget to it.
+APC_MEMORY_ENV = "APC_MEMORY_MAX_GB"
+# Where engine.cache.memory_budget_bytes comes from (both describers).
+APC_MEMORY_SOURCE = (f"vlm_engine.APC_MEMORY_SHARE ({APC_MEMORY_SHARE:g}) of the Metal "
+                     f"working set; {APC_MEMORY_ENV} in the environment overrides it")
+
+
+def apc_memory_budget_gb(working_set_bytes: Any) -> Optional[float]:
+    """The byte budget heylook gives a model's prefix cache, in GiB, or None
+    to leave it to mlx-vlm: when ``APC_MEMORY_MAX_GB`` is set in the
+    environment (an operator's override) or the working set is unknown."""
+    if os.environ.get(APC_MEMORY_ENV) is not None:
+        return None
+    if not isinstance(working_set_bytes, int) or working_set_bytes <= 0:
+        return None
+    return working_set_bytes * APC_MEMORY_SHARE / 2**30
+
+
+def _metal_working_set_bytes() -> Optional[int]:
+    """The working set mlx-vlm sizes its own budget from."""
+    try:
+        return int(mx.device_info()["max_recommended_working_set_size"])
+    except (AttributeError, RuntimeError, KeyError, TypeError, ValueError):
+        return None
 
 
 def make_apc_manager():
     """A per-model, in-memory-only APC store."""
     from mlx_vlm import apc as _apc
 
-    return _apc.APCManager(disk=None, overrides={
+    overrides: dict[str, Any] = {
         "checkpoint_interval_tokens": APC_CHECKPOINT_INTERVAL_TOKENS,
         "checkpoint_entries": APC_CHECKPOINT_ENTRIES,
-    })
+    }
+    budget = apc_memory_budget_gb(_metal_working_set_bytes())
+    if budget is not None:
+        overrides["memory_max_gb"] = budget
+    return _apc.APCManager(disk=None, overrides=overrides)
 
 
 def capture_lengths(final: int, *, interval: int, block_size: int, captures: int,

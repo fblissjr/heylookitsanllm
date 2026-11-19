@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.252] - 2026-11-19
+
+### Fixed
+- **MLX prefix cache: the byte budget is heylook's, sized per machine, not mlx-vlm's one-size cap.** mlx-vlm caps its store (APC) at `min(8 GiB, a tenth of the Metal working set)` for every model, and a checkpoint copies every layer's cache, so on `gemma-4-31B-it-8bit` (four times the 26B-A4B's KV per token) the cap held about one request's snapshots: going back to an earlier chat restored only the system prompt and re-prefilled the rest, while `gemma-4-26B-A4B-it-8bit` restored the conversation. [`vlm_engine.make_apc_manager`](src/heylook_llm/providers/common/vlm_engine.py) now passes `memory_max_gb` = `APC_MEMORY_SHARE` of the working set (never below mlx-vlm's default); APC still checks live headroom against its reserve before every store and restore. `APC_MEMORY_MAX_GB` in the server's environment still overrides it. `engine.cache.memory_budget_bytes` names the new source (`vlm_engine.APC_MEMORY_SOURCE`, both describers).
+- Docs: `docs/wiki/performance_optimizations.md` §2.1, `docs/frontend_v3_spec.md` §4 (`memory_budget_bytes`), `docs/architecture/sharp_edges.md` (Prompt cache), `.claude/rules/mlx.md`, `docs/project/TODO.md` (open: trim sliding-layer snapshots to the window; unexplained 31B stalls outside generation time).
+
+### Verification
+- `uv run pytest tests/unit/ tests/contract/ -q`: `1659 passed` (`test_apc_takes_our_overrides_and_no_disk` now pins the budget and the environment override).
+- `uv run python scripts/chain_probe.py --model gemma-4-31B-it-8bit`: `5/5` hops `match=True`, `restored=reused` (`internal/claude/chain_probe/chain_gemma-4-31B-it-8bit_20261119-134452.json`).
+- APC occupancy probe on both gemma-4 models, before and after (`internal/claude/perf/apc_budget_gemma4_2026-11-19/`).
+- `scripts/check_version_sync.py`: clean. `scripts/vendor_frontend.py --check`: `marked` `18.2.0` and `dompurify` `3.4.18` match the manifest; `Behind: marked` (`18.2.1` published), not updated.
+- `NOT run`: `scripts/perf_ab.py`, `tests/smoke/` (all three arms uncovered: `mlx-text`, `mlx-vision`, `gguf`), `tests/eval/`, `tests/e2e`.
+
 ## [2.0.251] - 2026-11-16
 
 ### Changed

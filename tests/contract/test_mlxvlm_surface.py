@@ -358,9 +358,22 @@ class TestVlmEngineSurface:
         assert isinstance(mgr._memory_headroom(), int)
         assert isinstance(mgr.memory_reserve_bytes, int)
 
-    def test_apc_takes_our_overrides_and_no_disk(self):
+    def test_apc_takes_our_overrides_and_no_disk(self, monkeypatch):
         from heylook_llm.providers.common.vlm_engine import (
-            APC_CHECKPOINT_ENTRIES, APC_CHECKPOINT_INTERVAL_TOKENS, make_apc_manager)
+            APC_CHECKPOINT_ENTRIES, APC_CHECKPOINT_INTERVAL_TOKENS, APC_MEMORY_ENV,
+            APC_MEMORY_SHARE, make_apc_manager)
+
+        # The byte budget is ours (a share of the working set), not mlx-vlm's
+        # 8 GiB ceiling: an override key mlx-vlm stops reading would put every
+        # model back on that ceiling with nothing failing. An operator's
+        # APC_MEMORY_MAX_GB still wins.
+        monkeypatch.delenv(APC_MEMORY_ENV, raising=False)
+        mgr = make_apc_manager()
+        assert mgr._working_set_bytes, "mlx-vlm no longer reads the working set it sizes from"
+        assert mgr.memory_max_bytes == int(mgr._working_set_bytes * APC_MEMORY_SHARE)
+        monkeypatch.setenv(APC_MEMORY_ENV, "3")
+        assert make_apc_manager().memory_max_bytes == 3 * 2**30
+        monkeypatch.delenv(APC_MEMORY_ENV)
 
         mgr = make_apc_manager()
         assert mgr.disk is None

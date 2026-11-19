@@ -772,7 +772,8 @@ cache, thinking, speculative, decoding, image, steering}`.
   block mode), `image_reuse` (true on checkpoint models), `checkpoint_interval`,
   `checkpoint_captures` (snapshots one request takes near its end, plus one at the end
   of a leading system prompt), `checkpoint_entries` (snapshots kept across requests,
-  under the byte budget), `memory_budget_bytes` (mlx-vlm's automatic budget), `disk`
+  under the byte budget), `memory_budget_bytes` (`vlm_engine.APC_MEMORY_SHARE` of the
+  Metal working set, v2.0.252; `APC_MEMORY_MAX_GB` in the server's environment overrides it), `disk`
   (false); `reuse_mode`, `image_reuse` and `memory_budget_bytes` are `unknown` until
   load, then `observed`. What a request actually reused is `usage` and
   `performance.cache`, not this.

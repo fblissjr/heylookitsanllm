@@ -287,9 +287,10 @@ def _cache_static() -> dict:
                                             "prompt ends, found from the template in force")),
         "checkpoint_entries": Fact(value=vlm_engine.APC_CHECKPOINT_ENTRIES, provenance="derived",
                                    source=("vlm_engine.APC_CHECKPOINT_ENTRIES: snapshots kept across "
-                                           "requests; the byte budget evicts before this count")),
+                                           "requests; on long prompts the byte budget can evict "
+                                           "before this count")),
         "memory_budget_bytes": Fact(provenance="unknown",
-                                    source="mlx-vlm's automatic budget, sized from the Metal working set at load"),
+                                    source=vlm_engine.APC_MEMORY_SOURCE + ", sized at load"),
         "disk": Fact(value=False, provenance="derived",
                      source="the prefix cache's disk tier is off: it would write prompt-derived state to disk"),
     }

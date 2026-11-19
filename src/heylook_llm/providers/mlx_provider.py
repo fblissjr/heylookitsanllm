@@ -1154,7 +1154,7 @@ class MLXProvider(BaseProvider):
                         "disk tier that would serve them is off"))
             cache["memory_budget_bytes"] = Fact(
                 value=int(self._apc.memory_max_bytes), provenance="observed",
-                source="mlx-vlm's automatic prefix-cache budget, sized from the Metal working set")
+                source=vlm_engine.APC_MEMORY_SOURCE)
         return Observed(loaded_template=self.loaded_chat_template, cache=cache,
                         decoding=decoding, speculative={"in_force": self._spec_in_force()})
 

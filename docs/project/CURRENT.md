@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-11-16, v2.0.251, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
+Last updated: 2026-11-19, v2.0.252, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md) (triaged 2026-09-25 and refreshed 2026-10-30;
@@ -16,6 +16,7 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
+| v2.0.252 APC byte budget (`vlm_engine.APC_MEMORY_SHARE`) | unit + contract `1659 passed`; `chain_probe.py --model gemma-4-31B-it-8bit` `5/5` hops `match=True`, `restored=reused` (`internal/claude/chain_probe/chain_gemma-4-31B-it-8bit_20261119-134452.json`); APC occupancy probe before/after on both gemma-4 models (`internal/claude/perf/apc_budget_gemma4_2026-11-19/`). NOT run: `scripts/perf_ab.py`, `tests/smoke/`, `tests/eval/`, `tests/e2e` | 2026-11-19 |
 | v2.0.251 unit + contract (`pytest tests/unit/ tests/contract/`) & static/sync guards | `1659 passed`; `scripts/vendor_frontend.py --check` & `scripts/check_version_sync.py` clean. NOT run: `scripts/perf_ab.py`, `tests/smoke/`, `tests/eval/`, `tests/e2e` | 2026-11-16 |
 | v2.0.250 unit + contract (`pytest tests/unit/ tests/contract/`) | `1658 passed` | 2026-11-16 |
 | v2.0.250 `scripts/chain_probe.py --model gemma-4-26B-A4B-it-8bit` | `5/5` hops `match=True`, `restored=reused` (`internal/claude/chain_probe/chain_gemma-4-26B-A4B-it-8bit_20261116-145810.json`) | 2026-11-16 |
