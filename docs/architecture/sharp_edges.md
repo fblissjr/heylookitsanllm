@@ -1779,6 +1779,17 @@ found, each silent:
   reflects buffer fill rather than sequence offset), trims rotating keys/values
   to `max_size` (preserving `keep` sink tokens on `RotatingKVCache`), and hands
   zero-copy single-row views to `store_exact_cache` (`internal/claude/perf/apc_fixes_2026-11-19/`).
+- **Single-row batch restore avoids double copy and per-layer syncs (`PATCH_RESTORE_BATCH`, v2.0.256).**
+  Because drafted generators keep batch caches (excluded from `#2356`), upstream
+  `APCCoordinator._merge_and_release_cache_rows` re-allocated `mx.zeros`
+  buffers and scatter-copied every layer that `lookup_exact_cache` had already
+  cloned, discarded pre-reserved `KVCache` capacity, and ran one blocking
+  `mx.eval()` per layer. Generator-scoped `PATCH_RESTORE_BATCH` in
+  `mlx_vlm_patches.py` wraps `RESTORE_MERGE` on drafted unquantized checkpoint
+  generators with single-row `Batch*` views (preserving `KVCache` capacity and
+  clearing the caller's temporary `warm_cache` refs for CoW refcount 1) under
+  one batched `mx.eval`, while keeping `prepare_prefill` memory admission intact
+  (`internal/claude/perf/apc_fixes_2026-11-19/`).
 - **The detokenizer.** mlx-vlm's BPE streaming detokenizer flushes only on a
   token that starts with a space, so a count, code or CJK text arrived in one
   lump at the end; the engine streams through mlx-lm's (vendored in stage 3

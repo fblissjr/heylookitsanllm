@@ -603,10 +603,17 @@ class TestCarriedPatches:
                                  suffix_is_text_only=lambda _: True,
                                  prefix_has_media=lambda _: False)
 
-        # The rule leaves these generators on batch caches, as mlx-vlm does
-        # cold: a drafter, KV quantization, a model without make_cache.
-        for over in ({"draft_model": object(), "draft_kind": "mtp"}, {"kv_bits": 8},
-                     {"model": SimpleNamespace()}, {"apc": None}):
+        # The rule leaves non-#2356 generators returning False so callers know #2356
+        # did not bind: drafted checkpoint generators receive PATCH_RESTORE_BATCH
+        # instead, while KV quantization, missing make_cache, or disabled APC
+        # leave _merge_and_release_cache_rows untouched.
+        drafted_bg = generator(draft_model=object(), draft_kind="mtp")
+        assert not mlx_vlm_patches.apply_to(drafted_bg)
+        assert not mlx_vlm_patches.apply_to(drafted_bg)
+        assert getattr(getattr(drafted_bg.apc, name), "_heylook_patch", None) == (
+            mlx_vlm_patches.PATCH_RESTORE_BATCH
+        )
+        for over in ({"kv_bits": 8}, {"model": SimpleNamespace()}, {"apc": None}):
             bg = generator(**over)
             assert not mlx_vlm_patches.apply_to(bg), over
             if bg.apc is not None:
@@ -855,6 +862,203 @@ class TestCarriedPatches:
         brot_rot.offset, brot_rot._idx, brot_rot.rotated = mx.array([20]), 8, True
         assert custom_coord.store_checkpoint(tokens_u, [brot_rot], batch_idx=0) is True
         assert fallback_calls == [1, 0, 0]
+
+    def test_batch_restore_carry_wraps_single_row_without_double_copy(self, caplog):
+        """PATCH_RESTORE_BATCH binds per drafted checkpoint generator, wraps
+        single-row snapshots into Batch* caches with one batched eval, preserves
+        pre-reserved KVCache capacity, matches upstream numerically, and falls
+        back or stands down cleanly."""
+        import logging
+        from types import SimpleNamespace
+
+        import mlx.core as mx
+        from mlx_vlm import apc as _apc
+        from mlx_vlm.apc_coordinator import APCCoordinator
+        from mlx_vlm.models.cache import (
+            ArraysCache,
+            BatchKVCache,
+            BatchRotatingKVCache,
+            KVCache,
+            RotatingKVCache,
+        )
+        from heylook_llm.providers.common import mlx_vlm_patches
+
+        # Stand-down check on altered signature.
+        bad_coord = SimpleNamespace(_merge_and_release_cache_rows=lambda wrong: (None, 0))
+        with caplog.at_level(logging.WARNING):
+            assert not mlx_vlm_patches._patch_batch_restore(bad_coord)
+        assert any(mlx_vlm_patches.PATCH_RESTORE_BATCH in r.message for r in caplog.records)
+
+        class_method = APCCoordinator.__dict__[mlx_vlm_patches.RESTORE_MERGE]
+        model = SimpleNamespace(make_cache=lambda: [RotatingKVCache(max_size=8), KVCache()])
+        mgr = _apc.APCManager(
+            num_blocks=8, block_size=16, disk=None, overrides={"checkpoint_entries": 8}
+        )
+        bg = SimpleNamespace(
+            apc=mgr.coordinator(model),
+            model=model,
+            kv_bits=None,
+            draft_model=object(),
+            draft_kind="mtp",
+        )
+        assert mlx_vlm_patches.apply_to(bg) is False
+        assert getattr(bg.apc._merge_and_release_cache_rows, "_heylook_patch", None) == (
+            mlx_vlm_patches.PATCH_RESTORE_BATCH
+        )
+        assert APCCoordinator.__dict__[mlx_vlm_patches.RESTORE_MERGE] is class_method
+
+        # 1. Exact RotatingKVCache + pre-reserved KVCache parity & update equivalence.
+        base_rk = mx.broadcast_to(
+            mx.arange(8, dtype=mx.float32).reshape(1, 1, 8, 1), (1, 1, 8, 4)
+        )
+        base_rv = base_rk + 10.0
+        base_kk = mx.broadcast_to(
+            mx.arange(32, dtype=mx.float32).reshape(1, 1, 32, 1), (1, 1, 32, 4)
+        )
+        base_kv = base_kk + 50.0
+        mx.eval(base_rk, base_rv, base_kk, base_kv)
+
+        r_exact = RotatingKVCache(max_size=8)
+        r_exact.keys, r_exact.values = mx.array(base_rk), mx.array(base_rv)
+        r_exact.offset, r_exact._idx = 20, 8
+
+        kv_init = KVCache()
+        kv_init.keys, kv_init.values, kv_init.offset = mx.array(base_kk), mx.array(base_kv), 32
+
+        tokens = list(range(32))
+        assert mgr.store_exact_cache(tokens, [r_exact, kv_init])
+        source_entry = mgr._exact_cache[next(iter(mgr._exact_cache))].prompt_cache
+
+        hit_pat = bg.apc.lookup(
+            tokens + [99],
+            extra_hash=0,
+            safe_lookup_min=0,
+            suffix_is_text_only=lambda _: True,
+            prefix_has_media=lambda _: False,
+        )
+        hit_up = bg.apc.lookup(
+            tokens + [99],
+            extra_hash=0,
+            safe_lookup_min=0,
+            suffix_is_text_only=lambda _: True,
+            prefix_has_media=lambda _: False,
+        )
+        assert hit_pat["warm_cache"][1].keys.shape[2] >= 256  # reserved by lookup
+
+        before_tok = mgr.stats_snapshot()["restored_tokens"]
+        orig_warm = hit_pat["warm_cache"]
+        b_pat, pref_pat = bg.apc._merge_and_release_cache_rows(
+            [hit_pat], [hit_pat["prefix_len"]]
+        )
+        assert pref_pat == 32
+        assert all(x is None for x in orig_warm)
+        assert mgr.stats_snapshot()["restored_tokens"] == before_tok + 32
+
+        upstream_fn = bg.apc._merge_and_release_cache_rows._heylook_upstream
+        b_up, pref_up = upstream_fn([hit_up], [hit_up["prefix_len"]])
+        assert pref_pat == pref_up
+
+        assert type(b_pat[0]) is BatchRotatingKVCache
+        assert mx.array_equal(b_pat[0].keys, b_up[0].keys)
+        assert mx.array_equal(b_pat[0].values, b_up[0].values)
+        assert b_pat[0].offset.tolist() == b_up[0].offset.tolist()
+        assert b_pat[0].left_padding.tolist() == b_up[0].left_padding.tolist()
+        assert (b_pat[0]._idx, b_pat[0]._offset, b_pat[0].rotated) == (
+            b_up[0]._idx,
+            b_up[0]._offset,
+            b_up[0].rotated,
+        )
+
+        # KVCache preserves pre-reserved step capacity while keeping state/extract identical.
+        assert type(b_pat[1]) is BatchKVCache
+        assert b_pat[1].keys.shape[2] == 256 and b_up[1].keys.shape[2] == 32
+        for arr_p, arr_u in zip(b_pat[1].state, b_up[1].state):
+            assert mx.array_equal(arr_p, arr_u)
+        ext_p, ext_u = b_pat[1].extract(0), b_up[1].extract(0)
+        assert mx.array_equal(ext_p.keys, ext_u.keys) and ext_p.offset == ext_u.offset
+
+        k1 = mx.full((1, 1, 1, 4), 7.0, dtype=mx.float32)
+        v1 = mx.full((1, 1, 1, 4), 9.0, dtype=mx.float32)
+        r_upd_p = b_pat[0].update_and_fetch(k1, v1)
+        r_upd_u = b_up[0].update_and_fetch(k1, v1)
+        assert mx.array_equal(r_upd_p[0], r_upd_u[0]) and mx.array_equal(r_upd_p[1], r_upd_u[1])
+        k_upd_p = b_pat[1].update_and_fetch(k1, v1)
+        k_upd_u = b_up[1].update_and_fetch(k1, v1)
+        assert mx.array_equal(k_upd_p[0], k_upd_u[0]) and mx.array_equal(k_upd_p[1], k_upd_u[1])
+        assert b_pat[1].trim(1) == b_up[1].trim(1) == 1
+
+        # Source snapshot inside APCManager remains unmutated after Batch* writes.
+        assert mx.array_equal(source_entry[0].keys, base_rk)
+        assert mx.array_equal(source_entry[1].keys, base_kk)
+
+        # S=3 concat update + rotated/partially-filled RotatingKVCache + ArraysCache parity.
+        def make_extra_caches():
+            rr = RotatingKVCache(max_size=8)
+            rr.keys, rr.values = mx.array(base_rk), mx.array(base_rv)
+            rr.offset, rr._idx = 20, 3  # rotated mid-buffer
+            ap = ArraysCache(2)
+            ap.cache = [mx.ones((1, 2, 4)), None]
+            ae = ArraysCache(2)
+            ke = KVCache()
+            return [rr, ap, ae, ke]
+
+        wrapped = mlx_vlm_patches._single_row_batch_caches(make_extra_caches())
+        ref_merged, _ = _apc._merge_and_release_cache_rows([make_extra_caches()], [20])
+        k3 = mx.full((1, 1, 3, 4), 12.0, dtype=mx.float32)
+        v3 = mx.full((1, 1, 3, 4), 15.0, dtype=mx.float32)
+        assert mx.array_equal(
+            wrapped[0].update_and_fetch(k3, v3)[0],
+            ref_merged[0].update_and_fetch(k3, v3)[0],
+        )
+        assert mx.array_equal(wrapped[1].cache[0], ref_merged[1].cache[0])
+        assert wrapped[1].cache[1] is None and wrapped[1].left_padding is None
+        assert wrapped[2].left_padding.tolist() == ref_merged[2].left_padding.tolist() == [0]
+        assert type(wrapped[3]) is BatchKVCache and wrapped[3].keys is None
+
+        # Empty RotatingKVCache wraps identically to BatchRotatingKVCache.merge directly.
+        r_empty = RotatingKVCache(max_size=8)
+        wrapped_empty = mlx_vlm_patches._single_row_batch_caches([r_empty])[0]
+        ref_empty = BatchRotatingKVCache.merge([r_empty])
+        assert type(wrapped_empty) is BatchRotatingKVCache and wrapped_empty.keys is None
+        assert wrapped_empty.left_padding.tolist() == ref_empty.left_padding.tolist() == [0]
+        assert wrapped_empty.offset.tolist() == ref_empty.offset.tolist() == [0]
+
+        # 2. Fallbacks preserve warm_cache intact and delegate to upstream;
+        # APCAdmissionError propagates when prepare_prefill denies admission.
+        r_keep = RotatingKVCache(max_size=8, keep=2)
+        r_keep.keys, r_keep.values, r_keep.offset, r_keep._idx = (
+            mx.array(base_rk),
+            mx.array(base_rv),
+            8,
+            8,
+        )
+        fb_calls = []
+        custom_mgr = _apc.APCManager(num_blocks=8, block_size=16, disk=None)
+        fb_coord = SimpleNamespace(
+            enabled=True,
+            is_checkpoint=True,
+            manager=custom_mgr,
+            prepare_prefill=lambda *a, **kw: True,
+            _merge_and_release_cache_rows=lambda picks, prefix_lens, *, kv_quant_config=None: (
+                fb_calls.append((len(picks), kv_quant_config)) or ([], prefix_lens[0])
+            ),
+        )
+        assert mlx_vlm_patches._patch_batch_restore(fb_coord)
+
+        keep_pick = {"warm_cache": [r_keep]}
+        fb_coord._merge_and_release_cache_rows([keep_pick], [8])
+        assert keep_pick["warm_cache"][0] is r_keep  # unmutated before fallback
+        fb_coord._merge_and_release_cache_rows([{"warm_cache": [object()]}], [8])
+        fb_coord._merge_and_release_cache_rows([{"warm_cache": [kv_init]}, None], [32, 0])
+        fb_coord._merge_and_release_cache_rows(
+            [{"warm_cache": [kv_init]}], [32], kv_quant_config={"bits": 4}
+        )
+        assert fb_calls == [(1, None), (1, None), (2, None), (1, {"bits": 4})]
+
+        custom_mgr.memory_plan.lengths = [64]
+        fb_coord.prepare_prefill = lambda *a, **kw: False
+        with pytest.raises(_apc.APCAdmissionError, match="admission"):
+            fb_coord._merge_and_release_cache_rows([{"warm_cache": [kv_init]}], [32])
 
 
 

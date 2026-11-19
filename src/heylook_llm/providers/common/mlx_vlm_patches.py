@@ -35,6 +35,7 @@ import os
 # installed cleanly and never ran. TestCarriedPatches reads the site's source
 # for this name so a move cannot go quiet again.
 PATCH_2356 = "mlx-vlm#2356"
+PATCH_RESTORE_BATCH = "heylook#apc-b1-batch-restore"
 RESTORE_MERGE = "_merge_and_release_cache_rows"
 MERGE_ROWS_PARAMS = ("picks", "prefix_lens", "kv_quant_config")  # bound method
 
@@ -548,12 +549,167 @@ def plain_single_row_generator(bg) -> bool:
             and hasattr(getattr(bg, "model", None), "make_cache"))
 
 
+def _drafted_single_row_generator(bg) -> bool:
+    """Drafted checkpoint generators keep batch caches on restore, matching cold."""
+    drafting = (getattr(bg, "draft_model", None) is not None
+                and getattr(bg, "draft_kind", None) is not None)
+    return (drafting and getattr(bg, "kv_bits", None) is None
+            and hasattr(getattr(bg, "model", None), "make_cache"))
+
+
 def single_restored_row(picks, kv_quant_config) -> bool:
     """One row, restored, with its own warm cache (a checkpoint hit), no KV
     quantization. Block-mode hits carry no warm cache and still merge."""
     return (len(picks) == 1 and picks[0] is not None
             and kv_quant_config is None
             and picks[0].get("warm_cache") is not None)
+
+
+def _single_row_batch_caches(warm_cache):
+    """Wrap single-row APC snapshots into Batch* caches with one batched sync.
+
+    Upstream ``_merge_and_release_cache_rows`` re-allocates ``mx.zeros`` slabs,
+    copies every layer already cloned by ``lookup_exact_cache``, drops
+    pre-reserved ``KVCache`` capacity, and calls ``mx.eval`` once per layer.
+    Returns ``None`` on any unsupported layout without mutating ``warm_cache``.
+    """
+    if not warm_cache:
+        return None
+    import mlx.core as mx
+    from mlx_vlm.models.cache import (
+        ArraysCache,
+        BatchKVCache,
+        BatchRotatingKVCache,
+        KVCache,
+        RotatingKVCache,
+    )
+
+    out = []
+    eval_targets = []
+    for c in warm_cache:
+        t = type(c)
+        if t is RotatingKVCache:
+            max_size = int(getattr(c, "max_size", 0) or 0)
+            keep = int(getattr(c, "keep", 0) or 0)
+            if max_size <= 0 or keep != 0:
+                return None
+            length = int(c.size())
+            bc = BatchRotatingKVCache(max_size, [0])
+            if c.keys is not None and c.values is not None and length > 0:
+                if (
+                    int(c.keys.shape[0]) != 1
+                    or int(c.values.shape[0]) != 1
+                    or int(c.keys.shape[2]) < length
+                    or int(c.values.shape[2]) < length
+                ):
+                    return None
+                if int(c._idx) == int(c.keys.shape[2]) and int(c.keys.shape[2]) == length:
+                    k, v = c.keys, c.values
+                else:
+                    k = c._temporal_order(c.keys)[..., -length:, :]
+                    v = c._temporal_order(c.values)[..., -length:, :]
+                    eval_targets.extend((k, v))
+                bc.keys = k
+                bc.values = v
+                bc.offset = mx.array([int(c.offset)])
+                bc._idx = length
+                bc._offset = length
+            eval_targets.extend((bc.left_padding, bc.offset))
+            out.append(bc)
+        elif t is KVCache:
+            length = int(c.size())
+            bc = BatchKVCache([0])
+            if c.keys is not None and c.values is not None and length > 0:
+                if (
+                    int(c.keys.shape[0]) != 1
+                    or int(c.values.shape[0]) != 1
+                    or int(c.keys.shape[2]) < length
+                    or int(c.values.shape[2]) < length
+                ):
+                    return None
+                bc.keys = c.keys
+                bc.values = c.values
+                bc.offset = mx.array([length])
+                bc._idx = length
+            eval_targets.extend((bc.left_padding, bc.offset))
+            out.append(bc)
+        elif t is ArraysCache:
+            if (
+                c.batch_size != 1
+                or getattr(c, "is_speculating", False)
+                or getattr(c, "_left_padding", None) is not None
+                or getattr(c, "_lengths", None) is not None
+            ):
+                return None
+            for arr in c.cache:
+                if arr is not None and (
+                    not isinstance(arr, mx.array)
+                    or arr.ndim < 1
+                    or int(arr.shape[0]) != 1
+                ):
+                    return None
+            ac = ArraysCache(len(c.cache))
+            if c.empty():
+                ac.left_padding = mx.array([0])
+                eval_targets.append(ac.left_padding)
+            else:
+                ac.cache = list(c.cache)
+            out.append(ac)
+        else:
+            return None
+
+    if eval_targets:
+        mx.eval(eval_targets)
+    return out
+
+
+def _patch_batch_restore(coord) -> bool:
+    upstream = getattr(coord, RESTORE_MERGE, None)
+    if getattr(upstream, "_heylook_patch", None) in (PATCH_2356, PATCH_RESTORE_BATCH):
+        return True
+    if (
+        upstream is None
+        or tuple(inspect.signature(upstream).parameters) != MERGE_ROWS_PARAMS
+    ):
+        logging.warning(
+            "%s carry not applied: APCCoordinator.%s is gone or its signature changed",
+            PATCH_RESTORE_BATCH,
+            RESTORE_MERGE,
+        )
+        return False
+
+    def merge_rows(picks, prefix_lens, *, kv_quant_config=None):
+        if single_restored_row(picks, kv_quant_config) and len(prefix_lens) == 1:
+            memory = getattr(coord.manager, "memory_plan", None)
+            if memory is not None and len(prefix_lens) == len(getattr(memory, "lengths", ())):
+                if not coord.prepare_prefill(
+                    memory.lengths,
+                    prefill_step_size=memory.chunk_size,
+                    prefix_lengths=prefix_lens,
+                    extra_reserve_bytes=memory.extra_reserve_bytes,
+                ):
+                    from mlx_vlm.apc import APCAdmissionError
+
+                    raise APCAdmissionError("APC batch merge deferred by memory admission")
+            try:
+                warm_cache = picks[0]["warm_cache"]
+                caches = _single_row_batch_caches(warm_cache)
+                if caches is not None:
+                    if isinstance(warm_cache, list):
+                        for i in range(len(warm_cache)):
+                            warm_cache[i] = None
+                    with coord.manager.lock:
+                        coord.manager.stats.restored_tokens += prefix_lens[0]
+                    return caches, prefix_lens[0]
+            except (AttributeError, KeyError, TypeError, IndexError, ValueError) as exc:
+                logging.warning("%s fell through to upstream: %r", PATCH_RESTORE_BATCH, exc)
+        return upstream(picks, prefix_lens, kv_quant_config=kv_quant_config)
+
+    merge_rows.__doc__ = upstream.__doc__
+    setattr(merge_rows, "_heylook_patch", PATCH_RESTORE_BATCH)
+    setattr(merge_rows, "_heylook_upstream", upstream)
+    setattr(coord, RESTORE_MERGE, merge_rows)
+    return True
 
 
 def _patch_merge_rows(coord) -> bool:
@@ -1051,8 +1207,11 @@ def apply_to(bg) -> bool:
     coord = getattr(bg, "apc", None)
     if coord is None:
         return False
-    if getattr(coord, "enabled", False) and getattr(coord, "is_checkpoint", False):
+    is_ckpt = bool(getattr(coord, "enabled", False) and getattr(coord, "is_checkpoint", False))
+    if is_ckpt:
         _patch_store_checkpoint(coord)
-    if not plain_single_row_generator(bg):
-        return False
-    return _patch_merge_rows(coord)
+    if plain_single_row_generator(bg):
+        return _patch_merge_rows(coord)
+    if is_ckpt and _drafted_single_row_generator(bg):
+        _patch_batch_restore(coord)
+    return False

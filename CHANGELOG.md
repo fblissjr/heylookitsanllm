@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.256] - 2026-11-19
+
+### Added
+
+- `docs/project/plan_mlx_0325_upgrade.md`: gated execution plan for upgrading `mlx >= 0.32.5` once released, replacing dense sliding-window 4D attention masks with native `window_size` SDPA when `not c.rotated`, gating around the open `sdpa_split` Metal precision regression (`#4808`), and preserving `gemma4_runtime._hoisted_8bit_qmv_kernel` for Ultra (`'d'` die) targets (linked in `docs/project/TODO.md`).
+
+### Changed
+
+- Single-row batched APC restore (`PATCH_RESTORE_BATCH` / `"heylook#apc-b1-batch-restore"` in `src/heylook_llm/providers/common/mlx_vlm_patches.py`): wrap drafted single-row generators via `_patch_batch_restore` / `_single_row_batch_caches` so `_merge_and_release_cache_rows` builds `BatchKVCache` / `BatchRotatingKVCache` wrappers in place on cached arrays without double-copying or issuing per-layer serial `mx.eval()` syncs, while keeping `PATCH_2356` intact on undrafted generators (`apply_to` continues returning `False` for drafted generators).
+- Contract tests (`TestCarriedPatches` in `tests/contract/test_mlxvlm_surface.py`) and docs (`docs/wiki/performance_optimizations.md`, `docs/architecture/sharp_edges.md`, `.claude/rules/mlx.md`, `docs/project/TODO.md`, `docs/project/CURRENT.md`) updated for single-row batched APC restore and the `mlx 0.32.5` upgrade plan.
+
+### Verification
+
+- `uv run pytest tests/unit/ tests/contract/ -q`: `1668 passed`.
+- `scripts/chain_probe.py`: `5/5` hops (`match=True`, `restored=reused`, `cause=None`) on `gemma-4 31B`, `gemma-4 26B-A4B`, and `Qwen3.8 27B` (local records in `internal/claude/perf/apc_fixes_2026-11-19/diagnostics.md` and `internal/claude/chain_probe/`).
+- `internal/claude/perf/apc_fixes_2026-11-19/diag_restore_batch.py` (`gemma-4 31B`, concurrent with external server process): confirmed `PATCH_RESTORE_BATCH` ON reduces `_merge_and_release_cache_rows` and first-chunk latency compared to OFF (local JSONL and notes in `internal/claude/perf/apc_fixes_2026-11-19/`).
+- `tests/smoke/run.py --arm mlx-text --arm mlx-vision`: `PASS 66/66`, `5 skipped` (`mlx-text` `Qwen3 0.6B`, `mlx-vision` `Qwen3.5 0.8B`; MLX Phase 3 thinking depth uncovered; `gguf` arm uncovered -- not run while external server process was active).
+- `scripts/vendor_frontend.py --check`: `marked` `18.2.0` and `dompurify` `3.4.18` match manifest (`Behind: marked`, not updated).
+- Not run: `gguf` smoke arm, `scripts/perf_ab.py`, `tests/eval/`, `tests/e2e`.
+
 ## [2.0.255] - 2026-11-19
 
 ### Fixed
