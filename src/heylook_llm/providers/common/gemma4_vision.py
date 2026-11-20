@@ -9,6 +9,51 @@ VISUAL_PATCH_KEYS = (
     ("pixel_values_videos", "video_position_ids"),
 )
 
+_SDPA_WINDOW_SUPPORT_CACHE: tuple[int, bool] | None = None
+
+
+def mlx_sdpa_supports_window_size() -> bool:
+    """True when the loaded MLX build accepts ``window_size`` on SDPA."""
+    global _SDPA_WINDOW_SUPPORT_CACHE
+    import mlx.core as mx
+
+    sdpa = getattr(getattr(mx, "fast", None), "scaled_dot_product_attention", None)
+    if not callable(sdpa):
+        return False
+    cached = _SDPA_WINDOW_SUPPORT_CACHE
+    if cached is not None and cached[0] == id(sdpa):
+        return cached[1]
+    supported = False
+    try:
+        params = inspect.signature(sdpa).parameters
+    except (TypeError, ValueError):
+        params = {}
+    if "window_size" in params:
+        supported = True
+    else:
+        has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+        if not params or has_varkw:
+            # nanobind extensions report (*args, **kwargs) in inspect.signature;
+            # confirm window_size on a 1-element CPU tensor once per process.
+            try:
+                probe = mx.zeros((1, 1, 1, 8), dtype=mx.float32)
+                mx.eval(sdpa(probe, probe, probe, scale=1.0, window_size=-1, stream=mx.cpu))
+                supported = True
+            except (TypeError, ValueError):
+                supported = False
+    _SDPA_WINDOW_SUPPORT_CACHE = (id(sdpa), supported)
+    return supported
+
+
+def _sliding_int_offset(c) -> int:
+    int_off = getattr(c, "_offset", None)
+    if isinstance(int_off, int):
+        return int_off
+    off = getattr(c, "offset", None)
+    if isinstance(off, int):
+        return off
+    return int(getattr(c, "max_size", 0) or 0)
+
 
 def _is_unpadded_single_row_batch_cache(c) -> bool:
     """True when ``c`` is a batch-1 cache with no left or pending right padding."""
@@ -75,7 +120,12 @@ def gemma4_make_masks(self, h, cache, mm_token_type_ids=None):
     """
     import mlx.core as mx
     from mlx_vlm.models.base import create_attention_mask, create_causal_mask
-    from mlx_vlm.models.cache import BatchKVCache, BatchRotatingKVCache, KVCache
+    from mlx_vlm.models.cache import (
+        BatchKVCache,
+        BatchRotatingKVCache,
+        KVCache,
+        RotatingKVCache,
+    )
 
     n = h.shape[1]
     use_bidirectional_vision = (
@@ -104,17 +154,35 @@ def gemma4_make_masks(self, h, cache, mm_token_type_ids=None):
                     )
                     m = create_attention_mask(h, c, return_array=return_array)
             elif lt == "sliding_attention":
-                unpadded_b1 = (
-                    not use_bidirectional_vision
-                    and type(c) is BatchRotatingKVCache
+                is_batch_rot = (
+                    type(c) is BatchRotatingKVCache
                     and c.max_size <= self.window_size
                     and _is_unpadded_single_row_batch_cache(c)
                 )
+                is_plain_rot = (
+                    type(c) is RotatingKVCache
+                    and c.max_size <= self.window_size
+                    and getattr(c, "keep", 0) == 0
+                )
+                unpadded_b1 = not use_bidirectional_vision and (is_batch_rot or is_plain_rot)
+                is_rotated = bool(
+                    getattr(c, "rotated", False)
+                    or (is_plain_rot and c.offset > getattr(c, "_idx", 0))
+                )
+                native_window_bound = (
+                    not getattr(self.config, "exact_speculative_verify", False)
+                    and mlx_sdpa_supports_window_size()
+                    and getattr(getattr(layer, "self_attn", None), "_heylook_sdpa_window_size", 0)
+                    == self.window_size
+                    and not hasattr(c, "bits")
+                    and not hasattr(c, "dequantize")
+                )
                 if unpadded_b1 and (
                     n == 1
+                    or native_window_bound
                     or (
-                        not c.rotated
-                        and min(c.max_size - 1, c._offset) + n <= self.window_size
+                        not is_rotated
+                        and min(c.max_size - 1, _sliding_int_offset(c)) + n <= self.window_size
                     )
                 ):
                     m = None if n == 1 else "causal"

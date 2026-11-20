@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.257] - 2026-11-19
+
+### Added
+
+- `scripts/build_mlx.py` (with unit coverage in `tests/unit/test_build_mlx.py`): reproducible out-of-repo MLX C++/Metal source builder cloning `ml-explore/mlx` outside the project and `.venv`, building `--rev` / repeatable `--pr` patch stacks (without `env`/`python -m pip` wrappers or polluting `.venv`), staging isolated `PYTHONPATH` overlays under `~/.heylook/mlx/` (or installing into `.venv` on explicit `--install`), and probing GPU Metal + `window_size=` SDPA capability (`--status`).
+- Contract coverage in `tests/contract/test_mlxvlm_surface.py` (`TestOwnedGemma4Runtime.test_native_window_size_sdpa_matches_upstream_4d_mask`, `test_adaptive_8bit_qmv_stands_down_when_native_probe_wins`) verifying native `window_size=` SDPA parity against 4D sliding masks and adaptive 8-bit QMV bypass without disturbing attention, `shared_kv`, or `verify_hidden` bindings.
+
+### Changed
+
+- Gemma 4 native `window_size=` sliding-window SDPA (`src/heylook_llm/providers/common/gemma4_vision.py`, `gemma4_runtime.py`): added `mlx_sdpa_supports_window_size()` (one-time CPU 1-element `sdpa(..., window_size=-1)` probe cached per `(id(sdpa), bool)`, handling nanobind `(*args, **kwargs)` signatures) and passed integer `(left_window, 0)` `window_size` bounds into `gemma4_make_masks`, `bind_gemma4_text_layers`, and `_bind_attention_subclass` when supported and `not c.rotated` (`mlx >= 0.32.5` / `mlx#4734`), preserving 4D sliding masks on `mlx 0.32.4` and rotated `BatchRotatingKVCache` steps.
+- Adaptive native vs hoisted 8-bit QMV selection (`_native_8bit_qmv_beats_hoisted` and `skip_8bit_qmv` in `src/heylook_llm/providers/common/gemma4_runtime.py`): probes the loaded 8-bit `embed_tokens` matrix (or fallback wide matrix) on GPU (`T=5`) and stands down `_hoisted_8bit_qmv_kernel` on wide MLPs and the tied LM head when native `mx.quantized_matmul` is faster (e.g. Ultra targets running `mlx#4890` + `mlx#4826`), while keeping the hoisted kernel active on `0.32.4` and stock `main`.
+- Updated `.claude/rules/dependencies.md`, `docs/architecture/sharp_edges.md`, `docs/wiki/performance_optimizations.md`, `docs/project/plan_mlx_0325_upgrade.md`, `docs/project/TODO.md`, and `docs/project/CURRENT.md` for `scripts/build_mlx.py`, `window_size=` SDPA (`mlx#4734`), `#4808` upstream closure, and Ultra `mlx#4890` + `mlx#4826` adaptive gating.
+
+### Verification
+
+- `uv run --no-sync pytest tests/unit/ tests/contract/ -q` (`mlx 0.32.4`): `1674 passed`.
+- `PYTHONPATH="$HOME/.heylook/mlx/overlay" .venv/bin/pytest tests/unit/ tests/contract/ -q` (`main`): `1674 passed`.
+- `PYTHONPATH="$HOME/.heylook/mlx/overlay-ultra" .venv/bin/pytest tests/contract/test_mlxvlm_surface.py -q` (`main + #4890 + #4826`): `40 passed`.
+- `scripts/chain_probe.py`: `5/5` hops (`match=True`, `restored=reused`, `cause=None`) on `gemma-4 31B` (both `main` and `main + #4890 + #4826` overlays), `gemma-4 26B-A4B` (both overlays), and `Qwen3.8 27B` (`main` overlay).
+- `scripts/vlm_parity_probe.py`: `ok=true` on `Qwen3.5 0.8B` (`main` overlay) and `gemma-4 26B-A4B` (`main + #4890 + #4826` overlay; `NEAR-TIE`, `feature_cache_hit=true`, `equals_cold_run=true`).
+- Single-run idle-GPU comparison (`internal/claude/perf/mlx_main_2026-11-19/bench_mlx_builds.py` & `results.md`) across `0.32.4`, `main`, and `main + #4890 + #4826` on `gemma-4 31B` and `gemma-4 26B-A4B`: confirmed `mlx#4890` native `qmv_mma` with hoisted 8-bit QMV stood down improves decode throughput over `0.32.4`, while warm-TTFT floor remains flat pending Phase 2 cache/runner work (not a multi-trial `scripts/perf_ab.py` run).
+- `scripts/vendor_frontend.py --check`: `marked` `18.2.0` and `dompurify` `3.4.18` match manifest (`Behind: marked`, not updated). Not run: `tests/smoke/`, `scripts/perf_ab.py`, `tests/eval/`, `tests/e2e`.
+
 ## [2.0.256] - 2026-11-19
 
 ### Added

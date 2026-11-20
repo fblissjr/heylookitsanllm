@@ -2150,3 +2150,218 @@ class TestOwnedGemma4Runtime:
             assert (acc_s, toks_s) == ([2], [[2, 3, 4]])
         finally:
             mtp._speculative_walk_batch_deferred_greedy = orig_walk
+
+    def test_native_window_size_sdpa_matches_upstream_4d_mask(self, monkeypatch):
+        import copy
+        import mlx.core as mx
+        from mlx.utils import tree_flatten
+        from mlx_vlm.models.cache import (
+            BatchKVCache,
+            BatchRotatingKVCache,
+            KVCache,
+            RotatingKVCache,
+        )
+        from mlx_vlm.models.gemma4.language import LanguageModel
+        from heylook_llm.providers.common import gemma4_runtime, gemma4_vision
+
+        mx.random.seed(23)
+        cfg = self._tiny_config(
+            hidden_size=128,
+            intermediate_size=64,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            num_global_key_value_heads=1,
+            head_dim=64,
+            global_head_dim=64,
+            sliding_window=8,
+            vocab_size=64,
+            use_bidirectional_attention="vision",
+            exact_speculative_verify=False,
+        )
+        lm_up = LanguageModel(cfg)
+        lm_bd = copy.deepcopy(lm_up)
+        lm_bd.load_weights(tree_flatten(lm_up.parameters()))
+        assert (
+            gemma4_runtime.bind_gemma4_runtime(type("M", (), {"language_model": lm_bd})())
+            is True
+        )
+        assert lm_bd.model.layers[0].self_attn._heylook_sdpa_window_size == 8
+        assert lm_bd.model.layers[1].self_attn._heylook_sdpa_window_size == 0
+
+        native_ws = gemma4_vision.mlx_sdpa_supports_window_size()
+
+        for expected_ndim, make_caches in (
+            (4, lambda: [BatchRotatingKVCache(8, [0]), BatchKVCache([0])]),
+            (2, lambda: [RotatingKVCache(8, keep=0), KVCache()]),
+        ):
+            cu, cb = make_caches(), make_caches()
+
+            # 1. Cold prefill inside sliding_window=8.
+            p1 = mx.array([[1, 2, 3, 4, 5]], dtype=mx.int32)
+            out_up = lm_up(p1, cache=cu).logits
+            out_bd = lm_bd(p1, cache=cb).logits
+            mx.eval(out_up, out_bd)
+            assert mx.allclose(out_up, out_bd, atol=1e-5).item()
+
+            # 2. Suffix prefill crossing window_size=8 (5 -> 11 tokens).
+            p2 = mx.array([[6, 7, 8, 9, 10, 11]], dtype=mx.int32)
+            h_p2 = mx.random.normal((1, 6, 128))
+            masks_suf = lm_bd.model._make_masks(h_p2, cb, None)
+            if native_ws:
+                assert masks_suf == ["causal", "causal"]
+            else:
+                assert isinstance(masks_suf[0], mx.array) and masks_suf[0].ndim == expected_ndim
+            out_up = lm_up(p2, cache=cu).logits
+            out_bd = lm_bd(p2, cache=cb).logits
+            mx.eval(out_up, out_bd)
+            assert mx.allclose(out_up, out_bd, atol=1e-5).item()
+
+            # 3. Single-token decodes rotate/wrap the sliding cache buffer.
+            for tok in (12, 13, 14):
+                step = mx.array([[tok]], dtype=mx.int32)
+                out_up = lm_up(step, cache=cu).logits
+                out_bd = lm_bd(step, cache=cb).logits
+                mx.eval(out_up, out_bd)
+                assert mx.allclose(out_up, out_bd, atol=1e-5).item()
+
+            # 4. N=3 multi-token verification AFTER rotation matches 4D masks.
+            h_ver = mx.random.normal((1, 3, 128))
+            masks_ver = lm_bd.model._make_masks(h_ver, cb, None)
+            if native_ws:
+                assert masks_ver == ["causal", "causal"]
+            else:
+                assert isinstance(masks_ver[0], mx.array) and masks_ver[0].ndim == expected_ndim
+            ver = mx.array([[15, 16, 17]], dtype=mx.int32)
+            out_up = lm_up(ver, cache=cu).logits
+            out_bd = lm_bd(ver, cache=cb).logits
+            mx.eval(out_up, out_bd)
+            assert mx.allclose(out_up, out_bd, atol=1e-5).item()
+
+        # Vision bidirectional overlay and padded B=2 always fall back to 4D array masks.
+        mm_vis = mx.array([[0, 1, 1, 0, 0]], dtype=mx.int32)
+        h_vis = mx.random.normal((1, 5, 128))
+        c_vis = [BatchRotatingKVCache(8, [0]), BatchKVCache([0])]
+        for m in lm_bd.model._make_masks(h_vis, c_vis, mm_vis):
+            assert isinstance(m, mx.array) and m.ndim == 4
+        h_pad = mx.random.normal((2, 4, 128))
+        c_pad = [BatchRotatingKVCache(8, [0, 2]), BatchKVCache([0, 2])]
+        for m in lm_bd.model._make_masks(h_pad, c_pad, None):
+            assert isinstance(m, mx.array) and m.ndim == 4
+
+        # Verify capability gate forwarding directly (covers both 0.32.4 & 0.32.5+ logic).
+        recorded_ws = []
+        orig_sdpa = mx.fast.scaled_dot_product_attention
+
+        def spy_sdpa(q, k, v, *, scale, mask=None, sinks=None, window_size=-1):
+            recorded_ws.append(window_size)
+            return mx.zeros_like(q)
+
+        monkeypatch.setattr(mx.fast, "scaled_dot_product_attention", spy_sdpa)
+        # Re-bind once against spy signature so closure resolves updated gate cleanly.
+        assert gemma4_vision.mlx_sdpa_supports_window_size() is True
+
+        attn_slide = lm_bd.model.layers[0].self_attn
+        x_in = mx.random.normal((1, 3, 128))
+
+        # Unquantized sliding cache with mask="causal" forwards window_size=8.
+        attn_slide(x_in, mask="causal", cache=RotatingKVCache(8, keep=0))
+        assert recorded_ws[-1] == 8
+
+        # Quantized cache must NOT forward window_size to raw mx.fast SDPA.
+        class _FakeQuantCache:
+            offset = 0
+            bits = 4
+            group_size = 64
+
+            def update_and_fetch(self, k, v):
+                return k, v
+
+        from mlx_vlm.models import base as mlx_vlm_base
+
+        base_calls = []
+        monkeypatch.setattr(
+            mlx_vlm_base,
+            "scaled_dot_product_attention",
+            lambda q, k, v, *, cache=None, scale=1.0, mask=None: (
+                base_calls.append(type(cache).__name__) or orig_sdpa(q, k, v, scale=scale)
+            ),
+        )
+        attn_slide(x_in, mask="causal", cache=_FakeQuantCache())
+        assert base_calls[-1] == "_FakeQuantCache"
+
+        # Disabled capability gate stands down cleanly without passing window_size.
+        monkeypatch.setattr(gemma4_vision, "mlx_sdpa_supports_window_size", lambda: False)
+        monkeypatch.setattr(gemma4_runtime, "mlx_sdpa_supports_window_size", lambda: False)
+        c_rot_past = RotatingKVCache(8, keep=0)
+        c_rot_past.update_and_fetch(mx.zeros((1, 2, 10, 64)), mx.zeros((1, 2, 10, 64)))
+        masks_off = lm_bd.model._make_masks(x_in, [c_rot_past, KVCache()], None)
+        assert isinstance(masks_off[0], mx.array) and masks_off[0].ndim == 2
+        attn_slide(x_in, mask="causal", cache=RotatingKVCache(8, keep=0))
+        assert len(base_calls) == 2
+
+    def test_adaptive_8bit_qmv_stands_down_when_native_probe_wins(self, monkeypatch):
+        import copy
+        import mlx.nn as nn
+        from mlx_vlm.models.gemma4.language import LanguageModel
+        from heylook_llm.providers.common import gemma4_runtime
+
+        cfg = self._tiny_config(
+            hidden_size=64,
+            intermediate_size=64,
+            num_hidden_layers=2,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            num_global_key_value_heads=1,
+            head_dim=32,
+            global_head_dim=32,
+            vocab_size=64,
+        )
+        base_lm = LanguageModel(cfg)
+        nn.quantize(base_lm, group_size=64, bits=8)
+
+        monkeypatch.setattr(gemma4_runtime, "MIN_QMV_OUT_ROWS", 64)
+
+        # Native probe wins -> skip 8-bit MLP & LM head hoisted kernels while keeping
+        # attention/shared_kv/verify_hidden/masks and _heylook_gemma4_runtime=True.
+        lm_native = copy.deepcopy(base_lm)
+        monkeypatch.setattr(gemma4_runtime, "_native_8bit_qmv_beats_hoisted", lambda embed=None: True)
+        assert (
+            gemma4_runtime.bind_gemma4_runtime(
+                type("M", (), {"language_model": lm_native})(),
+                min_out_rows=64,
+            )
+            is True
+        )
+        assert lm_native._heylook_gemma4_runtime is True
+        assert getattr(lm_native.model.layers[0].self_attn, "_heylook_gemma4_attn", False) is True
+        assert getattr(lm_native.model.layers[0].mlp, "_heylook_gemma4_mlp", False) is False
+        assert (
+            getattr(
+                getattr(lm_native.logits_from_hidden, "__func__", None),
+                "_heylook_patch",
+                None,
+            )
+            is None
+        )
+
+        # Native probe slower -> bind hoisted 8-bit MLP & LM head kernels as usual.
+        lm_hoisted = copy.deepcopy(base_lm)
+        monkeypatch.setattr(gemma4_runtime, "_native_8bit_qmv_beats_hoisted", lambda embed=None: False)
+        assert (
+            gemma4_runtime.bind_gemma4_runtime(
+                type("M", (), {"language_model": lm_hoisted})(),
+                min_out_rows=64,
+            )
+            is True
+        )
+        assert lm_hoisted._heylook_gemma4_runtime is True
+        assert getattr(lm_hoisted.model.layers[0].mlp, "_heylook_gemma4_mlp", False) is True
+        assert (
+            getattr(
+                getattr(lm_hoisted.logits_from_hidden, "__func__", None),
+                "_heylook_patch",
+                None,
+            )
+            == gemma4_runtime._PATCH_LOGITS
+        )

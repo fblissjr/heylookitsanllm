@@ -2177,6 +2177,16 @@ and `processor` and wraps `_apc_media_token_ids()` per generator before
 The optloop-lib bench exists because the app-level optloop (retired
 2026-07-06) bypassed the server code it claimed to measure.
 
+Out-of-repo MLX source builds (2026-11-19). `pyproject.toml` and `uv.lock` keep
+PyPI `mlx` and `mlx-metal` pins intact, while `scripts/build_mlx.py` (mirroring
+`scripts/build_llama.py`) clones `ml-explore/mlx` to `~/.heylook/mlx`, checks out
+a pinned rev plus optional `--pr` merges, builds a self-contained wheel containing
+`mlx.metallib` / `libmlx.dylib`, and verifies `mlx.__version__` and Metal load
+inside an unpacked `--overlay` directory (`PYTHONPATH` isolation). Prefer
+`--overlay` when another `heylookllm` process shares `.venv`; when `--install` is
+used intentionally, plain `uv run` auto-syncs `.venv` back to `uv.lock` unless
+`--no-sync` or `.venv/bin/python` is used.
+
 ## Tests
 
 ### No make-it-fail-first rule

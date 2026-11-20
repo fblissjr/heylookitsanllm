@@ -24,9 +24,14 @@ maintaining a fork of mlx-vlm:
 from functools import lru_cache
 import inspect
 import logging
+import time
 from typing import Any, Optional
 
-from .gemma4_vision import _is_unpadded_single_row_batch_cache, bind_text_masks
+from .gemma4_vision import (
+    _is_unpadded_single_row_batch_cache,
+    bind_text_masks,
+    mlx_sdpa_supports_window_size,
+)
 
 MIN_QMV_OUT_ROWS = 32768
 MIN_VERIFY_T = 2
@@ -43,6 +48,76 @@ _DRAFTER_CLASSES: dict[type, type] = {}
 _PATCH_SHARED_KV = "heylook#gemma4-shared-kv"
 _PATCH_LOGITS = "heylook#gemma4-logits"
 _PATCH_VERIFY_HIDDEN = "heylook#gemma4-verify-hidden"
+
+_NATIVE_8BIT_QMV_FASTER_CACHE: dict[tuple[int, str, int, int], bool] = {}
+
+
+def _native_8bit_qmv_beats_hoisted(embed=None) -> bool:
+    """True when native MLX ``quantized_matmul`` beats ``_hoisted_8bit_qmv_kernel`` on GPU."""
+    import mlx.core as mx
+    import mlx.nn as nn
+
+    if not mx.metal.is_available() or mx.default_device() != mx.gpu:
+        return False
+    qmm = getattr(mx, "quantized_matmul", None)
+    verify_t = 5
+
+    if embed is not None:
+        if getattr(embed, "bits", None) != 8 or not callable(getattr(embed, "as_linear", None)):
+            return False
+        weight = getattr(embed, "weight", None)
+        scales = getattr(embed, "scales", None)
+        if weight is None or scales is None or getattr(weight, "ndim", 0) != 2:
+            return False
+        n_out = int(weight.shape[0])
+        if n_out < MIN_QMV_OUT_ROWS:
+            return False
+        in_dim = int(weight.shape[1]) * 4
+        dtype = scales.dtype
+        if _quantized_module_spec(embed, dtype, in_dim) is None:
+            return False
+        probe_mod = embed
+        native_fn = embed.as_linear
+    else:
+        in_dim, n_out = 5376, 65536
+        dtype = mx.bfloat16
+        probe_mod = None
+        native_fn = None
+
+    key = (id(qmm), str(mx.default_device()), in_dim, n_out)
+    cached = _NATIVE_8BIT_QMV_FASTER_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    if probe_mod is None:
+        probe_mod = nn.QuantizedLinear(in_dim, n_out, bias=False, group_size=64, bits=8)
+        probe_mod.set_dtype(dtype)
+        native_fn = probe_mod
+        mx.eval(probe_mod.weight, probe_mod.scales, probe_mod.biases)
+
+    x = mx.random.normal((1, verify_t, in_dim)).astype(dtype)
+    mx.eval(x)
+    if gemma4_qmv_multi(probe_mod, x, min_out_rows=1) is None:
+        return False
+
+    for _ in range(3):
+        mx.eval(native_fn(x))
+        mx.eval(gemma4_qmv_multi(probe_mod, x, min_out_rows=1))
+
+    native_times = []
+    hoisted_times = []
+    for _ in range(5):
+        t0 = time.perf_counter()
+        mx.eval(native_fn(x))
+        native_times.append(time.perf_counter() - t0)
+
+        t1 = time.perf_counter()
+        mx.eval(gemma4_qmv_multi(probe_mod, x, min_out_rows=1))
+        hoisted_times.append(time.perf_counter() - t1)
+
+    native_wins = sorted(native_times)[2] < sorted(hoisted_times)[2]
+    _NATIVE_8BIT_QMV_FASTER_CACHE[key] = native_wins
+    return native_wins
 
 
 @lru_cache(maxsize=None)
@@ -426,13 +501,22 @@ def _attention_looks_compatible(attn) -> bool:
     return True
 
 
-def _bind_attention_subclass(attn) -> bool:
-    if getattr(attn, "_heylook_gemma4_attn", False):
-        return True
+def _bind_attention_subclass(attn, *, window_size: Optional[int] = None) -> bool:
     if not _attention_looks_compatible(attn):
         return False
 
-    from mlx_vlm.models.base import scaled_dot_product_attention
+    attn._heylook_sdpa_window_size = (
+        int(window_size)
+        if getattr(attn, "is_sliding", False)
+        and isinstance(window_size, int)
+        and window_size > 0
+        else 0
+    )
+    if getattr(attn, "_heylook_gemma4_attn", False):
+        return True
+
+    import mlx.core as mx
+    from mlx_vlm.models import base as _mlx_vlm_base
 
     base_cls = type(attn)
     sub_cls = _ATTENTION_CLASSES.get(base_cls)
@@ -477,9 +561,33 @@ def _bind_attention_subclass(attn) -> bool:
                 queries = queries.transpose(0, 2, 1, 3)
                 queries = self.rope(queries, offset=offset)
 
-                output = scaled_dot_product_attention(
-                    queries, keys, values, cache=cache, scale=self.scale, mask=mask
-                )
+                sdpa_ws = getattr(self, "_heylook_sdpa_window_size", 0)
+                if (
+                    sdpa_ws > 0
+                    and getattr(self, "is_sliding", False)
+                    and isinstance(mask, str)
+                    and mask == "causal"
+                    and mlx_sdpa_supports_window_size()
+                    and (
+                        cache is None
+                        or (
+                            not hasattr(cache, "bits")
+                            and not hasattr(cache, "decode_attention")
+                        )
+                    )
+                ):
+                    output = mx.fast.scaled_dot_product_attention(
+                        queries,
+                        keys,
+                        values,
+                        scale=self.scale,
+                        mask="causal",
+                        window_size=sdpa_ws,
+                    )
+                else:
+                    output = _mlx_vlm_base.scaled_dot_product_attention(
+                        queries, keys, values, cache=cache, scale=self.scale, mask=mask
+                    )
                 output = output.transpose(0, 2, 1, 3).reshape(batch_size, seq_len, -1)
                 return self.o_proj(output), (keys, values), offset
 
@@ -494,7 +602,9 @@ def _bind_attention_subclass(attn) -> bool:
     return True
 
 
-def _bind_mlp_subclass(mlp, *, min_out_rows: int) -> bool:
+def _bind_mlp_subclass(
+    mlp, *, min_out_rows: int, skip_8bit_qmv: bool = False
+) -> bool:
     import mlx.nn as nn
 
     gate_proj = getattr(mlp, "gate_proj", None)
@@ -504,6 +614,12 @@ def _bind_mlp_subclass(mlp, *, min_out_rows: int) -> bool:
         isinstance(gate_proj, nn.QuantizedLinear)
         and isinstance(up_proj, nn.QuantizedLinear)
         and down_proj is not None
+    ):
+        return False
+    if (
+        skip_8bit_qmv
+        and getattr(gate_proj, "bits", None) == 8
+        and getattr(up_proj, "bits", None) == 8
     ):
         return False
     total_n = int(gate_proj.weight.shape[0]) + int(up_proj.weight.shape[0])
@@ -600,7 +716,10 @@ def _bind_router_subclass(router) -> bool:
 
 
 def bind_gemma4_text_layers(
-    text_model, *, min_out_rows: int = MIN_QMV_OUT_ROWS
+    text_model,
+    *,
+    min_out_rows: int = MIN_QMV_OUT_ROWS,
+    skip_8bit_qmv: bool = False,
 ) -> bool:
     """Bind per-layer Gemma 4 Attention, wide MLP, and Router fast paths."""
     if _is_mock(text_model):
@@ -609,11 +728,12 @@ def bind_gemma4_text_layers(
     if not isinstance(layers, list) or not layers:
         return False
 
+    window_size = getattr(text_model, "window_size", None)
     bound_any = False
     for layer in layers:
         attn = getattr(layer, "self_attn", None)
         if attn is not None and ".gemma4." in type(attn).__module__:
-            if _bind_attention_subclass(attn):
+            if _bind_attention_subclass(attn, window_size=window_size):
                 bound_any = True
             else:
                 logging.warning(
@@ -621,7 +741,9 @@ def bind_gemma4_text_layers(
                 )
         mlp = getattr(layer, "mlp", None)
         if mlp is not None and ".gemma4." in type(mlp).__module__:
-            if _bind_mlp_subclass(mlp, min_out_rows=min_out_rows):
+            if _bind_mlp_subclass(
+                mlp, min_out_rows=min_out_rows, skip_8bit_qmv=skip_8bit_qmv
+            ):
                 bound_any = True
         router = getattr(layer, "router", None)
         if router is not None and ".gemma4." in type(router).__module__:
@@ -634,17 +756,23 @@ def bind_gemma4_text_layers(
     return bound_any
 
 
-def _bind_logits_from_hidden(lm, *, min_out_rows: int) -> bool:
+def _bind_logits_from_hidden(
+    lm, *, min_out_rows: int, skip_8bit_qmv: bool = False
+) -> bool:
     import types
+
+    text_model = getattr(lm, "model", None)
+    embed = getattr(text_model, "embed_tokens", None)
+    if embed is None:
+        return False
+    if skip_8bit_qmv and getattr(embed, "bits", None) == 8:
+        return True
 
     lm._heylook_min_out_rows = min_out_rows
     current = getattr(lm, "logits_from_hidden", None)
     if getattr(getattr(current, "__func__", None), "_heylook_patch", None) == _PATCH_LOGITS:
         return True
     if not callable(current) or tuple(inspect.signature(current).parameters) != ("hidden",):
-        return False
-    text_model = getattr(lm, "model", None)
-    if getattr(text_model, "embed_tokens", None) is None:
         return False
     try:
         from mlx_vlm.models.gemma4.language import logit_softcap
@@ -900,8 +1028,22 @@ def bind_gemma4_runtime(
     if ".gemma4." not in type(text_model).__module__:
         return False
 
-    layers_ok = bind_gemma4_text_layers(text_model, min_out_rows=min_out_rows)
-    logits_ok = _bind_logits_from_hidden(lm, min_out_rows=min_out_rows)
+    embed = getattr(text_model, "embed_tokens", None)
+    skip_8bit_qmv = (
+        min_out_rows == MIN_QMV_OUT_ROWS and _native_8bit_qmv_beats_hoisted(embed=embed)
+    )
+    if skip_8bit_qmv:
+        logging.info(
+            "gemma4 runtime: native MLX 8-bit quantized_matmul beat hoisted QMV on T=5 probe; "
+            "using native path for 8-bit wide MLPs and LM head"
+        )
+
+    layers_ok = bind_gemma4_text_layers(
+        text_model, min_out_rows=min_out_rows, skip_8bit_qmv=skip_8bit_qmv
+    )
+    logits_ok = _bind_logits_from_hidden(
+        lm, min_out_rows=min_out_rows, skip_8bit_qmv=skip_8bit_qmv
+    )
     kv_ok = _bind_shared_kv_from_cache(lm)
     verify_ok = _bind_speculative_verify_hidden(lm)
     if not (logits_ok and kv_ok):
