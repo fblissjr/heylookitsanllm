@@ -30,7 +30,7 @@ dependencies = [
     # MLX / model stack (darwin-only)
     "mlx>=0.32.3; sys_platform == 'darwin'",
     "mlx-metal>=0.32.3; sys_platform == 'darwin'",
-    "mlx-vlm>=0.6.15; sys_platform == 'darwin'",
+    "mlx-vlm>=0.8.0; sys_platform == 'darwin'",
     "transformers>=5.15.0",    # Floor only; the real constraint is the [tool.uv] override below
     # REQUIRED, and deliberately NOT derivable from the declared dep graph -- do
     # not "clean this up" because `uv tree` shows nothing depending on it
@@ -105,20 +105,9 @@ version = { attr = "heylook_llm.__version__" }
 # Replaces every transformers constraint in the graph (strips the upper bounds
 # mlx-vlm pins). Keep equal to the [project.dependencies] floor.
 override-dependencies = ["transformers>=5.15.0"]
-
-[tool.uv.sources]
-# COMMITTED git pin (owner decision 2026-09-05, when it also covered mlx-lm;
-# mlx-lm left the dependency set in plan W10 stage 3, its streaming
-# detokenizer vendored as providers/common/lm_detokenizer.py). mlx-vlm is the
-# engine every MLX model runs on, and the server is written against its main,
-# not a PyPI release. Exact `rev` on purpose, never `branch`: a branch pin
-# moves under a plain `uv lock --upgrade` and the manifest would stop saying
-# what it depends on. Moving the pin = edit the rev here, `uv lock && uv sync`
-# (the rev edit is what moves it), run the suite, name the new SHA in the
-# commit message; no CHANGELOG entry. Exact 40-char commit pins commit cleanly
-# without an override env var; floating branch/tag refs and local paths still
-# require HEYLOOK_ALLOW_CHANNEL_COMMIT=1. `mlx` itself is a PyPI release.
-mlx-vlm = { git = "https://github.com/Neywa-Labs/mlx-vlm", rev = "d204e74b7a4f529b0233b6d655e96348a3585853" }
+# Public pyproject.toml / uv.lock stay on clean PyPI releases (zero external git
+# SHAs). Local bleeding-edge builds live outside the repo under ~/.heylook/ via
+# scripts/build_llama.py, scripts/build_mlx.py, and scripts/sync_overlay.py.
 
 # ── Pytest ──────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]

@@ -1140,20 +1140,58 @@ class MLXProvider(BaseProvider):
                 source=self._pipeline_fallback_reason,
             )
 
+        from .common import b1_runner
+
+        b1_blocker = (
+            "diffusion model uses denoising loop"
+            if self.is_diffusion
+            else b1_runner.b1_runner_blocker(
+                model=self.model, apc_manager=self._apc, draft=self._draft
+            )
+        )
+        b1_active = (not self.is_diffusion) and (b1_blocker is None)
+        if not self.is_diffusion:
+            decoding["runner"] = Fact(
+                value="b1_runner" if b1_active else "batch_generator",
+                provenance="observed",
+                source=(
+                    "heylook thin B=1 runner with zero-copy CoW prefix cache"
+                    if b1_active
+                    else f"mlx-vlm BatchGenerator fallback: {b1_blocker}"
+                ),
+            )
+
         cache = {}
         if self._apc is not None:
-            checkpoints = self._apc_mode == "exact"
-            cache["reuse_mode"] = Fact(
-                value="checkpoints" if checkpoints else (self._apc_mode or "blocks"),
-                provenance="observed",
-                source=("from this model's cache layers: hybrid and sliding-window "
-                        "models restore whole-cache checkpoints taken during prefill; "
-                        "plain KV models reuse hashed blocks"))
-            cache["image_reuse"] = Fact(
-                value=checkpoints, provenance="observed",
-                source=("checkpoint models restore image turns; block models "
-                        "discard in-memory blocks that contain an image, and the "
-                        "disk tier that would serve them is off"))
+            if b1_active:
+                has_rec = b1_runner.model_has_recurrent_cache(self.model)
+                cache["reuse_mode"] = Fact(
+                    value="cow_prefix_recurrent" if has_rec else "cow_prefix",
+                    provenance="observed",
+                    source=(
+                        "heylook CoW prefix cache with interval checkpoints for non-trimmable recurrent layers"
+                        if has_rec
+                        else "heylook zero-copy CoW prefix cache (deferred post-gen storage + lazy rotating fallback)"
+                    ),
+                )
+                cache["image_reuse"] = Fact(
+                    value=True,
+                    provenance="observed",
+                    source="heylook CoW prefix cache reuses image turns via semantic hash salt",
+                )
+            else:
+                checkpoints = self._apc_mode == "exact"
+                cache["reuse_mode"] = Fact(
+                    value="checkpoints" if checkpoints else (self._apc_mode or "blocks"),
+                    provenance="observed",
+                    source=("from this model's cache layers: hybrid and sliding-window "
+                            "models restore whole-cache checkpoints taken during prefill; "
+                            "plain KV models reuse hashed blocks"))
+                cache["image_reuse"] = Fact(
+                    value=checkpoints, provenance="observed",
+                    source=("checkpoint models restore image turns; block models "
+                            "discard in-memory blocks that contain an image, and the "
+                            "disk tier that would serve them is off"))
             cache["memory_budget_bytes"] = Fact(
                 value=int(self._apc.memory_max_bytes), provenance="observed",
                 source=vlm_engine.APC_MEMORY_SOURCE)

@@ -1797,11 +1797,13 @@ found, each silent:
   set). The smoke walk-away
   check caught it, as a false "truncated" verdict: the whole answer had been
   delivered in the final flush.
-- **B=1 runner, CoW slice isolation, and deferred post-gen storage (`b1_runner.py`, `prefix_cache.py`, `v2.0.258` - `v2.0.259`).**
-  - MLX slice views (`a[...]` and `a[..., :k, :]`) allocate no backing tensor copies and trigger Copy-on-Write isolation on future `__setitem__` updates, whereas bare Python aliasing (`b = a`) shares the mutated buffer in place. Calling `store()` on `KVCache` before generation bumps its refcount, so decode step 1's `__setitem__` CoW-duplicates the entire full-attention KV buffer across every layer and leaves two copies pinned (`prefill` + `post-gen`). `b1_runner` therefore defers non-recurrent snapshot storage to `finally:` (`cache_trim_tail = cur_off - n` for the prompt beside `trim_tail = 0` for `[prompt + gen]`), aligns `BufferedRotatingKVCache` headroom to `RotatingKVCache.step` (`_buffer_rotating_size`: `256` default via `_should_use_buffered_rotating`, keeping undrafted `gpt-oss` / `gemma3` and `0.32.4` on `RotatingKVCache`), monitors rotating layers lazily via `capture_rotating_fallbacks_before_evict` right before `_planned_drop` or wraparound (avoiding eager CoW snapshots under large `max_tokens` budgets), and compacts oversized chunk-prefill rotating views on `_generation_stream()` via `compact_pending()`.
+- **B=1 runner, CoW slice isolation, and deferred post-gen storage (`b1_runner.py`, `prefix_cache.py`, `v2.0.258` - `v2.0.261`).**
+  - MLX slice views (`a[...]` and `a[..., :k, :]`) allocate no backing tensor copies and trigger Copy-on-Write isolation on future `__setitem__` updates, whereas bare Python aliasing (`b = a`) shares the mutated buffer in place. Calling `store()` on `KVCache` before generation bumps its refcount, so decode step 1's `__setitem__` CoW-duplicates the entire full-attention KV buffer across every layer and leaves two copies pinned (`prefill` + `post-gen`). `b1_runner` therefore defers non-recurrent snapshot storage to `finally:` (`cache_trim_tail = cur_off - n` for the prompt beside `trim_tail = 0` for `[prompt + gen]`), aligns `BufferedRotatingKVCache` headroom to `RotatingKVCache.step` (`_buffer_rotating_size`: `256` default via `_should_use_buffered_rotating`, keeping undrafted `gpt-oss` / `gemma3` and `0.32.4` on `RotatingKVCache`), monitors rotating layers lazily via `capture_rotating_fallbacks_before_evict` right before `_planned_drop` or wraparound (avoiding eager CoW snapshots under large `max_tokens` budgets), and compacts oversized chunk-prefill rotating views plus standalone oversized `KVCache` slices (e.g. aborted long generations, `allow_kv_compact=True`) on `_generation_stream()` via `compact_pending()` while leaving shared `[prompt]`/`[prompt + gen]` siblings zero-copy (`allow_kv_compact=False`).
+  - **MTP natural-EOS post-gen commit (`v2.0.261`)**: `MTPBatch.step()` always commits `[prev_bonus, *raw_toks[:-1]]` into `prompt_cache` before returning `raw_toks`. Setting `stopped_mid_mtp_round = True` on every `round_finish == "stop"` silently skipped caching `[prompt + gen]` on every normal EOS-terminated MTP reply (missed by `max_tokens=64` benchmarks). `b1_runner` now records `stop_idx` inside `raw_toks`: bonus-token EOS commits with `postgen_cache_trim_tail = 0`, and mid-round draft EOS commits `[prev_bonus, *raw_toks[:stop_idx]]` with `postgen_cache_trim_tail = (len(raw_toks) - 1) - stop_idx` on non-recurrent caches.
+  - **`PrefixCacheStore` headroom reserve (`v2.0.261`)**: `memory_reserve_bytes` was stored on `__init__` and unused in `v2.0.258`–`v2.0.259`; `_make_room_locked` now checks live Metal working-set headroom (`working_set - active_memory`) against `memory_reserve_bytes` and evicts oldest entries under pressure (incrementing `memory_evictions`). `b1_runner` also unions `model.config.eos_token_id` / `lm.config.eos_token_id` into its stop set (matching `BatchGenerator`) and guards `max_tokens <= 0`.
   - Because Gemma 4's template emits `<|thought>\n<thought|>` on the current open turn and strips it from closed assistant history, a multi-turn follow-up diverges several tokens before `N` (`min_match_len` past `sliding_window`). Retaining `_ROTATING_SLACK_TOKENS` pre-window tokens in rotating snapshots allows trimmed restores down to `min_match_len` without dropping to an earlier interior boundary. Hybrid recurrent `ArraysCache` layers (`min_match_len = N`) cannot trim backward, and templates such as Qwen3.5 likewise strip their `<think>\n\n</think>\n\n` open-turn suffix from historical assistant turns (`LCP < N - 1`), so `b1_runner._plan_chunk_stops` routes `has_recurrent` requests through `vlm_engine.capture_lengths` for near-end interval checkpoints alongside splitting the final token (`N - 1` + `1`).
   - `b1_runner` looks up `PrefixCacheStore` before calling `get_input_embeddings` so warm text-only prompts without extra kwargs or `get_rope_index` can embed `suffix_ids` alone when `to_dict()` contains only `inputs_embeds` / `per_layer_inputs`, falling back to full `input_ids` on MRoPE or multimodal models. Per-request `mx.clear_cache()` in `mlx_provider.py` stays enabled: idle-GPU measurements showed no warm-TTFT benefit from removing it while large idle MLX buffer pools stayed pinned across turns.
-  - Requests fall back automatically to `BatchGenerator` + APC when `HEYLOOK_B1_RUNNER=0`, `kv_bits` quantization is enabled, a non-`mtp` drafter (`dflash` / `ngram`) is attached, the pipeline-parallel sync APC wrapper (`_heylook_apc_sync_wrapped`) is active, or `lm.make_cache()` uses an unsupported cache class.
+  - Requests fall back automatically to `BatchGenerator` + APC when `HEYLOOK_B1_RUNNER=0`, `kv_bits` quantization is enabled, a non-`mtp` drafter (`dflash` / `ngram`) is attached, the pipeline-parallel sync APC wrapper (`_heylook_apc_sync_wrapped`) is active, or `lm.make_cache()` uses an unsupported cache class. `MLXProvider.describe_observed()` reports `decoding.runner` (`b1_runner` vs `batch_generator` with the blocker reason) and `cache.reuse_mode` (`cow_prefix` / `cow_prefix_recurrent` vs `checkpoints` / `blocks`).
 The one-hash image salt is also why a turn that adds an image re-prefills;
 any single salt heylook could choose either misses or risks restoring a
 different image behind identical placeholder tokens (owner decision: accepted,
@@ -2089,13 +2091,17 @@ with the behaviour the server is written against sitting unreleased on main),
 and the ecosystem posture has said "SHA-pin rather than wait" all along.
 `scripts/guard_stable_channel.sh` originally blocked every git pin by default so
 a trying-things `branch = "main"` pin in the working tree could never land by
-accident. On 2026-11-15 (v2.0.247, owner decision), the guard was relaxed to
-allow exact 40-hex `rev` git pins (`#<40-hex>` lock entries) plus self
-`editable = "."` to commit cleanly, while continuing to block floating
-`branch`/`tag`/unpinned `git` refs, non-40-hex revs, local path sources, and
-`latest` overrides unless `HEYLOOK_ALLOW_CHANNEL_COMMIT=1` is set
-(`tests/unit/test_guard_stable_channel.py`). A cloner's `uv sync` still needs
-git and GitHub reachable; that is the price, priced.
+accident. On 2026-11-15 (v2.0.247), the guard was briefly relaxed for exact
+40-hex `rev` git pins, and on 2026-11-20 (v2.0.261, owner decision) public
+`pyproject.toml` and `uv.lock` moved back to clean PyPI releases (`mlx>=0.32.3`,
+`mlx-vlm>=0.8.0`, zero external git SHAs in public git history). Local
+bleeding-edge upstream tracking for all three engines now lives outside the repo
+under `~/.heylook/` (`build_llama.py` -> `~/.heylook/llama.cpp`,
+`build_mlx.py` -> `~/.heylook/mlx/overlay`, `sync_overlay.py` ->
+`~/.heylook/overlays/<pkg>`), auto-discovered by `mlx_overlay.activate_all_overlays()`
+with automatic stand-down once `.venv` PyPI is strictly newer. `guard_stable_channel.sh`
+once again blocks external git sources in staged `pyproject.toml`/`uv.lock`
+unless `HEYLOOK_ALLOW_CHANNEL_COMMIT=1` is set (`tests/unit/test_guard_stable_channel.py`).
 
 (v2.0.88) mlx-lm is no longer a dependency: plan W10 moved every MLX model
 onto mlx-vlm's engine. Its streaming detokenizer is vendored, because

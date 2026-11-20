@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.261] - 2026-11-20
+
+### Added
+
+- `scripts/sync_overlay.py` and `tests/unit/test_sync_overlay.py`: out-of-repo pure-Python overlay syncer (`~/.heylook/overlays/<pkg>`, relocatable via `$HEYLOOK_OVERLAYS_DIR`) mirroring `scripts/build_llama.py` and `scripts/build_mlx.py` for fast-moving upstream repos (`mlx-vlm`, `transformers`, or any `--repo <url>`), supporting `--rev`, repeatable `--pr`, `--status`, `--remove`, and missing-dependency warnings against `.venv` without touching `pyproject.toml` or `uv.lock`.
+- Generalized pure-Python overlay discovery in `src/heylook_llm/mlx_overlay.py` (`discover_python_overlays`, `resolve_python_overlay`, `activate_python_overlays`, `activate_all_overlays`, `active_overlay_decisions`, global `$HEYLOOK_OVERLAYS=0`, per-package `$HEYLOOK_<PKG>_OVERLAY`), wired ahead of imports in `server.py`, `scripts/mlx_pipeline_worker.py`, `scripts/vlm_parity_probe.py`, and `scripts/perf_ab.py`.
+- `b1_runner_blocker` and `model_has_recurrent_cache` in `src/heylook_llm/providers/common/b1_runner.py`, surfaced in `MLXProvider.describe_observed()` as `decoding.runner` (`b1_runner` vs `batch_generator` with exact blocker reason) and truthful `cache.reuse_mode` (`cow_prefix` / `cow_prefix_recurrent`) + `cache.image_reuse = true`.
+- `$HEYLOOK_GEMMA4_8BIT_QMV` (`auto`/`native`/`hoisted`) override and console-only `INFO` timing verdict log in `src/heylook_llm/providers/common/gemma4_runtime.py`.
+
+### Fixed
+
+- **MTP natural-EOS `[prompt + gen]` cache commit (`src/heylook_llm/providers/common/b1_runner.py`)**: `b1_runner` previously set `stopped_mid_mtp_round = True` on every `round_finish == "stop"`, silently skipping `[prompt + gen]` storage whenever an MTP reply ended naturally on EOS. It now tracks exact `stop_idx` inside `raw_toks`: bonus-token EOS commits with `postgen_cache_trim_tail = 0`, and mid-round accepted-draft EOS commits `[prev_bonus, *raw_toks[:stop_idx]]` with `postgen_cache_trim_tail = (len(raw_toks) - 1) - stop_idx` on non-recurrent caches.
+- **`PrefixCacheStore` headroom reserve & oversized `KVCache` slice compaction (`src/heylook_llm/providers/common/prefix_cache.py`)**: `_make_room_locked` now enforces `memory_reserve_bytes` against live Metal working-set headroom (evicting oldest entries and incrementing `memory_evictions`), and `compact_pending()` detaches oversized standalone `KVCache` slices (`backing_len > end + 256`, `allow_kv_compact=True`, e.g. aborted long generations) while keeping completed `[prompt]` + `[prompt + gen]` siblings zero-copy (`allow_kv_compact=False`).
+- **Stop-token completeness & `max_tokens <= 0` guard (`src/heylook_llm/providers/common/b1_runner.py`)**: `_collect_stop_tokens` unions `model.config.eos_token_id` / `lm.config.eos_token_id` (matching `BatchGenerator`), and `max_tokens <= 0` returns cleanly without emitting a token.
+
+### Changed
+
+- Moved public `pyproject.toml` and `uv.lock` onto clean PyPI releases (`mlx-vlm>=0.8.0`, removing `[tool.uv.sources]` git SHA pin; zero external git SHAs in public history) and tightened `scripts/guard_stable_channel.sh` (and `tests/unit/test_guard_stable_channel.py`) to block external git sources in staged `pyproject.toml` / `uv.lock` unless `HEYLOOK_ALLOW_CHANNEL_COMMIT=1` is set.
+- Updated `mlx_describe._engine_build()` to report both `mlx` and `mlx-vlm` versions including active local overlay provenance (`canonical`/`override`/`pythonpath`), and updated `.claude/rules/dependencies.md`, `docs/frontend_v3_spec.md`, `docs/wiki/performance_optimizations.md`, `docs/architecture/sharp_edges.md`, `scripts/README.md`, and `docs/project/CURRENT.md`.
+
+### Verification
+
+- `pytest tests/unit/ tests/contract/ -q` on clean PyPI `.venv` (`mlx 0.32.4`, `mlx-vlm 0.8.0`): `1715 passed, 2 subtests passed`.
+- `pytest tests/unit/ tests/contract/ -q` with canonical `~/.heylook/mlx/overlay` (`0.32.5.dev20261119+27105c17`) + `~/.heylook/overlays/mlx-vlm` (`0.8.0 @ 392052b443`): `1715 passed, 2 subtests passed`.
+- Isolated `:8991` `scripts/dev_server.sh` launched with zero env overrides auto-discovered both canonical overlays, reported `decoding.runner=b1_runner`, `cache.reuse_mode=cow_prefix`, `cache.image_reuse=True` on `/v1/admin/models/gemma-4-26B-A4B-it-8bit`, and passed full 3-arm live `tests/smoke/run.py`: **`PASS 92/92`, `7 skipped`** (`mlx-text` `Qwen3-0.6B-8bit-mlx`, `mlx-vision` `gemma-4-26B-A4B-it-8bit`, `gguf` `JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`; uncovered rows: `mlx-text` & `mlx-vision` thinking depth, `mlx-text` vision checks, `mlx-vision` thinking block on short prompt & known `new_image_set` gap, `gguf` audio).
+- `scripts/chain_probe.py` on `gemma-4-26B-A4B-it-8bit`: 4/5 hops `match=True`, `restored=reused`, `cause=None` (`extend-3` reproduces known `Moon`/`moon` MoE tie).
+- `scripts/vlm_parity_probe.py --model Qwen3.5-0.8B-MLX-8bit`: `ok=true` (`MATCH` / `NEAR-TIE` / `NEAR-TIE`, `feature_cache_hit=true`, `equals_cold_run=true`).
+- `scripts/vendor_frontend.py --check`: `marked` `18.2.0` and `dompurify` `3.4.18` match manifest (`Behind: marked` `18.2.1` available, not updated). `scripts/check_version_sync.py` and `scripts/guard_stable_channel.sh` clean.
+
 ## [2.0.260] - 2026-11-19
 
 ### Added

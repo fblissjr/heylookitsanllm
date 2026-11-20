@@ -107,6 +107,9 @@ def _vision_content(variant: int):
 
 
 def _run(args) -> dict:
+    from heylook_llm.mlx_overlay import activate_all_overlays
+
+    activate_all_overlays(log=False)
     import mlx.core as mx
     from mlx_vlm.generate.ar import generate_step
 

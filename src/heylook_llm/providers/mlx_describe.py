@@ -29,17 +29,44 @@ from heylook_llm.providers.contract import (
 
 @lru_cache(maxsize=1)
 def _engine_build() -> str:
-    """The installed mlx-vlm, by commit where installed from git.
+    """The active ``mlx`` and ``mlx-vlm`` builds (including local overlays).
 
-    Read from each distribution's own install record (direct_url.json), not
-    from uv.lock: the lock can say one thing while the venv holds another,
-    and loader routing depends on what mlx-vlm actually registers. Constant
-    for the life of the process, since the libraries are imported once.
+    Read from active overlay decisions and each distribution's own install
+    record (direct_url.json / METADATA), never from uv.lock: the lock can say
+    one thing while local overlays or the venv hold another. Constant for the
+    life of the process, since the libraries are imported once.
     """
     from importlib import metadata
+    from heylook_llm.mlx_overlay import (
+        active_overlay_decisions,
+        read_overlay_version,
+        read_package_overlay_version,
+    )
 
+    decisions = active_overlay_decisions()
     parts = []
-    for dist in ("mlx-vlm",):
+    for dist in ("mlx", "mlx-vlm"):
+        dec = decisions.get(dist)
+        if dec is not None and dec.action in ("canonical", "override", "pythonpath"):
+            ov_ver = (
+                read_overlay_version(dec.path)
+                if dist == "mlx" and dec.path is not None
+                else (
+                    read_package_overlay_version(dec.path, dist)
+                    if dec.path is not None
+                    else None
+                )
+            )
+            tag = dec.label or ov_ver or dec.action
+            if ov_ver and dec.label:
+                sha_head = dec.label.split(" ", 1)[0]
+                if sha_head and sha_head in ov_ver:
+                    rest = dec.label[len(sha_head):].strip()
+                    tag = f"{ov_ver} {rest}".strip()
+                else:
+                    tag = f"{ov_ver}+{dec.label}"
+            parts.append(f"{dist}@{tag} ({dec.action})")
+            continue
         try:
             d = metadata.distribution(dist)
         except metadata.PackageNotFoundError:
@@ -170,7 +197,7 @@ def describe_static(model_id: str, cfg: dict, config_obj: Any, *,
         speculative=_speculative(cfg, derived, written),
         cache=_cache_static(),
         runtime=Fact(value="mlx-vlm", provenance="derived",
-                     source="every MLX model runs on mlx-vlm's engine (plan W10, A2)"),
+                     source="heylook thin B=1 runner over mlx-vlm models (BatchGenerator fallback for unsupported layouts/drafters/pipeline)"),
         context=ContextFacts(
             length=length_fact,
             running=Fact(provenance="not_applicable",
@@ -273,10 +300,11 @@ def _cache_static() -> dict:
 
     return {
         "reuse": Fact(value="prefix cache across requests", provenance="derived",
-                      source="mlx-vlm's automatic prefix cache, held in memory per loaded model"),
+                      source="heylook CoW prefix cache on B=1 runner (mlx-vlm APC on BatchGenerator fallback), held in memory per loaded model"),
         "reuse_mode": Fact(provenance="unknown",
-                           source=("decided at load from the model's cache layers: checkpoints "
-                                   "(hybrid, sliding-window) or hashed blocks (plain KV)")),
+                           source=("decided at load from the runner and cache layers: "
+                                   "cow_prefix / cow_prefix_recurrent on B=1 runner, or "
+                                   "checkpoints / blocks on BatchGenerator fallback")),
         "image_reuse": Fact(provenance="unknown",
                             source="decided at load with the reuse mode"),
         "checkpoint_interval": Fact(value=vlm_engine.APC_CHECKPOINT_INTERVAL_TOKENS, provenance="derived",

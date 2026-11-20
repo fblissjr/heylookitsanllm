@@ -24,6 +24,7 @@ maintaining a fork of mlx-vlm:
 from functools import lru_cache
 import inspect
 import logging
+import os
 import time
 from typing import Any, Optional
 
@@ -50,12 +51,33 @@ _PATCH_LOGITS = "heylook#gemma4-logits"
 _PATCH_VERIFY_HIDDEN = "heylook#gemma4-verify-hidden"
 
 _NATIVE_8BIT_QMV_FASTER_CACHE: dict[tuple[int, str, int, int], bool] = {}
+ENV_GEMMA4_8BIT_QMV = "HEYLOOK_GEMMA4_8BIT_QMV"
 
 
 def _native_8bit_qmv_beats_hoisted(embed=None) -> bool:
-    """True when native MLX ``quantized_matmul`` beats ``_hoisted_8bit_qmv_kernel`` on GPU."""
+    """True when native MLX ``quantized_matmul`` beats ``_hoisted_8bit_qmv_kernel`` on GPU.
+
+    Honors ``$HEYLOOK_GEMMA4_8BIT_QMV`` (``native`` / ``hoisted`` / ``auto``)
+    so A/B benchmarks or load-time GPU contention can override the microbenchmark.
+    """
     import mlx.core as mx
     import mlx.nn as nn
+
+    mode = (os.environ.get(ENV_GEMMA4_8BIT_QMV) or "auto").strip().lower()
+    if mode in ("native", "off", "0", "false", "skip"):
+        logging.info(
+            "gemma4 8-bit QMV: using native quantized_matmul (override %s=%s)",
+            ENV_GEMMA4_8BIT_QMV,
+            mode,
+        )
+        return True
+    if mode in ("hoisted", "on", "1", "true"):
+        logging.info(
+            "gemma4 8-bit QMV: using hoisted kernel (override %s=%s)",
+            ENV_GEMMA4_8BIT_QMV,
+            mode,
+        )
+        return False
 
     if not mx.metal.is_available() or mx.default_device() != mx.gpu:
         return False
@@ -115,8 +137,19 @@ def _native_8bit_qmv_beats_hoisted(embed=None) -> bool:
         mx.eval(gemma4_qmv_multi(probe_mod, x, min_out_rows=1))
         hoisted_times.append(time.perf_counter() - t1)
 
-    native_wins = sorted(native_times)[2] < sorted(hoisted_times)[2]
+    native_med_ms = sorted(native_times)[2] * 1000.0
+    hoisted_med_ms = sorted(hoisted_times)[2] * 1000.0
+    native_wins = native_med_ms < hoisted_med_ms
     _NATIVE_8BIT_QMV_FASTER_CACHE[key] = native_wins
+    logging.info(
+        "gemma4 8-bit QMV (%dx%d, T=%d): using %s (native=%.2f ms, hoisted=%.2f ms)",
+        in_dim,
+        n_out,
+        verify_t,
+        "native quantized_matmul" if native_wins else "hoisted kernel",
+        native_med_ms,
+        hoisted_med_ms,
+    )
     return native_wins
 
 

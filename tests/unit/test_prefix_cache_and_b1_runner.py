@@ -848,3 +848,294 @@ def test_b1_runner_recurrent_uses_capture_lengths_near_end_checkpoints(monkeypat
     )
     assert c2[0].cache.outcome == "reused"
     assert c2[0].cache.cached_tokens == 64
+
+
+@pytest.mark.unit
+def test_b1_runner_mtp_natural_eos_caches_postgen_on_bonus_and_draft_stop(monkeypatch):
+    """MTP replies ending naturally on EOS (bonus or accepted draft) must cache [prompt + gen]."""
+    from mlx_vlm import apc as apc_mod
+    from mlx_vlm.speculative import mtp as mtp_mod
+    from mlx_vlm.speculative import utils as spec_utils
+
+    monkeypatch.setattr(apc_mod, "hash_image_payload", lambda **_k: 0)
+    monkeypatch.setattr(apc_mod, "semantic_extra_hash", lambda **_k: 123)
+    monkeypatch.setattr(spec_utils, "speculative_prefill_kwargs", lambda *_a, **_k: {})
+    monkeypatch.setattr(spec_utils, "speculative_hidden_state", lambda *_a, **_k: mx.zeros((1, 1, 1)))
+
+    # Case 1: bonus token is EOS (raw_toks = [11, 12, 99], stop=99 at index 2).
+    # Prefill emits first_tok=8, MTPBatch commits [8, 11, 12] -> offset = 10 + 3 = 13.
+    class _FakeMTPBatch:
+        planned_rounds: list[list[int]] = []
+
+        def __init__(self, lm, draft, prompt_cache, hidden, first_y, block_size, *_a, **_k):
+            self.cache = prompt_cache
+            first_tok = int(first_y.item())
+            start_pos = int(prompt_cache[0].offset)
+            self.rows = [SimpleNamespace(bonus=first_tok, position=start_pos)]
+            self._rounds = list(self.planned_rounds)
+
+        def step(self, budgets, positions, thinking_budget_criteria=None):
+            raw = self._rounds.pop(0)
+            committed = [int(self.rows[0].bonus), *raw[:-1]]
+            k = mx.arange(len(committed), dtype=mx.float32).reshape(1, 1, len(committed), 1)
+            for c in self.cache:
+                c.update_and_fetch(k, k)
+            self.rows[0].position += len(committed)
+            self.rows[0].bonus = raw[-1]
+            return [raw]
+
+    monkeypatch.setattr(mtp_mod, "MTPBatch", _FakeMTPBatch)
+    draft_stub = (SimpleNamespace(config=SimpleNamespace(block_size=4)), "mtp")
+
+    model, _ = _make_toy_vlm(vocab_size=32, window_size=8)
+    apc = _make_fake_apc()
+    prompt1 = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    ids1 = mx.array([prompt1], dtype=mx.int32)
+
+    # first_tok = (offset=10 + 4) % 32 = 14; round commits [14, 15, 16], bonus EOS=99.
+    _FakeMTPBatch.planned_rounds = [[15, 16, 99]]
+    c1 = list(
+        vlm_engine.generate(
+            model=model,
+            processor=None,
+            apc_manager=apc,
+            input_ids=ids1,
+            raw_inputs={"input_ids": ids1},
+            sampler=None,
+            processors=[],
+            stop_tokens=[99],
+            max_tokens=16,
+            greedy=True,
+            detokenizer=_DummyDetok(),
+            draft=draft_stub,
+        )
+    )
+    assert [c.token for c in c1] == [14, 15, 16]
+    assert c1[-1].finish_reason == "stop"
+
+    # Turn 2 continues after the Turn 1 assistant reply [14, 15, 16] -> must reuse all 13 tokens!
+    prompt2 = [*prompt1, 14, 15, 16, 20, 21]
+    ids2 = mx.array([prompt2], dtype=mx.int32)
+    _FakeMTPBatch.planned_rounds = [[99]]
+    c2 = list(
+        vlm_engine.generate(
+            model=model,
+            processor=None,
+            apc_manager=apc,
+            input_ids=ids2,
+            raw_inputs={"input_ids": ids2},
+            sampler=None,
+            processors=[],
+            stop_tokens=[99],
+            max_tokens=16,
+            greedy=True,
+            detokenizer=_DummyDetok(),
+            draft=draft_stub,
+        )
+    )
+    assert c2[0].cache.outcome == "reused"
+    assert c2[0].cache.cached_tokens == 13
+
+    # Case 2: EOS lands on an accepted draft token mid-round (raw_toks = [25, 99, 27]).
+    # MTPBatch commits [first_tok, 25, 99] (3 tokens); cache_trim_tail=1 trims 99, keeping [prompt3, first_tok, 25].
+    apc2 = _make_fake_apc()
+    _FakeMTPBatch.planned_rounds = [[25, 99, 27]]
+    c3 = list(
+        vlm_engine.generate(
+            model=model,
+            processor=None,
+            apc_manager=apc2,
+            input_ids=ids1,
+            raw_inputs={"input_ids": ids1},
+            sampler=None,
+            processors=[],
+            stop_tokens=[99],
+            max_tokens=16,
+            greedy=True,
+            detokenizer=_DummyDetok(),
+            draft=draft_stub,
+        )
+    )
+    assert [c.token for c in c3] == [14, 25]
+    assert c3[-1].finish_reason == "stop"
+
+    ids4 = mx.array([[*prompt1, 14, 25, 30, 31]], dtype=mx.int32)
+    _FakeMTPBatch.planned_rounds = [[99]]
+    c4 = list(
+        vlm_engine.generate(
+            model=model,
+            processor=None,
+            apc_manager=apc2,
+            input_ids=ids4,
+            raw_inputs={"input_ids": ids4},
+            sampler=None,
+            processors=[],
+            stop_tokens=[99],
+            max_tokens=16,
+            greedy=True,
+            detokenizer=_DummyDetok(),
+            draft=draft_stub,
+        )
+    )
+    assert c4[0].cache.outcome == "reused"
+    assert c4[0].cache.cached_tokens == 12
+
+
+@pytest.mark.unit
+def test_prefix_cache_enforces_memory_reserve_bytes():
+    from mlx_vlm.models.cache import KVCache
+
+    headroom_state = {"bytes": 10_000}
+    store = PrefixCacheStore(
+        memory_max_bytes=10 * 1024 * 1024,
+        max_entries=16,
+        memory_reserve_bytes=8_000,
+        headroom_fn=lambda: headroom_state["bytes"],
+    )
+
+    def _kv_with(n: int) -> list[KVCache]:
+        c = KVCache()
+        x = mx.ones((1, 1, n, 4), dtype=mx.float32)
+        c.update_and_fetch(x, x)
+        mx.eval(c.keys, c.values)
+        return [c]
+
+    assert store.store(list(range(1, 33)), _kv_with(32), extra_hash=1)
+    assert store.store(list(range(101, 133)), _kv_with(32), extra_hash=1)
+    assert store.stats_snapshot()["entries"] == 2
+    assert store.stats_snapshot()["memory_evictions"] == 0
+
+    # Drop headroom below reserve -> storing next entry must evict oldest entries.
+    headroom_state["bytes"] = 7_500
+    assert store.store(list(range(201, 233)), _kv_with(32), extra_hash=1)
+    snap = store.stats_snapshot()
+    assert snap["memory_evictions"] >= 1
+    assert snap["entries"] < 3
+
+
+@pytest.mark.unit
+def test_prefix_cache_compacts_oversized_kv_slices_when_allowed():
+    from mlx_vlm.models.cache import KVCache
+
+    kv = KVCache()
+    big = mx.arange(600, dtype=mx.float32).reshape(1, 1, 600, 1)
+    kv.update_and_fetch(big, big * 2.0)
+    mx.eval(kv.keys, kv.values)
+    assert kv.keys.shape[2] >= 600
+
+    # Shared-sibling store (allow_kv_compact=False) leaves needs_compact=False.
+    store_shared = PrefixCacheStore(memory_max_bytes=10 * 1024 * 1024, max_entries=4)
+    assert store_shared.store(
+        list(range(100)),
+        [kv],
+        extra_hash=1,
+        cache_trim_tail=500,
+        allow_kv_compact=False,
+    )
+    assert store_shared.compact_pending() == 0
+
+    # Standalone store (allow_kv_compact=True, e.g. aborted gen) compacts oversized KV slice.
+    store_aborted = PrefixCacheStore(memory_max_bytes=10 * 1024 * 1024, max_entries=4)
+    assert store_aborted.store(
+        list(range(100)),
+        [kv],
+        extra_hash=1,
+        cache_trim_tail=500,
+        allow_kv_compact=True,
+    )
+    assert store_aborted.compact_pending() == 1
+    restored, matched, _ = store_aborted.lookup(list(range(100)) + [999], extra_hash=1)
+    assert matched == 100
+    assert restored[0].keys.shape[2] == 100
+
+
+@pytest.mark.unit
+def test_b1_runner_config_eos_union_and_zero_max_tokens(monkeypatch):
+    from mlx_vlm import apc as apc_mod
+
+    monkeypatch.setattr(apc_mod, "hash_image_payload", lambda **_k: 0)
+    monkeypatch.setattr(apc_mod, "semantic_extra_hash", lambda **_k: 7)
+
+    model, _ = _make_toy_vlm(vocab_size=32, window_size=8)
+    # Prompt len 6 -> first_tok = (6 + 4) = 10, next = 11. Put 11 ONLY in model.config.eos_token_id.
+    model.config = SimpleNamespace(eos_token_id=[11])
+    apc = _make_fake_apc()
+    ids = mx.array([[1, 2, 3, 4, 5, 6]], dtype=mx.int32)
+
+    chunks = list(
+        vlm_engine.generate(
+            model=model,
+            processor=None,
+            apc_manager=apc,
+            input_ids=ids,
+            raw_inputs={"input_ids": ids},
+            sampler=None,
+            processors=[],
+            stop_tokens=[99],
+            max_tokens=8,
+            greedy=True,
+            detokenizer=_DummyDetok(),
+        )
+    )
+    assert [c.token for c in chunks] == [10, None]
+    assert chunks[-1].finish_reason == "stop"
+
+    # max_tokens=0 emits no generated tokens.
+    zero_chunks = list(
+        vlm_engine.generate(
+            model=model,
+            processor=None,
+            apc_manager=apc,
+            input_ids=ids,
+            raw_inputs={"input_ids": ids},
+            sampler=None,
+            processors=[],
+            stop_tokens=[99],
+            max_tokens=0,
+            greedy=True,
+            detokenizer=_DummyDetok(),
+        )
+    )
+    assert len(zero_chunks) == 1
+    assert zero_chunks[0].token is None
+    assert zero_chunks[0].generation_tokens == 0
+    assert zero_chunks[0].finish_reason == "length"
+
+
+@pytest.mark.unit
+def test_mlx_provider_describe_observed_reports_b1_runner_and_cow_prefix(monkeypatch):
+    from heylook_llm.providers.mlx_provider import MLXProvider
+
+    model, _ = _make_toy_vlm(vocab_size=32, window_size=8)
+    rec_model, _ = _make_toy_vlm(vocab_size=32, window_size=8, with_recurrent=True)
+    apc = _make_fake_apc()
+
+    provider = MLXProvider.__new__(MLXProvider)
+    provider.unload = lambda **_k: None
+    provider.is_diffusion = False
+    provider.model = model
+    provider._apc = apc
+    provider._apc_mode = "blocks"
+    provider._draft = None
+    provider.drafter_skipped = None
+    provider.loaded_chat_template = None
+    provider.config = {"model_path": "/tmp/demo"}
+
+    monkeypatch.delenv("HEYLOOK_B1_RUNNER", raising=False)
+    obs = provider.describe_observed()
+    assert obs.decoding["runner"].value == "b1_runner"
+    assert obs.cache["reuse_mode"].value == "cow_prefix"
+    assert obs.cache["image_reuse"].value is True
+
+    provider.model = rec_model
+    obs_rec = provider.describe_observed()
+    assert obs_rec.decoding["runner"].value == "b1_runner"
+    assert obs_rec.cache["reuse_mode"].value == "cow_prefix_recurrent"
+
+    monkeypatch.setenv("HEYLOOK_B1_RUNNER", "0")
+    provider.model = model
+    obs_fb = provider.describe_observed()
+    assert obs_fb.decoding["runner"].value == "batch_generator"
+    assert "HEYLOOK_B1_RUNNER=0" in obs_fb.decoding["runner"].source
+    assert obs_fb.cache["reuse_mode"].value == "blocks"
+    assert obs_fb.cache["image_reuse"].value is False

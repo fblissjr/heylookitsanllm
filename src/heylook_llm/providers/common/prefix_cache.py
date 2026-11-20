@@ -191,6 +191,7 @@ def _snapshot_layer(
     trim_tail: int = 0,
     target_len: int = 0,
     slack_cap: int = _ROTATING_SLACK_TOKENS,
+    allow_kv_compact: bool = True,
 ) -> Optional[_LayerSnapshot]:
     KVCache, RotatingKVCache, BufferedRotatingKVCache, ArraysCache, CacheList = (
         _cache_classes()
@@ -216,7 +217,8 @@ def _snapshot_layer(
                 min_offset=0,
                 needs_compact=False,
             )
-        if int(c.keys.shape[2]) < end:
+        backing_len = int(c.keys.shape[2])
+        if backing_len < end:
             return None
         k = c.keys[..., :end, :]
         v = c.values[..., :end, :]
@@ -227,7 +229,7 @@ def _snapshot_layer(
             offset=end,
             idx=end,
             min_offset=0,
-            needs_compact=False,
+            needs_compact=(allow_kv_compact and backing_len > end + 256),
         )
 
     if t is BufferedRotatingKVCache:
@@ -308,6 +310,7 @@ def _snapshot_layer(
                 trim_tail=trim_tail,
                 target_len=target_len,
                 slack_cap=slack_cap,
+                allow_kv_compact=allow_kv_compact,
             )
             if snap is None:
                 return None
@@ -529,7 +532,7 @@ def _collect_compactions(
     targets: list[mx.array],
     pending: list[tuple[_LayerSnapshot, mx.array, mx.array]],
 ) -> None:
-    if snap.kind == "rotating" and snap.needs_compact:
+    if snap.kind in ("kv", "rotating") and snap.needs_compact:
         if snap.keys is not None and snap.values is not None:
             kc = mx.contiguous(snap.keys)
             vc = mx.contiguous(snap.values)
@@ -571,6 +574,18 @@ def _longest_common_prefix(a: tuple[int, ...], b: tuple[int, ...], limit: int) -
     return n
 
 
+def _metal_memory_headroom_bytes() -> Optional[int]:
+    """Remaining bytes under Metal's max recommended working set, or None."""
+    try:
+        if not mx.metal.is_available():
+            return None
+        working_set = int(mx.device_info()["max_recommended_working_set_size"])
+        active = int(mx.get_active_memory())
+        return working_set - active
+    except (AttributeError, RuntimeError, KeyError, TypeError, ValueError):
+        return None
+
+
 class PrefixCacheStore:
     """In-memory CoW prefix cache for single-row MLX inference."""
 
@@ -580,10 +595,14 @@ class PrefixCacheStore:
         memory_max_bytes: int = 0,
         max_entries: int = 32,
         memory_reserve_bytes: int = 0,
+        headroom_fn: Optional[Callable[[], Optional[int]]] = None,
     ) -> None:
         self.memory_max_bytes = max(0, int(memory_max_bytes))
         self.max_entries = max(1, int(max_entries))
         self.memory_reserve_bytes = max(0, int(memory_reserve_bytes))
+        self._headroom_fn = (
+            _metal_memory_headroom_bytes if headroom_fn is None else headroom_fn
+        )
         self._lock = threading.RLock()
         self._entries: OrderedDict[tuple[int, tuple[int, ...]], _CacheEntry] = (
             OrderedDict()
@@ -651,6 +670,16 @@ class PrefixCacheStore:
                 oldest_key, _ = next(iter(self._entries.items()))
                 self._evict_key_locked(oldest_key)
                 self.memory_evictions += 1
+        if self.memory_reserve_bytes > 0 and self._entries:
+            headroom = self._headroom_fn()
+            if headroom is not None and headroom - needed_bytes < self.memory_reserve_bytes:
+                deficit = self.memory_reserve_bytes - (headroom - needed_bytes)
+                freed = 0
+                while self._entries and freed < deficit:
+                    oldest_key, oldest_entry = next(iter(self._entries.items()))
+                    freed += max(1, oldest_entry.nbytes)
+                    self._evict_key_locked(oldest_key)
+                    self.memory_evictions += 1
 
     def lookup(
         self,
@@ -733,6 +762,7 @@ class PrefixCacheStore:
         cache_trim_tail: Optional[int] = None,
         rope_deltas: Optional[mx.array] = None,
         layer_fallbacks: Optional[dict[int, _LayerSnapshot]] = None,
+        allow_kv_compact: bool = True,
     ) -> bool:
         target_len = len(token_ids) - int(trim_tail)
         kv_trim = int(trim_tail) if cache_trim_tail is None else int(cache_trim_tail)
@@ -742,7 +772,10 @@ class PrefixCacheStore:
         layers: list[_LayerSnapshot] = []
         for idx, c in enumerate(prompt_cache):
             snap = _snapshot_layer(
-                c, trim_tail=kv_trim, target_len=target_len
+                c,
+                trim_tail=kv_trim,
+                target_len=target_len,
+                allow_kv_compact=allow_kv_compact,
             )
             if snap is None and layer_fallbacks is not None:
                 fb = layer_fallbacks.get(idx)

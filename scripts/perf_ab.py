@@ -310,7 +310,9 @@ def _timed(provider, request) -> dict:
 
 def worker(args) -> None:
     import heylook_llm
+    from heylook_llm.mlx_overlay import activate_all_overlays
 
+    activate_all_overlays(log=False)
     print(f"HEYLOOK_FILE {heylook_llm.__file__}", flush=True)
     overrides = json.loads(args.overrides or "{}")
     provider_name, cfg = _resolve_config(args.model, overrides)

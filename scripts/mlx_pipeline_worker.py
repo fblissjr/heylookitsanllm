@@ -38,9 +38,10 @@ import threading
 from pathlib import Path
 from typing import Any, Optional
 
-from heylook_llm.mlx_overlay import activate_mlx_overlay, log_mlx_runtime
+from heylook_llm.mlx_overlay import activate_all_overlays, log_mlx_runtime
 
-_MLX_OVERLAY_DECISION = activate_mlx_overlay(log=False)
+_OVERLAY_DECISIONS = activate_all_overlays(log=False)
+_MLX_OVERLAY_DECISION = _OVERLAY_DECISIONS.get("mlx")
 
 import mlx.core as mx
 

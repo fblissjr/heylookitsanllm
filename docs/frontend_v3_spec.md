@@ -768,8 +768,9 @@ cache, thinking, speculative, decoding, image, steering}`.
   `ram_budget_mib` is `unknown` until load and then `observed` from `_auto_cache_ram_mb()`,
   which sizes `-cram` up to 32768 MiB from live working-set headroom; `checkpoint_min_spacing`
   auto-resolves to 256 on recurrent and sliding-window models). MLX (v2.0.86, mlx-vlm's prefix cache):
-  `reuse`, `reuse_mode` (`checkpoints` for hybrid and sliding-window models, else the
-  block mode), `image_reuse` (true on checkpoint models), `checkpoint_interval`,
+  `reuse`, `reuse_mode` (`cow_prefix` or `cow_prefix_recurrent` when heylook's B=1 runner
+  is active since v2.0.261, or `checkpoints` / `blocks` on the BatchGenerator fallback),
+  `image_reuse` (true on B=1 runner and on checkpoint fallback models), `checkpoint_interval`,
   `checkpoint_captures` (near-end, coarse interior, and system-prompt snapshots one request
   takes), `checkpoint_entries` (snapshots kept across requests,
   under the byte budget), `memory_budget_bytes` (`vlm_engine.APC_MEMORY_SHARE` of the
@@ -789,8 +790,10 @@ cache, thinking, speculative, decoding, image, steering}`.
   drafters, and prompts exceeding `draft_max_context` run undrafted and carry no
   `performance.speculative`.
 - `decoding` (v2.0.147), Facts: `mode` (`autoregressive`, or `diffusion` for a
-  masked-diffusion checkpoint) and `request_fields` (the request fields that engine path
-  reads; null = every sampler field). gguf: autoregressive, null, `derived`. MLX: `unknown`
+  masked-diffusion checkpoint), `request_fields` (the request fields that engine path
+  reads; null = every sampler field), and on loaded autoregressive MLX models (v2.0.261)
+  `runner` (`b1_runner` for heylook's thin B=1 runner, or `batch_generator` with the exact
+  fallback blocker reason). gguf: autoregressive, null, `derived`. MLX: `unknown`
   until load (mlx-vlm's own diffusion check on the loaded model), then `observed`; a
   diffusion model reads `temperature`, `max_tokens`, `enable_thinking` and
   `reasoning_effort` only (`mlx_provider.DIFFUSION_REQUEST_FIELDS`), and v3's sampler panel

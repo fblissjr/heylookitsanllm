@@ -43,17 +43,16 @@ def _run_guard(
     )
 
 
-def test_allows_40_hex_pin_and_self_editable_without_override(tmp_path: Path) -> None:
+def test_allows_clean_pypi_and_self_editable_without_override(tmp_path: Path) -> None:
     pyproject = (
-        '[project]\nname = "demo"\n\n'
-        "[tool.coverage.run]\nbranch = true\n\n"
-        "[tool.uv.sources]\n"
-        f'mlx-vlm = {{ git = "https://github.com/Neywa-Labs/mlx-vlm", rev = "{HEX40}" }}\n'
+        '[project]\nname = "demo"\n'
+        'dependencies = ["mlx-vlm>=0.8.0"]\n\n'
+        "[tool.coverage.run]\nbranch = true\n"
     )
     uv_lock = (
         '[[package]]\nname = "demo"\nsource = { editable = "." }\n\n'
         '[[package]]\nname = "mlx-vlm"\n'
-        f'source = {{ git = "https://github.com/Neywa-Labs/mlx-vlm?rev={HEX40}#{HEX40}" }}\n'
+        'source = { registry = "https://pypi.org/simple" }\n'
     )
     res = _run_guard(tmp_path, pyproject=pyproject, uv_lock=uv_lock)
     assert res.returncode == 0, res.stderr
@@ -63,24 +62,24 @@ def test_allows_40_hex_pin_and_self_editable_without_override(tmp_path: Path) ->
     ("source_block", "expected_msg"),
     [
         (
+            f'[tool.uv.sources]\nmlx-vlm = {{ git = "https://github.com/Neywa-Labs/mlx-vlm", rev = "{HEX40}" }}\n',
+            "git source",
+        ),
+        (
             '[tool.uv.sources]\nmlx-vlm = { git = "https://github.com/example/mlx-vlm", branch = "main" }\n',
-            "floating git branch",
+            "git source",
         ),
         (
             '[tool.uv.sources]\nmlx-vlm = { git = "https://github.com/example/mlx-vlm", tag = "v0.4.0" }\n',
-            "git tag",
-        ),
-        (
-            '[tool.uv.sources]\nmlx-vlm = { git = "https://github.com/example/mlx-vlm", rev = "e267ccf" }\n',
-            "non-40-hex rev",
+            "git source",
         ),
         (
             '[tool.uv.sources]\nmlx-vlm = { git = "https://github.com/example/mlx-vlm" }\n',
-            "unpinned git source",
+            "git source",
         ),
         (
             '[tool.uv.sources.mlx-vlm]\ngit = "https://github.com/example/mlx-vlm"\n',
-            "unpinned git source",
+            "git source",
         ),
         (
             '[tool.uv.sources]\nmlx-vlm = { path = "../mlx-vlm", editable = true }\n',
@@ -92,7 +91,7 @@ def test_allows_40_hex_pin_and_self_editable_without_override(tmp_path: Path) ->
         ),
     ],
 )
-def test_blocks_unpinned_or_local_pyproject_sources(
+def test_blocks_git_or_local_pyproject_sources(
     tmp_path: Path, source_block: str, expected_msg: str
 ) -> None:
     res = _run_guard(tmp_path, pyproject=source_block)
@@ -104,12 +103,12 @@ def test_blocks_unpinned_or_local_pyproject_sources(
     ("lock_line", "expected_msg"),
     [
         (
-            'source = { git = "https://github.com/example/mlx-vlm?branch=main#main" }\n',
-            "unpinned git dependency",
+            f'source = {{ git = "https://github.com/Neywa-Labs/mlx-vlm?rev={HEX40}#{HEX40}" }}\n',
+            "external git dependency",
         ),
         (
-            'source = { git = "https://github.com/example/mlx-vlm?rev=deadbeef#deadbeef" }\n',
-            "unpinned git dependency",
+            'source = { git = "https://github.com/example/mlx-vlm?branch=main#main" }\n',
+            "external git dependency",
         ),
         (
             'source = { editable = "../mlx-vlm" }\n',
@@ -121,7 +120,7 @@ def test_blocks_unpinned_or_local_pyproject_sources(
         ),
     ],
 )
-def test_blocks_unpinned_or_local_uv_lock_sources(
+def test_blocks_git_or_local_uv_lock_sources(
     tmp_path: Path, lock_line: str, expected_msg: str
 ) -> None:
     res = _run_guard(tmp_path, uv_lock=lock_line)
@@ -130,7 +129,7 @@ def test_blocks_unpinned_or_local_uv_lock_sources(
 
 
 def test_override_env_allows_blocked_source(tmp_path: Path) -> None:
-    pyproject = '[tool.uv.sources]\nmlx-vlm = { path = "../mlx-vlm", editable = true }\n'
+    pyproject = f'[tool.uv.sources]\nmlx-vlm = {{ git = "https://github.com/Neywa-Labs/mlx-vlm", rev = "{HEX40}" }}\n'
     res = _run_guard(
         tmp_path,
         pyproject=pyproject,

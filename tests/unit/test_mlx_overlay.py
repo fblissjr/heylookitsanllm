@@ -295,3 +295,129 @@ class TestResolveMlxOverlay:
             check=False,
         )
         assert proc.returncode == 0, proc.stderr or proc.stdout
+
+
+def _make_python_overlay(
+    root: Path,
+    pkg: str = "mlx-vlm",
+    import_name: str = "mlx_vlm",
+    *,
+    version: str = "0.8.0",
+    sha: str = "a22a364af9d7ee5e7e063881923cf18a3f42533d",
+    prs: list[dict] | None = None,
+) -> Path:
+    ov = root / pkg
+    pkg_dir = ov / import_name
+    pkg_dir.mkdir(parents=True, exist_ok=True)
+    (pkg_dir / "__init__.py").write_text(f"__version__ = '{version}'\n", encoding="utf-8")
+    dist_info = ov / f"{import_name}-{version}.dist-info"
+    dist_info.mkdir(parents=True, exist_ok=True)
+    (dist_info / "METADATA").write_text(
+        f"Metadata-Version: 2.1\nName: {pkg}\nVersion: {version}\n",
+        encoding="utf-8",
+    )
+    (ov / "heylook-build.json").write_text(
+        json.dumps(
+            {
+                "package": pkg,
+                "import_name": import_name,
+                "sha": sha,
+                "version": version,
+                "prs": prs or [],
+                "overlay": str(ov),
+            }
+        ),
+        encoding="utf-8",
+    )
+    return ov
+
+
+@pytest.mark.unit
+class TestPurePythonOverlays:
+    def test_discover_and_resolve_same_version_stays_active_newer_pypi_stands_down(
+        self, tmp_path: Path
+    ):
+        root = tmp_path / "overlays"
+        ov = _make_python_overlay(
+            root, "mlx-vlm", "mlx_vlm", version="0.8.0", prs=[{"number": 2767}]
+        )
+        env = {mlx_overlay.ENV_OVERLAYS_DIR: str(root)}
+
+        discovered = mlx_overlay.discover_python_overlays(env)
+        assert discovered == [("mlx-vlm", "mlx_vlm")]
+
+        # Same base version (0.8.0 == 0.8.0) keeps local main overlay active.
+        d_same = mlx_overlay.resolve_python_overlay(
+            "mlx-vlm", "mlx_vlm", env, venv_version="0.8.0", already_imported=False
+        )
+        assert d_same.action == "canonical"
+        assert d_same.path == ov
+        assert d_same.label == "a22a364a (#2767)"
+
+        # Strictly newer PyPI release (0.8.1 > 0.8.0) stands down automatically.
+        d_newer = mlx_overlay.resolve_python_overlay(
+            "mlx-vlm", "mlx_vlm", env, venv_version="0.8.1", already_imported=False
+        )
+        assert d_newer.action == "superseded_by_pypi"
+        assert d_newer.path is None
+        assert d_newer.warning and "0.8.1" in d_newer.warning
+
+    def test_global_heylook_overlays_zero_disables_mlx_and_python_overlays(
+        self, tmp_path: Path, monkeypatch
+    ):
+        mlx_ov = _make_overlay(tmp_path / "mlx", version="0.32.5.dev20261119+280cc67d")
+        py_root = tmp_path / "overlays"
+        _make_python_overlay(py_root, "mlx-vlm", "mlx_vlm", version="0.8.0")
+        monkeypatch.setattr(mlx_overlay, "DEFAULT_OVERLAY", mlx_ov)
+
+        env = {
+            mlx_overlay.ENV_OVERLAYS: "0",
+            mlx_overlay.ENV_OVERLAYS_DIR: str(py_root),
+        }
+        d_mlx = mlx_overlay.resolve_mlx_overlay(env, venv_version="0.32.4", already_imported=False)
+        d_vlm = mlx_overlay.resolve_python_overlay(
+            "mlx-vlm", "mlx_vlm", env, venv_version="0.8.0", already_imported=False
+        )
+        assert d_mlx.action == "disabled"
+        assert d_vlm.action == "disabled"
+
+    def test_per_package_env_override_and_engine_build_reporting(
+        self, tmp_path: Path, monkeypatch
+    ):
+        from heylook_llm.providers import mlx_describe
+
+        alt = _make_python_overlay(
+            tmp_path / "alt", "mlx-vlm", "mlx_vlm", version="0.8.0", sha="112233445566"
+        )
+        env = {
+            mlx_overlay.ENV_OVERLAYS_DIR: str(tmp_path / "empty_overlays"),
+            "HEYLOOK_MLX_VLM_OVERLAY": str(alt),
+        }
+        d = mlx_overlay.resolve_python_overlay(
+            "mlx-vlm", "mlx_vlm", env, venv_version="0.8.0", already_imported=False
+        )
+        assert d.action == "override"
+        assert d.path == alt
+        assert d.label == "11223344"
+
+        monkeypatch.setattr(
+            mlx_overlay,
+            "_ACTIVE_DECISIONS",
+            {
+                "mlx": mlx_overlay.OverlayDecision(
+                    action="canonical",
+                    path=None,
+                    source="canonical build",
+                    label="27105c17 (#4890)",
+                    package="mlx",
+                ),
+                "mlx-vlm": d,
+            },
+        )
+        mlx_describe._engine_build.cache_clear()
+        try:
+            build = mlx_describe._engine_build()
+            assert "mlx@27105c17 (#4890) (canonical)" in build
+            assert "mlx-vlm@0.8.0+11223344 (override)" in build
+        finally:
+            mlx_describe._engine_build.cache_clear()

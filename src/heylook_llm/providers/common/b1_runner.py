@@ -36,6 +36,51 @@ def _is_mock_or_none(obj: Any) -> bool:
     return obj is None or "unittest.mock" in type(obj).__module__
 
 
+def b1_runner_blocker(
+    *,
+    model: Any,
+    apc_manager: Any = None,
+    draft: Any = None,
+    kv_bits: Optional[int] = None,
+) -> Optional[str]:
+    """Reason this request cannot use the B=1 runner, or ``None`` when eligible."""
+    if os.environ.get("HEYLOOK_B1_RUNNER", "1") == "0":
+        return "disabled via HEYLOOK_B1_RUNNER=0"
+    if kv_bits is not None:
+        return f"KV cache quantization (kv_bits={kv_bits})"
+    if getattr(apc_manager, "_heylook_apc_sync_wrapped", False):
+        return "pipeline-parallel synchronized APC wrapper is active"
+    if draft is not None and (
+        not isinstance(draft, tuple) or len(draft) < 2 or draft[1] != "mtp"
+    ):
+        kind = draft[1] if isinstance(draft, tuple) and len(draft) >= 2 else type(draft).__name__
+        return f"non-MTP drafter ({kind}) uses BatchGenerator"
+    if _is_mock_or_none(model):
+        return "no loaded model"
+    lm = getattr(model, "language_model", None)
+    if _is_mock_or_none(lm) or not callable(getattr(lm, "make_cache", None)):
+        return "language_model does not expose make_cache()"
+
+    cached_ok = getattr(lm, "_heylook_b1_layout_ok", None)
+    if cached_ok is None:
+        has_rec = False
+        try:
+            sample = lm.make_cache()
+            cached_ok = bool(sample) and cache_layout_supported(sample)
+            if cached_ok:
+                has_rec = cache_has_recurrent(sample)
+        except Exception:  # noqa: BLE001 - conservative fallback on unusual model caches
+            cached_ok = False
+        try:
+            lm._heylook_b1_layout_ok = cached_ok
+            lm._heylook_b1_has_recurrent = has_rec
+        except Exception:  # noqa: BLE001
+            pass
+    if not cached_ok:
+        return "model cache layout is unsupported by CoW PrefixCacheStore"
+    return None
+
+
 def can_use_b1_runner(
     *,
     model: Any,
@@ -44,34 +89,36 @@ def can_use_b1_runner(
     kv_bits: Optional[int] = None,
 ) -> bool:
     """True when this request can execute safely on the B=1 runner."""
-    if os.environ.get("HEYLOOK_B1_RUNNER", "1") == "0":
-        return False
-    if kv_bits is not None:
-        return False
-    if getattr(apc_manager, "_heylook_apc_sync_wrapped", False):
-        return False
-    if draft is not None and (
-        not isinstance(draft, tuple) or len(draft) < 2 or draft[1] != "mtp"
-    ):
-        return False
-    if _is_mock_or_none(model):
-        return False
-    lm = getattr(model, "language_model", None)
-    if _is_mock_or_none(lm) or not callable(getattr(lm, "make_cache", None)):
-        return False
+    return (
+        b1_runner_blocker(
+            model=model,
+            apc_manager=apc_manager,
+            draft=draft,
+            kv_bits=kv_bits,
+        )
+        is None
+    )
 
-    cached_ok = getattr(lm, "_heylook_b1_layout_ok", None)
-    if cached_ok is None:
-        try:
-            sample = lm.make_cache()
-            cached_ok = bool(sample) and cache_layout_supported(sample)
-        except Exception:  # noqa: BLE001 - conservative fallback on unusual model caches
-            cached_ok = False
-        try:
-            lm._heylook_b1_layout_ok = cached_ok
-        except Exception:  # noqa: BLE001
-            pass
-    return bool(cached_ok)
+
+def model_has_recurrent_cache(model: Any) -> bool:
+    """True when ``model.language_model.make_cache()`` contains recurrent ``ArraysCache`` layers."""
+    lm = getattr(model, "language_model", None)
+    if _is_mock_or_none(lm):
+        return False
+    cached = getattr(lm, "_heylook_b1_has_recurrent", None)
+    if isinstance(cached, bool):
+        return cached
+    if not callable(getattr(lm, "make_cache", None)):
+        return False
+    try:
+        has_rec = cache_has_recurrent(lm.make_cache())
+    except Exception:  # noqa: BLE001
+        return False
+    try:
+        lm._heylook_b1_has_recurrent = has_rec
+    except Exception:  # noqa: BLE001
+        pass
+    return has_rec
 
 
 def get_or_create_b1_cache(apc_manager: Any) -> Optional[PrefixCacheStore]:
@@ -331,6 +378,28 @@ def _uniform_cache_offset(prompt_cache: list[Any]) -> Optional[int]:
     return first if all(o == first for o in offsets) else None
 
 
+def _collect_stop_tokens(stop_tokens: Iterable[int], model: Any, lm: Any) -> set[int]:
+    """Union caller stop tokens with model/LM config EOS ids (matching BatchGenerator)."""
+    out = {int(t) for t in stop_tokens}
+    configs = (
+        getattr(model, "config", None),
+        getattr(lm, "config", None),
+        getattr(getattr(model, "config", None), "text_config", None),
+        getattr(getattr(model, "config", None), "language_config", None),
+    )
+    for cfg in configs:
+        if cfg is None or _is_mock_or_none(cfg):
+            continue
+        raw = getattr(cfg, "eos_token_id", None)
+        if isinstance(raw, int) and not isinstance(raw, bool):
+            out.add(int(raw))
+        elif isinstance(raw, (list, tuple, set, frozenset)):
+            for item in raw:
+                if isinstance(item, int) and not isinstance(item, bool):
+                    out.add(int(item))
+    return out
+
+
 def _apply_forced_budget_check(criteria: Any, tok: int) -> Optional[int]:
     if criteria is None:
         return None
@@ -397,7 +466,8 @@ def generate_b1(
             f"system prompt."
         )
 
-    stop = set(int(t) for t in stop_tokens)
+    lm = model.language_model
+    stop = _collect_stop_tokens(stop_tokens, model, lm)
     if reset_peak:
         mx.reset_peak_memory()
     started = time.perf_counter()
@@ -432,7 +502,6 @@ def generate_b1(
         sampler._heylook_mtp_penalties = (raw_procs, mtp_gen_tokens)
         eff_greedy = False
 
-    lm = model.language_model
     b1_cache = get_or_create_b1_cache(apc_manager)
     detok = detokenizer
     if detok is None:
@@ -449,6 +518,7 @@ def generate_b1(
     prompt_cache: list[Any] = []
     cache_tokens = list(prompt_list)
     stopped_mid_mtp_round = False
+    postgen_cache_trim_tail = 0
     has_media = any(
         raw_inputs.get(k) is not None
         for k in ("pixel_values", "pixel_values_videos", "audio_features", "input_features")
@@ -756,13 +826,18 @@ def generate_b1(
                     chunk.cache = cache_rep
                 return chunk
 
-            # Handle first token (never emit a stop token as text).
+            # Handle zero-token cap and first token (never emit a stop token as text).
+            if max_tokens <= 0:
+                finish = "length"
+                yield _emit_chunk(None, is_last=True, is_first=True, fin="length")
+                return
+
             if first_tok in stop:
                 finish = "stop"
                 yield _emit_chunk(None, is_last=True, is_first=True, fin="stop")
                 return
 
-            if max_tokens <= 1:
+            if max_tokens == 1:
                 finish = "length"
                 if mtp_gen_tokens is not None:
                     mtp_gen_tokens.append(first_tok)
@@ -916,9 +991,11 @@ def generate_b1(
 
                     toks: list[int] = []
                     round_finish: Optional[str] = None
-                    for tok in raw_toks:
+                    stop_idx: Optional[int] = None
+                    for idx, tok in enumerate(raw_toks):
                         if tok in stop:
                             round_finish = "stop"
+                            stop_idx = idx
                             break
                         toks.append(tok)
                     delivered = len(toks) + (1 if round_finish == "stop" else 0)
@@ -926,12 +1003,30 @@ def generate_b1(
                     if round_finish is None and generated + len(toks) >= max_tokens:
                         round_finish = "length"
 
-                    if round_finish != "stop" and len(raw_toks) >= 1:
-                        committed_in_round = [prev_bonus, *raw_toks[:-1]]
-                        if len(cache_tokens) + len(committed_in_round) == mtp_batch.rows[0].position:
-                            cache_tokens.extend(committed_in_round)
+                    if raw_toks:
+                        committed_total = len(raw_toks)
+                        if round_finish != "stop":
+                            committed_in_round = [prev_bonus, *raw_toks[:-1]]
+                            if len(cache_tokens) + committed_total == mtp_batch.rows[0].position:
+                                cache_tokens.extend(committed_in_round)
+                            else:
+                                stopped_mid_mtp_round = True
                         else:
-                            stopped_mid_mtp_round = True
+                            # MTPBatch.step() commits [prev_bonus, *raw_toks[:-1]] into prompt_cache.
+                            # Keep pre-EOS reply tokens in cache_tokens, trimming any trailing
+                            # committed draft tokens past stop_idx on non-recurrent caches.
+                            assert stop_idx is not None
+                            if len(cache_tokens) + committed_total == mtp_batch.rows[0].position:
+                                if stop_idx == committed_total - 1:
+                                    cache_tokens.extend([prev_bonus, *raw_toks[:-1]])
+                                    postgen_cache_trim_tail = 0
+                                elif not has_recurrent:
+                                    cache_tokens.extend([prev_bonus, *raw_toks[:stop_idx]])
+                                    postgen_cache_trim_tail = (committed_total - 1) - stop_idx
+                                else:
+                                    stopped_mid_mtp_round = True
+                            else:
+                                stopped_mid_mtp_round = True
                     else:
                         stopped_mid_mtp_round = True
 
@@ -963,6 +1058,14 @@ def generate_b1(
                     cur_off = _uniform_cache_offset(prompt_cache)
                     if cur_off is not None and cur_off >= n:
                         mx.eval([c.state for c in prompt_cache])
+                        will_store_postgen = (
+                            not aborted
+                            and generated > 0
+                            and finish in ("stop", "length")
+                            and not stopped_mid_mtp_round
+                            and len(cache_tokens) > n
+                            and cur_off - postgen_cache_trim_tail == len(cache_tokens)
+                        )
                         b1_cache.store(
                             prompt_list,
                             prompt_cache,
@@ -971,20 +1074,15 @@ def generate_b1(
                             cache_trim_tail=cur_off - n,
                             rope_deltas=rope_deltas,
                             layer_fallbacks=pregen_fallbacks,
+                            allow_kv_compact=not will_store_postgen,
                         )
-                        if (
-                            not aborted
-                            and generated > 0
-                            and finish in ("stop", "length")
-                            and not stopped_mid_mtp_round
-                            and len(cache_tokens) > n
-                            and cur_off == len(cache_tokens)
-                        ):
+                        if will_store_postgen:
                             b1_cache.store(
                                 cache_tokens,
                                 prompt_cache,
                                 extra_hash=salt or 0,
                                 trim_tail=0,
+                                cache_trim_tail=postgen_cache_trim_tail,
                                 rope_deltas=rope_deltas,
                             )
                     pregen_fallbacks.clear()

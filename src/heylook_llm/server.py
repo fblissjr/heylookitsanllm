@@ -246,10 +246,11 @@ def main():
     else:
         logging.info("uvloop not available - using standard asyncio event loop")
 
-    # Select canonical or overridden MLX overlay before first `import mlx`.
-    from heylook_llm.mlx_overlay import activate_mlx_overlay, log_mlx_runtime
+    # Select canonical or overridden MLX / Python overlays before first imports.
+    from heylook_llm.mlx_overlay import activate_all_overlays, log_mlx_runtime
 
-    mlx_decision = activate_mlx_overlay()
+    overlay_decisions = activate_all_overlays()
+    mlx_decision = overlay_decisions.get("mlx")
 
     # Set process-wide wired memory limit for Metal.
     # mlx-lm does this at server startup (server.py main()) to keep model weights
