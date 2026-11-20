@@ -22,6 +22,7 @@ from .prefix_cache import (
     PrefixCacheStore,
     cache_has_recurrent,
     cache_layout_supported,
+    capture_rotating_fallbacks_before_evict,
     snapshot_rotating_fallbacks,
 )
 
@@ -103,10 +104,30 @@ def _generation_stream():
 
 
 def _buffer_rotating_size(draft_model: Any, draft_block_size: Optional[int]) -> int:
+    if draft_model is None:
+        return 256
     cfg = getattr(draft_model, "config", None)
     configured = int(getattr(cfg, "block_size", draft_block_size or 1) or 1)
     requested = int(draft_block_size or configured)
-    return max(128, min(192, max(configured, requested) * 8))
+    raw = max(256, max(configured, requested) * 8)
+    aligned = ((raw + 255) // 256) * 256
+    return min(512, aligned)
+
+
+def _should_use_buffered_rotating(lm: Any, *, drafting: bool) -> bool:
+    if drafting:
+        return True
+    from . import gemma4_vision as _gv
+
+    return (
+        _gv.mlx_sdpa_supports_window_size()
+        and getattr(
+            getattr(getattr(lm, "model", None), "_make_masks", None),
+            "__func__",
+            None,
+        )
+        is _gv.gemma4_make_masks
+    )
 
 
 def _ensure_buffered_rotating_caches(prompt_cache: list[Any], buffer_size: int) -> None:
@@ -218,8 +239,47 @@ def _plan_chunk_stops(
     step_size: Optional[int],
     boundaries: Iterable[int],
     adjust_fn,
+    has_recurrent: bool = False,
+    apc_manager: Any = None,
 ) -> tuple[list[int], set[int]]:
     """Return sorted chunk end positions strictly in ``(cached, total_len)`` and snapshot stops."""
+    if has_recurrent:
+        if total_len <= cached + 1:
+            return [], set()
+        from . import vlm_engine as _ve
+
+        interval = int(
+            getattr(
+                apc_manager,
+                "checkpoint_interval_tokens",
+                _ve.APC_CHECKPOINT_INTERVAL_TOKENS,
+            )
+            or _ve.APC_CHECKPOINT_INTERVAL_TOKENS
+        )
+        block_size = int(getattr(apc_manager, "block_size", 16) or 16)
+        min_tokens = int(getattr(apc_manager, "exact_cache_min_tokens", 16) or 16)
+        planned = _ve.capture_lengths(
+            total_len - 1,
+            interval=interval,
+            block_size=block_size,
+            captures=_ve.APC_CHECKPOINT_CAPTURES,
+            min_tokens=min_tokens,
+            boundaries=boundaries,
+            adjust=adjust_fn or (lambda m: m),
+            interior_stride=_ve.APC_INTERIOR_STRIDE_TOKENS,
+            interior_max=_ve.APC_INTERIOR_MAX_CAPTURES,
+        )
+        snap_stops = {p for p in planned if cached < p < total_len - 1}
+        stops = set(snap_stops)
+        if step_size is not None and step_size > 0 and (total_len - cached) > step_size:
+            pos = cached + step_size
+            while pos < total_len:
+                stops.add(pos)
+                if pos == total_len - 1 and (adjust_fn is None or adjust_fn(pos) == pos):
+                    snap_stops.add(pos)
+                pos += step_size
+        return sorted(stops), snap_stops
+
     snap_stops: set[int] = set()
     for b in boundaries:
         if cached < b < total_len:
@@ -389,28 +449,22 @@ def generate_b1(
     prompt_cache: list[Any] = []
     cache_tokens = list(prompt_list)
     stopped_mid_mtp_round = False
-    has_media = raw_inputs.get("pixel_values") is not None
+    has_media = any(
+        raw_inputs.get(k) is not None
+        for k in ("pixel_values", "pixel_values_videos", "audio_features", "input_features")
+    )
     rope_deltas: Optional[mx.array] = None
     pregen_fallbacks: dict[int, Any] = {}
     has_recurrent = False
+    has_uncaptured_rotating = False
 
     try:
-        embed = model.get_input_embeddings(
-            input_ids,
-            raw_inputs.get("pixel_values"),
-            mask=raw_inputs.get("attention_mask"),
-            **data,
-            **(embed_extras or {}),
+        use_buf_rot = _should_use_buffered_rotating(lm, drafting=drafting)
+        buf_size = (
+            _buffer_rotating_size(draft[0] if drafting else None, draft_block_size)
+            if use_buf_rot
+            else 64
         )
-        gen_kwargs = {
-            **data,
-            **{k: v for k, v in embed.to_dict().items() if v is not None},
-        }
-        full_embeds = gen_kwargs.pop("inputs_embeds", None)
-        if full_embeds is None:
-            raise ValueError("get_input_embeddings did not produce inputs_embeds")
-
-        buf_size = _buffer_rotating_size(draft[0], draft_block_size) if drafting else 64
         media_ids = _ve.multimodal_token_ids(model, processor)
         suffix_is_text = (
             (lambda m: not any(t in media_ids for t in prompt_list[m:]))
@@ -428,7 +482,7 @@ def generate_b1(
                     prompt_list,
                     extra_hash=salt,
                     suffix_is_text_only=suffix_is_text,
-                    use_buffered_rotating=drafting,
+                    use_buffered_rotating=use_buf_rot,
                     buffer_size=buf_size,
                 )
                 if restored_cache is not None and cached > 0:
@@ -437,21 +491,67 @@ def generate_b1(
                     cached = 0
             if not prompt_cache:
                 prompt_cache = list(lm.make_cache())
-                if drafting:
+                if use_buf_rot:
                     _ensure_buffered_rotating_caches(prompt_cache, buf_size)
                 if hasattr(lm, "_rope_deltas"):
                     lm._rope_deltas = None
             elif hasattr(lm, "_rope_deltas"):
                 lm._rope_deltas = restored_rd
 
-            if restored_rd is not None and "rope_deltas" not in gen_kwargs:
-                gen_kwargs["rope_deltas"] = restored_rd
-
             has_recurrent = cache_has_recurrent(prompt_cache)
+            has_uncaptured_rotating = b1_cache is not None and not has_recurrent
             rem_len = n - cached
             suffix_ids = input_ids[:, cached:]
-            suffix_embeds = full_embeds[:, cached:, :]
-            rem_kwargs = _slice_prompt_kwargs(gen_kwargs, full_len=n, start=cached)
+
+            gen_kwargs: dict[str, Any] = {}
+            rem_kwargs: dict[str, Any] = {}
+            suffix_embeds = None
+            can_suffix_embed = (
+                cached > 0
+                and not has_media
+                and not data
+                and not embed_extras
+                and not hasattr(lm, "get_rope_index")
+            )
+            if can_suffix_embed:
+                embed = model.get_input_embeddings(suffix_ids, None, mask=None)
+                emb_dict = {
+                    k: v for k, v in embed.to_dict().items() if v is not None
+                }
+                if "inputs_embeds" in emb_dict and all(
+                    k in ("inputs_embeds", "per_layer_inputs") for k in emb_dict
+                ):
+                    suffix_embeds = emb_dict.pop("inputs_embeds")
+                    rem_kwargs = dict(emb_dict)
+                    gen_kwargs = dict(emb_dict)
+
+            if suffix_embeds is None:
+                embed = model.get_input_embeddings(
+                    input_ids,
+                    raw_inputs.get("pixel_values"),
+                    mask=raw_inputs.get("attention_mask"),
+                    **data,
+                    **(embed_extras or {}),
+                )
+                gen_kwargs = {
+                    **data,
+                    **{k: v for k, v in embed.to_dict().items() if v is not None},
+                }
+                full_embeds = gen_kwargs.pop("inputs_embeds", None)
+                if full_embeds is None:
+                    raise ValueError(
+                        "get_input_embeddings did not produce inputs_embeds"
+                    )
+                suffix_embeds = full_embeds[:, cached:, :]
+                rem_kwargs = _slice_prompt_kwargs(
+                    gen_kwargs, full_len=n, start=cached
+                )
+
+            if restored_rd is not None:
+                if "rope_deltas" not in gen_kwargs:
+                    gen_kwargs["rope_deltas"] = restored_rd
+                if "rope_deltas" not in rem_kwargs:
+                    rem_kwargs["rope_deltas"] = restored_rd
 
             chunk_policy = getattr(lm, "chunked_prefill_policy", None)
             allow_chunk = True
@@ -486,6 +586,8 @@ def generate_b1(
                 step_size=step_size,
                 boundaries=boundaries,
                 adjust_fn=adjust_fn,
+                has_recurrent=has_recurrent,
+                apc_manager=apc_manager,
             )
 
             report_progress = getattr(abort_event, "set_prefill_progress", None)
@@ -602,21 +704,14 @@ def generate_b1(
             mx.eval(first_y, [c.state for c in prompt_cache])
             first_tok = int(first_y.item())
 
-            if b1_cache is not None:
-                if has_recurrent:
-                    b1_cache.store(
-                        prompt_list,
-                        prompt_cache,
-                        extra_hash=salt or 0,
-                        trim_tail=0,
-                        rope_deltas=rope_deltas,
-                    )
-                else:
-                    pregen_fallbacks = snapshot_rotating_fallbacks(
-                        prompt_cache,
-                        target_len=n,
-                        max_tokens=max_tokens,
-                    )
+            if b1_cache is not None and has_recurrent:
+                b1_cache.store(
+                    prompt_list,
+                    prompt_cache,
+                    extra_hash=salt or 0,
+                    trim_tail=0,
+                    rope_deltas=rope_deltas,
+                )
 
             prefill_done_at = time.perf_counter()
             if report_progress is not None:
@@ -712,6 +807,13 @@ def generate_b1(
                                 pending_forced = int(seq[idx])
                                 crit._forced_index = idx + 1
 
+                    if has_uncaptured_rotating:
+                        has_uncaptured_rotating = capture_rotating_fallbacks_before_evict(
+                            prompt_cache,
+                            target_len=n,
+                            incoming=1,
+                            captured=pregen_fallbacks,
+                        )
                     step_in = mx.array([[next_input_tok]], dtype=input_ids.dtype)
                     out = lm(step_in, cache=prompt_cache, **fwd_kw)
                     cache_tokens.append(next_input_tok)
@@ -797,6 +899,13 @@ def generate_b1(
                             crit.thinking_budget = 0
                             crit.budget_exceeded = True
 
+                    if has_uncaptured_rotating:
+                        has_uncaptured_rotating = capture_rotating_fallbacks_before_evict(
+                            prompt_cache,
+                            target_len=n,
+                            incoming=block_size + 1,
+                            captured=pregen_fallbacks,
+                        )
                     prev_bonus = int(mtp_batch.rows[0].bonus)
                     round_tokens = mtp_batch.step(
                         [max_tokens - generated],

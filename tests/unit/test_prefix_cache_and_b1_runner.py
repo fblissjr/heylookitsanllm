@@ -4,11 +4,12 @@ from types import SimpleNamespace
 import mlx.core as mx
 import pytest
 
-from heylook_llm.providers.common import b1_runner, vlm_engine
+from heylook_llm.providers.common import b1_runner, gemma4_vision, vlm_engine
 from heylook_llm.providers.common.prefix_cache import (
     PrefixCacheStore,
     cache_has_recurrent,
     cache_layout_supported,
+    capture_rotating_fallbacks_before_evict,
     snapshot_rotating_fallbacks,
 )
 
@@ -561,3 +562,289 @@ def test_deferred_postgen_storage_and_rotating_fallbacks():
     mx.eval(r_fb[0].keys, r_fb[1].keys)
     assert r_fb[0].keys[0, 0, :, 0].tolist() == [float(i) for i in range(1, 21)]
     assert r_fb[1].keys[0, 0, :, 0].tolist() == [float(i) for i in range(13, 21)]
+
+
+@pytest.mark.unit
+def test_lazy_rotating_fallback_skips_pregen_capture_under_large_max_tokens_and_captures_on_compaction():
+    from mlx_vlm.models.cache import BufferedRotatingKVCache, KVCache
+
+    assert b1_runner._buffer_rotating_size(None, None) == 256
+    assert (
+        b1_runner._buffer_rotating_size(
+            SimpleNamespace(config=SimpleNamespace(block_size=5)), None
+        )
+        == 256
+    )
+    assert (
+        b1_runner._buffer_rotating_size(
+            SimpleNamespace(config=SimpleNamespace(block_size=33)), None
+        )
+        == 512
+    )
+
+    kv = KVCache()
+    buf = BufferedRotatingKVCache(max_size=8, keep=0, buffer_size=4)
+    prompt_seq = mx.arange(1, 11, dtype=mx.float32).reshape(1, 1, 10, 1)
+    kv.update_and_fetch(prompt_seq, prompt_seq)
+    buf.update_and_fetch(prompt_seq, prompt_seq)
+    mx.eval(kv.keys, buf.keys)
+
+    # Case A: 2 decode tokens stay within max_size + buffer_size (12) -> ZERO fallback capture.
+    captured: dict = {}
+    for tok_val in (11, 12):
+        still_monitoring = capture_rotating_fallbacks_before_evict(
+            [kv, buf], target_len=10, incoming=1, captured=captured
+        )
+        assert still_monitoring is True
+        assert captured == {}
+        step = mx.full((1, 1, 1, 1), float(tok_val), dtype=mx.float32)
+        kv.update_and_fetch(step, step)
+        buf.update_and_fetch(step, step)
+        mx.eval(kv.keys, buf.keys)
+
+    prompt_tokens = list(range(100, 110))
+    store_short = PrefixCacheStore(memory_max_bytes=1024 * 1024, max_entries=8)
+    assert store_short.store(
+        prompt_tokens, [kv, buf], trim_tail=0, cache_trim_tail=2, layer_fallbacks=captured
+    )
+    r_short, m_short, _ = store_short.lookup([*prompt_tokens, 999])
+    assert m_short == 10
+    mx.eval(r_short[0].keys, r_short[1].keys)
+    assert r_short[1].keys[0, 0, :, 0].tolist() == [float(i) for i in range(3, 11)]
+
+    # Case B: Next decode step pushes past target_size=12 -> captures pre-compaction prompt tail once.
+    still_monitoring = capture_rotating_fallbacks_before_evict(
+        [kv, buf], target_len=10, incoming=1, captured=captured
+    )
+    assert still_monitoring is False
+    assert set(captured) == {1}
+
+    for tok_val in range(13, 19):
+        step = mx.full((1, 1, 1, 1), float(tok_val), dtype=mx.float32)
+        kv.update_and_fetch(step, step)
+        buf.update_and_fetch(step, step)
+        mx.eval(kv.keys, buf.keys)
+    assert buf.start_position > 2
+
+    all_tokens = prompt_tokens + list(range(110, 118))
+    store_long = PrefixCacheStore(memory_max_bytes=1024 * 1024, max_entries=8)
+    assert store_long.store(
+        prompt_tokens, [kv, buf], trim_tail=0, cache_trim_tail=8, layer_fallbacks=captured
+    )
+    assert store_long.store(all_tokens, [kv, buf], trim_tail=0)
+
+    r_p, m_p, _ = store_long.lookup([*prompt_tokens, 999])
+    assert m_p == 10 and r_p[0].offset == 10 and r_p[1].offset == 10
+    mx.eval(r_p[0].keys, r_p[1].keys)
+    assert r_p[0].keys[0, 0, :, 0].tolist() == [float(i) for i in range(1, 11)]
+    assert r_p[1].keys[0, 0, :, 0].tolist() == [float(i) for i in range(3, 11)]
+
+    r_full, m_full, _ = store_long.lookup([*all_tokens, 999])
+    assert m_full == 18
+    mx.eval(r_full[0].keys, r_full[1].keys)
+    assert r_full[0].keys[0, 0, :, 0].tolist() == [float(i) for i in range(1, 19)]
+    assert r_full[1].keys[0, 0, :, 0].tolist() == [float(i) for i in range(11, 19)]
+
+
+@pytest.mark.unit
+def test_b1_runner_suffix_only_embeddings_and_mrope_fallback(monkeypatch):
+    from mlx_vlm import apc as apc_mod
+
+    monkeypatch.setattr(apc_mod, "hash_image_payload", lambda **_k: 0)
+    monkeypatch.setattr(apc_mod, "semantic_extra_hash", lambda **_k: 21)
+
+    model, calls = _make_toy_vlm(vocab_size=32, window_size=8)
+    embed_lens: list[int] = []
+    orig_embed = model.get_input_embeddings
+
+    def tracked_embed(input_ids, pixel_values=None, mask=None, **kw):
+        embed_lens.append(int(input_ids.shape[1]))
+        return orig_embed(input_ids, pixel_values, mask=mask, **kw)
+
+    model.get_input_embeddings = tracked_embed
+    apc = _make_fake_apc()
+
+    ids1 = mx.array([[100 + i for i in range(12)]], dtype=mx.int32)
+    list(
+        vlm_engine.generate(
+            model=model,
+            processor=None,
+            apc_manager=apc,
+            input_ids=ids1,
+            raw_inputs={"input_ids": ids1, "attention_mask": mx.ones_like(ids1)},
+            sampler=None,
+            processors=[],
+            stop_tokens=[99],
+            max_tokens=2,
+            greedy=True,
+            detokenizer=_DummyDetok(),
+        )
+    )
+    assert embed_lens == [12]
+
+    calls.clear()
+    ids2 = mx.array([[100 + i for i in range(15)]], dtype=mx.int32)
+    chunks2 = list(
+        vlm_engine.generate(
+            model=model,
+            processor=None,
+            apc_manager=apc,
+            input_ids=ids2,
+            raw_inputs={"input_ids": ids2, "attention_mask": mx.ones_like(ids2)},
+            sampler=None,
+            processors=[],
+            stop_tokens=[99],
+            max_tokens=2,
+            greedy=True,
+            detokenizer=_DummyDetok(),
+        )
+    )
+    assert chunks2[0].cache.outcome == "reused"
+    assert chunks2[0].cache.cached_tokens == 12
+    assert embed_lens == [12, 3]
+    assert [c[0] for c in calls] == [3, 1]  # 1 suffix prefill step (3) + 1 decode step (1)
+
+    # Extra dict key in embed output (e.g. position_ids) -> full input fallback cleanly.
+    def embed_with_pos(input_ids, pixel_values=None, mask=None, **kw):
+        embed_lens.append(int(input_ids.shape[1]))
+        n = int(input_ids.shape[1])
+        emb = mx.zeros((1, n, 4), dtype=mx.float32)
+        pos = mx.broadcast_to(mx.arange(n).reshape(1, n), (3, 1, n))
+        return SimpleNamespace(to_dict=lambda: {"inputs_embeds": emb, "position_ids": pos})
+
+    model.get_input_embeddings = embed_with_pos
+    ids3 = mx.array([[100 + i for i in range(16)]], dtype=mx.int32)
+    chunks3 = list(
+        vlm_engine.generate(
+            model=model,
+            processor=None,
+            apc_manager=apc,
+            input_ids=ids3,
+            raw_inputs={"input_ids": ids3, "attention_mask": mx.ones_like(ids3)},
+            sampler=None,
+            processors=[],
+            stop_tokens=[99],
+            max_tokens=2,
+            greedy=True,
+            detokenizer=_DummyDetok(),
+        )
+    )
+    assert chunks3[0].cache.cached_tokens == 15
+    assert embed_lens[-2:] == [1, 16]
+
+    # Presence of get_rope_index on language_model avoids even a speculative suffix call.
+    model.get_input_embeddings = tracked_embed
+    model.language_model.get_rope_index = lambda *a, **kw: (None, None)
+    ids4 = mx.array([[100 + i for i in range(17)]], dtype=mx.int32)
+    chunks4 = list(
+        vlm_engine.generate(
+            model=model,
+            processor=None,
+            apc_manager=apc,
+            input_ids=ids4,
+            raw_inputs={"input_ids": ids4, "attention_mask": mx.ones_like(ids4)},
+            sampler=None,
+            processors=[],
+            stop_tokens=[99],
+            max_tokens=2,
+            greedy=True,
+            detokenizer=_DummyDetok(),
+        )
+    )
+    assert chunks4[0].cache.cached_tokens == 16
+    assert embed_lens[-1] == 17
+
+
+@pytest.mark.unit
+def test_should_use_buffered_rotating_gating(monkeypatch):
+    import types
+
+    class _Inner:
+        def _make_masks(self, h, cache, mm_token_type_ids=None):
+            return []
+
+    gemma_lm = SimpleNamespace(model=_Inner())
+    gemma_lm.model._make_masks = types.MethodType(
+        gemma4_vision.gemma4_make_masks, gemma_lm.model
+    )
+    other_lm = SimpleNamespace(model=_Inner())
+
+    assert b1_runner._should_use_buffered_rotating(other_lm, drafting=True) is True
+
+    monkeypatch.setattr(gemma4_vision, "mlx_sdpa_supports_window_size", lambda: True)
+    assert b1_runner._should_use_buffered_rotating(gemma_lm, drafting=False) is True
+    assert b1_runner._should_use_buffered_rotating(other_lm, drafting=False) is False
+
+    monkeypatch.setattr(gemma4_vision, "mlx_sdpa_supports_window_size", lambda: False)
+    assert b1_runner._should_use_buffered_rotating(gemma_lm, drafting=False) is False
+
+
+@pytest.mark.unit
+def test_b1_runner_recurrent_uses_capture_lengths_near_end_checkpoints(monkeypatch):
+    from mlx_vlm import apc as apc_mod
+
+    monkeypatch.setattr(apc_mod, "hash_image_payload", lambda **_k: 0)
+    monkeypatch.setattr(apc_mod, "semantic_extra_hash", lambda **_k: 55)
+
+    assert b1_runner._plan_chunk_stops(
+        cached=0,
+        total_len=85,
+        step_size=1024,
+        boundaries=(),
+        adjust_fn=None,
+        has_recurrent=False,
+    ) == ([], set())
+    assert b1_runner._plan_chunk_stops(
+        cached=0,
+        total_len=85,
+        step_size=1024,
+        boundaries=(),
+        adjust_fn=None,
+        has_recurrent=True,
+    ) == ([64], {64})
+
+    model, calls = _make_toy_vlm(vocab_size=32, window_size=8, with_recurrent=True)
+    apc = _make_fake_apc()
+    apc.checkpoint_interval_tokens = 64
+    apc.block_size = 16
+    apc.exact_cache_min_tokens = 16
+
+    ids1 = mx.array([[100 + i for i in range(85)]], dtype=mx.int32)
+    c1 = list(
+        vlm_engine.generate(
+            model=model,
+            processor=None,
+            apc_manager=apc,
+            input_ids=ids1,
+            raw_inputs={"input_ids": ids1},
+            sampler=None,
+            processors=[],
+            stop_tokens=[99],
+            max_tokens=2,
+            greedy=True,
+            detokenizer=_DummyDetok(),
+        )
+    )
+    assert c1[0].cache.outcome == "miss"
+
+    # Turn 2 diverges at index 81 (simulating stripped 4-token open-turn suffix) -> hits 64.
+    calls.clear()
+    diverged = [100 + i for i in range(81)] + [900 + i for i in range(19)]
+    ids2 = mx.array([diverged], dtype=mx.int32)
+    c2 = list(
+        vlm_engine.generate(
+            model=model,
+            processor=None,
+            apc_manager=apc,
+            input_ids=ids2,
+            raw_inputs={"input_ids": ids2},
+            sampler=None,
+            processors=[],
+            stop_tokens=[99],
+            max_tokens=2,
+            greedy=True,
+            detokenizer=_DummyDetok(),
+        )
+    )
+    assert c2[0].cache.outcome == "reused"
+    assert c2[0].cache.cached_tokens == 64

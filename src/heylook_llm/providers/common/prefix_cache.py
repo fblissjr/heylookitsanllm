@@ -357,6 +357,77 @@ def snapshot_rotating_fallbacks(
     return fallbacks
 
 
+def capture_rotating_fallbacks_before_evict(
+    prompt_cache: Sequence[Any],
+    *,
+    target_len: int,
+    incoming: int,
+    captured: dict[int, _LayerSnapshot],
+    slack_cap: int = _ROTATING_SLACK_TOKENS,
+) -> bool:
+    """Capture pre-compaction rotating snapshots right before decode evicts prompt tail.
+
+    Returns ``True`` while at least one rotating layer in ``prompt_cache`` still
+    needs monitoring, or ``False`` once every rotating layer has been captured.
+    """
+    _, RotatingKVCache, BufferedRotatingKVCache, _, CacheList = _cache_classes()
+
+    def _has_rotating(entry: Any) -> bool:
+        t = type(entry)
+        if t is BufferedRotatingKVCache or t is RotatingKVCache:
+            return True
+        if t is CacheList:
+            return any(_has_rotating(ch) for ch in entry.caches)
+        return False
+
+    def _needs_capture(entry: Any) -> tuple[bool, int]:
+        t = type(entry)
+        if t is BufferedRotatingKVCache:
+            if entry.keys is None or int(entry.offset) < target_len:
+                return False, 0
+            if int(entry._planned_drop(incoming)) > 0:
+                return True, int(entry.offset) - target_len
+            return False, 0
+        if t is RotatingKVCache:
+            if entry.keys is None or int(entry.offset) < target_len:
+                return False, 0
+            if int(entry.offset) + incoming > int(entry.max_size):
+                return True, int(entry.offset) - target_len
+            return False, 0
+        if t is CacheList:
+            for ch in entry.caches:
+                should, tail = _needs_capture(ch)
+                if should:
+                    return True, tail
+            return False, 0
+        return False, 0
+
+    to_capture: list[tuple[int, Any, int]] = []
+    any_uncaptured = False
+    for idx, c in enumerate(prompt_cache):
+        if idx in captured or not _has_rotating(c):
+            continue
+        any_uncaptured = True
+        should, trim_tail = _needs_capture(c)
+        if should:
+            to_capture.append((idx, c, trim_tail))
+
+    if to_capture:
+        mx.eval([c.state for _, c, _ in to_capture])
+        for idx, c, trim_tail in to_capture:
+            snap = _snapshot_layer(
+                c, trim_tail=trim_tail, target_len=target_len, slack_cap=slack_cap
+            )
+            if snap is not None:
+                captured[idx] = snap
+        any_uncaptured = any(
+            idx not in captured and _has_rotating(c)
+            for idx, c in enumerate(prompt_cache)
+        )
+
+    return any_uncaptured
+
+
 def _restore_layer(
     snap: _LayerSnapshot,
     *,

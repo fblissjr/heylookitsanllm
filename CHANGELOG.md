@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.259] - 2026-11-19
+
+### Added
+
+- `capture_rotating_fallbacks_before_evict` in `src/heylook_llm/providers/common/prefix_cache.py` and wired into `src/heylook_llm/providers/common/b1_runner.py` (undrafted `incoming=1` and MTP `incoming=block_size + 1` loops): monitors rotating layers lazily during decode and captures pre-compaction CoW snapshots with a single batched `mx.eval` only right before `_planned_drop` or wraparound would evict prompt-tail tokens, leaving `pregen_fallbacks` empty on short/medium replies regardless of `max_tokens`.
+- `_should_use_buffered_rotating` in `src/heylook_llm/providers/common/b1_runner.py`: limits undrafted `BufferedRotatingKVCache` promotion to Gemma 4 requests running with native `window_size=` SDPA + `gemma4_make_masks`, keeping undrafted `gpt-oss` / `gemma3` and `0.32.4` runs on `RotatingKVCache`.
+- Self-verifying warm text suffix embedding path in `src/heylook_llm/providers/common/b1_runner.py`: runs `b1_cache.lookup()` ahead of `model.get_input_embeddings` inside `_generation_stream()`, embedding only `suffix_ids` when `cached > 0`, `not has_media`, no extra kwargs, and `not hasattr(lm, "get_rope_index")`, and falling back to full `input_ids` whenever `to_dict()` emits anything beyond `inputs_embeds` / `per_layer_inputs`.
+- Four unit tests in `tests/unit/test_prefix_cache_and_b1_runner.py` covering lazy pre-compaction fallback capture under high `max_tokens`, suffix-only warm text embeddings + MRoPE/extra-kwarg fallback, `_should_use_buffered_rotating` gating, and recurrent `capture_lengths` near-end checkpoints.
+
+### Changed
+
+- Aligned `_buffer_rotating_size` in `src/heylook_llm/providers/common/b1_runner.py` to `RotatingKVCache.step` (`256` default, up to `512`), eliminating unnecessary mid-decode compaction within `BufferedRotatingKVCache`'s already-allocated `step=256` capacity.
+- Updated `b1_runner._plan_chunk_stops` (`has_recurrent=True`, `apc_manager`) to compute near-end interval checkpoints via `vlm_engine.capture_lengths(total_len - 1, ...)`, fixing image-conversation follow-up reuse on hybrid recurrent models (`Qwen3.5`) whose chat templates strip closed open-turn `<think>\n\n</think>\n\n` suffixes before `N - 1`.
+- Expanded `has_media` in `b1_runner.generate_b1` across `pixel_values`, `pixel_values_videos`, `audio_features`, and `input_features`.
+- Updated `docs/wiki/performance_optimizations.md`, `docs/architecture/sharp_edges.md`, `docs/project/CURRENT.md`, and `docs/project/TODO.md` (`mlx_provider.py` keeps per-request `mx.clear_cache()` after idle-GPU verification showed no warm-TTFT penalty vs freeing idle Metal buffers).
+
+### Verification
+
+- `uv run --no-sync pytest tests/unit/ tests/contract/ -q` (`mlx 0.32.4`): `1685 passed`.
+- `PYTHONPATH="$HOME/.heylook/mlx/overlay" .venv/bin/pytest tests/unit/ tests/contract/ -q` (`main`): `1685 passed`.
+- `PYTHONPATH="$HOME/.heylook/mlx/overlay-ultra" .venv/bin/pytest tests/contract/test_mlxvlm_surface.py tests/unit/test_prefix_cache_and_b1_runner.py -q` (`main + #4890 + #4826`): `51 passed`.
+- `scripts/chain_probe.py` under `overlay-ultra`: `5/5` hops (`match=True`, `restored=reused`, `cause=None`, MTP active) on `gemma-4 31B` and `Qwen3.8 27B`.
+- `scripts/vlm_parity_probe.py` under `overlay-ultra`: `ok=true` on `Qwen3.5 0.8B` (Case 1 `MATCH`, Cases 2-3 `NEAR-TIE` within threshold, `feature_cache_hit=true`, `equals_cold_run=true`).
+- Idle-GPU Phase 2B measurements (`internal/claude/perf/mlx_main_2026-11-19/b1_runner_v259.jsonl`, `phase2b_results.md`, plus `max_tokens=4096` early-stop check, `mx.clear_cache()` A/B, and `N`-sweep / QMM hardware floor) confirm zero rotating fallback CoW spike on short/medium turns on `gemma-4 31B` and `gemma-4 26B-A4B`.
+- Full 3-arm live `tests/smoke/run.py`: **`PASS 93/93`, `6 skipped`** across `contract`, `mlx-text` (`Qwen3 0.6B`), `mlx-vision` (`Qwen3.5 0.8B`), and `gguf` (`Qwen3.8 27B`). Uncovered preconditions: thinking depth on both MLX arms (`reasoning_effort` not advertised on those small models), vision checks on `mlx-text`, MLX known `new_image_set` gap on `mlx-vision`, and audio input on `gguf` (selected GGUF model declares no audio modality).
+- `scripts/check_version_sync.py` clean; `scripts/vendor_frontend.py --check`: `marked` `18.2.0` and `dompurify` `3.4.18` match manifest (`Behind: marked`). Not run: `scripts/perf_ab.py`, `tests/eval/`, `tests/e2e`.
+
 ## [2.0.258] - 2026-11-19
 
 ### Added
