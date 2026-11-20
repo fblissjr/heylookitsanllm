@@ -10,18 +10,20 @@ Mirrors ``scripts/build_llama.py`` for the MLX C++/Metal backend. It never edits
 manifest at ``<dir>/build/heylook-build.json``.
 
 Two delivery modes:
-  --overlay   Unpack the built wheel into ``<dir>/overlay`` (default) so you can
-              run isolated processes via ``PYTHONPATH=<overlay> .venv/bin/python``
-              without mutating ``.venv`` or disturbing a live server.
+  --overlay   Unpack the built wheel into ``<dir>/overlay`` (default).
+              ``heylookllm`` picks up ``~/.heylook/mlx/overlay`` automatically
+              with zero config, unless ``HEYLOOK_MLX_OVERLAY`` overrides or
+              disables (``0``) it, ``PYTHONPATH`` already supplies ``mlx``, or
+              ``.venv`` PyPI ``mlx`` is strictly newer than the overlay.
   --install   Install the built wheel directly into ``--python``'s environment
               and clean stale ``mlx_metal-*.dist-info`` metadata. Plain ``uv run``
               syncs ``.venv`` back to ``uv.lock`` unless ``--no-sync`` is passed.
 
 Examples:
-  uv run scripts/build_mlx.py --rev main --overlay
-  uv run scripts/build_mlx.py --rev main --pr 4890 --pr 4826 --overlay-dir ~/.heylook/mlx/overlay-ultra
+  uv run scripts/build_mlx.py --rev main --pr 4890 --pr 4826
   uv run scripts/build_mlx.py --status
   uv run scripts/build_mlx.py --rebuild --overlay
+  HEYLOOK_MLX_OVERLAY=0 uv run --no-sync heylookllm
 """
 
 from __future__ import annotations
@@ -572,6 +574,20 @@ def print_status(path: Path, target_py: Path) -> None:
             print(f"  wheel    {dim(wheel)}")
         if "has_window_size_sdpa" in manifest:
             print(f"  sdpa_ws  {manifest['has_window_size_sdpa']}")
+    canonical_overlay = path / "overlay"
+    if (canonical_overlay / "mlx").is_dir():
+        print(f"  auto     {green(str(canonical_overlay))} (heylookllm canonical build)")
+    else:
+        print(f"  auto     {dim('inactive (no canonical overlay at ' + str(canonical_overlay) + ')')}")
+    env = (os.environ.get("HEYLOOK_MLX_OVERLAY") or "").strip()
+    if env:
+        if env.lower() in {"0", "off", "false", "no", "none", "pypi", "disabled"}:
+            print(yellow(f"  note: $HEYLOOK_MLX_OVERLAY={env} disables canonical overlay discovery."))
+        elif not canonical_overlay.exists() or Path(env).expanduser().resolve() != canonical_overlay.resolve():
+            print(yellow(
+                f"  note: $HEYLOOK_MLX_OVERLAY points at {env} -- heylookllm "
+                "will use THAT overlay instead of the canonical build."
+            ))
     print(f"  venv     {target_py} -> {_venv_mlx_version(target_py)}")
 
 
@@ -724,7 +740,18 @@ def main() -> None:
         f"  version {info.get('version')}  "
         f"(metal={info.get('metal')}, window_size={info.get('window_size')})"
     )
-    print(dim(f'  use: PYTHONPATH="{overlay_dir}" {target_py} ...'))
+    canonical_overlay = path / "overlay"
+    if overlay_dir.resolve() == canonical_overlay.resolve():
+        current = (os.environ.get("HEYLOOK_MLX_OVERLAY") or "").strip()
+        if current:
+            print(yellow(f"  note    $HEYLOOK_MLX_OVERLAY={current} overrides auto-discovery."))
+        else:
+            print(dim(
+                f"  auto    heylookllm uses {overlay_dir} automatically "
+                "(HEYLOOK_MLX_OVERLAY=0 for .venv PyPI)"
+            ))
+    else:
+        print(dim(f'  use     HEYLOOK_MLX_OVERLAY="{overlay_dir}" heylookllm ...'))
 
 
 if __name__ == "__main__":

@@ -11,7 +11,6 @@ import sys
 import uvicorn
 
 from heylook_llm.config import DEFAULT_PORT
-from heylook_llm.router import ModelRouter
 
 # Try to use uvloop for better async performance
 try:
@@ -247,12 +246,19 @@ def main():
     else:
         logging.info("uvloop not available - using standard asyncio event loop")
 
+    # Select canonical or overridden MLX overlay before first `import mlx`.
+    from heylook_llm.mlx_overlay import activate_mlx_overlay, log_mlx_runtime
+
+    mlx_decision = activate_mlx_overlay()
+
     # Set process-wide wired memory limit for Metal.
     # mlx-lm does this at server startup (server.py main()) to keep model weights
     # wired between requests. Without this, the OS can page out model weights
     # between requests, causing memory churn and slower time-to-first-token.
     # The per-generation wired_limit() context manager still applies on top of this.
     import mlx.core as mx
+
+    log_mlx_runtime(mx.__version__, getattr(mx, "__file__", None), mlx_decision)
 
     if mx.metal.is_available():
         wired_limit = int(mx.device_info()["max_recommended_working_set_size"])
@@ -268,7 +274,7 @@ def main():
     log_all_optimization_status()
 
     # Initialize the router and store it in the app's state
-    from heylook_llm.router import CONFIG_FILENAME
+    from heylook_llm.router import CONFIG_FILENAME, HAS_MLX, ModelRouter
 
     router = ModelRouter(
         config_path=CONFIG_FILENAME,
@@ -277,8 +283,6 @@ def main():
     )
 
     # Check if any providers are available
-    from heylook_llm.router import HAS_MLX
-
     if not HAS_MLX:
         logging.error("No model providers available! Please install MLX:")
         logging.error("  uv sync")

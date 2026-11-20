@@ -38,6 +38,10 @@ import threading
 from pathlib import Path
 from typing import Any, Optional
 
+from heylook_llm.mlx_overlay import activate_mlx_overlay, log_mlx_runtime
+
+_MLX_OVERLAY_DECISION = activate_mlx_overlay(log=False)
+
 import mlx.core as mx
 
 from heylook_llm.providers.common.mlx_pipeline import (
@@ -433,6 +437,13 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    )
+    if _MLX_OVERLAY_DECISION.warning:
+        logging.warning("[MLX] %s", _MLX_OVERLAY_DECISION.warning)
+    log_mlx_runtime(
+        mx.__version__,
+        getattr(mx, "__file__", None),
+        _MLX_OVERLAY_DECISION,
     )
 
     if args.internal_session_worker:

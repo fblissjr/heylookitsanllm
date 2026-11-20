@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.260] - 2026-11-19
+
+### Added
+
+- `src/heylook_llm/mlx_overlay.py`: zero-config canonical MLX overlay discovery (`~/.heylook/mlx/overlay`, or `$HEYLOOK_MLX_DIR/overlay`) mirroring `LlamaServerProvider.DEFAULT_BUILD`, with `$HEYLOOK_MLX_OVERLAY` override/disable (`0`/`off`/`pypi`), `$PYTHONPATH` respect, Python ABI mismatch fallback, PEP 440 + regex-fallback auto-stand-down when `.venv` PyPI `mlx` is strictly newer, and startup banner runtime logging (`[MLX] using canonical overlay ...` and `[MLX] runtime: mlx <ver> (...)`).
+- `tests/unit/test_mlx_overlay.py`: unit coverage across canonical selection, PyPI supersede stand-down, ABI mismatch + `.abi3.so` acceptance, disable/override env vars, `PYTHONPATH` precedence, `already_imported` safety, `$HEYLOOK_MLX_DIR`, version comparator, and subprocess verification that importing `heylook_llm.server` does not eagerly import `mlx`.
+
+### Changed
+
+- Deferred `ModelRouter` import inside `src/heylook_llm/server.py:main()` so `activate_mlx_overlay()` selects the canonical overlay (or override) before first `import mlx.core`, and wired `activate_mlx_overlay()` ahead of `import mlx.core` in `scripts/mlx_pipeline_worker.py`.
+- Updated `scripts/build_mlx.py` (`print_status`, build footer, module docstring) and `tests/unit/test_build_mlx.py` to report canonical `auto` discovery status and `$HEYLOOK_MLX_OVERLAY` override notes matching `scripts/build_llama.py`; promoted `14dc9c67` + `#4890` + `#4826` into the single canonical `~/.heylook/mlx/overlay`.
+- Updated `.claude/rules/dependencies.md`, `docs/architecture/sharp_edges.md`, `scripts/README.md`, `docs/project/plan_mlx_0325_upgrade.md`, `docs/project/CURRENT.md`, and `docs/project/TODO.md`.
+
+### Verification
+
+- `uv run --no-sync pytest tests/unit/ tests/contract/ -q` (`mlx 0.32.4` `.venv`): `1704 passed`.
+- Isolated `:8991` dev server launched without `PYTHONPATH` or `HEYLOOK_MLX_OVERLAY` logged `[MLX] using canonical overlay at ~/.heylook/mlx/overlay (27105c17 (#4890, #4826))` and `[MLX] runtime: mlx 0.32.5.dev20261119+27105c17`; full 3-arm live `tests/smoke/run.py`: `PASS 93/93, 6 skipped` (`mlx-text` `Qwen3-0.6B-8bit-mlx`, `mlx-vision` `Qwen3.5-0.8B-MLX-8bit`, `gguf` `JonathanColetti_Qwen3.8-27B-Uncensored-GGUF`; uncovered rows: `mlx-text` & `mlx-vision` thinking depth, `mlx-text` vision checks, `mlx-vision` known `new_image_set` gap, `gguf` audio).
+- `scripts/vendor_frontend.py --check`: `marked` `18.2.0` and `dompurify` `3.4.18` match manifest (`Behind: marked`; `18.2.1` available, not updated).
+
 ## [2.0.259] - 2026-11-19
 
 ### Added

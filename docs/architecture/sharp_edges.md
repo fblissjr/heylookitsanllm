@@ -2185,15 +2185,22 @@ and `processor` and wraps `_apc_media_token_ids()` per generator before
 The optloop-lib bench exists because the app-level optloop (retired
 2026-07-06) bypassed the server code it claimed to measure.
 
-Out-of-repo MLX source builds (2026-11-19). `pyproject.toml` and `uv.lock` keep
+Out-of-repo MLX source builds (2026-11-19, updated v2.0.260). `pyproject.toml` and `uv.lock` keep
 PyPI `mlx` and `mlx-metal` pins intact, while `scripts/build_mlx.py` (mirroring
 `scripts/build_llama.py`) clones `ml-explore/mlx` to `~/.heylook/mlx`, checks out
 a pinned rev plus optional `--pr` merges, builds a self-contained wheel containing
 `mlx.metallib` / `libmlx.dylib`, and verifies `mlx.__version__` and Metal load
-inside an unpacked `--overlay` directory (`PYTHONPATH` isolation). Prefer
-`--overlay` when another `heylookllm` process shares `.venv`; when `--install` is
-used intentionally, plain `uv run` auto-syncs `.venv` back to `uv.lock` unless
-`--no-sync` or `.venv/bin/python` is used.
+inside the canonical unpacked overlay at `~/.heylook/mlx/overlay`. Starting in
+v2.0.260, `src/heylook_llm/mlx_overlay.py` runs in `server.py` and
+`scripts/mlx_pipeline_worker.py` BEFORE first `import mlx` (so `server.py`
+keeps `ModelRouter` lazy inside `main()`), picks up `~/.heylook/mlx/overlay`
+(`$HEYLOOK_MLX_DIR/overlay`) automatically with zero config, honors
+`$HEYLOOK_MLX_OVERLAY` overrides or `0`/`off`/`pypi` disable values, respects an
+explicit `$PYTHONPATH` containing `mlx`, and automatically stands down to `.venv`
+PyPI `mlx` on Python ABI mismatch or whenever `.venv` carries a strictly newer
+PyPI release. Prefer `--overlay` when another `heylookllm` process or `pytest`
+uses `.venv`; when `--install` is used intentionally, plain `uv run` auto-syncs
+`.venv` back to `uv.lock` unless `--no-sync` or `.venv/bin/python` is used.
 
 ## Tests
 

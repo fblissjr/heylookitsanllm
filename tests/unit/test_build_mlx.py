@@ -133,3 +133,28 @@ class TestOverlayAndStatus:
         assert "#4890@12345678" in second
         assert "0.32.5.dev20261119+fc344c9" in second
         assert "sdpa_ws  True" in second
+
+    def test_print_status_reports_auto_and_override_note(
+        self, tmp_path: Path, capsys, monkeypatch
+    ):
+        checkout = tmp_path / "mlx_checkout"
+        overlay = checkout / "overlay"
+        (overlay / "mlx").mkdir(parents=True)
+        target_py = tmp_path / "missing-python"
+
+        monkeypatch.delenv("HEYLOOK_MLX_OVERLAY", raising=False)
+        build_mlx.print_status(checkout, target_py)
+        out_default = capsys.readouterr().out
+        assert "heylookllm canonical build" in out_default
+
+        monkeypatch.setenv("HEYLOOK_MLX_OVERLAY", "0")
+        build_mlx.print_status(checkout, target_py)
+        out_disabled = capsys.readouterr().out
+        assert "disables canonical overlay discovery" in out_disabled
+
+        custom = tmp_path / "custom_overlay"
+        custom.mkdir()
+        monkeypatch.setenv("HEYLOOK_MLX_OVERLAY", str(custom))
+        build_mlx.print_status(checkout, target_py)
+        out_override = capsys.readouterr().out
+        assert "will use THAT overlay instead of the canonical build" in out_override

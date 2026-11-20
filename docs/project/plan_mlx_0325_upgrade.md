@@ -1,13 +1,13 @@
 # MLX >= 0.32.5 Upgrade & Gemma 4 Native Sliding-Window Attention Plan
 
-Status: **All five upstream PRs merged on `ml-explore/mlx` `main`; `#4808` closed as non-bug; source build enabled via `scripts/build_mlx.py` (owner 2026-11-19)** (`uv.lock` stays at PyPI `mlx == 0.32.4` until `0.32.5` is released on PyPI; Phase 0/2 runs isolated via `scripts/build_mlx.py --overlay`).
+Status: **Canonical `~/.heylook/mlx/overlay` auto-discovery shipped (`v2.0.260`, mirroring `llama.cpp`); all five base upstream PRs merged on `ml-explore/mlx` `main`; `#4808` closed as non-bug; `#4890` + `#4826` verified end-to-end on canonical overlay (`0.32.5.dev20261119+27105c17`) while `pyproject.toml` / `uv.lock` remain on PyPI `mlx == 0.32.4` and auto-stand-down once PyPI `0.32.5+` ships**
 Related backlog: [TODO.md](./TODO.md) Track 1.3 & Gemma 4 parked items (`#2b`, `#3a`).
 
 ---
 
 ## 1. Release Channel & Scope
 
-- **PyPI pin + out-of-repo source builds**: per [dependencies.md](../../.claude/rules/dependencies.md), `pyproject.toml` and `uv.lock` stay on PyPI `mlx` / `mlx-metal` until upstream tags and publishes `0.32.5+`, while `scripts/build_mlx.py` builds pinned `ml-explore/mlx` revs (plus candidate upstream PRs) outside the repo into `~/.heylook/mlx` (`--overlay` for `PYTHONPATH` isolation or opt-in `--install`).
+- **PyPI pin + canonical out-of-repo source builds**: per [dependencies.md](../../.claude/rules/dependencies.md), `pyproject.toml` and `uv.lock` stay on PyPI `mlx` / `mlx-metal`, while `scripts/build_mlx.py` builds pinned `ml-explore/mlx` revs (plus candidate upstream PRs) outside the repo into `~/.heylook/mlx/overlay`. Starting in `v2.0.260`, `src/heylook_llm/mlx_overlay.py` (`server.py` + `scripts/mlx_pipeline_worker.py`) picks up that canonical overlay automatically with zero config (`HEYLOOK_MLX_OVERLAY=0` disables it) and automatically stands down whenever `.venv` carries a strictly newer PyPI `mlx` release (`0.32.5+`).
 - **No blind retirement of owned Gemma 4 kernels**: upgrade kernels must be measured and checked numerically against existing owned paths (`providers/common/gemma4_vision.py`, `providers/common/gemma4_runtime.py`) before replacing any carried optimization.
 
 ---
