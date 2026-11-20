@@ -1797,6 +1797,10 @@ found, each silent:
   set). The smoke walk-away
   check caught it, as a false "truncated" verdict: the whole answer had been
   delivered in the final flush.
+- **B=1 runner, CoW slice isolation, and deferred post-gen storage (`b1_runner.py`, `prefix_cache.py`, `v2.0.258`).**
+  - MLX slice views (`a[...]` and `a[..., :k, :]`) allocate no backing tensor copies and trigger Copy-on-Write isolation on future `__setitem__` updates, whereas bare Python aliasing (`b = a`) shares the mutated buffer in place. Calling `store()` on `KVCache` before generation bumps its refcount, so decode step 1's `__setitem__` CoW-duplicates the entire full-attention KV buffer across every layer and leaves two copies pinned (`prefill` + `post-gen`). `b1_runner` therefore defers non-recurrent snapshot storage to `finally:` (`cache_trim_tail = cur_off - n` for the prompt beside `trim_tail = 0` for `[prompt + gen]`), taking `snapshot_rotating_fallbacks` up front only for rotating layers whose live `BufferedRotatingKVCache` / `RotatingKVCache` window would be evicted during `max_tokens` decode, and compacts oversized chunk-prefill rotating views on `_generation_stream()` via `compact_pending()`.
+  - Because Gemma 4's template emits `<|thought>\n<thought|>` on the current open turn and strips it from closed assistant history, a multi-turn follow-up diverges several tokens before `N` (`min_match_len` past `sliding_window`). Retaining `_ROTATING_SLACK_TOKENS` pre-window tokens in rotating snapshots allows trimmed restores down to `min_match_len` without dropping to an earlier interior boundary, while hybrid recurrent `ArraysCache` layers (`min_match_len = N`) still split the final token (`N - 1` + `1`) before decode.
+  - Requests fall back automatically to `BatchGenerator` + APC when `HEYLOOK_B1_RUNNER=0`, `kv_bits` quantization is enabled, a non-`mtp` drafter (`dflash` / `ngram`) is attached, the pipeline-parallel sync APC wrapper (`_heylook_apc_sync_wrapped`) is active, or `lm.make_cache()` uses an unsupported cache class.
 The one-hash image salt is also why a turn that adds an image re-prefills;
 any single salt heylook could choose either misses or risks restoring a
 different image behind identical placeholder tokens (owner decision: accepted,
@@ -2027,6 +2031,9 @@ decoding across dense and MoE targets (`v2.0.249`, `gemma4_runtime.py`,
   tiling boundary across MoE layers, slowing short and medium prompts without
   offsetting acceptance gains (sweep recorded locally in
   `internal/claude/perf/gemma4_mtp_v20250_2026-11-16.md`).
+
+- **`BufferedRotatingKVCache` inherits from `RotatingKVCache` (`gemma4_runtime.py`, `gemma4_vision.py`, `v2.0.258`).**
+  Upstream `BufferedRotatingKVCache` subclasses `RotatingKVCache`, so `isinstance(c, cs.RotatingKVCache)` in `_bind_speculative_verify_hidden` caught it and wrapped it in `_RotatingCacheTransaction`, whose `commit_rotating_prefix` returns `False` for subclasses and falls back to buffer copies/replay. Checking `not (isinstance(c, BufferedRotatingKVCache) and getattr(c, "keep", 0) == 0)` routes `BufferedRotatingKVCache` (`keep == 0`) to `SpeculativeCacheTransaction`'s O(1) `trim()` rollback while keeping plain `RotatingKVCache` on `_RotatingCacheTransaction`. In `gemma4_make_masks`, `use_bidirectional_attention` (`unpadded_b1`) must still gate `is_buf_rot and n == 1`, while keeping `not is_rotated` out of `native_window_bound` because both `RotatingKVCache._update_concat` and `BatchRotatingKVCache._update_concat` restore chronological order via `_temporal_order()` before SDPA runs on `N > 1` verification past `sliding_window`.
 
 ## Repo conventions
 

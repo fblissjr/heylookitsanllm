@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.258] - 2026-11-19
+
+### Added
+
+- Heylook-owned CoW single-row prefix cache (`src/heylook_llm/providers/common/prefix_cache.py`): stores zero-copy MLX array slice views across `KVCache`, `RotatingKVCache`, `BufferedRotatingKVCache`, `ArraysCache`, and `CacheList` keyed by media-only `semantic_hash`, supports rotating rollback slack (`_ROTATING_SLACK_TOKENS` / `min_match_len`) past `sliding_window`, shares single backing buffers across `[prompt]` (`cache_trim_tail`) and `[prompt + gen]` via `snapshot_rotating_fallbacks`, and detaches oversized prefill chunk views post-generation via `compact_pending()` on `_generation_stream()`.
+- Thin `B=1` MLX execution path (`src/heylook_llm/providers/common/b1_runner.py`, wired into `src/heylook_llm/providers/common/vlm_engine.py`): drives chunked prefill, progress reporting, thinking budgets, `abort_event` / `pop_end_reasoning`, `generated_only` logits processors, and undrafted or `MTPBatch` speculative decoding without `BatchGenerator` / `APCCoordinator` batching or per-layer clones, keeping `BatchGenerator` intact as fallback for `HEYLOOK_B1_RUNNER=0`, `kv_bits` KV quantization, non-`mtp` drafters, pipeline-parallel workers (`_heylook_apc_sync_wrapped`), and unsupported cache classes.
+- Unit and contract coverage in `tests/unit/test_prefix_cache_and_b1_runner.py` (6 tests covering CoW isolation, `trim_tail` + `compact_pending`, rotating rollback slack past `max_size`, deferred post-gen storage + `snapshot_rotating_fallbacks`, `can_use_b1_runner` gating, and prefill/reuse/stop/processors/thinking-budget/abort/recurrent flows) and `tests/contract/test_mlxvlm_surface.py` (`TestOwnedGemma4Runtime.test_buffered_and_rotated_sliding_masks`).
+
+### Changed
+
+- Updated `vlm_engine.refresh_snapshots`, `vlm_engine.apc_is_empty`, and `vlm_engine.apc_memory_pressure` (`src/heylook_llm/providers/common/vlm_engine.py`) to inspect both `_heylook_b1_cache` and `APCManager`.
+- Extended `src/heylook_llm/providers/common/gemma4_vision.py` (`gemma4_make_masks`) and `src/heylook_llm/providers/common/gemma4_runtime.py` (`_bind_speculative_verify_hidden`) so `BufferedRotatingKVCache` (`keep == 0`) uses single-row unpadded masks, native `window_size=` SDPA, and O(1) `trim()` rollback in `SpeculativeCacheTransaction` instead of `_RotatingCacheTransaction` replay copies, while preserving `unpadded_b1` bidirectional-vision guards and native `window_size=` on rotated `N > 1` verification steps.
+
+### Fixed
+
+- Scoped `_real_mlx_modules` in `tests/contract/test_mlxvlm_surface.py` strictly to `mlx` / `mlx_lm` / `mlx_vlm` module entries so `heylook_llm.*` module identities remain consistent across test teardowns.
+- Updated `docs/wiki/performance_optimizations.md`, `docs/architecture/sharp_edges.md`, and `docs/project/CURRENT.md` for `b1_runner`, `prefix_cache`, CoW deferred storage, rotating rollback slack, and `BufferedRotatingKVCache` handling.
+
+### Verification
+
+- `uv run --no-sync pytest tests/unit/ tests/contract/ -q` (`mlx 0.32.4`): `1681 passed`.
+- `PYTHONPATH="$HOME/.heylook/mlx/overlay" .venv/bin/pytest tests/unit/ tests/contract/ -q` (`main`): `1681 passed`.
+- `PYTHONPATH="$HOME/.heylook/mlx/overlay-ultra" .venv/bin/pytest tests/contract/test_mlxvlm_surface.py tests/unit/test_prefix_cache_and_b1_runner.py -q` (`main + #4890 + #4826`): `47 passed`.
+- `scripts/chain_probe.py` under `overlay-ultra`: `5/5` hops (`match=True`, `restored=reused`, `cause=None`, MTP active) on `gemma-4 31B` and `Qwen3.8 27B`; on `gemma-4 26B-A4B`, `4/5` hops match (`extend-0/1/2`, `edit`) and `extend-3` splits one close `"Moon"` vs `"moon"` choice traced directly to `0.0` KV diff vs manual split and an exact MoE router chunk-boundary tie with zero cache store or rollback involved.
+- `scripts/vlm_parity_probe.py` under `overlay-ultra`: `ok=true` on `Qwen3.5 0.8B` (all `MATCH`) and `gemma-4 26B-A4B` (Case 1 `NEAR-TIE`, Cases 2-3 `MATCH`, `feature_cache_hit=true`, `equals_cold_run=true`).
+- Sequential idle-GPU A/B (`internal/claude/perf/mlx_main_2026-11-19/bench_b1_runner_ab.py` & `b1_runner_results.md`) on `gemma-4 31B` and `gemma-4 26B-A4B` confirms lower cold and warm TTFT (`warm_19`/`warm_58`/`warm_73` and `turn2_followup` via rotating rollback slack) and lower active/peak memory from deferred post-gen single-buffer storage.
+- `scripts/check_version_sync.py` clean; `scripts/vendor_frontend.py --check`: `marked` `18.2.0` and `dompurify` `3.4.18` match manifest (`Behind: marked`). Not run: 3-arm `tests/smoke/` (scheduled in Phase 2B), `scripts/perf_ab.py`, `tests/eval/`, `tests/e2e`.
+
 ## [2.0.257] - 2026-11-19
 
 ### Added

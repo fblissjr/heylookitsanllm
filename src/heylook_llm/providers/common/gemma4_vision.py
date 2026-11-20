@@ -123,6 +123,7 @@ def gemma4_make_masks(self, h, cache, mm_token_type_ids=None):
     from mlx_vlm.models.cache import (
         BatchKVCache,
         BatchRotatingKVCache,
+        BufferedRotatingKVCache,
         KVCache,
         RotatingKVCache,
     )
@@ -159,15 +160,25 @@ def gemma4_make_masks(self, h, cache, mm_token_type_ids=None):
                     and c.max_size <= self.window_size
                     and _is_unpadded_single_row_batch_cache(c)
                 )
+                is_buf_rot = (
+                    isinstance(c, BufferedRotatingKVCache)
+                    and c.max_size <= self.window_size
+                    and getattr(c, "keep", 0) == 0
+                )
                 is_plain_rot = (
                     type(c) is RotatingKVCache
                     and c.max_size <= self.window_size
                     and getattr(c, "keep", 0) == 0
                 )
-                unpadded_b1 = not use_bidirectional_vision and (is_batch_rot or is_plain_rot)
+                unpadded_b1 = not use_bidirectional_vision and (
+                    is_batch_rot or is_plain_rot or is_buf_rot
+                )
                 is_rotated = bool(
-                    getattr(c, "rotated", False)
-                    or (is_plain_rot and c.offset > getattr(c, "_idx", 0))
+                    (not is_buf_rot)
+                    and (
+                        getattr(c, "rotated", False)
+                        or (is_plain_rot and c.offset > getattr(c, "_idx", 0))
+                    )
                 )
                 native_window_bound = (
                     not getattr(self.config, "exact_speculative_verify", False)
@@ -177,12 +188,35 @@ def gemma4_make_masks(self, h, cache, mm_token_type_ids=None):
                     and not hasattr(c, "bits")
                     and not hasattr(c, "dequantize")
                 )
-                if unpadded_b1 and (
+                if unpadded_b1 and is_buf_rot and n == 1:
+                    drop_fn = getattr(c, "_planned_drop", None)
+                    drop = int(drop_fn(1)) if callable(drop_fn) else 0
+                    buf_key_len = int(getattr(c, "_idx", 0)) - drop + 1
+                    if buf_key_len <= self.window_size:
+                        m = None
+                    elif native_window_bound:
+                        m = "causal"
+                    else:
+                        m = create_attention_mask(
+                            h, c, window_size=self.window_size, return_array=False
+                        )
+                elif unpadded_b1 and (
                     n == 1
                     or native_window_bound
                     or (
                         not is_rotated
-                        and min(c.max_size - 1, _sliding_int_offset(c)) + n <= self.window_size
+                        and (
+                            int(getattr(c, "_idx", 0))
+                            - (
+                                int(c._planned_drop(n))
+                                if callable(getattr(c, "_planned_drop", None))
+                                else 0
+                            )
+                            + n
+                            if is_buf_rot
+                            else min(c.max_size - 1, _sliding_int_offset(c)) + n
+                        )
+                        <= self.window_size
                     )
                 ):
                     m = None if n == 1 else "causal"

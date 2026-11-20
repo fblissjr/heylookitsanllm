@@ -951,7 +951,7 @@ def _bind_speculative_verify_hidden(lm) -> bool:
     ):
         return False
     try:
-        from mlx_vlm.models.cache import BatchRotatingKVCache
+        from mlx_vlm.models.cache import BatchRotatingKVCache, BufferedRotatingKVCache
         from mlx_vlm.speculative import cache_state as cs
     except ImportError:
         return False
@@ -987,7 +987,10 @@ def _bind_speculative_verify_hidden(lm) -> bool:
                             entries.append((c, start(length)))
                         elif type(c) is BatchRotatingKVCache:
                             tx._rotating[id(c)] = _FastB1RotatingTransaction(c, length)
-                        elif isinstance(c, cs.RotatingKVCache):
+                        elif isinstance(c, cs.RotatingKVCache) and not (
+                            isinstance(c, BufferedRotatingKVCache)
+                            and getattr(c, "keep", 0) == 0
+                        ):
                             tx._rotating[id(c)] = cs._RotatingCacheTransaction(c)
                         else:
                             rp = cs._cache_position_reader(c)

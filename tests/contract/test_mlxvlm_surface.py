@@ -70,8 +70,18 @@ _REAL_MLX_SYS_MODULES = {
 
 @pytest.fixture(autouse=True)
 def _real_mlx_modules():
-    with patch.dict(sys.modules, _REAL_MLX_SYS_MODULES):
+    def _is_mlx(name: str) -> bool:
+        return name == "mlx" or name.startswith(("mlx.", "mlx_lm", "mlx_vlm"))
+
+    saved = {name: mod for name, mod in sys.modules.items() if _is_mlx(name)}
+    sys.modules.update(_REAL_MLX_SYS_MODULES)
+    try:
         yield
+    finally:
+        for name in [n for n in sys.modules if _is_mlx(n)]:
+            if name not in saved:
+                sys.modules.pop(name, None)
+        sys.modules.update(saved)
 
 
 # ---------------------------------------------------------------------------
@@ -2365,3 +2375,101 @@ class TestOwnedGemma4Runtime:
             )
             == gemma4_runtime._PATCH_LOGITS
         )
+
+    def test_buffered_and_rotated_sliding_masks(self, monkeypatch):
+        import copy
+        import mlx.core as mx
+        from mlx_vlm.models.cache import (
+            BatchKVCache,
+            BatchRotatingKVCache,
+            BufferedRotatingKVCache,
+            KVCache,
+            RotatingKVCache,
+        )
+        from mlx_vlm.models.gemma4.language import LanguageModel
+        from heylook_llm.providers.common import gemma4_runtime, gemma4_vision
+
+        cfg = self._tiny_config(
+            hidden_size=128,
+            intermediate_size=128,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            num_global_key_value_heads=2,
+            head_dim=32,
+            global_head_dim=32,
+            sliding_window=8,
+            vocab_size=64,
+        )
+        lm_up = LanguageModel(cfg)
+        lm_bd = copy.deepcopy(lm_up)
+        gemma4_runtime.bind_gemma4_runtime(type("M", (), {"language_model": lm_bd})())
+
+        cu = [BufferedRotatingKVCache(8, keep=0, buffer_size=16), KVCache()]
+        cb = [BufferedRotatingKVCache(8, keep=0, buffer_size=16), KVCache()]
+        prefix = mx.array([[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]], dtype=mx.int32)
+        out_u0 = lm_up(prefix, cache=cu).logits
+        out_b0 = lm_bd(prefix, cache=cb).logits
+        mx.eval(out_u0, out_b0)
+        assert mx.allclose(out_u0, out_b0, atol=1e-5).item()
+
+        # Check n=1 and n=5 past sliding_window=8 both with native window_size=False and real probe.
+        for gate_val in (False, gemma4_vision.mlx_sdpa_supports_window_size()):
+            monkeypatch.setattr(gemma4_vision, "mlx_sdpa_supports_window_size", lambda g=gate_val: g)
+            monkeypatch.setattr(gemma4_runtime, "mlx_sdpa_supports_window_size", lambda g=gate_val: g)
+
+            cu_s = copy.deepcopy(cu)
+            cb_s = copy.deepcopy(cb)
+            step1 = mx.array([[11]], dtype=mx.int32)
+            m1 = lm_bd.model._make_masks(mx.zeros((1, 1, 128)), cb_s, None)
+            if gate_val:
+                assert m1 == ["causal", None]
+            else:
+                assert isinstance(m1[0], mx.array) and m1[0].ndim == 2
+            lu1 = lm_up(step1, cache=cu_s).logits
+            lb1 = lm_bd(step1, cache=cb_s).logits
+            mx.eval(lu1, lb1)
+            assert mx.allclose(lu1, lb1, atol=1e-5).item()
+
+            step5 = mx.array([[12, 13, 14, 15, 16]], dtype=mx.int32)
+            m5 = lm_bd.model._make_masks(mx.zeros((1, 5, 128)), cb_s, None)
+            if gate_val:
+                assert m5 == ["causal", "causal"]
+            else:
+                assert isinstance(m5[0], mx.array) and m5[0].ndim == 2
+            lu5 = lm_up(step5, cache=cu_s).logits
+            lb5 = lm_bd(step5, cache=cb_s).logits
+            mx.eval(lu5, lb5)
+            assert mx.allclose(lu5, lb5, atol=1e-5).item()
+
+        # Verify rotated BatchRotatingKVCache / RotatingKVCache (n > 1):
+        # without native window_size= they fall back to array masks; with native window_size= they use "causal".
+        rot_batch = BatchRotatingKVCache(8, [0])
+        rot_batch.update_and_fetch(mx.zeros((1, 2, 8, 32)), mx.zeros((1, 2, 8, 32)))
+        rot_batch.update_and_fetch(mx.zeros((1, 2, 1, 32)), mx.zeros((1, 2, 1, 32)))
+        assert rot_batch.rotated is True
+
+        rot_plain = RotatingKVCache(8, keep=0)
+        rot_plain.update_and_fetch(mx.zeros((1, 2, 8, 32)), mx.zeros((1, 2, 8, 32)))
+        rot_plain.update_and_fetch(mx.zeros((1, 2, 1, 32)), mx.zeros((1, 2, 1, 32)))
+        assert rot_plain.offset == 9 and rot_plain._idx < rot_plain.offset
+
+        monkeypatch.setattr(gemma4_vision, "mlx_sdpa_supports_window_size", lambda: False)
+        monkeypatch.setattr(gemma4_runtime, "mlx_sdpa_supports_window_size", lambda: False)
+        masks_rot_off = lm_bd.model._make_masks(
+            mx.zeros((1, 3, 128)), [rot_batch, BatchKVCache([0])], None
+        )
+        assert isinstance(masks_rot_off[0], mx.array) and masks_rot_off[0].ndim == 4
+        masks_plain_off = lm_bd.model._make_masks(
+            mx.zeros((1, 3, 128)), [rot_plain, KVCache()], None
+        )
+        assert isinstance(masks_plain_off[0], mx.array) and masks_plain_off[0].ndim == 2
+
+        monkeypatch.setattr(gemma4_vision, "mlx_sdpa_supports_window_size", lambda: True)
+        monkeypatch.setattr(gemma4_runtime, "mlx_sdpa_supports_window_size", lambda: True)
+        assert lm_bd.model._make_masks(
+            mx.zeros((1, 3, 128)), [rot_batch, BatchKVCache([0])], None
+        ) == ["causal", "causal"]
+        assert lm_bd.model._make_masks(
+            mx.zeros((1, 3, 128)), [rot_plain, KVCache()], None
+        ) == ["causal", "causal"]

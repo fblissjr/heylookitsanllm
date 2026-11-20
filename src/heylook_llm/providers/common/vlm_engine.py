@@ -202,15 +202,17 @@ def refresh_snapshots(apc_manager, prompt: list[int], boundaries: Iterable[int],
     pinned in TestVlmEngineSurface). A snapshot that is not there is left
     alone."""
     store = getattr(apc_manager, "_exact_cache", None)
-    if store is None:
-        return
-    from mlx_vlm.apc import _sequence_hash
+    if store is not None:
+        from mlx_vlm.apc import _sequence_hash
 
-    with apc_manager.lock:
-        for n in boundaries:
-            key = _sequence_hash(tuple(prompt[:n]), extra_hash, apc_manager.block_size)
-            if key in store:
-                store.move_to_end(key)
+        with apc_manager.lock:
+            for n in boundaries:
+                key = _sequence_hash(tuple(prompt[:n]), extra_hash, apc_manager.block_size)
+                if key in store:
+                    store.move_to_end(key)
+    b1_cache = getattr(apc_manager, "_heylook_b1_cache", None)
+    if b1_cache is not None:
+        b1_cache.touch(prompt, boundaries, extra_hash=extra_hash)
 
 
 _MEDIA_TOKEN_ID_ATTRS = (
@@ -356,6 +358,9 @@ def apc_is_empty(apc_manager) -> bool:
     pinned in TestVlmEngineSurface)."""
     if apc_manager is None:
         return False
+    b1_cache = getattr(apc_manager, "_heylook_b1_cache", None)
+    if b1_cache is not None and not b1_cache.is_empty():
+        return False
     return not (getattr(apc_manager, "_exact_cache", True) or getattr(apc_manager, "hash_table", True))
 
 
@@ -394,6 +399,9 @@ def apc_memory_pressure(apc_manager) -> Optional[str]:
     cache was already empty and so evicts nothing. Never raises."""
     try:
         count = int(apc_manager.stats_snapshot().get("memory_evictions") or 0)
+        b1_cache = getattr(apc_manager, "_heylook_b1_cache", None)
+        if b1_cache is not None:
+            count += int(b1_cache.stats_snapshot().get("memory_evictions") or 0)
         seen = _MEMORY_EVICTIONS_SEEN.get(id(apc_manager), 0)
         if seen > count:  # a new manager reusing a dead one's id
             seen = 0
@@ -576,6 +584,7 @@ def generate(
     """
     from mlx_vlm.generate.ar import BatchGenerator
 
+    from . import b1_runner
     from .generation_core import generated_only
 
     prompt_list = input_ids.squeeze(0).tolist()
@@ -587,6 +596,53 @@ def generate(
             f"system prompt.")
 
     stop = set(int(t) for t in stop_tokens)
+    active = generated_only(processors) or []
+    drafting = False
+    if draft is not None:
+        blocker = drafting_blocker(
+            active,
+            draft_kind=draft[1],
+            prompt_tokens=n,
+            draft_max_context=draft_max_context,
+        )
+        if blocker is None:
+            drafting = True
+        else:
+            logging.debug(f"{model_id}: not drafting this request: {blocker}")
+
+    if b1_runner.can_use_b1_runner(
+        model=model,
+        apc_manager=apc_manager,
+        draft=draft if drafting else None,
+    ):
+        yield from b1_runner.generate_b1(
+            model=model,
+            processor=processor,
+            apc_manager=apc_manager,
+            input_ids=input_ids,
+            raw_inputs=raw_inputs,
+            sampler=sampler,
+            embed_extras=embed_extras,
+            detokenizer=detokenizer,
+            processors=processors,
+            stop_tokens=stop_tokens,
+            max_tokens=max_tokens,
+            greedy=greedy,
+            abort_event=abort_event,
+            continuing=continuing,
+            context_length=context_length,
+            prefill_step_size=prefill_step_size,
+            model_id=model_id,
+            reset_peak=reset_peak,
+            thinking_budget=thinking_budget,
+            end_thinking_criteria=end_thinking_criteria,
+            shared_prefixes=shared_prefixes,
+            draft=draft,
+            draft_block_size=draft_block_size,
+            draft_max_context=draft_max_context,
+        )
+        return
+
     if reset_peak:
         mx.reset_peak_memory()
     started = time.perf_counter()
@@ -600,21 +656,9 @@ def generate(
     }
     if prefill_step_size:
         bg_kwargs["prefill_step_size"] = prefill_step_size
-    active = generated_only(processors) or []
-    drafting = False
-    if draft is not None:
-        blocker = drafting_blocker(
-            active,
-            draft_kind=draft[1],
-            prompt_tokens=n,
-            draft_max_context=draft_max_context,
-        )
-        if blocker is None:
-            drafting = True
-            bg_kwargs.update(draft_model=draft[0], draft_kind=draft[1],
-                             draft_block_size=draft_block_size)
-        else:
-            logging.debug(f"{model_id}: not drafting this request: {blocker}")
+    if drafting:
+        bg_kwargs.update(draft_model=draft[0], draft_kind=draft[1],
+                         draft_block_size=draft_block_size)
     mtp_gen_tokens: Optional[list[int]] = None
     if drafting and active:
         mtp_gen_tokens = []
