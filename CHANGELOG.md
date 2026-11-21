@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.262] - 2026-11-21
+
+### Fixed
+
+- **MTP thinking forced closed when `thinking_budget_tokens` is unset (`src/heylook_llm/providers/common/b1_runner.py`)**: `generate_b1` previously passed `active_crit = thinking_budget or end_thinking_criteria` directly to `MTPBatch.step(..., thinking_budget_criteria=crit_arg)`. Because `_end_thinking_criteria` is a standby `ThinkingBudgetCriteria` initialized with `thinking_budget=0` for mid-stream `end_reasoning` signals, any MTP-drafted request with thinking enabled and no upfront `thinking_budget_tokens` immediately hit `budget=0` on step 1 and closed the thinking block. `b1_runner` now starts MTP drafting with `active_crit = thinking_budget` (`None` when uncapped), tracks `end_thinking_criteria` across rounds via `_track_end_thinking_criteria`, and only activates `crit_arg = [crit]` when `pop_end_reasoning()` fires.
+- **Non-drafting `end_reasoning` signal incomplete without upfront budget (`src/heylook_llm/providers/common/b1_runner.py`)**: on the non-drafting `b1_runner` path with `thinking_budget=None`, triggering `pop_end_reasoning()` previously emitted only the first token (`\n`) of `_forced_sequence` and skipped the closer (`</think>` / `<channel|>`) because the per-step check gated on `thinking_budget is not None`. Promoting `active_budget = crit` on `pop_end_reasoning()` now drains the full forced closing sequence.
+
+### Verification
+
+- `uv run pytest tests/unit/ tests/contract/ -q`: `1716 passed, 2 subtests passed` (including new `test_b1_runner_standby_end_thinking_criteria_not_enforced_until_triggered`).
+
 ## [2.0.261] - 2026-11-20
 
 ### Added

@@ -1139,3 +1139,158 @@ def test_mlx_provider_describe_observed_reports_b1_runner_and_cow_prefix(monkeyp
     assert "HEYLOOK_B1_RUNNER=0" in obs_fb.decoding["runner"].source
     assert obs_fb.cache["reuse_mode"].value == "blocks"
     assert obs_fb.cache["image_reuse"].value is False
+
+
+@pytest.mark.unit
+def test_b1_runner_standby_end_thinking_criteria_not_enforced_until_triggered(monkeypatch):
+    """Standby end_thinking_criteria (budget=0) must stay inactive until pop_end_reasoning()."""
+    from mlx_vlm import apc as apc_mod
+    from mlx_vlm.speculative import mtp as mtp_mod
+    from mlx_vlm.speculative import utils as spec_utils
+
+    monkeypatch.setattr(apc_mod, "hash_image_payload", lambda **_k: 0)
+    monkeypatch.setattr(apc_mod, "semantic_extra_hash", lambda **_k: 123)
+    monkeypatch.setattr(spec_utils, "speculative_prefill_kwargs", lambda *_a, **_k: {})
+    monkeypatch.setattr(spec_utils, "speculative_hidden_state", lambda *_a, **_k: mx.zeros((1, 1, 1)))
+
+    class _StandbyCriteria:
+        def __init__(self, *, preopened: bool = True):
+            self.thinking_budget = 0
+            self.thinking_start_token_id = 15
+            self.thinking_end_token_id = 29
+            self.in_thinking = preopened
+            self.budget_exceeded = False
+            self._forced_sequence = [28, 29]
+            self._forced_index = 0
+            self.calls = 0
+
+        def __call__(self, tok: int):
+            self.calls += 1
+            if not self.in_thinking and tok == self.thinking_start_token_id:
+                self.in_thinking = True
+            elif self.in_thinking and tok == self.thinking_end_token_id:
+                self.in_thinking = False
+            elif self.in_thinking:
+                self.budget_exceeded = True
+
+        def pop_forced_token_id(self):
+            if self.budget_exceeded and self._forced_index < len(self._forced_sequence):
+                tok = self._forced_sequence[self._forced_index]
+                self._forced_index += 1
+                return tok
+            return None
+
+    # 1. MTP drafting: thinking_budget=None + standby end_thinking_criteria must pass
+    #    thinking_budget_criteria=None until pop_end_reasoning() fires.
+    seen_crit_args: list[Any] = []
+
+    class _FakeMTPBatch:
+        planned_rounds: list[list[int]] = []
+
+        def __init__(self, lm, draft, prompt_cache, hidden, first_y, block_size, *_a, **_k):
+            self.cache = prompt_cache
+            first_tok = int(first_y.item())
+            start_pos = int(prompt_cache[0].offset)
+            self.rows = [SimpleNamespace(bonus=first_tok, position=start_pos)]
+            self._rounds = list(self.planned_rounds)
+
+        def step(self, budgets, positions, thinking_budget_criteria=None):
+            seen_crit_args.append(thinking_budget_criteria)
+            raw = self._rounds.pop(0)
+            committed = [int(self.rows[0].bonus), *raw[:-1]]
+            k = mx.arange(len(committed), dtype=mx.float32).reshape(1, 1, len(committed), 1)
+            for c in self.cache:
+                c.update_and_fetch(k, k)
+            self.rows[0].position += len(committed)
+            self.rows[0].bonus = raw[-1]
+            return [raw]
+
+    monkeypatch.setattr(mtp_mod, "MTPBatch", _FakeMTPBatch)
+    draft_stub = (SimpleNamespace(config=SimpleNamespace(block_size=4)), "mtp")
+
+    model, _ = _make_toy_vlm(vocab_size=32, window_size=8)
+    ids = mx.array([[1, 2, 3, 4, 5, 6]], dtype=mx.int32)
+
+    # Round 1: no end_reasoning -> crit_arg is None, standby criteria untouched.
+    standby_mtp = _StandbyCriteria(preopened=True)
+    _FakeMTPBatch.planned_rounds = [[11, 12], [13, 99]]
+    chunks = list(
+        vlm_engine.generate(
+            model=model,
+            processor=None,
+            apc_manager=_make_fake_apc(),
+            input_ids=ids,
+            raw_inputs={"input_ids": ids},
+            sampler=None,
+            processors=[],
+            stop_tokens=[99],
+            max_tokens=16,
+            greedy=True,
+            detokenizer=_DummyDetok(),
+            thinking_budget=None,
+            end_thinking_criteria=standby_mtp,
+            draft=draft_stub,
+        )
+    )
+    assert seen_crit_args == [None, None]
+    assert standby_mtp.calls == 0
+    assert standby_mtp.budget_exceeded is False
+    assert [c.token for c in chunks] == [10, 11, 12, 13]
+
+    # Round 2: standby starts outside thinking, enters via token 15 in round 1,
+    # then pop_end_reasoning fires before round 2 -> crit_arg activates [standby].
+    seen_crit_args.clear()
+    standby_mtp2 = _StandbyCriteria(preopened=False)
+    abort = _AbortSignal()
+    _FakeMTPBatch.planned_rounds = [[15, 16], [28, 29, 99]]
+    gen = vlm_engine.generate(
+        model=model,
+        processor=None,
+        apc_manager=_make_fake_apc(),
+        input_ids=ids,
+        raw_inputs={"input_ids": ids},
+        sampler=None,
+        processors=[],
+        stop_tokens=[99],
+        max_tokens=16,
+        greedy=True,
+        abort_event=abort,
+        detokenizer=_DummyDetok(),
+        thinking_budget=None,
+        end_thinking_criteria=standby_mtp2,
+        draft=draft_stub,
+    )
+    out = [next(gen), next(gen), next(gen)]  # first_tok + round 1 ([15, 16])
+    assert standby_mtp2.in_thinking is True
+    abort.end_reasoning_once = True
+    out.extend(list(gen))
+    assert seen_crit_args[0] is None
+    assert seen_crit_args[1] == [standby_mtp2]
+    assert standby_mtp2.budget_exceeded is True
+
+    # 2. Non-drafting: pop_end_reasoning with thinking_budget=None and standby
+    #    end_thinking_criteria must force ALL tokens of _forced_sequence ([28, 29]).
+    standby_ar = _StandbyCriteria(preopened=True)
+    abort_ar = _AbortSignal()
+    gen_ar = vlm_engine.generate(
+        model=model,
+        processor=None,
+        apc_manager=_make_fake_apc(),
+        input_ids=ids,
+        raw_inputs={"input_ids": ids},
+        sampler=None,
+        processors=[],
+        stop_tokens=[99],
+        max_tokens=5,
+        greedy=True,
+        abort_event=abort_ar,
+        detokenizer=_DummyDetok(),
+        thinking_budget=None,
+        end_thinking_criteria=standby_ar,
+    )
+    ar_toks = [next(gen_ar).token]
+    assert standby_ar.budget_exceeded is False
+    abort_ar.end_reasoning_once = True
+    ar_toks.extend(c.token for c in gen_ar)
+    assert ar_toks[1:3] == [28, 29]
+    assert standby_ar.in_thinking is False

@@ -863,12 +863,13 @@ def generate_b1(
             if not drafting:
                 next_input_tok = first_tok
                 fwd_kw = {"rope_deltas": rope_deltas} if rope_deltas is not None else {}
+                active_budget = thinking_budget
                 while generated < max_tokens:
                     if abort_event is not None and abort_event.is_set():
                         aborted = True
                         return
                     if pop_end_reasoning is not None and pop_end_reasoning():
-                        crit = thinking_budget or end_thinking_criteria
+                        crit = active_budget or end_thinking_criteria
                         if (
                             crit is not None
                             and getattr(crit, "in_thinking", False)
@@ -876,6 +877,7 @@ def generate_b1(
                         ):
                             crit.thinking_budget = 0
                             crit.budget_exceeded = True
+                            active_budget = crit
                             seq = getattr(crit, "_forced_sequence", None) or []
                             idx = int(getattr(crit, "_forced_index", 0) or 0)
                             if pending_forced is None and idx < len(seq):
@@ -916,8 +918,8 @@ def generate_b1(
                         yield _emit_chunk(None, is_last=True, is_first=False, fin="stop")
                         return
 
-                    if thinking_budget is not None:
-                        forced_after = _apply_forced_budget_check(thinking_budget, tok)
+                    if active_budget is not None:
+                        forced_after = _apply_forced_budget_check(active_budget, tok)
                         if forced_after is not None and pending_forced is None:
                             pending_forced = forced_after
                     elif end_thinking_criteria is not None:
@@ -957,7 +959,7 @@ def generate_b1(
                     prompt_tokens=input_ids,
                     rope_deltas=rope_deltas,
                 )
-                active_crit = thinking_budget or end_thinking_criteria
+                active_crit = thinking_budget
                 crit_arg = [active_crit] if active_crit is not None else None
 
                 while generated < max_tokens:
@@ -965,7 +967,7 @@ def generate_b1(
                         aborted = True
                         return
                     if pop_end_reasoning is not None and pop_end_reasoning():
-                        crit = thinking_budget or end_thinking_criteria
+                        crit = active_crit or end_thinking_criteria
                         if (
                             crit is not None
                             and getattr(crit, "in_thinking", False)
@@ -973,6 +975,8 @@ def generate_b1(
                         ):
                             crit.thinking_budget = 0
                             crit.budget_exceeded = True
+                            active_crit = crit
+                            crit_arg = [crit]
 
                     if has_uncaptured_rotating:
                         has_uncaptured_rotating = capture_rotating_fallbacks_before_evict(
@@ -1032,6 +1036,9 @@ def generate_b1(
 
                     if mtp_gen_tokens is not None and toks:
                         mtp_gen_tokens.extend(toks)
+                    if active_crit is None and end_thinking_criteria is not None:
+                        for tok in toks:
+                            _track_end_thinking_criteria(end_thinking_criteria, tok)
 
                     steps: list[Optional[int]] = toks if toks else [None]
                     for idx, step_tok in enumerate(steps):
