@@ -4206,7 +4206,7 @@ async function main() {
       await et.page.evaluate(() => { location.hash = '#/perf'; });
       await et.page.waitForSelector('.perf__obs-select');
       const accessText = await et.page.$eval('.perf__access', (el) => el.textContent);
-      assert(accessText.includes('OFF') && accessText.includes('unset'),
+      assert(/\boff\b/i.test(accessText) && accessText.includes('unset'),
         `expected Access gate summary on #/perf, got ${JSON.stringify(accessText)}`);
       const initialRows = await et.page.$$eval('.perf__obs-logs tbody tr', (trs) => trs.length);
       assert(initialRows === 1, `expected 1 stub log row on #/perf, got ${initialRows}`);

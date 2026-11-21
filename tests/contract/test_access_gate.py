@@ -527,3 +527,160 @@ class TestAdminTokenSecondFactorAndConfigVisibility:
         assert both.json()["access"]["admin_token_enabled"] is True
         assert TEST_KEY not in both.text
         assert "extra-admin-secret" not in both.text
+
+
+class TestAlwaysOnOriginAndFramingGuards:
+    """Independently of the API key, state-changing cross-origin/same-site requests 403 and CSP frame-ancestors is sent."""
+
+    @pytest.mark.parametrize(
+        "method, path, body",
+        [
+            ("POST", "/v1/data/clear", None),
+            ("POST", "/v1/models/test-mlx-model/load", None),
+            ("POST", "/v1/admin/models/test-mlx-model/unload", None),
+            ("POST", "/v1/cache/clear", {}),
+            ("POST", "/v1/admin/models/test-mlx-model/reload", {}),
+            ("PUT", "/v1/admin/config", {"observability_level": "off"}),
+            ("PATCH", "/v1/admin/models/test-mlx-model", {"config": {}}),
+            ("DELETE", "/v1/requests/req-1", None),
+            (
+                "POST",
+                "/v1/messages",
+                {
+                    "model": "test-mlx-model",
+                    "max_tokens": 8,
+                    "stream": False,
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+            ),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "bad_headers",
+        [
+            pytest.param(
+                {"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"},
+                id="cross_site_tab_to_loopback",
+            ),
+            pytest.param(
+                {"Origin": "https://other.lan.example", "Sec-Fetch-Site": "same-site"},
+                id="same_site_sibling_subdomain",
+            ),
+            pytest.param(
+                {"Origin": "http://127.0.0.1:3000", "Sec-Fetch-Site": "same-site"},
+                id="loopback_cross_port",
+            ),
+            pytest.param(
+                {"Origin": "null"},
+                id="null_origin_alone",
+            ),
+            pytest.param(
+                {"Sec-Fetch-Site": "cross-site"},
+                id="sec_fetch_site_cross_site_alone",
+            ),
+            pytest.param(
+                {"Sec-Fetch-Site": "same-site"},
+                id="sec_fetch_site_same_site_alone",
+            ),
+            pytest.param(
+                {"Origin": "https://evil.example", "X-Forwarded-Host": "evil.example"},
+                id="unlisted_forwarded_host_spoof",
+            ),
+        ],
+    )
+    def test_state_changing_requests_refused_without_api_key_when_cross_origin_or_same_site(
+        self,
+        app,
+        monkeypatch: pytest.MonkeyPatch,
+        method: str,
+        path: str,
+        body: dict | None,
+        bad_headers: dict[str, str],
+    ):
+        monkeypatch.delenv("HEYLOOK_API_KEY", raising=False)
+        monkeypatch.setenv("HEYLOOK_API_KEY_FILE", "")
+        monkeypatch.delenv("HEYLOOK_ADMIN_TOKEN", raising=False)
+
+        with TestClient(
+            app, base_url="http://127.0.0.1:42193", raise_server_exceptions=False
+        ) as c:
+            res = c.request(method, path, headers=bad_headers, json=body)
+            assert res.status_code == 403, f"{method} {path} with {bad_headers} -> {res.status_code}"
+            assert res.json()["error"]["code"] == "csrf_rejected"
+            assert res.headers.get("content-security-policy") == "frame-ancestors 'self'"
+
+    def test_same_origin_ui_tailscale_serve_and_cli_succeed_with_key_and_admin_token_unset(
+        self, app, mock_router, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.delenv("HEYLOOK_API_KEY", raising=False)
+        monkeypatch.setenv("HEYLOOK_API_KEY_FILE", "")
+        monkeypatch.delenv("HEYLOOK_ADMIN_TOKEN", raising=False)
+
+        with TestClient(
+            app, base_url="http://127.0.0.1:42193", raise_server_exceptions=False
+        ) as c:
+            # 1. Same-origin loopback frontend works on admin routes with no admin token.
+            same_origin = {
+                "Origin": "http://127.0.0.1:42193",
+                "Sec-Fetch-Site": "same-origin",
+            }
+            assert c.post("/v1/data/clear", headers=same_origin).status_code == 200
+            assert c.post("/v1/cache/clear", headers=same_origin, json={}).status_code == 200
+
+            # 2. Non-browser CLI (no Origin, no Sec-Fetch-Site) works unchanged.
+            assert c.post("/v1/data/clear").status_code == 200
+
+            # 3. `tailscale serve` rewrites Host to 127.0.0.1:42193 and passes X-Forwarded-Host:
+            #    refused with an allowed_hosts hint until listed, then accepted; sibling .ts.net
+            #    nodes remain refused (403).
+            ts_headers = {
+                "Origin": "https://node.tailnet.example",
+                "Sec-Fetch-Site": "same-origin",
+                "X-Forwarded-Host": "node.tailnet.example",
+                "X-Forwarded-Proto": "https",
+            }
+            unlisted = c.post("/v1/data/clear", headers=ts_headers)
+            assert unlisted.status_code == 403
+            assert "allowed_hosts" in unlisted.json()["detail"]
+
+            monkeypatch.setattr(
+                mock_router.app_config,
+                "allowed_hosts",
+                ["testserver", "node.tailnet.example"],
+            )
+            listed = c.post("/v1/data/clear", headers=ts_headers)
+            assert listed.status_code == 200
+
+            sibling_ts = {
+                "Origin": "https://other-node.tailnet.example",
+                "Sec-Fetch-Site": "same-site",
+                "X-Forwarded-Host": "node.tailnet.example",
+                "X-Forwarded-Proto": "https",
+            }
+            assert c.post("/v1/data/clear", headers=sibling_ts).status_code == 403
+
+    def test_csp_frame_ancestors_self_is_sent_on_every_response_with_and_without_key(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.delenv("HEYLOOK_API_KEY", raising=False)
+        monkeypatch.setenv("HEYLOOK_API_KEY_FILE", "")
+
+        for path in ("/", "/js/app.js", "/health", "/v1/models", "/missing-route"):
+            res = client.get(path)
+            assert res.headers.get("content-security-policy") == "frame-ancestors 'self'", path
+            assert res.headers.get("x-frame-options") == "SAMEORIGIN", path
+
+        rebound = client.get("/v1/models", headers={"Host": "rebind.attacker.example:8000"})
+        assert rebound.status_code == 403
+        assert rebound.headers.get("content-security-policy") == "frame-ancestors 'self'"
+
+        monkeypatch.setenv("HEYLOOK_API_KEY", TEST_KEY)
+        for path, hdrs in (
+            ("/", {"Accept": "text/html"}),
+            ("/login", {}),
+            ("/v1/models", {}),
+            ("/v1/models", {"x-api-key": TEST_KEY}),
+        ):
+            res = client.get(path, headers=hdrs)
+            assert res.headers.get("content-security-policy") == "frame-ancestors 'self'", path
+            assert res.headers.get("x-frame-options") == "SAMEORIGIN", path

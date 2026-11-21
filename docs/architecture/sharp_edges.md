@@ -879,12 +879,23 @@ Three traps shaped its design:
 - **Never exempt loopback or LAN IPs**: reverse proxies on another LAN host and
   loopback forwarders (`tailscale serve`) hide real client addresses behind a
   LAN IP or `127.0.0.1`; exempting either exempts everyone.
-- **`SameSite=Strict` alone does not stop sibling subdomains or loopback ports**:
-  sibling apps under the same parent domain count as `same-site` in browsers,
-  and cookies are port-agnostic on `127.0.0.1`. State-changing cookie requests
-  therefore require `Origin` to match `Host` (or `Sec-Fetch-Site` in
-  `{"same-origin", "none"}` with no conflicting `Origin`), while omitting
-  `Secure` on plain HTTP loopback so Safari still stores the cookie locally.
+- **Always-on Origin, `Sec-Fetch-Site`, and `frame-ancestors 'self'` (v2.0.264)**:
+  even when no API key is configured, an unrelated web page open in the local
+  machine's browser can `POST` to `http://127.0.0.1:<port>/v1/data/clear`,
+  model load/unload, cache clear, or reload without triggering a CORS preflight
+  (and the frontend never sends `X-Heylook-Admin-Token`, so setting that token
+  breaks its admin views). Likewise, `SameSite=Strict` alone does not stop
+  sibling subdomains (`same-site`) or other loopback ports. `AccessGateMiddleware`
+  therefore unconditionally sends `Content-Security-Policy: frame-ancestors 'self'`
+  (`+ X-Frame-Options: SAMEORIGIN`) on every HTTP response and rejects every
+  state-changing request (`POST`/`PUT`/`PATCH`/`DELETE` and WebSockets) whose
+  `Sec-Fetch-Site` is not `same-origin`/`none` or whose `Origin` does not match
+  `Host` (or a recognized `X-Forwarded-Host` in `own_names`/`allowed_hosts` for
+  `tailscale serve`, which rewrites `Host` to loopback), while non-browser CLI
+  and SDK clients omit both headers and pass. Cookie-authenticated state changes
+  additionally require at least one of `Origin` or `Sec-Fetch-Site` to be
+  present, while omitting `Secure` on plain HTTP loopback so Safari still stores
+  the cookie locally.
 
 The OpenAPI drift guard (`generated-api.ts`, `scripts/check_openapi_sync.sh`,
 the pre-commit block, `/openapi-regen`) was retired 2026-07-09 with the legacy

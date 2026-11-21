@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.264] - 2026-11-21
+
+### Security
+
+- **Always-on `Origin` / `Sec-Fetch-Site` enforcement on state-changing requests (`src/heylook_llm/auth.py`)**: independently of whether an API key is configured, `AccessGateMiddleware` now refuses every state-changing request (`POST`, `PUT`, `PATCH`, `DELETE`, and WebSockets) with `403` (`error.code = "csrf_rejected"`) before auth or route logic runs whenever `Sec-Fetch-Site` is not `same-origin` or `none` (blocking `cross-site` and sibling-subdomain `same-site`) or `Origin` does not match this server's `Host` (or a recognized `X-Forwarded-Host` in `own_names` / `allowed_hosts` for proxies like `tailscale serve` that rewrite `Host` to loopback). Non-browser CLI and SDK clients omit both headers and remain unaffected, while same-origin UI pages keep full admin access without needing `HEYLOOK_ADMIN_TOKEN` (which the frontend never sends).
+- **Always-on `Content-Security-Policy: frame-ancestors 'self'` (`src/heylook_llm/auth.py`, `src/heylook_llm/host_check.py`)**: every HTTP response (static HTML/CSS/JS, API routes, `/login`, `/health`, and `401`/`403`/`503` errors) now carries `Content-Security-Policy: frame-ancestors 'self'` alongside `X-Frame-Options: SAMEORIGIN`.
+
+### Verification
+
+- `uv run pytest tests/unit/ tests/contract/ -q`: `1825 passed, 2 subtests passed` (including 65 new contract checks in `TestAlwaysOnOriginAndFramingGuards` across `POST`/`PUT`/`PATCH`/`DELETE`, `tailscale serve` `X-Forwarded-Host`, and `frame-ancestors 'self'`).
+- `scripts/check_version_sync.py`, `scripts/guard_stable_channel.sh`, `scripts/vendor_frontend.py --check` (`marked` `18.2.0` / `dompurify` `3.4.18` match manifest; `Behind: marked`), and path-privacy scan clean. NOT run: live 3-arm `tests/smoke/`, `tests/eval/`, `scripts/perf_ab.py`, browser E2E (`puppeteer-core` removed in `v2.0.240`).
+
 ## [2.0.263] - 2026-11-21
 
 ### Added

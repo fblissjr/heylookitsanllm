@@ -107,5 +107,7 @@ class HostCheckMiddleware:
         )}).encode()
         await send({"type": "http.response.start", "status": 403,
                     "headers": [(b"content-type", b"application/json"),
-                                (b"content-length", str(len(body)).encode())]})
+                                (b"content-length", str(len(body)).encode()),
+                                (b"content-security-policy", b"frame-ancestors 'self'"),
+                                (b"x-frame-options", b"SAMEORIGIN")]})
         await send({"type": "http.response.body", "body": body})

@@ -1,15 +1,28 @@
-"""Server-wide access gate and optional extra admin authentication.
+"""Server-wide access gate, always-on browser origin/framing guards, and optional extra admin auth.
 
-One pure ASGI gate (``AccessGateMiddleware``), installed beside
+One pure ASGI middleware (``AccessGateMiddleware``), installed beside
 ``HostCheckMiddleware``, covers every HTTP/WebSocket route, the static
-frontend, streaming responses, and any router added later. It is off when no
-key is configured and turns on when a key is present in:
-  1. ``HEYLOOK_API_KEY`` (env var), or
-  2. a mode-600 file at ``~/.heylook/api_key`` (or ``$HEYLOOK_API_KEY_FILE``).
+frontend, streaming responses, and any router added later:
 
-The key is NEVER read from or written to ``heylook.toml``, because
-``/v1/admin/config`` reads and writes that file. All key comparisons run in
-constant time via ``hmac.compare_digest`` on UTF-8 bytes.
+Always-on (independent of whether an API key is configured):
+  - ``Content-Security-Policy: frame-ancestors 'self'`` (plus
+    ``X-Frame-Options: SAMEORIGIN``) on every HTTP response.
+  - State-changing requests (``POST``, ``PUT``, ``PATCH``, ``DELETE``, and
+    WebSockets) are refused with ``403`` whenever ``Sec-Fetch-Site`` is not
+    ``same-origin`` or ``none`` (blocking ``cross-site`` and sibling-subdomain
+    ``same-site``) or ``Origin`` does not match this server's ``Host`` (or an
+    ``X-Forwarded-Host`` explicitly listed in ``own_names`` / ``allowed_hosts``
+    for ``tailscale serve``). Non-browser clients omit both headers and pass.
+    This protects loopback and ``tailscale serve`` endpoints from cross-tab
+    browser requests without needing ``HEYLOOK_ADMIN_TOKEN`` (which the
+    frontend never sends).
+
+When a key is configured in:
+  1. ``HEYLOOK_API_KEY`` (env var), or
+  2. a mode-600 file at ``~/.heylook/api_key`` (or ``$HEYLOOK_API_KEY_FILE``),
+the authentication gate turns on across every route (never read from or written
+to ``heylook.toml``, which ``/v1/admin/config`` reads and writes). All key
+comparisons run in constant time via ``hmac.compare_digest`` on UTF-8 bytes.
 
 Accepted credentials (any one suffices):
   - ``x-api-key: <key>`` (Anthropic SDK ``api_key`` default)
@@ -18,17 +31,17 @@ Accepted credentials (any one suffices):
   - ``heylook_session`` cookie (HttpOnly, SameSite=Strict, Secure over HTTPS,
     host-only, storing a random 256-bit session token whose SHA-256 digest is
     held in ``SessionStore`` -- never the API key itself). State-changing
-    cookie requests additionally require ``Origin`` to match ``Host`` (or
-    ``Sec-Fetch-Site`` in ``{"same-origin", "none"}`` with no conflicting
-    ``Origin``), blocking sibling-subdomain and loopback cross-port CSRF.
+    cookie requests additionally require at least one of ``Origin`` or
+    ``Sec-Fetch-Site`` to be present.
 
 There are NO source-IP exemptions (loopback and LAN proxies forward external
 clients from ``127.0.0.1`` and LAN addresses). The ONLY unauthenticated routes
-are ``EXEMPT_ROUTES``: ``/login``, the four static assets it loads, and
-``/health`` (which returns only ``{"status": "ok"}``).
+when the key is set are ``EXEMPT_ROUTES``: ``/login``, the four static assets
+it loads, and ``/health`` (which returns only ``{"status": "ok"}``).
 
 ``HEYLOOK_ADMIN_TOKEN`` (header ``X-Heylook-Admin-Token``) stays as an optional
-extra factor on admin routes plus ``/v1/data/clear`` and ``/v1/cache/clear``.
+extra factor on admin routes plus ``/v1/data/clear`` and ``/v1/cache/clear``
+(note: the web UI never sends ``X-Heylook-Admin-Token``).
 """
 
 from __future__ import annotations
@@ -53,6 +66,7 @@ import urllib.parse
 from fastapi import HTTPException, Request
 
 from heylook_llm import observability
+from heylook_llm.host_check import _configured as _configured_hosts, own_names
 
 logger = logging.getLogger(__name__)
 
@@ -432,15 +446,27 @@ def _normalized_authority(host_port: str, scheme: str) -> tuple[str, int | None]
     return (host_clean, port)
 
 
-def check_cookie_csrf(scope: dict[str, Any]) -> tuple[bool, str]:
-    """Cross-site protection for state-changing cookie requests and /login.
+def check_request_origin(
+    scope: dict[str, Any],
+    *,
+    require_browser_signal: bool = False,
+    own: frozenset[str] | None = None,
+) -> tuple[bool, str]:
+    """Cross-origin & sibling-site protection for state-changing requests.
 
-    Requires:
-      1. ``Sec-Fetch-Site``, when present, to be ``same-origin`` or ``none``
+    Enforced independently of whether an API key is configured:
+      1. ``Sec-Fetch-Site``, when present, MUST be ``same-origin`` or ``none``
          (rejecting ``cross-site`` and sibling-subdomain ``same-site``).
-      2. ``Origin``, when present, to be an ``http(s)`` origin whose host:port
-         matches ``Host`` (and not downgraded to ``http`` over an HTTPS proxy).
-      3. At least one of ``Origin`` or ``Sec-Fetch-Site`` to be present.
+      2. ``Origin``, when present, MUST be an ``http(s)`` origin whose
+         ``host:port`` matches ``Host`` (or a recognized ``X-Forwarded-Host``
+         in ``own_names`` / ``heylook.toml``'s ``allowed_hosts`` for proxies
+         like ``tailscale serve`` that rewrite ``Host`` to loopback), and must
+         not downgrade ``https`` to ``http`` over an HTTPS proxy.
+      3. When ``require_browser_signal`` is True (cookie-authenticated state
+         changes and ``POST /login``), at least one of ``Origin`` or
+         ``Sec-Fetch-Site`` must be present. Non-browser clients (``curl``,
+         SDKs, scripts) omit both and pass when ``require_browser_signal`` is
+         False.
     """
     sfs_raw = _header_first(scope, b"sec-fetch-site")
     sfs = sfs_raw.strip().lower() if sfs_raw is not None else None
@@ -472,14 +498,36 @@ def check_cookie_csrf(scope: dict[str, Any]) -> tuple[bool, str]:
         if (scheme == "http" and origin_port == 80) or (scheme == "https" and origin_port == 443):
             origin_port = None
         origin_auth = (origin_host, origin_port)
-        if host_auth is None or origin_auth != host_auth:
-            return False, "origin_mismatch"
-        return True, "ok"
+        if host_auth is not None and origin_auth == host_auth:
+            return True, "ok"
+
+        # Proxies like `tailscale serve` rewrite `Host` to 127.0.0.1:<port> and
+        # pass the public hostname in `X-Forwarded-Host`. Accept it ONLY when
+        # that hostname is one of this server's recognized non-wildcard names.
+        xfh_raw = _header_first(scope, b"x-forwarded-host")
+        if xfh_raw:
+            xfh_first = xfh_raw.split(",", 1)[0].strip()
+            xfh_auth = _normalized_authority(xfh_first, effective_scheme)
+            if xfh_auth is not None and origin_auth == xfh_auth:
+                known = ((own if own is not None else own_names()) | _configured_hosts(scope)) - {"*", "localhost"}
+                if xfh_auth[0] in known:
+                    return True, "ok"
+                return False, f"unlisted_forwarded_host:{_clean_log_token(xfh_auth[0], 96)}"
+
+        return False, "origin_mismatch"
 
     if sfs in ("same-origin", "none"):
         return True, "ok"
 
-    return False, "missing_origin_and_sec_fetch_site"
+    if require_browser_signal:
+        return False, "missing_origin_and_sec_fetch_site"
+
+    return True, "ok"
+
+
+def check_cookie_csrf(scope: dict[str, Any]) -> tuple[bool, str]:
+    """Cross-site protection for cookie-authenticated state changes and /login."""
+    return check_request_origin(scope, require_browser_signal=True)
 
 
 def format_peer(scope: dict[str, Any]) -> str:
@@ -561,27 +609,98 @@ async def _send_asgi_response(
     await send({"type": "http.response.body", "body": b"" if is_head else body})
 
 
+_CSP_FRAME_ANCESTORS = b"frame-ancestors 'self'"
+_X_FRAME_OPTIONS = b"SAMEORIGIN"
+
+
+def _ensure_framing_headers(headers: list[tuple[bytes, bytes]]) -> list[tuple[bytes, bytes]]:
+    present = {k.lower() for k, _ in headers}
+    if b"content-security-policy" not in present:
+        headers.append((b"content-security-policy", _CSP_FRAME_ANCESTORS))
+    if b"x-frame-options" not in present:
+        headers.append((b"x-frame-options", _X_FRAME_OPTIONS))
+    return headers
+
+
+def _with_security_headers(send, *, extra_response_headers: list[tuple[bytes, bytes]] | None = None):
+    async def wrapped(message):
+        if message["type"] == "http.response.start":
+            hdrs = list(message.get("headers") or ())
+            if extra_response_headers:
+                existing = {k.lower() for k, _ in hdrs}
+                for ek, ev in extra_response_headers:
+                    if ek.lower() not in existing:
+                        hdrs.append((ek, ev))
+            _ensure_framing_headers(hdrs)
+            message = {**message, "headers": hdrs}
+        await send(message)
+
+    return wrapped
+
+
+async def _send_csrf_403(send, scope: dict[str, Any], *, reason: str) -> None:
+    if reason.startswith("unlisted_forwarded_host:"):
+        fwd_host = reason.split(":", 1)[1]
+        msg = (
+            f"Cross-origin state-changing request refused: X-Forwarded-Host '{fwd_host}' "
+            "is not in heylook.toml's allowed_hosts. Add it there if you reach this server "
+            "through tailscale serve or a reverse proxy that rewrites Host."
+        )
+    else:
+        msg = (
+            "Cross-origin state-changing request refused "
+            "(Origin must match Host; Sec-Fetch-Site must be same-origin or none)."
+        )
+    csrf_body = json.dumps({
+        "detail": msg,
+        "type": "error",
+        "error": {
+            "type": "forbidden",
+            "code": "csrf_rejected",
+            "message": msg,
+        },
+    }).encode("utf-8")
+    await _send_asgi_response(
+        send, scope, status=403, content_type=b"application/json", body=csrf_body,
+    )
+
+
 class AccessGateMiddleware:
-    """Single app-wide ASGI authentication & cookie-CSRF gate."""
+    """Single app-wide ASGI origin/framing & authentication gate."""
 
     def __init__(self, app) -> None:
         self.app = app
+        self._own_names = own_names()
 
     async def __call__(self, scope, receive, send):
         scope_type = scope.get("type")
         if scope_type not in ("http", "websocket"):
             return await self.app(scope, receive, send)
 
-        state = resolve_access_key()
-        if not state.enabled:
-            return await self.app(scope, receive, send)
-
+        send_out = _with_security_headers(send) if scope_type == "http" else send
         path = scope.get("path") or ""
         method = str(scope.get("method") or ("GET" if scope_type == "websocket" else "")).upper()
+        is_state_changing = scope_type == "websocket" or method not in _SAFE_METHODS
+
+        # Always-on (independent of API key): refuse cross-origin and same-site
+        # browser state-changing requests before any auth or route logic runs.
+        if is_state_changing:
+            origin_ok, origin_reason = check_request_origin(
+                scope, require_browser_signal=False, own=self._own_names,
+            )
+            if not origin_ok:
+                log_auth_failure(scope, reason=f"cross_origin:{origin_reason}")
+                if scope_type == "websocket":
+                    return await send({"type": "websocket.close", "code": 1008})
+                return await _send_csrf_403(send_out, scope, reason=origin_reason)
+
+        state = resolve_access_key()
+        if not state.enabled:
+            return await self.app(scope, receive, send_out)
 
         # /health stays up even when the key file is misconfigured, revealing nothing.
         if scope_type == "http" and (path, method) in {("/health", "GET"), ("/health", "HEAD")}:
-            return await self.app(scope, receive, send)
+            return await self.app(scope, receive, send_out)
 
         # Fail closed when a key file exists with bad permissions or is empty.
         if state.error or not state.key:
@@ -598,11 +717,11 @@ class AccessGateMiddleware:
                 },
             }).encode("utf-8")
             return await _send_asgi_response(
-                send, scope, status=503, content_type=b"application/json", body=payload,
+                send_out, scope, status=503, content_type=b"application/json", body=payload,
             )
 
         if scope_type == "http" and (path, method) in EXEMPT_ROUTES:
-            return await self.app(scope, receive, send)
+            return await self.app(scope, receive, send_out)
 
         expected = state.key
         failure_reason = "missing_credentials"
@@ -612,7 +731,7 @@ class AccessGateMiddleware:
         if api_key_hdr is not None:
             candidate = api_key_hdr.strip()
             if candidate and verify_api_key(candidate, expected):
-                return await self.app(scope, receive, send)
+                return await self.app(scope, receive, send_out)
             if candidate:
                 failure_reason = "invalid_api_key"
 
@@ -623,7 +742,7 @@ class AccessGateMiddleware:
             candidate = bearer_tok.strip()
             if scheme.lower() == "bearer" and candidate:
                 if verify_api_key(candidate, expected):
-                    return await self.app(scope, receive, send)
+                    return await self.app(scope, receive, send_out)
                 failure_reason = "invalid_bearer_token"
             elif auth_hdr.strip():
                 failure_reason = "unsupported_authorization_scheme"
@@ -633,33 +752,20 @@ class AccessGateMiddleware:
         store = get_session_store()
         if session_tokens:
             if any(store.verify(tok, expected) for tok in session_tokens):
-                if scope_type == "websocket" or method not in _SAFE_METHODS:
-                    csrf_ok, csrf_reason = check_cookie_csrf(scope)
+                if is_state_changing:
+                    csrf_ok, csrf_reason = check_request_origin(
+                        scope, require_browser_signal=True, own=self._own_names,
+                    )
                     if not csrf_ok:
                         log_auth_failure(scope, reason=f"cross_origin_cookie:{csrf_reason}")
                         if scope_type == "websocket":
                             return await send({"type": "websocket.close", "code": 1008})
-                        csrf_body = json.dumps({
-                            "detail": "Cross-origin cookie request refused (Origin must match Host).",
-                            "type": "error",
-                            "error": {
-                                "type": "forbidden",
-                                "code": "csrf_rejected",
-                                "message": "Cross-origin cookie request refused (Origin must match Host).",
-                            },
-                        }).encode("utf-8")
-                        return await _send_asgi_response(
-                            send, scope, status=403, content_type=b"application/json", body=csrf_body,
-                        )
+                        return await _send_csrf_403(send_out, scope, reason=csrf_reason)
                 if scope_type == "http":
-                    async def send_with_session_marker(message):
-                        if message["type"] == "http.response.start":
-                            hdrs = list(message.get("headers") or ())
-                            if not any(k.lower() == b"x-heylook-session" for k, _ in hdrs):
-                                message = {**message, "headers": hdrs + [(b"x-heylook-session", b"1")]}
-                        await send(message)
-
-                    return await self.app(scope, receive, send_with_session_marker)
+                    send_session = _with_security_headers(
+                        send, extra_response_headers=[(b"x-heylook-session", b"1")],
+                    )
+                    return await self.app(scope, receive, send_session)
                 return await self.app(scope, receive, send)
             if failure_reason == "missing_credentials":
                 failure_reason = "invalid_session"
@@ -675,7 +781,7 @@ class AccessGateMiddleware:
         if _wants_html_login(scope, path, method):
             html_body = render_login_html()
             return await _send_asgi_response(
-                send,
+                send_out,
                 scope,
                 status=401,
                 content_type=b"text/html; charset=utf-8",
@@ -694,7 +800,7 @@ class AccessGateMiddleware:
             },
         }).encode("utf-8")
         return await _send_asgi_response(
-            send,
+            send_out,
             scope,
             status=401,
             content_type=b"application/json",

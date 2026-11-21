@@ -677,18 +677,29 @@ Authentication is **opt-in and off by default**:
   app-level gate.)
 - **Optional admin second factor** (`HEYLOOK_ADMIN_TOKEN` → send
   `X-Heylook-Admin-Token`). Gates `/v1/admin/*`, `/v1/data/clear`, and
-  `/v1/cache/clear` as an extra factor; an inference integration never needs it.
+  `/v1/cache/clear` as an extra factor for headless admin callers; an inference
+  integration never needs it, and the bundled web frontend never sends it
+  (setting it breaks UI admin pages).
 
-Two network rules apply alongside the access gate:
+Three always-on browser defenses apply regardless of whether a key is set:
 
 - **Host check** (v2.0.137, DNS-rebinding guard). A request whose `Host`
   header is not an IP address, `localhost`, one of the server machine's own
   names, or an entry in `allowed_hosts` at the top of the server's
   `heylook.toml` gets a **403** naming that fix. A client reaching the server
   by a LAN DNS name needs that name added by the operator; an IP always works.
-- **No CORS** (v2.0.123). The server sends no CORS headers, so a browser page
-  on another origin is refused at preflight. Call it server-side, or serve
-  the page from the same origin.
+- **State-changing Origin & Fetch-Metadata check** (v2.0.264). Every `POST`,
+  `PUT`, `PATCH`, `DELETE`, or WebSocket request carrying a mismatched `Origin`
+  or `Sec-Fetch-Site` (`cross-site` or `same-site`) is refused with **403**
+  (`error.code = "csrf_rejected"`), blocking cross-tab browser attacks against
+  loopback or `tailscale serve`. Non-browser HTTP clients omit both headers and
+  are unaffected. (If using `tailscale serve`, which rewrites `Host` to
+  `127.0.0.1` and passes `X-Forwarded-Host`, list your `.ts.net` hostname in
+  `allowed_hosts`.)
+- **No CORS & `frame-ancestors 'self'`** (v2.0.123 / v2.0.264). The server sends
+  no CORS headers and sets `Content-Security-Policy: frame-ancestors 'self'`
+  (`+ X-Frame-Options: SAMEORIGIN`) on every response. Call the API server-side,
+  or serve the page from the same origin.
 
 Send `X-Request-ID` on every request, and **make it unique per request** — a
 fresh UUID each time, not one stable id per session or per client. This is
