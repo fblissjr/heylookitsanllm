@@ -45,6 +45,28 @@ from .tasks import BUILTIN_TASKS, Task, get_task, load_task_file, missing_requir
 DEFAULT_SERVER = os.environ.get("BATCH_LABELER_SERVER", "http://localhost:8000")
 
 
+def _resolve_api_key(explicit: str | None = None) -> str | None:
+    """Resolve API key from --api-key, HEYLOOK_API_KEY, or mode-600 ~/.heylook/api_key."""
+    for candidate in (explicit, os.environ.get("HEYLOOK_API_KEY")):
+        if candidate and candidate.strip():
+            return candidate.strip()
+    if "HEYLOOK_API_KEY_FILE" in os.environ:
+        raw_path = os.environ["HEYLOOK_API_KEY_FILE"].strip()
+        key_paths = [Path(raw_path).expanduser()] if raw_path else []
+    else:
+        key_paths = [Path.home() / ".heylook" / "api_key"]
+    for p in key_paths:
+        try:
+            st = p.stat()
+            if p.is_file() and (st.st_mode & 0o077) == 0:
+                val = p.read_text(encoding="utf-8").strip()
+                if val:
+                    return val
+        except OSError:
+            pass
+    return None
+
+
 # ---------------------------------------------------------------- arg parsing
 
 def _add_server_arg(p: argparse.ArgumentParser) -> None:
@@ -52,6 +74,11 @@ def _add_server_arg(p: argparse.ArgumentParser) -> None:
         "--server",
         default=DEFAULT_SERVER,
         help=f"Server base URL (default: {DEFAULT_SERVER}; env BATCH_LABELER_SERVER)",
+    )
+    p.add_argument(
+        "--api-key",
+        default=None,
+        help="Server API key (default: env HEYLOOK_API_KEY or mode-600 ~/.heylook/api_key)",
     )
 
 
@@ -249,17 +276,21 @@ def _print_models_table(models: list[dict], console: Console) -> None:
     console.print(table)
 
 
-def _http_client(args) -> httpx.Client:
+def _http_client(args, *, timeout: float | None = None) -> httpx.Client:
+    key = _resolve_api_key(getattr(args, "api_key", None))
+    headers = {"x-api-key": key} if key else {}
+    effective_timeout = timeout if timeout is not None else getattr(args, "timeout", 10.0)
     return httpx.Client(
         base_url=args.server,
-        timeout=httpx.Timeout(args.timeout, connect=10.0),
+        headers=headers,
+        timeout=httpx.Timeout(effective_timeout, connect=10.0),
     )
 
 
 # ---------------------------------------------------------------- subcommands
 
 def cmd_models(args, console: Console) -> int:
-    with httpx.Client(base_url=args.server, timeout=httpx.Timeout(10.0)) as hc:
+    with _http_client(args, timeout=10.0) as hc:
         try:
             models = fetch_models(hc)
         except ServerError as e:

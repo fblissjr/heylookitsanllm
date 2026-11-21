@@ -31,7 +31,7 @@ from heylook_llm.schema.messages import MessageCreateRequest
 
 # `tests/` on the path: this runs as a SCRIPT, not under pytest.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from helpers.engines import classify, format_coverage  # noqa: E402
+from helpers.engines import auth_headers, classify, format_coverage  # noqa: E402
 
 GREEN = "\x1b[32m"
 RED = "\x1b[31m"
@@ -144,7 +144,7 @@ def run_task(server: str, model: str, task) -> dict:
         req = urllib.request.Request(
             f"{server}/v1/messages",
             data=json.dumps(body).encode(),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", **auth_headers()},
         )
         try:
             with urllib.request.urlopen(req, timeout=task.timeout) as resp:

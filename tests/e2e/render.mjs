@@ -441,6 +441,12 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
           mlx_cache_limit_gb: null,
         },
         stored: {},
+        access: remote.access ?? {
+          enabled: false,
+          source: 'none',
+          source_detail: 'unset',
+          admin_token_enabled: false,
+        },
       };
     }
     if (url.endsWith('/v1/admin/config') && method === 'PUT') {
@@ -453,6 +459,12 @@ function makeStubStore({ unsaved = false, caps = [], secondModel = null, withMed
           mlx_cache_limit_gb: null,
         },
         stored: body,
+        access: remote.access ?? {
+          enabled: false,
+          source: 'none',
+          source_detail: 'unset',
+          admin_token_enabled: false,
+        },
       };
     }
     if (url.includes('/v1/admin/config/logs')) {
@@ -4193,6 +4205,9 @@ async function main() {
     await suite.check('Perf page renders Observability controls and updates level via /v1/admin/config', async () => {
       await et.page.evaluate(() => { location.hash = '#/perf'; });
       await et.page.waitForSelector('.perf__obs-select');
+      const accessText = await et.page.$eval('.perf__access', (el) => el.textContent);
+      assert(accessText.includes('OFF') && accessText.includes('unset'),
+        `expected Access gate summary on #/perf, got ${JSON.stringify(accessText)}`);
       const initialRows = await et.page.$$eval('.perf__obs-logs tbody tr', (trs) => trs.length);
       assert(initialRows === 1, `expected 1 stub log row on #/perf, got ${initialRows}`);
 

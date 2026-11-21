@@ -22,6 +22,7 @@
 
 import { createEl } from './utils.js';
 import { buildSettingsPanel } from './settings.js';
+import { hasActiveSession, logoutSession, onSessionChange } from './api.js';
 
 let mounted = false;
 let panelEl = null;   // the slide-over <aside>
@@ -99,6 +100,7 @@ export function mountSettingsDrawer(navDesktop, navPhone) {
   // before app.js's own hashchange->navigate listener, so inert is cleared before
   // the next page mounts.
   window.addEventListener('hashchange', () => { if (isOpen) close(); });
+  onSessionChange(() => requestRebuild());
 }
 
 // ---------------------------------------------------------------------------
@@ -242,6 +244,17 @@ function render() {
   if (current?.extras) children.push(...current.extras());
 
   children.push(createEl('a', { href: '#/embeddings', class: 'btn btn--sm' }, ['Embeddings workbench']));
+  if (hasActiveSession()) {
+    const logoutBtn = createEl('button', {
+      type: 'button',
+      class: 'btn btn--sm drawer__logout',
+    }, ['Sign out']);
+    logoutBtn.addEventListener('click', () => {
+      logoutBtn.disabled = true;
+      logoutSession();
+    });
+    children.push(logoutBtn);
+  }
 
   bodyEl.replaceChildren(...children);
 }

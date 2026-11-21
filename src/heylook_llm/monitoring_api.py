@@ -6,6 +6,7 @@ through get_metrics_collector()."""
 import threading
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from starlette.responses import Response
 
 from heylook_llm.auth import require_admin_token
 from heylook_llm.config import (
@@ -18,6 +19,23 @@ from heylook_llm.router import ModelRouter
 from heylook_llm.system_metrics import SystemMetricsCollector
 
 monitoring_router = APIRouter(tags=["Monitoring"])
+
+
+@monitoring_router.get(
+    "/health",
+    summary="Health Check",
+    description=(
+        "Unauthenticated liveness check returning only `{\"status\": \"ok\"}`. "
+        "Discloses no version, hardware, configuration, or model information."
+    ),
+)
+async def health_check():
+    return {"status": "ok"}
+
+
+@monitoring_router.head("/health", include_in_schema=False)
+async def health_check_head():
+    return Response(status_code=200)
 
 
 # The system metrics collector: created on first use, shared by the metrics

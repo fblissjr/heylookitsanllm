@@ -182,7 +182,11 @@ app = FastAPI(
         {
             "name": "Presets",
             "description": "Saved presets: named system prompt + sampler parameter bundles"
-        }
+        },
+        {
+            "name": "Auth",
+            "description": "Browser session sign-in and logout when the server-wide access gate is enabled"
+        },
     ]
 )
 
@@ -227,13 +231,21 @@ install_generation_in_progress_handler(app)
 #
 # The same page could still reach it as ITS OWN origin by DNS rebinding;
 # the Host check refuses that (host_check.py, v2.0.137).
+# AccessGateMiddleware sits directly inside HostCheckMiddleware so every route,
+# static asset, and streaming response shares one gate when a key is configured,
+# while rebound Host headers still answer 403 first.
+from heylook_llm.auth import AccessGateMiddleware
 from heylook_llm.host_check import HostCheckMiddleware
+app.add_middleware(AccessGateMiddleware)
 app.add_middleware(HostCheckMiddleware)
 
 # Every response echoes the client's X-Request-ID when it has none of its own
 # (the busy 503 and error responses used to drop it).
 from heylook_llm.request_registry import RequestIdEchoMiddleware
 app.add_middleware(RequestIdEchoMiddleware)
+
+from heylook_llm.auth_api import auth_router
+app.include_router(auth_router)
 
 # Import and include Messages API router
 from heylook_llm.messages_api import messages_router

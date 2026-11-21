@@ -128,7 +128,8 @@ heylookitsanllm/
 │   ├── samplers.py              # The sampler resolution cascade
 │   ├── observability.py         # Single JSONL ingestion path (opt-in, default off)
 │   ├── toml_comments.py         # Comment-preserving heylook.toml writes
-│   ├── auth.py                  # Optional admin-token gate ($HEYLOOK_ADMIN_TOKEN)
+│   ├── auth.py                  # Server-wide ASGI access gate ($HEYLOOK_API_KEY / ~/.heylook/api_key) + optional $HEYLOOK_ADMIN_TOKEN
+│   ├── auth_api.py              # Browser session sign-in & logout (/login, /logout)
 │   ├── providers/               # Engine provider implementations
 │   │   ├── base.py              # BaseProvider, GenerationChunk, error classes
 │   │   ├── mlx_provider.py      # MLX text & vision unified generation

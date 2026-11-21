@@ -16,6 +16,13 @@ import pytest
 # setdefault: respect an explicit HEYLOOK_LOGS_DIR from the environment.
 os.environ.setdefault("HEYLOOK_LOGS_DIR", tempfile.mkdtemp(prefix="heylook-test-logs-"))
 
+# Isolate the access gate and admin token so unit/contract tests never inherit
+# a shell HEYLOOK_API_KEY or the operator's real ~/.heylook/api_key on disk.
+# Tests that exercise authentication set these explicitly via monkeypatch.
+os.environ.pop("HEYLOOK_API_KEY", None)
+os.environ["HEYLOOK_API_KEY_FILE"] = ""
+os.environ.pop("HEYLOOK_ADMIN_TOKEN", None)
+
 from heylook_llm.config import (
     ChatMessage,
     ChatRequest,
@@ -48,8 +55,11 @@ def _reset_observability():
     themselves in-body (autouse runs first, so their override wins).
     """
     from heylook_llm import observability
+    from heylook_llm.auth import get_session_store
     observability.configure(level="minimal", log_dir=os.environ["HEYLOOK_LOGS_DIR"])
+    get_session_store().clear()
     yield
+    get_session_store().clear()
 
 
 # ---------------------------------------------------------------------------

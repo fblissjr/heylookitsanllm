@@ -307,20 +307,24 @@ def main():
     print(f"Available endpoints: {len(endpoints)} under /v1 "
           f"-- browse at http://{args.host}:{args.port}/docs")
 
-    # LAN hardening hint (S1.6): when bound to a non-loopback address, the
-    # server is reachable by every host on the local network. Plain HTTP is
-    # fine on a trusted home LAN but gets upgraded to HTTPS via a reverse
-    # proxy (Caddy / nginx / tailscale serve), not uvicorn-native TLS.
-    if args.host not in ("127.0.0.1", "localhost", "::1"):
+    from heylook_llm.auth import is_loopback_host, log_startup_access_state
+
+    try:
+        log_startup_access_state(args.host, args.port)
+    except RuntimeError as exc:
+        logging.error("Refusing to start: %s", exc)
+        sys.exit(1)
+
+    if not is_loopback_host(args.host):
         logging.info(
-            "Listening on http://%s:%s -- LAN-reachable. For HTTPS, put a "
-            "reverse proxy (Caddy, nginx, or tailscale serve) in front.",
+            "Listening on http://%s:%s -- LAN-reachable. Put an HTTPS reverse "
+            "proxy (Caddy, nginx, or tailscale serve) in front for remote access.",
             args.host,
             args.port,
         )
     if os.environ.get("HEYLOOK_ADMIN_TOKEN", "").strip():
         logging.info(
-            "HEYLOOK_ADMIN_TOKEN set -- admin endpoints require "
+            "HEYLOOK_ADMIN_TOKEN set -- admin endpoints additionally require "
             "X-Heylook-Admin-Token header."
         )
 

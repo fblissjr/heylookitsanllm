@@ -117,8 +117,15 @@ response = client.messages.create(
   refusing the input: media it does not serve, a prompt over its context, a
   `reasoning_effort` it does not offer, generation sent to an embedding
   model. Pick another model or input.
+- **401** -- the server-wide access gate is enabled (`HEYLOOK_API_KEY` or
+  `~/.heylook/api_key`) and the request lacks a valid `x-api-key`,
+  `Authorization: Bearer`, or browser session cookie (`error.code =
+  "auth_required"`), or an admin route additionally requires
+  `X-Heylook-Admin-Token`.
 - **403** -- the `Host` header names a host the server does not recognise
-  (DNS-rebinding guard). `detail` names the fix; an IP address always works.
+  (DNS-rebinding guard; `detail` names the fix, and an IP address always
+  works), or a state-changing cookie request failed the `Origin` / `Host`
+  cross-origin check (`error.code = "csrf_rejected"`).
 - **500** -- the model exists but failed to load. That model is broken.
 - **422** -- the request body failed validation, including a removed,
   misspelt or unbuilt field (`tools`). The offending field and reason are
@@ -142,9 +149,12 @@ response = client.messages.create(
   it takes the generation gate, so keep it out of a per-request pre-flight.
 - One model resident by default, LRU eviction; group your requests by model
   so consecutive ones do not each pay a load.
-- Auth is opt-in and off by default: `HEYLOOK_ADMIN_TOKEN`
-  (`X-Heylook-Admin-Token`) gates admin. Inference is unauthenticated (a
-  trusted home LAN is the boundary).
+- Auth is opt-in and off by default: setting `HEYLOOK_API_KEY` or creating a
+  mode-600 `~/.heylook/api_key` enables a single server-wide ASGI gate across
+  every route and static asset (accepting `x-api-key: <key>`,
+  `Authorization: Bearer <key>`, or a `/login` browser session cookie, with
+  only `/health` and `/login` assets exempt). `HEYLOOK_ADMIN_TOKEN`
+  (`X-Heylook-Admin-Token`) stays as an optional extra factor on admin routes.
 - Send `X-Request-ID`. Every response echoes a valid one (the busy 503 included), it correlates the
   server-side logs, and it is the handle `DELETE /v1/requests/{{id}}` cancels
   by -- the only way to stop a NON-streaming run, which writes nothing until

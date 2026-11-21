@@ -52,7 +52,7 @@ from typing import Any
 # inserted the rootdir for us. helpers/ is where shared test code already lives
 # (mlx_mock, sse).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from helpers.engines import ARMS, classify, format_coverage, model_size_gb, pick_models  # noqa: E402
+from helpers.engines import ARMS, auth_headers, classify, format_coverage, model_size_gb, pick_models  # noqa: E402
 
 GREEN, RED, YELLOW, DIM, RESET = "\x1b[32m", "\x1b[31m", "\x1b[33m", "\x1b[2m", "\x1b[0m"
 
@@ -118,9 +118,12 @@ def call(server, method, path, body=None, timeout=120, raw=False) -> tuple[int, 
     """Returns (status, parsed_or_bytes). Never raises on an HTTP status --
     a 409 IS the assertion in places here."""
     data = json.dumps(body).encode() if body is not None else None
+    hdrs = dict(auth_headers())
+    if data:
+        hdrs["Content-Type"] = "application/json"
     req = urllib.request.Request(
         f"{server}{path}", data=data, method=method,
-        headers={"Content-Type": "application/json"} if data else {},
+        headers=hdrs,
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -346,7 +349,7 @@ def stream_until(server, conv_id, body, stop_after_bytes=None, timeout=300,
     data = json.dumps(body).encode()
     req = urllib.request.Request(
         f"{server}/v1/conversations/{conv_id}/generate", data=data, method="POST",
-        headers={"Content-Type": "application/json", "Accept": "text/event-stream"},
+        headers={"Content-Type": "application/json", "Accept": "text/event-stream", **auth_headers()},
     )
     res = StreamResult()
     try:

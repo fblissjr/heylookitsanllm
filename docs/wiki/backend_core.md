@@ -10,10 +10,11 @@ The entry point [`api.py`](../../src/heylook_llm/api.py) is intended as the **ap
 
 **The codebase has one live exception**, worth knowing before you trust the rule: `api.py` declares `POST /v1/data/clear` inline on the app -- a destructive route that deletes all conversations, messages and notebooks. It is the only inline route in the file. `api.py`'s module docstring names this exception, along with the asset routes `frontend_static.py` registers, so the docstring and the file agree.
 
-**One middleware, and no CORS.** Every request, the static frontend included, first passes the Host check ([`host_check.py`](../../src/heylook_llm/host_check.py)), the guard against DNS rebinding. It answers a Host that is an IP address, `localhost`, one of the machine's own names, or a name in heylook.toml's top-level `allowed_hosts`; anything else gets a 403 whose body names the fix. The list is read through the router's config, so a config reload changes it, and no route writes it.
+**Two ASGI gates, and no CORS.** Every request, the static frontend included, first passes the Host check ([`host_check.py`](../../src/heylook_llm/host_check.py)), the guard against DNS rebinding. It answers a Host that is an IP address, `localhost`, one of the machine's own names, or a name in heylook.toml's top-level `allowed_hosts`; anything else gets a 403 whose body names the fix. The list is read through the router's config, so a config reload changes it, and no route writes it. Immediately inside `HostCheckMiddleware` sits [`AccessGateMiddleware`](../../src/heylook_llm/auth.py): off when unset, on when `HEYLOOK_API_KEY` or a mode-600 `~/.heylook/api_key` (`$HEYLOOK_API_KEY_FILE`) is present (never in `heylook.toml`), gating every route, static asset, and SSE stream behind `x-api-key`, `Authorization: Bearer`, or a `/login` browser session cookie (`HttpOnly; SameSite=Strict`, `Secure` over HTTPS, `Origin` == `Host` CSRF check on state-changing requests) with zero source-IP exemptions and only `EXEMPT_ROUTES` (`/health`, `/login`, and `/login`'s four static assets) unauthenticated.
 
 ```
 Route modules in src/heylook_llm/:
+├── auth_api.py                  # Browser session sign-in & logout: GET/POST /login, POST /logout
 ├── messages_api.py              # THE inference wire: POST /v1/messages
 ├── conversation_generate_api.py # Server-owned generation: POST /v1/conversations/{id}/generate, DELETE .../generate, POST .../generate/reasoning-end
 ├── conversation_api.py          # Conversation & message CRUD: /v1/conversations/*
@@ -29,7 +30,7 @@ Route modules in src/heylook_llm/:
 │                                #                          scan-config)
 │                                #   admin_ops_router    -> /v1/admin         (model-options, ops)
 ├── config_api.py                # Operational settings & JSONL log reader: /v1/admin/config, /v1/admin/config/logs
-├── monitoring_api.py            # /v1/capabilities, /v1/system/metrics,
+├── monitoring_api.py            # /health, /v1/capabilities, /v1/system/metrics,
 │                                # /v1/performance/profile/{time_range}, /v1/cache/clear
 ├── requests_api.py              # Execution cancellation & mid-stream thinking end: DELETE /v1/requests/{id}, POST /v1/requests/{id}/reasoning-end
 ├── telemetry_api.py             # Frontend ingestion: /v1/telemetry/events
@@ -40,7 +41,7 @@ Not every route comes from a *_api.py router: `frontend_static.py`
 registers the asset routes, and `api.py` declares one inline route (see above).
 ```
 
-Four routers sit under a `/v1/admin*` prefix -- the three in `admin_api.py` plus the settings router in `config_api.py` -- and all four carry the admin-token dependency, as do the data-clear and cache-clear routes outside that prefix. The gate is a **no-op unless `HEYLOOK_ADMIN_TOKEN` is set to a non-empty value**; when it is, a request must present a matching `X-Heylook-Admin-Token` header or get a 401.
+Four routers sit under a `/v1/admin*` prefix -- the three in `admin_api.py` plus the settings router in `config_api.py` -- and all four carry the optional `require_admin_token` second factor, as do the data-clear and cache-clear routes outside that prefix. That second factor is a **no-op unless `HEYLOOK_ADMIN_TOKEN` is set to a non-empty value**; when it is, a request must also present a matching `X-Heylook-Admin-Token` header or get a 401.
 
 Model *load* is deliberately not behind it -- a generate request already loads and can evict, so the token would be gating nothing.
 

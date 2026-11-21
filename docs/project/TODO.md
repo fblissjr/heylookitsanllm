@@ -208,7 +208,7 @@ Record: `internal/claude/improve/archive/runs-2026-09-24/` (report.html has the 
   notebook, preset or generate routers, so it looked like protection without
   being it. If the server ever leaves the trusted LAN, a real gate must cover
   every router at once (one app-level dependency, not per-router) and ship
-  with the Host check below.
+  with the Host check below. **Update (v2.0.263)**: built as one pure ASGI gate (`auth.AccessGateMiddleware` + `auth_api.py`) beside `HostCheckMiddleware`, covering every route, static asset, and SSE stream (`test_access_gate.py`).
 - [x] **MLX image sources: local file paths refused** (v2.0.128, owner:
   `utils.load_image` accepts only `data:image/...` and `http(s)://`; llama-server
   already refuses `file://` without `--media-path`, which heylook never passes).

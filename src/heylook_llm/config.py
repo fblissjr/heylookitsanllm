@@ -1709,6 +1709,18 @@ class AppConfig(BaseModel):
                     "name it is reached by. [\"*\"] turns the Host check off.",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_api_key_in_toml(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            settings_tbl = data.get("settings")
+            if "api_key" in data or (isinstance(settings_tbl, dict) and "api_key" in settings_tbl):
+                raise ValueError(
+                    "api_key must not be stored in heylook.toml (readable and writable via "
+                    "/v1/admin/config). Set HEYLOOK_API_KEY or write a mode-600 ~/.heylook/api_key."
+                )
+        return data
+
     def get_model_config(self, model_id: str) -> Optional[ModelConfig]:
         return next((m for m in self.models if m.id == model_id), None)
 

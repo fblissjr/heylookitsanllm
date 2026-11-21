@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.263] - 2026-11-21
+
+### Added
+
+- **Single app-wide ASGI access gate (`src/heylook_llm/auth.py`, `src/heylook_llm/auth_api.py`, `src/heylook_llm/api.py`)**: `AccessGateMiddleware` sits directly inside `HostCheckMiddleware`, covering every HTTP/WebSocket route, static frontend asset, and streaming SSE response. Off by default; turns on when `HEYLOOK_API_KEY` or a mode-600 `~/.heylook/api_key` (`$HEYLOOK_API_KEY_FILE`) is present (failing closed with `503` on group/other file permissions or empty files, and explicitly refused in `heylook.toml` by `AppConfig` and `SettingsSchema` so `/v1/admin/config` can never read or write the key). Accepts `x-api-key: <key>`, `Authorization: Bearer <key>`, or a random 256-bit `heylook_session` cookie (`HttpOnly; SameSite=Strict`, `Secure` over HTTPS while working over plain HTTP on loopback, stored hashed in `SessionStore`, revocable via `POST /logout`), with constant-time UTF-8 `hmac.compare_digest`, zero source-IP exemptions, `Origin`/`Sec-Fetch-Site` cross-origin refusal (`403` `csrf_rejected`) on state-changing cookie requests, and only `EXEMPT_ROUTES` (`/health`, `/login`, and `/login`'s four static assets) unauthenticated. `HEYLOOK_ADMIN_TOKEN` (`X-Heylook-Admin-Token`) remains an optional second factor on admin routes.
+- **Sign-in UI, session logout, and admin config visibility (`frontend/login.html`, `frontend/js/login.js`, `frontend/js/api.js`, `frontend/js/settings-drawer.js`, `frontend/js/pages/perf.js`, `frontend/css/app.css`, `src/heylook_llm/config_api.py`, `src/heylook_llm/monitoring_api.py`)**: added `GET/HEAD /health` (`{"status": "ok"}`), `GET/POST /login` and `POST /logout`, Lamplight-themed `/login` form with accessible `Show`/`Hide` toggle (`aria-pressed`) and hash preservation, **Sign out** in the settings drawer and `#/perf`, read-only `access` state (never the key) on `GET /v1/admin/config` and `#/perf`, startup gate-state logging plus loud non-loopback no-key warnings (`server.py`, `service_manager.py`), and failed-attempt warnings with method, path, and peer.
+- **Client & harness key support (`apps/batch-labeler/`, `scripts/`, `tests/`)**: added `--api-key` / `HEYLOOK_API_KEY` / mode-600 `~/.heylook/api_key` header support to `batch-labeler`, `scripts/dev_server.sh`, `scripts/chain_probe.py`, `scripts/benchmark.py`, `tests/helpers/engines.py`, `tests/smoke/`, and `tests/eval/`, plus gate env isolation in `tests/conftest.py` and `tests/e2e/lib/server.mjs`.
+- **Exhaustive route & auth tests (`tests/contract/test_access_gate.py`, `tests/unit/test_access_gate.py`)**: recursive `app.routes` walk asserting every non-exempt `(path, method)` returns `401` without credentials, all three credential types across discovery/non-streaming/SSE streaming, cookie flags & logout revocation, cross-origin cookie `POST` `403` refusal, zero IP exemptions, `HEYLOOK_ADMIN_TOKEN` layering, mode-600 enforcement, TOML key refusal, and startup/failure log checks.
+
+### Verification
+
+- `uv run pytest tests/unit/ tests/contract/ -q`: `1760 passed, 2 subtests passed`.
+- `uv run --directory apps/batch-labeler pytest tests/ -q`: `65 passed`.
+- `node --test tests/e2e/embed-kit.test.mjs`: `11/11` passed; `node --check` clean on all frontend/E2E JS modules.
+- `scripts/vendor_frontend.py --check` (`marked` `18.2.0` and `dompurify` `3.4.18` match manifest; `Behind: marked`), `scripts/check_version_sync.py`, and path-privacy scan clean. NOT run: live 3-arm `tests/smoke/`, `tests/eval/`, browser E2E (`puppeteer-core` removed in `v2.0.240`).
+
 ## [2.0.262] - 2026-11-21
 
 ### Fixed

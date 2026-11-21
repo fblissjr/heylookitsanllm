@@ -658,15 +658,28 @@ is normal.
 
 ## 6. Auth
 
-Inference is unauthenticated: the server is meant for a trusted home LAN.
-The one gate is **opt-in and off by default**:
+Authentication is **opt-in and off by default**:
 
-- `HEYLOOK_ADMIN_TOKEN` → send `X-Heylook-Admin-Token`. Gates the
-  `/v1/admin/*` routes plus `/v1/data/clear` and `/v1/cache/clear`; a wrong
-  or missing token is a 401. An integration should not need it.
-  (`HEYLOOK_API_KEY`, an inference key, was removed in v2.0.127.)
+- **Server-wide access gate** (`HEYLOOK_API_KEY` env var or mode-600
+  `~/.heylook/api_key`, v2.0.263). When a key is configured, one ASGI middleware
+  (`AccessGateMiddleware`) gates **every** route, static asset, and SSE stream
+  with no source-IP exemptions (only `/health` and `/login` are unauthenticated).
+  Clients authenticate by configuration alone using any one of:
+  - `x-api-key: <key>` — the Anthropic SDK's default (`api_key="<key>"`).
+  - `Authorization: Bearer <key>` — OpenAI-style `/v1/models` discovery clients
+    and the Anthropic SDK's `auth_token`.
+  - Browser session cookie (`heylook_session`) — minted at `POST /login` and
+    revoked at `POST /logout` (`HttpOnly; SameSite=Strict`, `Secure` over HTTPS,
+    with `Origin` == `Host` CSRF enforcement on state-changing cookie requests).
+  Missing or wrong credentials return **401** (`error.code = "auth_required"`).
+  (The earlier v2.0.127 removal retired a partial router-level key that left
+  conversations, notebooks, and presets open; v2.0.263 replaces it with one
+  app-level gate.)
+- **Optional admin second factor** (`HEYLOOK_ADMIN_TOKEN` → send
+  `X-Heylook-Admin-Token`). Gates `/v1/admin/*`, `/v1/data/clear`, and
+  `/v1/cache/clear` as an extra factor; an inference integration never needs it.
 
-Two network rules replace an inference key:
+Two network rules apply alongside the access gate:
 
 - **Host check** (v2.0.137, DNS-rebinding guard). A request whose `Host`
   header is not an IP address, `localhost`, one of the server machine's own

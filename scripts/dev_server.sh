@@ -79,8 +79,10 @@ probe() {
   # foreign-server port guard into a no-op.
   ( cd "$REPO_ROOT" && uv run python - "$BASE" <<'PY' 2>/dev/null ) || true
 import sys, json, urllib.request
+from heylook_llm.auth import client_auth_headers
 try:
-    with urllib.request.urlopen(sys.argv[1] + "/v1/models", timeout=5) as r:
+    req = urllib.request.Request(sys.argv[1] + "/v1/models", headers=client_auth_headers())
+    with urllib.request.urlopen(req, timeout=5) as r:
         print(",".join(m["id"] for m in json.load(r).get("data", [])))
 except Exception:
     pass
@@ -200,9 +202,11 @@ case "$CMD" in
     echo "loading model $MODEL (server-side load$([ "$WARM" = 1 ] && echo '+warm')) ..."
     if ! ( cd "$REPO_ROOT" && uv run python - "$BASE" "$MODEL" "$WARM" <<'PY' )
 import json, sys, urllib.parse, urllib.request
+from heylook_llm.auth import client_auth_headers
 base, model, warm = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
 url = f"{base}/v1/models/{urllib.parse.quote(model, safe='')}/load?warm={'true' if warm else 'false'}"
-with urllib.request.urlopen(urllib.request.Request(url, method="POST"), timeout=900) as r:
+req = urllib.request.Request(url, method="POST", headers=client_auth_headers())
+with urllib.request.urlopen(req, timeout=900) as r:
     data = json.load(r)
 if warm and data.get("warmed"):
     print(f"warm generation OK ({data.get('warm_ms', '?')} ms, Metal kernels JIT'd)")

@@ -421,11 +421,11 @@ def manage_service(args) -> int:
     action = args.action
 
     if action == "install":
-        # Security warning if binding to all interfaces
-        if args.host == "0.0.0.0":
-            print("WARNING: Binding to 0.0.0.0 exposes the server to your network.")
-            print("Ensure you have firewall rules in place and are behind a VPN.")
-            print("See: guides/SERVICE_SECURITY.md for configuration guidance.")
+        # Security warning if binding to a non-loopback interface
+        from heylook_llm.auth import is_loopback_host, resolve_access_key
+        if not is_loopback_host(args.host) and not resolve_access_key().enabled:
+            print(f"WARNING: Binding to {args.host} with no access key configured exposes every route.")
+            print("Create a mode-600 ~/.heylook/api_key (or set HEYLOOK_API_KEY) before starting.")
             print()
 
         if platform == "linux":

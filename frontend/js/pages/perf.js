@@ -13,7 +13,7 @@
 
 import { createPage } from '../page.js';
 import { causeWords, createEl, formatBytes, formatTokens } from '../utils.js';
-import { api } from '../api.js';
+import { api, hasActiveSession, logoutSession } from '../api.js';
 import * as drawer from '../settings-drawer.js';
 
 const RANGES = ['1h', '6h', '24h', '7d'];
@@ -166,11 +166,43 @@ function buildSkeleton(ctx) {
     s.obsLogsBody,
   ]);
 
+  // access gate -----------------------------------------------------------
+  s.accessGateEl = createEl('span', { class: 'perf-row__value' }, ['--']);
+  s.accessSourceEl = createEl('span', { class: 'perf-row__value' }, ['--']);
+  s.accessAdminEl = createEl('span', { class: 'perf-row__value' }, ['--']);
+  s.accessErrorEl = createEl('div', { class: 'error-note', role: 'alert', hidden: true });
+  s.logoutBtn = createEl('button', {
+    type: 'button',
+    class: 'btn btn--sm',
+    hidden: !hasActiveSession(),
+  }, ['Sign out']);
+  s.logoutBtn.addEventListener('click', () => {
+    s.logoutBtn.disabled = true;
+    logoutSession();
+  });
+
+  const accessSection = createEl('section', { class: 'perf__section perf__access' }, [
+    createEl('div', { class: 'perf__section-head' }, [
+      createEl('h2', { class: 'perf__section-title' }, ['Access gate']),
+      s.logoutBtn,
+    ]),
+    s.accessErrorEl,
+    createEl('div', { class: 'perf__rows' }, [
+      sysRow('Gate', s.accessGateEl),
+      sysRow('Key source', s.accessSourceEl),
+      sysRow('Admin token', s.accessAdminEl),
+    ]),
+    createEl('div', { class: 'muted small perf__access-note' }, [
+      'Read-only: the API key comes from HEYLOOK_API_KEY or a mode-600 ~/.heylook/api_key file and is never stored in heylook.toml or returned by the API.',
+    ]),
+  ]);
+
   ctx.el.append(createEl('div', { class: 'perf' }, [
     s.errorEl,
     header,
     systemSection,
     profileSection,
+    accessSection,
     obsSection,
   ]));
 }
@@ -447,6 +479,25 @@ function applyObsConfig(ctx, cfg) {
   if (eff.observability_retention_days != null) {
     s.obsRetentionInput.value = String(eff.observability_retention_days);
   }
+  const acc = cfg.access;
+  if (acc && typeof acc === 'object') {
+    s.accessGateEl.textContent = acc.error
+      ? 'Misconfigured (refusing requests)'
+      : (acc.enabled ? 'On' : 'Off');
+    if (acc.enabled) {
+      s.accessSourceEl.textContent = acc.source === 'env'
+        ? `env (${acc.source_detail})`
+        : `${acc.source_detail} (mode 0600)`;
+    } else {
+      s.accessSourceEl.textContent = 'unset';
+    }
+    s.accessAdminEl.textContent = acc.admin_token_enabled
+      ? 'Set (X-Heylook-Admin-Token required on admin routes)'
+      : 'Unset';
+    s.accessErrorEl.textContent = acc.error || '';
+    s.accessErrorEl.hidden = !acc.error;
+  }
+  s.logoutBtn.hidden = !hasActiveSession();
 }
 
 async function updateObsSetting(ctx, patch) {

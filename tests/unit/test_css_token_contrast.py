@@ -24,6 +24,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 CSS = ROOT / "frontend" / "css" / "app.css"
 INDEX = ROOT / "frontend" / "index.html"
+LOGIN = ROOT / "frontend" / "login.html"
 
 TEXT_FLOOR = 4.5      # WCAG 2 AA, body text
 NON_TEXT_FLOOR = 3.0  # WCAG 2 AA, UI component borders and placeholders
@@ -172,19 +173,20 @@ def test_pair_meets_floor(theme, fg, bg, floor):
     assert ratio >= floor, f"{theme}: {fg} on {bg} is {ratio:.2f}:1, floor {floor}"
 
 
+@pytest.mark.parametrize("page_path", (INDEX, LOGIN), ids=lambda p: p.name)
 @pytest.mark.parametrize("theme", THEMES)
-def test_theme_color_meta_is_the_surface_token(theme):
+def test_theme_color_meta_is_the_surface_token(page_path, theme):
     # --surface is the bottom nav, the element that touches the browser's bar.
-    html = INDEX.read_text()
+    html = page_path.read_text()
     m = re.search(
         rf'<meta name="theme-color" media="\(prefers-color-scheme: {theme}\)" content="([^"]+)">', html)
-    assert m, f"index.html has no theme-color meta for {theme}"
+    assert m, f"{page_path.name} has no theme-color meta for {theme}"
     want = _oklch_to_hex(TOKENS["surface"][theme])
-    assert m.group(1).lower() == want, f"{theme} theme-color is {m.group(1)}, --surface is {want}"
+    assert m.group(1).lower() == want, f"{page_path.name} {theme} theme-color is {m.group(1)}, --surface is {want}"
     scheme = re.search(r'<meta name="color-scheme" content="([^"]+)">', html)
-    assert scheme and scheme.group(1) == "light dark", "index.html must declare the scheme :root follows"
+    assert scheme and scheme.group(1) == "light dark", f"{page_path.name} must declare the scheme :root follows"
     assert html.index(scheme.group(0)) < html.index('rel="stylesheet"'), (
-        "color-scheme must come before the stylesheet, or the first paint is light")
+        f"{page_path.name}: color-scheme must come before the stylesheet, or the first paint is light")
 
 
 @pytest.mark.parametrize("theme", THEMES)

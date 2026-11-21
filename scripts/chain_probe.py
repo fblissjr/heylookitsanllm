@@ -67,12 +67,14 @@ SYSTEM = ("You are a concise assistant. Answer in one or two sentences. "
 
 
 def http_asker():
+    from heylook_llm.auth import client_auth_headers
+
     def ask(messages):
         body = {"model": a.model, "max_tokens": a.max_tokens, "stream": False,
                 "temperature": 0.0, "system": SYSTEM, "messages": messages,
                 "thinking": False}
         r = urllib.request.Request(a.server + "/v1/messages", data=json.dumps(body).encode(),
-                                   headers={"Content-Type": "application/json"})
+                                   headers={"Content-Type": "application/json", **client_auth_headers()})
         b = json.loads(urllib.request.urlopen(r, timeout=900).read())
         text = "".join(x.get("text") or "" for x in b["content"] if x.get("type") == "text")
         perf = b.get("performance") or {}
@@ -81,7 +83,7 @@ def http_asker():
     def clear():
         r = urllib.request.Request(a.server + "/v1/cache/clear", method="POST",
                                    data=json.dumps({"model": a.model}).encode(),
-                                   headers={"Content-Type": "application/json"})
+                                   headers={"Content-Type": "application/json", **client_auth_headers()})
         if json.loads(urllib.request.urlopen(r, timeout=60).read()).get("deleted_count") != 1:
             sys.exit(f"could not clear {a.model}'s prefix cache; a fresh run would not be fresh")
     return ask, None, clear

@@ -93,6 +93,7 @@ Unknown keys are rejected (catches typos). `--system-prompt`,
 ```
 batch-labeler run IMAGE_DIR [-o results.jsonl] [--limit N] [--no-recursive]
                  [--dry-run] [--retries 2] [--timeout 300] [--server URL]
+                 [--api-key KEY]
 ```
 
 - `--dry-run` scans, reports counts, and prints the fully-resolved settings.
@@ -100,6 +101,8 @@ batch-labeler run IMAGE_DIR [-o results.jsonl] [--limit N] [--no-recursive]
   inspect, then run the rest.
 - Server URL default is `http://localhost:8000`, overridable via the
   `BATCH_LABELER_SERVER` env var.
+- Server authentication reads `--api-key`, `HEYLOOK_API_KEY`, or mode-600
+  `~/.heylook/api_key` and sends `x-api-key`.
 - Transient failures (timeout, connection, 5xx) retry with backoff; 4xx fail
   the image immediately. Failed images are NOT written, so a re-run retries
   exactly those.

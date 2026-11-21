@@ -206,9 +206,9 @@ backend):**
 
 ## 4. Backend API contract (integration surface — verified against source)
 
-Base: same-origin. One opt-in auth gate: `HEYLOOK_ADMIN_TOKEN` (`X-Heylook-Admin-Token`) on admin +
-`/v1/data/clear`. Inference, conversations/notebooks/models-list/metrics/profile are unauthenticated
-(no inference API key since v2.0.127).
+Base: same-origin. Two opt-in auth layers (both off by default):
+1. **Server-wide access gate** (`AccessGateMiddleware`, v2.0.263): turns on when `HEYLOOK_API_KEY` or a mode-600 `~/.heylook/api_key` (`$HEYLOOK_API_KEY_FILE`) is set (never in `heylook.toml`). Covers every HTTP/WebSocket route, static frontend asset, and streaming response with zero source-IP exemptions; only `/health` (`{"status": "ok"}`), `/login`, and `/login`'s four static assets (`/css/app.css`, `/js/login.js`, `/icon.svg`, `/favicon.ico`) are exempt. Accepts `x-api-key: <key>`, `Authorization: Bearer <key>`, or the `heylook_session` cookie (`POST /login` mints a random 256-bit token stored hashed in `SessionStore`, `HttpOnly; SameSite=Strict`, `Secure` over HTTPS, host-only; `POST /logout` revokes and clears it; state-changing cookie requests require `Origin` to match `Host` or `Sec-Fetch-Site` in `{"same-origin", "none"}`, answering `403` `csrf_rejected` otherwise; cookie-authenticated responses carry `X-Heylook-Session: 1` so the UI shows **Sign out**, and unauthenticated API calls return `401` `error.code = "auth_required"`).
+2. **Optional admin second factor**: `HEYLOOK_ADMIN_TOKEN` (`X-Heylook-Admin-Token`) on `/v1/admin/*`, `/v1/data/clear`, and `/v1/cache/clear`.
 
 **Embeddings** `POST /v1/embeddings`: non-streaming, shared by `mlx` and `gguf`.
 The JSON body has `model`, `input` and optional `dimensions` only. `input` is a
@@ -1041,7 +1041,7 @@ outcomes:{<outcome>:n},causes:{<cause>:n}}], resource_timeline, bottlenecks}`. T
 counts only requests whose engine sent a cache report (in-memory ring buffer, lost on restart; 503/empty if analytics extra not installed).
 **Clear** `POST /v1/data/clear` (admin) → `{conversations_deleted, notebooks_deleted}`.
 **Operational config & observability logs** (admin, `src/heylook_llm/config_api.py`):
-`GET /v1/admin/config` → `{effective, stored, memory_only?, error?}`,
+`GET /v1/admin/config` → `{effective, stored, access:{enabled,source,source_detail,admin_token_enabled,error?}, memory_only?, error?}` (`access` reports gate state and key source, never the key),
 `PUT /v1/admin/config` body `{observability_level?, observability_retention_days?, mlx_cache_limit_gb?}` → snapshot,
 `DELETE /v1/admin/config/{key}` → snapshot, and (v2.0.216) `GET /v1/admin/config/logs?stream={events|metrics}&limit={1..500}` →
 `{stream, level, records:[...]}` returning the most recent JSONL telemetry records from `observability_log_dir()` newest first (consumed by the Observability section on `#/perf`).

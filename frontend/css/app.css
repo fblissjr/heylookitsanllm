@@ -2283,6 +2283,57 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
   .preset-edit__row .input { min-height: var(--ctrl-h-touch); }
 }
 
+/* ================= access gate sign-in (/login) ================= */
+
+/* Positioned in the upper viewport so mobile keyboards never cover the field
+   or the Sign in button on iPhone Safari. Uses the shared :root tokens only. */
+.auth-page {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: calc(min(14dvh, var(--space-12)) + env(safe-area-inset-top, 0px)) var(--space-4) var(--space-8);
+  padding-inline: max(var(--space-4), env(safe-area-inset-left, 0px)) max(var(--space-4), env(safe-area-inset-right, 0px));
+}
+.auth-card {
+  width: 100%;
+  max-width: 24rem;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-card);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.auth-card__head { display: flex; flex-direction: column; gap: var(--space-1); }
+.auth-card__brand { padding: 0; font-size: var(--text-lg); }
+.auth-card__help { margin: 0; }
+.auth-form { display: flex; flex-direction: column; gap: var(--space-4); }
+.auth-form__field { display: flex; flex-direction: column; gap: var(--space-1); }
+.auth-form__label { font-size: var(--text-ui); font-weight: 550; }
+.auth-form__input-row { display: flex; align-items: stretch; gap: var(--space-2); }
+.auth-form__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--mono);
+  min-height: var(--ctrl-h);
+}
+.auth-form__input:user-invalid { border-color: var(--danger); }
+.auth-form__toggle { flex: 0 0 auto; min-height: var(--ctrl-h); }
+.auth-form__submit { width: 100%; justify-content: center; min-height: var(--ctrl-h); }
+.perf__access-note { margin-top: var(--space-2); }
+.drawer__logout { margin-top: var(--space-2); }
+
+@media (hover: none), (max-width: 767px) {
+  .auth-form__input,
+  .auth-form__toggle,
+  .auth-form__submit,
+  .drawer__logout {
+    min-height: var(--ctrl-h-touch);
+  }
+}
+
 /* ================= themed model picker (desktop) ================= */
 
 /* Safari 27 and current Chrome can style the OPEN picker of a <select>

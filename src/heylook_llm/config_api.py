@@ -23,7 +23,7 @@ import orjson
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import ValidationError
 
-from heylook_llm.auth import require_admin_token
+from heylook_llm.auth import access_config_view, require_admin_token
 
 from heylook_llm import observability
 from heylook_llm.settings import SettingsSchema, resolve_settings_safe
@@ -113,12 +113,13 @@ def apply_runtime_settings(app) -> SettingsSchema:
 
 
 def _snapshot(app) -> dict:
-    """Effective settings (stored > default) + the raw stored values."""
+    """Effective settings (stored > default) + the raw stored values + read-only access gate state."""
     stored = stored_settings(app)
     effective, err = resolve_settings_safe(stored)
     snap = {
         "effective": effective.model_dump(),   # stored > default -- what's in force
         "stored": stored,                       # only explicitly set values
+        "access": access_config_view(),         # gate state & source only, never the key
     }
     if _MEMORY_ONLY:
         snap["memory_only"] = sorted(_MEMORY_ONLY)  # held by this read-only instance

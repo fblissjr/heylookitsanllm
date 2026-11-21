@@ -41,6 +41,10 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from helpers.engines import auth_headers  # noqa: E402
 
 GREEN, RED, DIM, RESET = "\x1b[32m", "\x1b[31m", "\x1b[2m", "\x1b[0m"
 
@@ -48,7 +52,7 @@ GREEN, RED, DIM, RESET = "\x1b[32m", "\x1b[31m", "\x1b[2m", "\x1b[0m"
 def call(base, method, path, body=None, timeout=120):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(base + path, data=data, method=method,
-                                 headers={"Content-Type": "application/json"})
+                                 headers={"Content-Type": "application/json", **auth_headers()})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, json.loads(resp.read().decode() or "{}")
@@ -94,7 +98,7 @@ def check_model(base: str, model_id: str) -> list[str]:
         req = urllib.request.Request(
             f"{base}/v1/conversations/{cid}/generate",
             data=json.dumps({"mode": "append", "overrides": {"max_tokens": 4096}}).encode(),
-            method="POST", headers={"Content-Type": "application/json"})
+            method="POST", headers={"Content-Type": "application/json", **auth_headers()})
         try:
             with urllib.request.urlopen(req, timeout=300) as resp:
                 for raw in resp:

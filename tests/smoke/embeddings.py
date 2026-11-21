@@ -12,11 +12,15 @@ import math
 from pathlib import Path
 import struct
 import subprocess
+import sys
 import tempfile
 import urllib.request
 import wave
 
 from PIL import Image
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from helpers.engines import auth_headers  # noqa: E402
 
 
 def fixtures(folder):
@@ -49,7 +53,11 @@ def fixtures(folder):
 def post(server, model, items, dimensions=None):
     body = {"model": model, "input": items}
     if dimensions: body['dimensions'] = dimensions
-    request = urllib.request.Request(server.rstrip('/')+'/v1/embeddings', data=json.dumps(body).encode(), headers={'Content-Type': 'application/json'})
+    request = urllib.request.Request(
+        server.rstrip('/') + '/v1/embeddings',
+        data=json.dumps(body).encode(),
+        headers={'Content-Type': 'application/json', **auth_headers()},
+    )
     try:
         with urllib.request.urlopen(request, timeout=300) as response:
             return json.load(response)
@@ -86,7 +94,8 @@ def main():
             expected = vectors[0][:dimension]
             norm = math.sqrt(cosine(expected,expected))
             assert cosine(short,[x/norm for x in expected]) > .9999
-        with urllib.request.urlopen(args.server.rstrip('/')+'/v1/models') as response:
+        models_req = urllib.request.Request(args.server.rstrip('/') + '/v1/models', headers=auth_headers())
+        with urllib.request.urlopen(models_req) as response:
             row = next(m for m in json.load(response)['data'] if m['id'] == args.model)
         for name, prefix in row['engine']['embedding']['prompts'].items():
             text = 'A dog playing on a beach.'

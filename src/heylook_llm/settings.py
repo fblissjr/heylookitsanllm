@@ -24,7 +24,13 @@ from __future__ import annotations
 
 from typing import Any, Literal, Mapping
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+
+
+_API_KEY_TOML_MSG = (
+    "api_key must not be stored in heylook.toml (readable and writable via /v1/admin/config). "
+    "Set HEYLOOK_API_KEY or write a mode-600 ~/.heylook/api_key."
+)
 
 
 class SettingsSchema(BaseModel):
@@ -37,6 +43,13 @@ class SettingsSchema(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_api_key(cls, data: Any) -> Any:
+        if isinstance(data, Mapping) and "api_key" in data:
+            raise ValueError(_API_KEY_TOML_MSG)
+        return data
 
     # File logging is OPT-IN (owner rule 2026-08-13): the default writes no
     # files under logs/ at all. Raise the level via /v1/admin/config (or the
@@ -59,9 +72,13 @@ def resolve_settings(stored: Mapping[str, Any]) -> SettingsSchema:
 
     ``stored`` is the raw ``{key: value}`` map (the file's [settings]); unknown keys
     (a setting since removed from the schema) are dropped, not errored, so a
-    stale file can't break resolution. Raises ``pydantic.ValidationError`` on an
-    invalid stored value (fail loud, like the strict TOML validation).
+    stale file can't break resolution -- except ``api_key``, which is always
+    refused so a key mistakenly placed in heylook.toml never fails open. Raises
+    ``pydantic.ValidationError`` on an invalid stored value (fail loud, like the
+    strict TOML validation).
     """
+    if "api_key" in stored:
+        return SettingsSchema(**{"api_key": stored["api_key"]})
     fields = SettingsSchema.model_fields
     merged: dict[str, Any] = {k: v for k, v in stored.items() if k in fields}
     return SettingsSchema(**merged)

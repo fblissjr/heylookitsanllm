@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f8f6f1">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#191713">
+  <base href="/">
+  <title>Sign in · heylook</title>
+  <link rel="icon" href="icon.svg">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <main class="auth-page">
+    <section class="auth-card">
+      <div class="auth-card__head">
+        <h1 id="login-heading" class="brand auth-card__brand">hey<span class="brand__accent">look</span></h1>
+        <p id="login-help" class="muted small auth-card__help">Enter the server API key to start a browser session.</p>
+      </div>
+      <!--LOGIN_ERROR-->
+      <form id="login-form" class="auth-form" method="post" action="/login" aria-labelledby="login-heading">
+        <div class="auth-form__field">
+          <label class="auth-form__label" for="api-key">API key</label>
+          <div class="auth-form__input-row">
+            <input
+              class="input auth-form__input"
+              type="password"
+              id="api-key"
+              name="api_key"
+              autocomplete="current-password"
+              autocorrect="off"
+              autocapitalize="none"
+              spellcheck="false"
+              enterkeyhint="done"
+              aria-describedby="login-help login-error"
+              required
+              autofocus
+            >
+            <button
+              type="button"
+              id="toggle-key"
+              class="btn btn--sm auth-form__toggle"
+              aria-pressed="false"
+              aria-controls="api-key"
+              aria-label="Show API key"
+            >Show</button>
+          </div>
+        </div>
+        <button type="submit" id="login-submit" class="btn btn--primary auth-form__submit">Sign in</button>
+      </form>
+    </section>
+  </main>
+  <script type="module" src="js/login.js"></script>
+</body>
+</html>

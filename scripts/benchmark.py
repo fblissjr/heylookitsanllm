@@ -22,6 +22,10 @@ from dataclasses import dataclass, field
 
 import requests
 
+from heylook_llm.auth import client_auth_headers
+
+_HTTP = requests.Session()
+
 try:
     import orjson
 
@@ -72,6 +76,7 @@ class BenchmarkConfig:
     endpoint: str = "openai"
     seed: int | None = None
     json_output: bool = False
+    api_key: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +114,7 @@ PROMPT_SETS = {
 def discover_model(base_url: str) -> str:
     """Auto-discover the first available model from GET /v1/models."""
     try:
-        resp = requests.get(f"{base_url}/v1/models", timeout=5)
+        resp = _HTTP.get(f"{base_url}/v1/models", timeout=5)
         resp.raise_for_status()
         data = json_loads(resp.content)
         models = data.get("data", [])
@@ -124,7 +129,7 @@ def discover_model(base_url: str) -> str:
 def get_memory_snapshot(base_url: str) -> dict | None:
     """Get system metrics snapshot."""
     try:
-        resp = requests.get(f"{base_url}/v1/system/metrics?force_refresh=true", timeout=10)
+        resp = _HTTP.get(f"{base_url}/v1/system/metrics?force_refresh=true", timeout=10)
         resp.raise_for_status()
         return json_loads(resp.content)
     except Exception:
@@ -157,7 +162,7 @@ def run_openai_streaming(base_url: str, model: str, prompt: PromptSet, config: B
     server_tps = 0.0
     first_token_received = False
 
-    resp = requests.post(f"{base_url}/v1/chat/completions", json=payload, stream=True, timeout=120)
+    resp = _HTTP.post(f"{base_url}/v1/chat/completions", json=payload, stream=True, timeout=120)
     resp.raise_for_status()
 
     for line in resp.iter_lines(decode_unicode=True):
@@ -222,7 +227,7 @@ def run_openai_non_streaming(base_url: str, model: str, prompt: PromptSet, confi
         payload["seed"] = config.seed
 
     start = time.perf_counter()
-    resp = requests.post(f"{base_url}/v1/chat/completions", json=payload, timeout=120)
+    resp = _HTTP.post(f"{base_url}/v1/chat/completions", json=payload, timeout=120)
     resp.raise_for_status()
     total_time = (time.perf_counter() - start) * 1000
     data = json_loads(resp.content)
@@ -271,7 +276,7 @@ def run_messages_streaming(base_url: str, model: str, prompt: PromptSet, config:
     prompt_tokens = 0
     completion_tokens = 0
 
-    resp = requests.post(f"{base_url}/v1/messages", json=payload, stream=True, timeout=120)
+    resp = _HTTP.post(f"{base_url}/v1/messages", json=payload, stream=True, timeout=120)
     resp.raise_for_status()
 
     event_type = None
@@ -327,7 +332,7 @@ def run_messages_non_streaming(base_url: str, model: str, prompt: PromptSet, con
     }
 
     start = time.perf_counter()
-    resp = requests.post(f"{base_url}/v1/messages", json=payload, timeout=120)
+    resp = _HTTP.post(f"{base_url}/v1/messages", json=payload, timeout=120)
     resp.raise_for_status()
     total_time = (time.perf_counter() - start) * 1000
     data = json_loads(resp.content)
@@ -541,6 +546,7 @@ def parse_args() -> BenchmarkConfig:
     parser.add_argument("--endpoint", default="openai", choices=["openai", "messages"], help="API endpoint")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
     parser.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+    parser.add_argument("--api-key", default="", help="Server API key (defaults to HEYLOOK_API_KEY or ~/.heylook/api_key)")
 
     args = parser.parse_args()
 
@@ -557,15 +563,17 @@ def parse_args() -> BenchmarkConfig:
         endpoint=args.endpoint,
         seed=args.seed,
         json_output=args.json,
+        api_key=args.api_key,
     )
 
 
 def main():
     config = parse_args()
+    _HTTP.headers.update(client_auth_headers(config.api_key))
 
     # Check server is reachable
     try:
-        resp = requests.get(f"{config.base_url}/v1/models", timeout=5)
+        resp = _HTTP.get(f"{config.base_url}/v1/models", timeout=5)
         resp.raise_for_status()
     except Exception as e:
         print(f"Cannot reach server at {config.base_url}: {e}", file=sys.stderr)

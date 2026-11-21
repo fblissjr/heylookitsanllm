@@ -4,6 +4,8 @@ from rich.console import Console
 
 from batch_labeler.cli import (
     _build_parser,
+    _http_client,
+    _resolve_api_key,
     _resolve_options,
     _resolve_task,
     _settings_echo,
@@ -42,6 +44,28 @@ class TestParser:
     def test_max_edge(self):
         assert parse(["run", "imgs", "--max-edge", "768"]).max_edge == 768
         assert parse(["run", "imgs", "--max-edge", "0"]).max_edge == 0
+
+    def test_api_key_header_resolution(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("HEYLOOK_API_KEY", raising=False)
+        monkeypatch.setenv("HEYLOOK_API_KEY_FILE", "")
+        with _http_client(parse(["models"])) as hc:
+            assert "x-api-key" not in hc.headers
+
+        monkeypatch.setenv("HEYLOOK_API_KEY", "env-secret")
+        with _http_client(parse(["models"])) as hc:
+            assert hc.headers["x-api-key"] == "env-secret"
+
+        with _http_client(parse(["run", "imgs", "--api-key", "flag-secret"])) as hc:
+            assert hc.headers["x-api-key"] == "flag-secret"
+
+        monkeypatch.delenv("HEYLOOK_API_KEY", raising=False)
+        key_file = tmp_path / "api_key"
+        key_file.write_text("file-secret\n")
+        key_file.chmod(0o644)
+        monkeypatch.setenv("HEYLOOK_API_KEY_FILE", str(key_file))
+        assert _resolve_api_key() is None
+        key_file.chmod(0o600)
+        assert _resolve_api_key() == "file-secret"
 
 
 class TestResolveTask:

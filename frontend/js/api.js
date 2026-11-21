@@ -1,6 +1,41 @@
 // JSON API layer. Every wrapper is generated from ROUTES below; streaming
 // chat lives in streaming.js, not here.
 
+let activeSession = false;
+const sessionListeners = new Set();
+
+function markSession(present) {
+  const next = Boolean(present);
+  if (next === activeSession) return;
+  activeSession = next;
+  for (const fn of sessionListeners) fn(activeSession);
+}
+
+export function hasActiveSession() {
+  return activeSession;
+}
+
+export function onSessionChange(fn) {
+  sessionListeners.add(fn);
+  return () => sessionListeners.delete(fn);
+}
+
+export async function logoutSession() {
+  try {
+    await fetch('/logout', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'X-Request-ID': requestId(),
+      },
+    });
+  } catch { /* navigate to /login either way */ }
+  markSession(false);
+  if (typeof window !== 'undefined' && window.location) {
+    window.location.assign('/login');
+  }
+}
+
 export function requestId() {
   try { return crypto.randomUUID(); }
   catch { return `req-${Math.random().toString(36).slice(2)}-${Date.now()}`; }
@@ -29,6 +64,10 @@ export async function httpError(res) {
   err.detail = structured;
   err.code = code;
   err.retryAfter = Number(res.headers.get('Retry-After')) || null;
+  if (res.status === 401 && code === 'auth_required' && typeof window !== 'undefined' && window.location?.pathname !== '/login') {
+    markSession(false);
+    window.location.assign(`/login${window.location.hash || ''}`);
+  }
   return err;
 }
 
@@ -45,6 +84,7 @@ export async function request(method, path, body, { signal, keepalive = false } 
     signal,
     keepalive,
   });
+  if (res.headers.get('X-Heylook-Session') === '1') markSession(true);
   if (!res.ok) throw await httpError(res);
   return res.status === 204 ? null : res.json();
 }

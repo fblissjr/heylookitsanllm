@@ -862,6 +862,30 @@ LAN DNS or VPN name needs that name listed, and the refusal says so in its
 body and once in the log. `["*"]` turns the check off. Owner-agreed
 2026-09-24 in the improvement loop's security findings.
 
+**One app-wide access gate, zero IP exemptions (v2.0.263).** The v2.0.127 key
+was removed because it lived on individual routers (`messages`, `load`,
+`requests`) and left `conversations`, `notebooks`, `presets`, and static assets
+wide open -- looking like authentication without being it. `AccessGateMiddleware`
+(`src/heylook_llm/auth.py`) sits as a pure ASGI middleware directly inside
+`HostCheckMiddleware`, so every route, static asset, SSE stream, and future
+router shares one gate, and `tests/contract/test_access_gate.py` walks
+`app.routes` (recursing through `_IncludedRouter`) to fail CI if any route
+outside `EXEMPT_ROUTES` answers anything other than 401 without credentials.
+Three traps shaped its design:
+- **Never store the key in `heylook.toml`**: `/v1/admin/config` reads and writes
+  `heylook.toml`, so `AppConfig` and `SettingsSchema` explicitly reject `api_key`.
+  The key comes only from `HEYLOOK_API_KEY` or a mode-600 `~/.heylook/api_key`
+  (`$HEYLOOK_API_KEY_FILE`), failing closed (`503`) if group/other bits are set.
+- **Never exempt loopback or LAN IPs**: reverse proxies on another LAN host and
+  loopback forwarders (`tailscale serve`) hide real client addresses behind a
+  LAN IP or `127.0.0.1`; exempting either exempts everyone.
+- **`SameSite=Strict` alone does not stop sibling subdomains or loopback ports**:
+  sibling apps under the same parent domain count as `same-site` in browsers,
+  and cookies are port-agnostic on `127.0.0.1`. State-changing cookie requests
+  therefore require `Origin` to match `Host` (or `Sec-Fetch-Site` in
+  `{"same-origin", "none"}` with no conflicting `Origin`), while omitting
+  `Secure` on plain HTTP loopback so Safari still stores the cookie locally.
+
 The OpenAPI drift guard (`generated-api.ts`, `scripts/check_openapi_sync.sh`,
 the pre-commit block, `/openapi-regen`) was retired 2026-07-09 with the legacy
 React app that consumed the generated TS types; v3 hand-writes `api.js`.

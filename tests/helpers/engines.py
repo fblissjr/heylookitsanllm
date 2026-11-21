@@ -33,14 +33,41 @@ not under pytest, and must not need a venv beyond the server's own).
 from __future__ import annotations
 
 import json
+import os
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 
 # The arms a live run can have. Order is display order.
 ARMS = ("mlx-text", "mlx-vision", "gguf")
+
+
+def auth_headers(explicit_key: str | None = None) -> dict[str, str]:
+    """Stdlib-only authentication headers for live harnesses calling a server."""
+    key = (explicit_key or os.environ.get("HEYLOOK_API_KEY") or "").strip()
+    if not key:
+        if "HEYLOOK_API_KEY_FILE" in os.environ:
+            raw = os.environ["HEYLOOK_API_KEY_FILE"].strip()
+            candidates = [Path(raw).expanduser()] if raw else []
+        else:
+            candidates = [Path.home() / ".heylook" / "api_key"]
+        for p in candidates:
+            try:
+                st = p.stat()
+                if p.is_file() and (st.st_mode & 0o077) == 0:
+                    key = p.read_text(encoding="utf-8").strip()
+            except OSError:
+                pass
+    headers: dict[str, str] = {}
+    if key:
+        headers["x-api-key"] = key
+    admin_tok = os.environ.get("HEYLOOK_ADMIN_TOKEN", "").strip()
+    if admin_tok:
+        headers["X-Heylook-Admin-Token"] = admin_tok
+    return headers
 
 
 @dataclass
@@ -73,7 +100,7 @@ def _get(server: str, path: str, timeout: int = 30):
     endpoint behind a token answers 401, and that is a fact to report, not a
     traceback."""
     try:
-        req = urllib.request.Request(f"{server.rstrip('/')}{path}")
+        req = urllib.request.Request(f"{server.rstrip('/')}{path}", headers=auth_headers())
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             payload = resp.read()
             return resp.status, (json.loads(payload) if payload else None)
@@ -178,7 +205,7 @@ def _post(server: str, path: str, body: dict, timeout: int = 60):
     try:
         req = urllib.request.Request(
             f"{server.rstrip('/')}{path}", data=payload, method="POST",
-            headers={"Content-Type": "application/json"})
+            headers={"Content-Type": "application/json", **auth_headers()})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read()
             return resp.status, (json.loads(raw) if raw else None)
