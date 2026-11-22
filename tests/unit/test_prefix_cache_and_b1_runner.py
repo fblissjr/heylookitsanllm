@@ -1294,3 +1294,112 @@ def test_b1_runner_standby_end_thinking_criteria_not_enforced_until_triggered(mo
     ar_toks.extend(c.token for c in gen_ar)
     assert ar_toks[1:3] == [28, 29]
     assert standby_ar.in_thinking is False
+
+
+@pytest.mark.unit
+def test_b1_runner_and_caches_survive_quarantined_worker_thread_switch(monkeypatch):
+    """Regression for 'RuntimeError: There is no Stream(gpu, N) in current thread.'
+    when Worker A is quarantined mid-stream (staying alive and retaining its
+    thread-local generation_stream) and Worker B reuses PrefixCacheStore,
+    VisionFeatureCache, and Gemma 4 Router state."""
+    import queue
+    import threading
+    from heylook_llm.providers.common.vision_feature_cache import VisionFeatureCache
+
+    new_tls = getattr(mx, "new_thread_local_stream", None)
+    if callable(new_tls):
+        tls_stream = new_tls(mx.default_device())
+        monkeypatch.setattr(b1_runner, "_generation_stream", lambda: tls_stream)
+
+    apc = _make_fake_apc()
+    model, _ = _make_toy_vlm(vocab_size=32, window_size=8)
+    vcache = VisionFeatureCache(max_entries=4)
+    ids1 = mx.array([[10, 11, 12, 13, 14, 15]], dtype=mx.int32)
+    ids2 = mx.array([[10, 11, 12, 13, 14, 15, 16, 17]], dtype=mx.int32)
+    pix = mx.ones((1, 2, 2, 3), dtype=mx.float32)
+
+    # Simulate model setting _rope_deltas lazily during forward
+    orig_call = model.language_model.__call__
+
+    def _call_with_rope_deltas(input_ids, cache=None, **kw):
+        model.language_model._rope_deltas = mx.zeros((1, 1), dtype=mx.int32) + 1
+        return orig_call(input_ids, cache=cache, **kw)
+
+    model.language_model.__call__ = _call_with_rope_deltas
+
+    ready_q: queue.Queue = queue.Queue()
+    release_q: queue.Queue = queue.Queue()
+    errors: list[Exception] = []
+
+    def worker_a():
+        try:
+            with mx.stream(b1_runner._generation_stream()):
+                # Store an unevaluated op into VisionFeatureCache on Worker A's stream
+                vcache.put("same-img", mx.ones((1, 4, 4), dtype=mx.float32) + 2.0)
+                gen1 = vlm_engine.generate(
+                    model=model,
+                    processor=None,
+                    apc_manager=apc,
+                    input_ids=ids1,
+                    raw_inputs={"input_ids": ids1, "pixel_values": pix},
+                    sampler=None,
+                    processors=[],
+                    stop_tokens=[99],
+                    max_tokens=8,
+                    greedy=True,
+                    detokenizer=_DummyDetok(),
+                )
+                first = next(gen1)
+                assert first.token is not None
+                # Close mid-stream on Worker A (just like a cancelled/quarantined request)
+                gen1.close()
+        except Exception as exc:  # pragma: no cover
+            errors.append(exc)
+        finally:
+            ready_q.put(True)
+            # Stay alive like a quarantined _executor_pool worker!
+            release_q.get(timeout=10)
+
+    t_a = threading.Thread(target=worker_a, daemon=True)
+    t_a.start()
+    ready_q.get(timeout=10)
+    assert not errors
+
+    out_chunks = []
+
+    def worker_b():
+        try:
+            with mx.stream(b1_runner._generation_stream()):
+                cached_feat = vcache.get("same-img")
+                assert cached_feat is not None
+                mx.eval(cached_feat + 1.0)
+                gen2 = vlm_engine.generate(
+                    model=model,
+                    processor=None,
+                    apc_manager=apc,
+                    input_ids=ids2,
+                    raw_inputs={"input_ids": ids2, "pixel_values": pix},
+                    sampler=None,
+                    processors=[],
+                    stop_tokens=[99],
+                    max_tokens=4,
+                    greedy=True,
+                    detokenizer=_DummyDetok(),
+                )
+                out_chunks.extend(list(gen2))
+        except Exception as exc:
+            errors.append(exc)
+
+    try:
+        t_b = threading.Thread(target=worker_b, daemon=True)
+        t_b.start()
+        t_b.join(timeout=10)
+    finally:
+        release_q.put(True)
+        t_a.join(timeout=5)
+
+    assert not errors, f"Worker B crashed with cross-thread stream error: {errors}"
+    assert len(out_chunks) >= 2
+    assert out_chunks[0].cache is not None
+    assert out_chunks[0].cache.outcome == "reused"
+    assert out_chunks[0].cache.cached_tokens == 6

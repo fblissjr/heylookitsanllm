@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-11-21, v2.0.266, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
+Last updated: 2026-11-21, v2.0.267, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md) (triaged 2026-09-25 and refreshed 2026-10-30;
@@ -16,6 +16,7 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
+| v2.0.267 Fix cross-worker `There is no Stream(gpu, N) in current thread` crash & 1 ms AnyIO `CancelScope` false worker quarantine (`prefix_cache.py`, `vision_feature_cache.py`, `gemma4_runtime.py`, `streaming_utils.py`, `messages_api.py`, `sharp_edges.md`) | unit + contract `1831 passed, 2 subtests passed` on `.venv` + `23/23` in `test_streaming_executor_pool.py` & `test_prefix_cache_and_b1_runner.py` on live `mlx 0.32.5` overlay; `scripts/chain_probe.py` `5/5` hops `match=True`, `restored=reused`, `cause=None` on `Qwen3.5-0.8B-MLX-8bit` and `Qwen3-0.6B-8bit-mlx` (26B/31B sliding class skipped while `:42193` server shared GPU); `check_version_sync.py`, `guard_stable_channel.sh`, `vendor_frontend.py --check` (`marked` `18.2.0` / `dompurify` `3.4.18` match manifest; `Behind: marked`), and path-privacy scan clean. NOT run: `tests/smoke/`, `tests/eval/`, `scripts/perf_ab.py`, browser E2E (harness pending migration since `v2.0.240`) | 2026-11-21 |
 | v2.0.266 Simplify `heylookllm key [status\|create\|clear]` to plain mode-600 `~/.heylook/api_key` with zero `op` calls or sidecar files (`auth.py`, `server.py`, `test_access_gate.py`) | unit + contract `1829 passed, 2 subtests passed`; `check_version_sync.py`, `guard_stable_channel.sh`, and path-privacy scan clean. NOT run: `tests/smoke/`, `tests/eval/`, `scripts/perf_ab.py`, browser E2E (harness pending migration since `v2.0.240`) | 2026-11-21 |
 | v2.0.265 `heylookllm key [status\|create\|sync\|clear]` CLI with 1Password master copy + unattended-boot mode-600 `~/.heylook/api_key` (`auth.py`, `server.py`, `test_access_gate.py`) | unit + contract `1835 passed, 2 subtests passed`; live loopback probe against `:42193` confirmed `401` unauthenticated, `200` with `x-api-key`, and `403` cross-origin `POST`; `check_version_sync.py`, `guard_stable_channel.sh`, and path-privacy scan clean. NOT run: `tests/smoke/`, `tests/eval/`, `scripts/perf_ab.py`, browser E2E (harness pending migration since `v2.0.240`) | 2026-11-21 |
 | v2.0.264 Always-on state-changing `Origin` / `Sec-Fetch-Site` (`cross-site`/`same-site`) `403` guard + `tailscale serve` `X-Forwarded-Host` recognition + `Content-Security-Policy: frame-ancestors 'self'` (`auth.py`, `host_check.py`, `test_access_gate.py`) | unit + contract `1825 passed, 2 subtests passed`; `check_version_sync.py`, `guard_stable_channel.sh`, `vendor_frontend.py --check` (`marked` `18.2.0` / `dompurify` `3.4.18` match manifest; `Behind: marked`), and path-privacy scan clean. NOT run: `tests/smoke/`, `tests/eval/`, `scripts/perf_ab.py`, browser E2E (harness pending migration since `v2.0.240`) | 2026-11-21 |

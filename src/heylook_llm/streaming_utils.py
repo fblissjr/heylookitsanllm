@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import AsyncGenerator
 
+import anyio
 from fastapi import Request
 
 
@@ -58,6 +59,67 @@ class _PinnedExecutorPool:
 
 
 _executor_pool = _PinnedExecutorPool()
+
+
+async def _await_worker_shielded(fut: asyncio.Future, *, timeout: float = 30.0) -> None:
+    """Wait up to ``timeout`` seconds for ``fut`` even when the current task has
+    a pending ``CancelledError`` from Starlette/AnyIO stream teardown."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    absorbed_cancels = 0
+    try:
+        with anyio.CancelScope(shield=True):
+            while not fut.done():
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    break
+                try:
+                    await asyncio.wait_for(asyncio.shield(fut), timeout=remaining)
+                    break
+                except (TimeoutError, asyncio.TimeoutError):
+                    break
+                except asyncio.CancelledError:
+                    absorbed_cancels += 1
+                    if absorbed_cancels > 4:
+                        break
+                except Exception:
+                    break
+    finally:
+        if absorbed_cancels:
+            task = asyncio.current_task()
+            if task is not None:
+                for _ in range(absorbed_cancels):
+                    task.cancel()
+
+
+async def run_on_pinned_worker(fn, *, abort_event=None):
+    """Run synchronous generation work on a persistent ``_executor_pool`` worker."""
+    loop = asyncio.get_running_loop()
+    gen_executor = _executor_pool.acquire()
+    worker_idle = threading.Event()
+
+    def _run():
+        try:
+            return fn()
+        finally:
+            worker_idle.set()
+
+    fut = loop.run_in_executor(gen_executor, _run)
+    try:
+        return await fut
+    except BaseException:
+        if abort_event is not None and not abort_event.is_set():
+            abort_event.set()
+        if not worker_idle.is_set():
+            await _await_worker_shielded(fut, timeout=30)
+        raise
+    finally:
+        if worker_idle.is_set():
+            _executor_pool.release(gen_executor)
+        else:
+            logging.warning(
+                "Pinned worker still busy on exit; quarantining its worker (kept alive, never reused)"
+            )
+            _executor_pool.quarantine(gen_executor)
 
 
 class KeepaliveMarker:
@@ -158,6 +220,7 @@ async def async_generator_with_abort(
     read_progress = getattr(abort_event, "prefill_progress", None)
     last_progress = None
 
+    exhausted = False
     try:
         while True:
             chunk_future = loop.run_in_executor(gen_executor, get_next)
@@ -199,29 +262,32 @@ async def async_generator_with_abort(
 
             chunk = await chunk_future
             if chunk is None:
+                exhausted = True
                 break
             last_keepalive = loop.time()
             yield chunk
     finally:
-        # Close the provider generator so its finally blocks run immediately
-        # (releases the generation gate, decrements _active_generations, clears
-        # the MLX cache). Without this, close() only runs when GC collects the
-        # abandoned generator -- which would hold the gate and stall the queue.
-        # close() runs on the same pinned worker that drove generation.
-        closed = False
+        # Signal abort when exiting before natural exhaustion (for example when
+        # Starlette/AnyIO cancels the streaming task while next() is in flight),
+        # and shield close_future from an already-cancelled AnyIO CancelScope so
+        # wait_for actually waits up to 30s instead of failing in <1ms and
+        # falsely quarantining an idle worker.
+        if not exhausted and abort_event is not None and not abort_event.is_set():
+            abort_event.set()
+        worker_idle = threading.Event()
+
+        def _close_gen():
+            try:
+                sync_gen.close()
+            finally:
+                worker_idle.set()
+
         try:
             logging.debug(f"{log_prefix}Closing provider generator")
-            close_future = loop.run_in_executor(gen_executor, sync_gen.close)
-            await asyncio.wait_for(close_future, timeout=30)
-            closed = True
-        except Exception:
-            pass
+            close_future = loop.run_in_executor(gen_executor, _close_gen)
+            await _await_worker_shielded(close_future, timeout=30)
         finally:
-            # Return the executor for reuse -- NEVER shut it down (a dying
-            # MLX thread aborts the process; see _PinnedExecutorPool). If
-            # close timed out the worker may be wedged mid-generation: leak
-            # that executor rather than queueing a future request behind it.
-            if closed:
+            if worker_idle.is_set():
                 _executor_pool.release(gen_executor)
             else:
                 logging.warning(f"{log_prefix}Generator close timed out; quarantining its worker (kept alive, never reused)")

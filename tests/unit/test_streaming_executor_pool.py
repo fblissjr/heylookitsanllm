@@ -127,3 +127,50 @@ def test_a_worker_whose_close_timed_out_is_kept_alive_and_never_reused(monkeypat
     assert wedged.is_alive(), (
         "the close-timed-out worker's thread exited -- the executor was dropped "
         "instead of quarantined, and GC shut it down")
+
+
+def test_cancelled_anyio_scope_closes_cleanly_without_false_quarantine():
+    """Starlette's StreamingResponse cancels an AnyIO CancelScope on disconnect.
+    Without shielding close_future inside async_generator_with_abort's finally,
+    await wait_for(close_future) immediately raised CancelledError in <1ms and
+    falsely quarantined a healthy worker thread while close() was still running."""
+    import anyio
+
+    abort_event = threading.Event()
+    closed_cleanly = threading.Event()
+    quarantined_before = len(_executor_pool._quarantined)
+    first_worker_ident = []
+
+    def cooperative_gen():
+        first_worker_ident.append(threading.get_ident())
+        try:
+            yield "first"
+            # Block until abort_event is set by async_generator_with_abort's finally
+            assert abort_event.wait(2.0), "abort_event was not signalled on scope cancel"
+            yield "aborted-tail"
+        finally:
+            closed_cleanly.set()
+
+    async def run_under_cancelled_scope():
+        async def consume_stream(started_evt: anyio.Event):
+            async for chunk in async_generator_with_abort(
+                cooperative_gen(), None, abort_event
+            ):
+                if chunk == "first":
+                    started_evt.set()
+
+        started = anyio.Event()
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(consume_stream, started)
+            await started.wait()
+            await anyio.sleep(0.02)
+            tg.cancel_scope.cancel()
+
+    anyio.run(run_under_cancelled_scope)
+    assert abort_event.is_set()
+    assert closed_cleanly.is_set()
+    assert len(_executor_pool._quarantined) == quarantined_before, (
+        "healthy worker was falsely quarantined on AnyIO scope cancellation"
+    )
+    # Subsequent generation reuses that exact same worker thread
+    assert _drain(_thread_ident_gen(1)) == first_worker_ident

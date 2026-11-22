@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.267] - 2026-11-21
+
+### Fixed
+
+- **Cross-worker `There is no Stream(gpu, N) in current thread` crash after client disconnect (`src/heylook_llm/providers/common/prefix_cache.py`, `src/heylook_llm/providers/common/vision_feature_cache.py`, `src/heylook_llm/providers/common/gemma4_runtime.py`, `src/heylook_llm/streaming_utils.py`, `src/heylook_llm/messages_api.py`)**:
+  - **False 1 ms worker quarantine under AnyIO `CancelScope`**: when a streaming client disconnected mid-generation, AnyIO's cancelled scope caused the unshielded `await asyncio.wait_for(close_future, timeout=30)` inside `async_generator_with_abort`'s `finally:` to raise `CancelledError` (`BaseException`) in 1 ms, quarantining a healthy `mlx-stream` worker while `sync_gen.close()` continued running `b1_runner`'s `finally:` on that still-alive thread. `streaming_utils` now signals `abort_event` on early exit, shields `close_future` via `_await_worker_shielded`, checks OS-thread `worker_idle` completion so only genuinely wedged workers are quarantined, and routes non-streaming `/v1/messages` through `run_on_pinned_worker` instead of `asyncio.to_thread`.
+  - **Unevaluated `Slice` views in cross-request caches**: `c.keys[..., :end, :]` and `rope_deltas[...]` created inside `with mx.stream(generation_stream):` recorded lazy `Slice` primitives bound to the creator thread's `new_thread_local_stream` (`Stream(gpu, 4)`), poisoning `PrefixCacheStore` whenever a later request ran on a different worker thread. `PrefixCacheStore.store` and fallback snapshotters now materialize snapshot views via `mx.eval` (`0` extra GPU bytes, zero-copy view detachment) before storing, and `VisionFeatureCache.put` and `_HeylookGemma4Router` likewise materialize cached arrays before publishing.
+
+### Verification
+
+- `uv run pytest tests/unit/ tests/contract/ -q`: `1831 passed, 2 subtests passed` on `.venv`, plus `23 passed` in `test_streaming_executor_pool.py` + `test_prefix_cache_and_b1_runner.py` against the active `mlx 0.32.5` overlay (`test_b1_runner_and_caches_survive_quarantined_worker_thread_switch` and `test_cancelled_anyio_scope_closes_cleanly_without_false_quarantine`).
+- `scripts/chain_probe.py`: `5/5` hops `match=True`, `restored=reused`, `cause=None` on `Qwen3.5-0.8B-MLX-8bit` (`chain_Qwen3.5-0.8B-MLX-8bit_20261121-202854.json`) and `Qwen3-0.6B-8bit-mlx` (`chain_Qwen3-0.6B-8bit-mlx_20261121-202925.json`); sliding-window 26B/31B `chain_probe.py` skipped while live server held `:42193`.
+- `scripts/check_version_sync.py`, `scripts/guard_stable_channel.sh`, `scripts/vendor_frontend.py --check` (`marked` `18.2.0` / `dompurify` `3.4.18` match manifest; `Behind: marked`), and path-privacy scan clean. NOT run: live 3-arm `tests/smoke/`, `tests/eval/`, `scripts/perf_ab.py`, browser E2E (`puppeteer-core` removed in `v2.0.240`).
+
 ## [2.0.266] - 2026-11-21
 
 ### Changed

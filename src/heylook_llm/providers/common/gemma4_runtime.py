@@ -718,6 +718,7 @@ def _bind_router_subclass(router) -> bool:
                     or getattr(self, "_heylook_root_size", None) != root_size
                 ):
                     norm_weight = scale * root_size
+                    mx.eval(norm_weight)
                     self._heylook_scaled_norm_weight = norm_weight
                     self._heylook_scale_id = id(scale)
                     self._heylook_root_size = root_size

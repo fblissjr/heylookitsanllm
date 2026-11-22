@@ -569,9 +569,11 @@ async def _non_stream_messages(
                 if text:
                     _saw(kind, at)
 
+    from heylook_llm.streaming_utils import run_on_pinned_worker
+
     generation_start = time.time()
     try:
-        await asyncio.to_thread(consume)
+        await run_on_pinned_worker(consume, abort_event=abort_event)
     except InvalidGenerationRequest as e:
         raise HTTPException(status_code=400, detail=str(e))
     except GenerationFailed as e:

@@ -2452,3 +2452,34 @@ window's duration (`min(max_frames, max(2, ceil((hi - lo) * fps)))`), falls back
 to all candidate frames in the window when a short window has `< 3` anchors, and
 `VideoWindows.sampling` defaults to `"fps"` so window vectors match the model's
 training frame rate unless `"content"` outlier selection is explicitly chosen.
+
+## CoW prefix slice views and AnyIO stream teardown across workers
+
+Hit live on `gemma-4-26B-A4B-it-8bit` (`v2.0.266` -> fixed in `v2.0.267`) with
+`RuntimeError: There is no Stream(gpu, 4) in current thread` at
+`b1_runner.py:774` and `:1067` on every request following a client disconnect.
+Two bugs compounded:
+
+1. **False 1 ms worker quarantine under Starlette/AnyIO `CancelScope`**: when a
+   streaming client disconnected mid-generation, AnyIO cancelled the response
+   scope. In `streaming_utils.async_generator_with_abort`'s `finally:`, the
+   unshielded `await asyncio.wait_for(close_future, timeout=30)` immediately
+   raised `CancelledError` (`BaseException`, bypassing `except Exception:`) in
+   1 ms, quarantining a healthy `mlx-stream` worker (`Stream(gpu, 4)`) while
+   `sync_gen.close()` continued running `b1_runner`'s `finally:` on that still-alive
+   thread. `_await_worker_shielded` now signals `abort_event`, shields
+   `close_future` inside `anyio.CancelScope(shield=True)` (absorbing pending
+   task cancellations and re-applying them on exit), and tracks OS-thread
+   completion via `worker_idle` so only genuinely wedged workers are quarantined.
+   Non-streaming `/v1/messages` also moved off `asyncio.to_thread` onto
+   `run_on_pinned_worker`.
+2. **Unevaluated `Slice` views in `PrefixCacheStore`**: even after `mx.eval` on
+   `prompt_cache`, slicing `c.keys[..., :end, :]` or `rope_deltas[...]` inside
+   `with mx.stream(generation_stream):` creates a lazy `Slice` primitive bound
+   to that thread's `new_thread_local_stream` (`Stream(gpu, 4)`). Because the
+   quarantined worker stayed alive, `Stream(gpu, 4)` stayed owned by that thread
+   and poisoned the cached entry for every subsequent worker. Calling `mx.eval`
+   on snapshot views before storing (`_materialize_snapshots` in
+   `prefix_cache.py`, plus `VisionFeatureCache.put` and `_HeylookGemma4Router`)
+   detaches the `Slice` op with zero extra GPU bytes so any worker thread can
+   restore and extend the snapshot safely.

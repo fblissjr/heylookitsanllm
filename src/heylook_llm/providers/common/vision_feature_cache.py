@@ -95,6 +95,11 @@ class VisionFeatureCache:
         # (deepseek_v4); both count against the byte cap.
         try:
             parts = features if isinstance(features, (list, tuple)) else [features]
+            arrays = [
+                f for f in parts if isinstance(mx.array, type) and isinstance(f, mx.array)
+            ]
+            if arrays:
+                mx.eval(arrays)
             new_bytes = sum(int(f.nbytes) for f in parts)
         except Exception:
             new_bytes = 0

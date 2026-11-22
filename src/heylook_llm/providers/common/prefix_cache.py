@@ -325,6 +325,34 @@ def _snapshot_layer(
     return None
 
 
+def _collect_snapshot_arrays(snap: _LayerSnapshot, out: list[mx.array]) -> None:
+    """Collect every MLX array view held by ``snap`` so ``mx.eval`` detaches it
+    from the creator thread's thread-local ``generation_stream`` (zero-copy)."""
+    if snap.keys is not None:
+        out.append(snap.keys)
+    if snap.values is not None:
+        out.append(snap.values)
+    if snap.arrays is not None:
+        for arr in snap.arrays:
+            if arr is not None:
+                out.append(arr)
+    if snap.children is not None:
+        for ch in snap.children:
+            _collect_snapshot_arrays(ch, out)
+
+
+def _materialize_snapshots(
+    snaps: Sequence[_LayerSnapshot], extra: Optional[mx.array] = None
+) -> None:
+    to_eval: list[mx.array] = []
+    for snap in snaps:
+        _collect_snapshot_arrays(snap, to_eval)
+    if extra is not None:
+        to_eval.append(extra)
+    if to_eval:
+        mx.eval(to_eval)
+
+
 def snapshot_rotating_fallbacks(
     prompt_cache: Sequence[Any],
     *,
@@ -357,6 +385,8 @@ def snapshot_rotating_fallbacks(
             )
             if snap is not None:
                 fallbacks[idx] = snap
+    if fallbacks:
+        _materialize_snapshots(tuple(fallbacks.values()))
     return fallbacks
 
 
@@ -417,12 +447,16 @@ def capture_rotating_fallbacks_before_evict(
 
     if to_capture:
         mx.eval([c.state for _, c, _ in to_capture])
+        newly_captured: list[_LayerSnapshot] = []
         for idx, c, trim_tail in to_capture:
             snap = _snapshot_layer(
                 c, trim_tail=trim_tail, target_len=target_len, slack_cap=slack_cap
             )
             if snap is not None:
                 captured[idx] = snap
+                newly_captured.append(snap)
+        if newly_captured:
+            _materialize_snapshots(newly_captured)
         any_uncaptured = any(
             idx not in captured and _has_rotating(c)
             for idx, c in enumerate(prompt_cache)
@@ -786,6 +820,7 @@ class PrefixCacheStore:
             layers.append(snap)
 
         rd_view = _array_view(rope_deltas)
+        _materialize_snapshots(layers, rd_view)
         entry_bytes = sum(s.logical_bytes for s in layers) + _nbytes(rd_view)
         if self.memory_max_bytes > 0 and entry_bytes > self.memory_max_bytes:
             return False
