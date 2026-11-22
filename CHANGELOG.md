@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.265] - 2026-11-21
+
+### Added
+
+- **`heylookllm key` CLI with 1Password master copy (`src/heylook_llm/auth.py`, `src/heylook_llm/server.py`, `tests/unit/test_access_gate.py`)**: added `heylookllm key [status|create|sync|clear]` while keeping `~/.heylook/api_key` (mode `0600`) as the sole file the server reads at startup and runtime so unattended restarts after a reboot never depend on 1Password being unlocked. `create` / `create --rotate` mints a `hlk_<random>` key, writes it to a 1Password item via JSON piped on `op`'s `stdin` (never in `argv` or shell history) and atomically to `~/.heylook/api_key` (`0600` temp file + `fsync` + `os.replace`) plus `~/.heylook/api_key.op_ref`, refusing to overwrite an existing key without `--rotate`, refusing symlinks, and refusing built-in `Private`, `Personal`, `Employee`, and `Shared` vaults so headless peer machines using 1Password service accounts can `op read` the item (`--local-only` skips 1Password; `--copy` copies via `pbcopy`). `sync` atomically rewrites `~/.heylook/api_key` (`0600`) from the 1Password item (`sync --seed` uploads an already-created `~/.heylook/api_key` into a new 1Password item without rotating). `status` reports gate health and whether `~/.heylook/api_key` matches the 1Password item without printing either secret; if `op` is missing or locked, both `status` and the server keep using the existing file and never fail closed.
+
+### Verification
+
+- `uv run pytest tests/unit/ tests/contract/ -q`: `1835 passed, 2 subtests passed` (including `TestKeySubcommandLifecycle` covering `0600` creation under permissive `umask`, overwrite refusal without `--rotate`, symlink refusal, 1Password service-account vault validation, `create`/`status`/`sync`/`sync --seed`/`clear`, `PASSKEY` protection, and non-blocking locked-`op` behavior).
+- Live loopback check against `:42193` confirmed `401` (`auth_required`) without credentials, `200` with `x-api-key`, and `403` (`csrf_rejected`) on cross-origin `POST`.
+- `scripts/check_version_sync.py`, `scripts/guard_stable_channel.sh`, and path-privacy scan clean. NOT run: live 3-arm `tests/smoke/`, `tests/eval/`, `scripts/perf_ab.py`, browser E2E (`puppeteer-core` removed in `v2.0.240`).
+
 ## [2.0.264] - 2026-11-21
 
 ### Security

@@ -22,6 +22,9 @@ os.environ.setdefault("HEYLOOK_LOGS_DIR", tempfile.mkdtemp(prefix="heylook-test-
 os.environ.pop("HEYLOOK_API_KEY", None)
 os.environ["HEYLOOK_API_KEY_FILE"] = ""
 os.environ.pop("HEYLOOK_ADMIN_TOKEN", None)
+os.environ.pop("HEYLOOK_OP_REF", None)
+os.environ.pop("HEYLOOK_OP_VAULT", None)
+os.environ.pop("HEYLOOK_OP_ITEM", None)
 
 from heylook_llm.config import (
     ChatMessage,

@@ -98,6 +98,59 @@ def main():
     # remaining use. Add a folder instead: heylook.toml, the Models page, or
     # PUT /v1/admin/models/scan-config.)
 
+    # Key command - 1Password master copy + mode-0600 ~/.heylook/api_key runtime file
+    key_parser = subparsers.add_parser(
+        "key",
+        help="Manage the server access key (1Password master copy + mode-0600 ~/.heylook/api_key)",
+    )
+    key_parser.add_argument(
+        "action",
+        nargs="?",
+        default="status",
+        choices=["status", "create", "sync", "clear"],
+        help="Key action to perform (default: status)",
+    )
+    key_parser.add_argument(
+        "--rotate",
+        action="store_true",
+        help="Replace an existing key in 1Password and ~/.heylook/api_key on 'create'",
+    )
+    key_parser.add_argument(
+        "--vault",
+        default=None,
+        help="1Password vault (must be service-account accessible: not Private, Personal, Employee, or Shared)",
+    )
+    key_parser.add_argument(
+        "--item",
+        default=None,
+        help="1Password item title (default: heylook)",
+    )
+    key_parser.add_argument(
+        "--op-ref",
+        default=None,
+        help="Explicit 1Password secret reference (op://<vault>/<item>/<field>)",
+    )
+    key_parser.add_argument(
+        "--url",
+        default=None,
+        help="Optional login URL to attach to the 1Password Login item for browser autofill",
+    )
+    key_parser.add_argument(
+        "--seed",
+        action="store_true",
+        help="For 'sync': upload an existing ~/.heylook/api_key into a new 1Password item without rotating",
+    )
+    key_parser.add_argument(
+        "--copy",
+        action="store_true",
+        help="Copy the newly created key to the macOS clipboard via pbcopy",
+    )
+    key_parser.add_argument(
+        "--local-only",
+        action="store_true",
+        help="For 'create': write only mode-0600 ~/.heylook/api_key without 1Password",
+    )
+
     # Service command - manage background service (macOS/Linux)
     service_parser = subparsers.add_parser(
         "service", help="Manage heylookllm as a background service (macOS/Linux)"
@@ -176,6 +229,12 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # Handle key command before importing MLX or router
+    if args.command == "key":
+        from heylook_llm.auth import manage_access_key
+
+        sys.exit(manage_access_key(args))
 
     # Handle service command
     if args.command == "service":
