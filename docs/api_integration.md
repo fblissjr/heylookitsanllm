@@ -661,13 +661,13 @@ is normal.
 Authentication is **opt-in and off by default**:
 
 - **Server-wide access gate** (`HEYLOOK_API_KEY` env var or mode-600
-  `~/.heylook/api_key`, v2.0.263; `heylookllm key [status|create|sync|clear]`
-  manages a 1Password master item + atomic mode-600 `~/.heylook/api_key` so
-  restarts never depend on 1Password being unlocked, v2.0.265). When a key is
-  configured, one ASGI middleware (`AccessGateMiddleware`) gates **every** route,
-  static asset, and SSE stream with no source-IP exemptions (only `/health` and
-  `/login` are unauthenticated). Clients authenticate by configuration alone
-  using any one of:
+  `~/.heylook/api_key`, v2.0.263; `heylookllm key [status|create|clear]` manages
+  the plain mode-600 file directly with `--rotate` to replace an existing key,
+  after which any remote client copy such as `/etc/heylook/api_key` is updated
+  over SSH, v2.0.266). When a key is configured, one ASGI middleware
+  (`AccessGateMiddleware`) gates **every** route, static asset, and SSE stream
+  with no source-IP exemptions (only `/health` and `/login` are unauthenticated).
+  Clients authenticate by configuration alone using any one of:
   - `x-api-key: <key>` — the Anthropic SDK's default (`api_key="<key>"`).
   - `Authorization: Bearer <key>` — OpenAI-style `/v1/models` discovery clients
     and the Anthropic SDK's `auth_token`.

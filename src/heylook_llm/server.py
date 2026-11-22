@@ -98,57 +98,27 @@ def main():
     # remaining use. Add a folder instead: heylook.toml, the Models page, or
     # PUT /v1/admin/models/scan-config.)
 
-    # Key command - 1Password master copy + mode-0600 ~/.heylook/api_key runtime file
+    # Key command - create, rotate, inspect, or clear mode-0600 ~/.heylook/api_key
     key_parser = subparsers.add_parser(
         "key",
-        help="Manage the server access key (1Password master copy + mode-0600 ~/.heylook/api_key)",
+        help="Create, rotate, inspect, or clear the server access key (~/.heylook/api_key)",
     )
     key_parser.add_argument(
         "action",
         nargs="?",
         default="status",
-        choices=["status", "create", "sync", "clear"],
+        choices=["status", "create", "clear"],
         help="Key action to perform (default: status)",
     )
     key_parser.add_argument(
         "--rotate",
         action="store_true",
-        help="Replace an existing key in 1Password and ~/.heylook/api_key on 'create'",
-    )
-    key_parser.add_argument(
-        "--vault",
-        default=None,
-        help="1Password vault (must be service-account accessible: not Private, Personal, Employee, or Shared)",
-    )
-    key_parser.add_argument(
-        "--item",
-        default=None,
-        help="1Password item title (default: heylook)",
-    )
-    key_parser.add_argument(
-        "--op-ref",
-        default=None,
-        help="Explicit 1Password secret reference (op://<vault>/<item>/<field>)",
-    )
-    key_parser.add_argument(
-        "--url",
-        default=None,
-        help="Optional login URL to attach to the 1Password Login item for browser autofill",
-    )
-    key_parser.add_argument(
-        "--seed",
-        action="store_true",
-        help="For 'sync': upload an existing ~/.heylook/api_key into a new 1Password item without rotating",
+        help="Replace an existing key file on 'create' (invalidates active browser sessions)",
     )
     key_parser.add_argument(
         "--copy",
         action="store_true",
-        help="Copy the newly created key to the macOS clipboard via pbcopy",
-    )
-    key_parser.add_argument(
-        "--local-only",
-        action="store_true",
-        help="For 'create': write only mode-0600 ~/.heylook/api_key without 1Password",
+        help="Copy the newly created key to the macOS clipboard via pbcopy instead of printing it",
     )
 
     # Service command - manage background service (macOS/Linux)

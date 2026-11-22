@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.266] - 2026-11-21
+
+### Changed
+
+- **Plain-file `heylookllm key` (`src/heylook_llm/auth.py`, `src/heylook_llm/server.py`, `tests/unit/test_access_gate.py`)**: removed the 1Password (`op`, `sync`, `--seed`, `--vault`, `.op_ref`) layer from `heylookllm key` so the key remains strictly a plain mode-`0600` `~/.heylook/api_key` file with zero `op` calls, zero prompts, and zero sidecar files. `heylookllm key status` reports only gate state and file health; `heylookllm key create [--rotate] [--copy]` atomically creates or rotates the mode-`0600` file (after which any remote client copy such as `/etc/heylook/api_key` is updated over SSH); `heylookllm key clear` removes the file.
+
+### Verification
+
+- `uv run pytest tests/unit/ tests/contract/ -q`: `1829 passed, 2 subtests passed` (asserting zero external subprocess calls and zero sidecar files on `status`, `create`, and `create --rotate`).
+- `scripts/check_version_sync.py`, `scripts/guard_stable_channel.sh`, and path-privacy scan clean. NOT run: live 3-arm `tests/smoke/`, `tests/eval/`, `scripts/perf_ab.py`, browser E2E (`puppeteer-core` removed in `v2.0.240`).
+
 ## [2.0.265] - 2026-11-21
 
 ### Added

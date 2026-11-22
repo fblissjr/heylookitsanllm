@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from pathlib import Path
@@ -24,11 +23,7 @@ from heylook_llm.auth import (
     is_loopback_host,
     log_startup_access_state,
     manage_access_key,
-    op_ref_sidecar_path,
-    parse_op_reference,
     resolve_access_key,
-    save_key_to_1password,
-    validate_op_vault,
     verify_api_key,
 )
 from heylook_llm.config import AppConfig
@@ -235,6 +230,11 @@ class TestKeySubcommandLifecycle:
     ):
         key_file = tmp_path / "nested" / "api_key"
         monkeypatch.setenv("HEYLOOK_API_KEY_FILE", str(key_file))
+        # Ensure zero external subprocess calls (no op, no pbcopy) on plain create/rotate/status
+        monkeypatch.setattr(
+            "heylook_llm.auth.subprocess.run",
+            lambda *a, **kw: (_ for _ in ()).throw(AssertionError("unexpected subprocess call")),
+        )
 
         old_umask = os.umask(0o022)
         try:
@@ -247,6 +247,7 @@ class TestKeySubcommandLifecycle:
         assert len(key1) >= 40
         assert (key_file.stat().st_mode & 0o777) == 0o600
         assert resolve_access_key().key == key1
+        assert list(key_file.parent.iterdir()) == [key_file]
 
         # Accidental re-run without --rotate refuses and leaves key1 intact
         with pytest.raises(FileExistsError, match="--rotate"):
@@ -254,21 +255,26 @@ class TestKeySubcommandLifecycle:
         assert key_file.read_text(encoding="utf-8").strip() == key1
 
         rc_refused = manage_access_key(
-            types.SimpleNamespace(action="create", rotate=False, copy=False, local_only=True)
+            types.SimpleNamespace(action="create", rotate=False, copy=False)
         )
         assert rc_refused == 1
         assert key_file.read_text(encoding="utf-8").strip() == key1
 
-        # Mint a browser session under key1, then rotate -> session is invalidated
+        # Mint a browser session under key1, then rotate via CLI -> session is invalidated
         tok = get_session_store().create(key1)
         assert get_session_store().verify(tok, key1) is True
 
-        key2, _ = create_access_key(rotate=True)
+        rc_rotated = manage_access_key(
+            types.SimpleNamespace(action="create", rotate=True, copy=False)
+        )
+        assert rc_rotated == 0
+        key2 = key_file.read_text(encoding="utf-8").strip()
         assert key2 != key1
         assert key2.startswith("hlk_")
         assert (key_file.stat().st_mode & 0o777) == 0o600
         assert resolve_access_key().key == key2
         assert get_session_store().verify(tok, key2) is False
+        assert list(key_file.parent.iterdir()) == [key_file]
 
     def test_create_refuses_symlink_target(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -283,258 +289,73 @@ class TestKeySubcommandLifecycle:
             create_access_key(rotate=True)
         assert victim.read_text(encoding="utf-8") == "keep-me\n"
 
-    @pytest.mark.parametrize("disallowed", ["Private", "private", "Personal", "Employee", "Shared"])
-    def test_rejects_vaults_inaccessible_to_1password_service_accounts(self, disallowed: str):
-        with pytest.raises(ValueError, match="service accounts"):
-            validate_op_vault(disallowed)
-        with pytest.raises(ValueError, match="service accounts"):
-            parse_op_reference(f"op://{disallowed}/heylook/password")
-
-        assert validate_op_vault("Homelab") == "Homelab"
-        assert parse_op_reference("op://Homelab/heylook/password") == ("Homelab", "heylook", "password")
-
-    def test_1password_master_copy_create_status_rotate_and_sync(
+    def test_cli_status_copy_and_clear_report_only_gate_and_file_health(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ):
         key_file = tmp_path / "api_key"
         monkeypatch.delenv("HEYLOOK_API_KEY", raising=False)
-        monkeypatch.delenv("HEYLOOK_OP_REF", raising=False)
-        monkeypatch.delenv("HEYLOOK_OP_VAULT", raising=False)
-        monkeypatch.setenv("HEYLOOK_API_KEY_FILE", str(key_file))
-        monkeypatch.setattr("heylook_llm.auth.shutil.which", lambda name: "/opt/homebrew/bin/op")
 
-        # In-memory fake 1Password vault store keyed by (vault, title)
-        vault_items: dict[tuple[str, str], dict] = {}
-        op_locked = False
+        # Unset -> OFF (single line, no external calls)
+        monkeypatch.setenv("HEYLOOK_API_KEY_FILE", "")
+        assert manage_access_key(types.SimpleNamespace(action="status")) == 0
+        off_out = capsys.readouterr()
+        assert off_out.out.strip() == "Access gate: OFF (unset; run 'heylookllm key create --copy' to enable)"
+        assert off_out.err == ""
+
+        monkeypatch.setenv("HEYLOOK_API_KEY_FILE", str(key_file))
         copied_payloads: list[bytes] = []
 
-        def _fake_subprocess_run(cmd, *, input=None, capture_output=False, text=False, **kwargs):
-            if cmd == ["pbcopy"]:
-                copied_payloads.append(input)
-                return subprocess.CompletedProcess(cmd, 0, "", "")
+        def _fake_run(cmd, *, input=None, check=False, **kwargs):
+            assert cmd == ["pbcopy"]
+            copied_payloads.append(input)
+            return subprocess.CompletedProcess(cmd, 0)
 
-            assert cmd[0] == "op"
-            # Secret values must NEVER appear on op's command line (argv)
-            for item_doc in vault_items.values():
-                for f in item_doc.get("fields", []):
-                    val = f.get("value")
-                    if val and val.startswith("hlk_"):
-                        assert all(val not in arg for arg in cmd)
+        monkeypatch.setattr("heylook_llm.auth.subprocess.run", _fake_run)
+        rc = manage_access_key(types.SimpleNamespace(action="create", rotate=False, copy=True))
+        assert rc == 0
+        captured = capsys.readouterr()
+        created_key = key_file.read_text(encoding="utf-8").strip()
+        assert copied_payloads == [created_key.encode("utf-8")]
+        assert created_key not in captured.out
+        assert created_key not in captured.err
+        assert list(tmp_path.iterdir()) == [key_file]
 
-            if op_locked:
-                return subprocess.CompletedProcess(cmd, 1, "", "[ERROR] 1Password is locked")
-
-            if cmd[:3] == ["op", "read", "--no-newline"]:
-                vault, title, field = parse_op_reference(cmd[3])
-                doc = vault_items.get((vault, title))
-                if not doc:
-                    return subprocess.CompletedProcess(cmd, 1, "", f'"{title}" isn\'t an item')
-                for f in doc.get("fields", []):
-                    if f.get("id") == field or f.get("label") == field:
-                        return subprocess.CompletedProcess(cmd, 0, f["value"], "")
-                return subprocess.CompletedProcess(cmd, 1, "", "field not found")
-
-            if cmd[:3] == ["op", "item", "get"]:
-                title = cmd[3]
-                vault = cmd[cmd.index("--vault") + 1]
-                doc = vault_items.get((vault, title))
-                if not doc:
-                    return subprocess.CompletedProcess(
-                        cmd, 1, "", f'[ERROR] "{title}" isn\'t an item in the "{vault}" vault.'
-                    )
-                return subprocess.CompletedProcess(cmd, 0, json.dumps(doc), "")
-
-            if cmd[:3] == ["op", "item", "create"]:
-                assert "-" in cmd
-                assert input is not None
-                vault = cmd[cmd.index("--vault") + 1]
-                payload = json.loads(input.decode("utf-8"))
-                # Verify secret was NOT in cmd argv during create either
-                for f in payload.get("fields", []):
-                    val = f.get("value")
-                    if val and val.startswith("hlk_"):
-                        assert all(val not in arg for arg in cmd)
-                doc = {
-                    "id": "item-uuid-1",
-                    "title": payload["title"],
-                    "category": payload["category"],
-                    "vault": {"name": vault},
-                    "fields": payload["fields"],
-                    "urls": payload.get("urls", []),
-                }
-                vault_items[(vault, payload["title"])] = doc
-                return subprocess.CompletedProcess(cmd, 0, json.dumps(doc), "")
-
-            if cmd[:3] == ["op", "item", "edit"]:
-                assert input is not None
-                vault = cmd[cmd.index("--vault") + 1]
-                payload = json.loads(input.decode("utf-8"))
-                for f in payload.get("fields", []):
-                    val = f.get("value")
-                    if val and val.startswith("hlk_"):
-                        assert all(val not in arg for arg in cmd)
-                vault_items[(vault, payload["title"])] = payload
-                return subprocess.CompletedProcess(cmd, 0, json.dumps(payload), "")
-
-            raise AssertionError(f"Unexpected command: {cmd}")
-
-        monkeypatch.setattr("heylook_llm.auth.subprocess.run", _fake_subprocess_run)
-
-        # 1. Refuses built-in Private vault on create
-        rc_priv = manage_access_key(
-            types.SimpleNamespace(action="create", vault="Private", rotate=False, copy=False, local_only=False)
-        )
-        assert rc_priv == 1
-        assert "service accounts" in capsys.readouterr().err
-        assert not key_file.exists()
-
-        # 2. Create in dedicated 'Homelab' vault writes both 1Password item and mode-0600 file
-        rc_create = manage_access_key(
-            types.SimpleNamespace(
-                action="create",
-                vault="Homelab",
-                item="heylook",
-                url="https://heylook.lan.example",
-                rotate=False,
-                copy=True,
-                local_only=False,
-            )
-        )
-        assert rc_create == 0
-        out_create = capsys.readouterr()
-        key1 = key_file.read_text(encoding="utf-8").strip()
-        assert key1.startswith("hlk_")
-        assert (key_file.stat().st_mode & 0o777) == 0o600
-        assert op_ref_sidecar_path(key_file).read_text(encoding="utf-8").strip() == "op://Homelab/heylook/password"
-        assert (op_ref_sidecar_path(key_file).stat().st_mode & 0o777) == 0o600
-        assert copied_payloads == [key1.encode("utf-8")]
-        assert key1 not in out_create.out
-        assert key1 not in out_create.err
-
-        # 3. status (with no flags -- uses .op_ref sidecar) reports IN SYNC without printing either key
+        # status reports only gate state & file source without printing the key
         assert manage_access_key(types.SimpleNamespace(action="status")) == 0
-        status_in_sync = capsys.readouterr().out
-        assert "Access gate: ON" in status_in_sync
-        assert "1Password: IN SYNC (op://Homelab/heylook/password)" in status_in_sync
-        assert key1 not in status_in_sync
+        status_out = capsys.readouterr()
+        assert status_out.out.strip().startswith("Access gate: ON (source: file -> ")
+        assert "\n" not in status_out.out.strip()
+        assert created_key not in status_out.out
+        assert status_out.err == ""
 
-        # 4. External update in 1Password -> status reports OUT OF SYNC; sync rewrites mode-0600 file
-        external_key = "hlk_updated_in_1password_master_copy_999"
-        for f in vault_items[("Homelab", "heylook")]["fields"]:
-            if f.get("id") == "password":
-                f["value"] = external_key
+        # Misconfigured permissions make status report MISCONFIGURED (exit 1)
+        key_file.chmod(0o644)
+        assert manage_access_key(types.SimpleNamespace(action="status")) == 1
+        mis_out = capsys.readouterr()
+        assert "Access gate: MISCONFIGURED" in mis_out.err
+        assert "chmod 600" in mis_out.err
+        assert created_key not in mis_out.err
+        key_file.chmod(0o600)
 
-        assert manage_access_key(types.SimpleNamespace(action="status")) == 0
-        status_drift = capsys.readouterr().out
-        assert "1Password: OUT OF SYNC" in status_drift
-        assert key1 not in status_drift
-        assert external_key not in status_drift
-
-        assert manage_access_key(types.SimpleNamespace(action="sync", seed=False)) == 0
-        capsys.readouterr()
-        assert key_file.read_text(encoding="utf-8").strip() == external_key
-        assert (key_file.stat().st_mode & 0o777) == 0o600
-        assert resolve_access_key().key == external_key
-
-        # 5. Locked 1Password NEVER fails closed: server & status keep using existing file,
-        #    and sync / create --rotate leave the existing file untouched!
-        op_locked = True
-        assert resolve_access_key().key == external_key
-        assert manage_access_key(types.SimpleNamespace(action="status")) == 0
-        locked_status = capsys.readouterr().out
-        assert "Access gate: ON" in locked_status
-        assert "1Password: unavailable" in locked_status
-        assert "keeping existing" in locked_status
-
-        assert manage_access_key(types.SimpleNamespace(action="sync", seed=False)) == 1
-        assert "keeping existing" in capsys.readouterr().err
-        assert key_file.read_text(encoding="utf-8").strip() == external_key
-
-        assert manage_access_key(
-            types.SimpleNamespace(action="create", rotate=True, copy=False, local_only=False)
-        ) == 1
-        assert "keeping existing" in capsys.readouterr().err
-        assert key_file.read_text(encoding="utf-8").strip() == external_key
-
-        # 6. Unlocking and running create --rotate updates both 1Password and mode-0600 file
-        op_locked = False
-        assert manage_access_key(
-            types.SimpleNamespace(action="create", rotate=True, copy=False, local_only=False)
-        ) == 0
-        capsys.readouterr()
-        rotated_key = key_file.read_text(encoding="utf-8").strip()
-        assert rotated_key != external_key
-        assert rotated_key.startswith("hlk_")
-        assert manage_access_key(types.SimpleNamespace(action="status")) == 0
-        assert "1Password: IN SYNC" in capsys.readouterr().out
-
-        # 7. Refuses JSON template edit if an existing item contains a PASSKEY field
-        vault_items[("Homelab", "heylook")]["fields"].append({"id": "pk1", "type": "PASSKEY"})
-        with pytest.raises(RuntimeError, match="passkey"):
-            save_key_to_1password("hlk_other", op_ref="op://Homelab/heylook/password", overwrite=True)
-
-        # 8. clear removes local file & sidecar while leaving 1Password item intact
+        # clear removes file and turns gate back off
         existed, _ = clear_access_key()
         assert existed is True
         assert not key_file.exists()
-        assert not op_ref_sidecar_path(key_file).exists()
-        assert ("Homelab", "heylook") in vault_items
 
-    def test_sync_seed_uploads_existing_local_key_without_rotating(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ):
-        key_file = tmp_path / "api_key"
-        existing_secret = "existing-handmade-openssl-key-0123456789"
-        key_file.write_text(f"{existing_secret}\n", encoding="utf-8")
-        key_file.chmod(0o600)
-        monkeypatch.setenv("HEYLOOK_API_KEY_FILE", str(key_file))
-        monkeypatch.setattr("heylook_llm.auth.shutil.which", lambda name: "/opt/homebrew/bin/op")
-
-        stored: dict[str, str] = {}
-
-        def _fake_op(cmd, *, input=None, **kwargs):
-            if cmd[:3] == ["op", "item", "get"]:
-                if "secret" not in stored:
-                    return subprocess.CompletedProcess(cmd, 1, "", 'isn\'t an item')
-                doc = {
-                    "id": "id1",
-                    "title": "heylook",
-                    "vault": {"name": "Homelab"},
-                    "fields": [{"id": "password", "purpose": "PASSWORD", "value": stored["secret"]}],
-                }
-                return subprocess.CompletedProcess(cmd, 0, json.dumps(doc), "")
-            if cmd[:3] == ["op", "item", "create"]:
-                payload = json.loads(input.decode("utf-8"))
-                for f in payload["fields"]:
-                    if f["id"] == "password":
-                        stored["secret"] = f["value"]
-                return subprocess.CompletedProcess(cmd, 0, json.dumps(payload), "")
-            raise AssertionError(f"Unexpected cmd: {cmd}")
-
-        monkeypatch.setattr("heylook_llm.auth.subprocess.run", _fake_op)
-        rc = manage_access_key(types.SimpleNamespace(action="sync", seed=True, vault="Homelab"))
-        assert rc == 0
-        out = capsys.readouterr()
-        assert stored["secret"] == existing_secret
-        assert key_file.read_text(encoding="utf-8").strip() == existing_secret
-        assert existing_secret not in out.out
-        assert op_ref_sidecar_path(key_file).read_text(encoding="utf-8").strip() == "op://Homelab/heylook/password"
-
-    def test_server_cli_key_status_runs_fast_without_starting_uvicorn(self, tmp_path: Path):
+    def test_server_cli_key_status_runs_fast_without_starting_uvicorn(self):
         env = {
             **os.environ,
             "HEYLOOK_API_KEY": "",
             "HEYLOOK_API_KEY_FILE": "",
-            "HEYLOOK_OP_REF": "",
-            "HEYLOOK_OP_VAULT": "",
         }
         proc = subprocess.run(
             [sys.executable, "-m", "heylook_llm.server", "key", "status"],
             env=env,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=10,
             check=False,
         )
         assert proc.returncode == 0
-        assert "Access gate: OFF" in proc.stdout
+        assert proc.stdout.strip() == "Access gate: OFF (unset; run 'heylookllm key create --copy' to enable)"

@@ -58,7 +58,6 @@ import os
 from pathlib import Path
 import re
 import secrets
-import shutil
 import subprocess
 import sys
 import threading
@@ -76,20 +75,6 @@ logger = logging.getLogger(__name__)
 API_KEY_ENV = "HEYLOOK_API_KEY"
 API_KEY_FILE_ENV = "HEYLOOK_API_KEY_FILE"
 DEFAULT_API_KEY_PATH = Path.home() / ".heylook" / "api_key"
-OP_REF_ENV = "HEYLOOK_OP_REF"
-OP_VAULT_ENV = "HEYLOOK_OP_VAULT"
-OP_ITEM_ENV = "HEYLOOK_OP_ITEM"
-DEFAULT_OP_ITEM = "heylook"
-DEFAULT_OP_FIELD = "password"
-
-# 1Password service accounts cannot be granted these built-in vaults, so
-# headless peer machines using a service account could not `op read` from them.
-DISALLOWED_SERVICE_ACCOUNT_VAULTS: frozenset[str] = frozenset({
-    "private",
-    "personal",
-    "employee",
-    "shared",
-})
 
 SESSION_COOKIE_NAME = "heylook_session"
 SESSION_TTL_SECONDS = 30 * 86400  # 30 days
@@ -157,9 +142,6 @@ class AccessKeyState:
 _file_cache_lock = threading.Lock()
 _file_cache_stamp: tuple[str, int, int, int] | None = None
 _file_cache_state: AccessKeyState | None = None
-
-_OP_REF_RE = re.compile(r"^op://([^/\r\n]+)/([^/\r\n]+)/([^\r\n]+)$")
-_OP_SUBPROCESS_TIMEOUT = 30
 
 
 def _read_key_file(key_path: Path, *, explicit: bool) -> AccessKeyState:
@@ -255,12 +237,7 @@ def _read_key_file(key_path: Path, *, explicit: bool) -> AccessKeyState:
 
 
 def resolve_access_key() -> AccessKeyState:
-    """Resolve the active access key from env or mode-600 file (never heylook.toml or 1Password).
-
-    Runtime deliberately reads the local mode-0600 file rather than calling
-    ``op``, so unattended restarts after a reboot never block or fail closed on
-    a locked 1Password vault.
-    """
+    """Resolve the active access key from env or mode-600 file (never heylook.toml)."""
     env_key = os.environ.get(API_KEY_ENV, "").strip()
     if env_key:
         return AccessKeyState(
@@ -933,12 +910,6 @@ def target_api_key_path() -> Path:
     return DEFAULT_API_KEY_PATH
 
 
-def op_ref_sidecar_path(key_path: Path | None = None) -> Path:
-    """Mode-0600 sidecar storing the linked ``op://<vault>/<item>/<field>`` pointer."""
-    target = key_path if key_path is not None else target_api_key_path()
-    return target.parent / f"{target.name}.op_ref"
-
-
 def _reset_file_cache() -> None:
     global _file_cache_stamp, _file_cache_state
     with _file_cache_lock:
@@ -997,7 +968,7 @@ def write_access_key_file(
     if target.exists() and not overwrite:
         raise FileExistsError(
             f"Key file already exists at {shown}. Pass --rotate to replace it "
-            "(invalidates active browser sessions and requires updating clients)."
+            "(invalidates active browser sessions and requires updating remote clients)."
         )
 
     _atomic_write_0600(target, f"{cleaned}\n")
@@ -1013,321 +984,19 @@ def create_access_key(*, rotate: bool = False, key_path: Path | None = None) -> 
 
 
 def clear_access_key(*, key_path: Path | None = None) -> tuple[bool, Path]:
-    """Delete the configured key file (and its ``.op_ref`` sidecar) if present."""
+    """Delete the configured key file if present."""
     target = key_path if key_path is not None else target_api_key_path()
     existed = target.exists() or target.is_symlink()
     target.unlink(missing_ok=True)
-    op_ref_sidecar_path(target).unlink(missing_ok=True)
     _reset_file_cache()
     return existed, target
 
 
-def validate_op_vault(vault: str) -> str:
-    """Ensure ``vault`` is non-empty, safe for CLI flags, and usable by 1Password service accounts."""
-    cleaned = (vault or "").strip()
-    if not cleaned or cleaned.startswith("-") or "/" in cleaned:
-        raise ValueError(f"Invalid 1Password vault name: {vault!r}")
-    if cleaned.lower() in DISALLOWED_SERVICE_ACCOUNT_VAULTS:
-        raise ValueError(
-            f"Refusing 1Password vault '{cleaned}': 1Password service accounts cannot be granted "
-            "the built-in Private, Personal, Employee, or default Shared vaults. Choose a "
-            "dedicated vault (for example --vault Homelab) so peer machines can 'op read' the item."
-        )
-    return cleaned
-
-
-def parse_op_reference(op_ref: str) -> tuple[str, str, str]:
-    """Parse and validate ``op://<vault>/<item>/<field>`` (enforcing service-account vault rule)."""
-    ref = (op_ref or "").strip()
-    m = _OP_REF_RE.match(ref)
-    if not m:
-        raise ValueError(
-            "Invalid 1Password secret reference: expected 'op://<vault>/<item>/<field>'."
-        )
-    vault = validate_op_vault(m.group(1))
-    item = m.group(2).strip()
-    field = m.group(3).strip()
-    if not item or item.startswith("-") or not field:
-        raise ValueError(
-            "Invalid 1Password secret reference: item and field must be non-empty."
-        )
-    return vault, item, field
-
-
-def resolve_configured_op_ref(
-    *,
-    op_ref: str | None = None,
-    vault: str | None = None,
-    item: str | None = None,
-    key_path: Path | None = None,
-) -> str | None:
-    """Resolve the active ``op://<vault>/<item>/<field>`` pointer from args, env, or sidecar."""
-    raw_ref = (op_ref or os.environ.get(OP_REF_ENV, "")).strip()
-    if raw_ref:
-        v, it, fld = parse_op_reference(raw_ref)
-        return f"op://{v}/{it}/{fld}"
-
-    raw_vault = (vault or os.environ.get(OP_VAULT_ENV, "")).strip()
-    raw_item = (item or os.environ.get(OP_ITEM_ENV, "")).strip()
-    sidecar = op_ref_sidecar_path(key_path)
-    stored_ref = ""
-    if sidecar.is_file() and not sidecar.is_symlink():
-        try:
-            stored_ref = sidecar.read_text(encoding="utf-8").strip()
-        except OSError:
-            stored_ref = ""
-
-    if raw_vault:
-        v = validate_op_vault(raw_vault)
-        it = raw_item or DEFAULT_OP_ITEM
-        if it.startswith("-") or "/" in it:
-            raise ValueError(f"Invalid 1Password item title: {it!r}")
-        return f"op://{v}/{it}/{DEFAULT_OP_FIELD}"
-
-    if stored_ref:
-        v, stored_item, fld = parse_op_reference(stored_ref)
-        it = raw_item or stored_item
-        if it.startswith("-") or "/" in it:
-            raise ValueError(f"Invalid 1Password item title: {it!r}")
-        return f"op://{v}/{it}/{fld}"
-
-    return None
-
-
-def _require_op_binary() -> str:
-    op_bin = shutil.which("op")
-    if not op_bin:
-        raise RuntimeError("1Password CLI ('op') is not installed or not on PATH.")
-    return op_bin
-
-
-def read_1password_secret(op_ref: str) -> str:
-    """Read a secret reference (``op://<vault>/<item>/<field>``) via ``op read``."""
-    v, it, fld = parse_op_reference(op_ref)
-    canonical_ref = f"op://{v}/{it}/{fld}"
-    _require_op_binary()
-    proc = subprocess.run(
-        ["op", "read", "--no-newline", canonical_ref],
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        timeout=_OP_SUBPROCESS_TIMEOUT,
-        check=False,
-    )
-    if proc.returncode != 0:
-        detail = _clean_log_token((proc.stderr or proc.stdout or "op read failed").strip(), 240)
-        raise RuntimeError(detail)
-    secret = proc.stdout.strip()
-    if not secret:
-        raise RuntimeError(f"1Password item {canonical_ref} resolved to an empty value.")
-    return secret
-
-
-def _extract_op_item_field(item_doc: dict[str, Any], field_name: str) -> str | None:
-    fields = item_doc.get("fields") or []
-    want_lower = field_name.lower()
-    for f in fields:
-        if not isinstance(f, dict):
-            continue
-        if want_lower == "password" and (f.get("purpose") or "").upper() == "PASSWORD":
-            val = f.get("value")
-            return str(val).strip() if val is not None else None
-        if str(f.get("id") or "").lower() == want_lower or str(f.get("label") or "").lower() == want_lower:
-            val = f.get("value")
-            return str(val).strip() if val is not None else None
-    return None
-
-
-def save_key_to_1password(
-    secret: str,
-    *,
-    op_ref: str,
-    url: str | None = None,
-    overwrite: bool = False,
-) -> tuple[str, bool]:
-    """Write ``secret`` to 1Password via JSON template on stdin (never in ``argv``).
-
-    Returns ``(canonical_op_ref, created_or_updated)``.
-    """
-    cleaned_secret = (secret or "").strip()
-    if not cleaned_secret:
-        raise ValueError("Refusing to store an empty key in 1Password.")
-    vault, item, field = parse_op_reference(op_ref)
-    canonical_ref = f"op://{vault}/{item}/{field}"
-
-    cleaned_url = (url or "").strip() or None
-    if cleaned_url:
-        parsed_url = urllib.parse.urlsplit(cleaned_url)
-        if parsed_url.scheme.lower() not in ("http", "https") or not parsed_url.hostname:
-            raise ValueError(f"Invalid --url '{cleaned_url}': expected an http:// or https:// URL.")
-
-    _require_op_binary()
-    probe = subprocess.run(
-        ["op", "item", "get", item, "--vault", vault, "--format=json"],
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        timeout=_OP_SUBPROCESS_TIMEOUT,
-        check=False,
-    )
-
-    if probe.returncode == 0:
-        try:
-            existing = json.loads(probe.stdout)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"Malformed JSON from 'op item get': {exc}") from exc
-
-        fields = list(existing.get("fields") or [])
-        if any(isinstance(f, dict) and (f.get("type") or "").upper() == "PASSKEY" for f in fields):
-            raise RuntimeError(
-                f"Refusing JSON template edit on 1Password item '{item}' because it contains a passkey."
-            )
-
-        current_val = _extract_op_item_field(existing, field)
-        urls_list = list(existing.get("urls") or [])
-        has_url = (not cleaned_url) or any(
-            isinstance(u, dict) and u.get("href") == cleaned_url for u in urls_list
-        )
-        if current_val and verify_api_key(current_val, cleaned_secret) and has_url:
-            return canonical_ref, False
-
-        if not overwrite:
-            raise FileExistsError(
-                f"1Password item '{item}' already exists in vault '{vault}'. "
-                "Pass --rotate to replace its stored key, or run 'heylookllm key sync' to pull from 1Password."
-            )
-
-        updated_field = False
-        want_lower = field.lower()
-        for f in fields:
-            if not isinstance(f, dict):
-                continue
-            if (want_lower == "password" and (f.get("purpose") or "").upper() == "PASSWORD") or (
-                str(f.get("id") or "").lower() == want_lower
-                or str(f.get("label") or "").lower() == want_lower
-            ):
-                f["value"] = cleaned_secret
-                updated_field = True
-                break
-        if not updated_field:
-            new_field: dict[str, Any] = {
-                "id": field,
-                "type": "CONCEALED",
-                "label": field,
-                "value": cleaned_secret,
-            }
-            if want_lower == "password":
-                new_field["purpose"] = "PASSWORD"
-            fields.append(new_field)
-        existing["fields"] = fields
-
-        if cleaned_url and not has_url:
-            for u in urls_list:
-                if isinstance(u, dict):
-                    u["primary"] = False
-            urls_list.insert(0, {"primary": True, "href": cleaned_url})
-            existing["urls"] = urls_list
-
-        item_id = str(existing.get("id") or item)
-        edit_proc = subprocess.run(
-            ["op", "item", "edit", item_id, "--vault", vault, "--format=json"],
-            input=json.dumps(existing).encode("utf-8"),
-            capture_output=True,
-            text=True,
-            timeout=_OP_SUBPROCESS_TIMEOUT,
-            check=False,
-        )
-        if edit_proc.returncode != 0:
-            detail = _clean_log_token((edit_proc.stderr or edit_proc.stdout or "op item edit failed").strip(), 240)
-            raise RuntimeError(detail)
-        return canonical_ref, True
-
-    stderr_lower = (probe.stderr or "").lower()
-    if "isn't an item" not in stderr_lower and "not found" not in stderr_lower:
-        detail = _clean_log_token((probe.stderr or probe.stdout or "op item get failed").strip(), 240)
-        raise RuntimeError(detail)
-
-    is_password_field = field.lower() == "password"
-    template_fields: list[dict[str, Any]] = []
-    if is_password_field:
-        template_fields.extend([
-            {
-                "id": "username",
-                "type": "STRING",
-                "purpose": "USERNAME",
-                "label": "username",
-                "value": "heylook",
-            },
-            {
-                "id": "password",
-                "type": "CONCEALED",
-                "purpose": "PASSWORD",
-                "label": "password",
-                "value": cleaned_secret,
-            },
-        ])
-    else:
-        template_fields.append({
-            "id": field,
-            "type": "CONCEALED",
-            "label": field,
-            "value": cleaned_secret,
-        })
-
-    template: dict[str, Any] = {
-        "title": item,
-        "category": "LOGIN" if is_password_field else "API_CREDENTIAL",
-        "fields": template_fields,
-    }
-    if cleaned_url:
-        template["urls"] = [{"primary": True, "href": cleaned_url}]
-
-    create_proc = subprocess.run(
-        ["op", "item", "create", "--vault", vault, "--format=json", "-"],
-        input=json.dumps(template).encode("utf-8"),
-        capture_output=True,
-        text=True,
-        timeout=_OP_SUBPROCESS_TIMEOUT,
-        check=False,
-    )
-    if create_proc.returncode != 0:
-        detail = _clean_log_token((create_proc.stderr or create_proc.stdout or "op item create failed").strip(), 240)
-        raise RuntimeError(detail)
-    return canonical_ref, True
-
-
-def sync_key_from_1password(
-    *,
-    op_ref: str,
-    key_path: Path | None = None,
-) -> tuple[Path, bool]:
-    """Read the master key from 1Password and atomically rewrite the mode-0600 key file.
-
-    Returns ``(target_path, changed)``. If ``op`` is missing or locked, raises
-    ``RuntimeError`` BEFORE touching the existing key file.
-    """
-    secret = read_1password_secret(op_ref)
-    target = key_path if key_path is not None else target_api_key_path()
-    already_matches = False
-    if target.is_file() and not target.is_symlink():
-        existing_state = _read_key_file(target, explicit=True)
-        if not existing_state.error and existing_state.key and verify_api_key(existing_state.key, secret):
-            already_matches = True
-
-    write_access_key_file(secret, overwrite=True, key_path=target)
-    _atomic_write_0600(op_ref_sidecar_path(target), f"{op_ref}\n")
-    return target, not already_matches
-
-
 def manage_access_key(args: Any) -> int:
-    """CLI handler for ``heylookllm key [status|create|sync|clear]``."""
+    """CLI handler for ``heylookllm key [status|create|clear]`` (plain mode-0600 file only)."""
     action = getattr(args, "action", "status") or "status"
     target = target_api_key_path()
     shown = _display_path(target)
-    arg_op_ref = getattr(args, "op_ref", None)
-    arg_vault = getattr(args, "vault", None)
-    arg_item = getattr(args, "item", None)
-    arg_url = getattr(args, "url", None)
 
     if action == "status":
         state = resolve_access_key()
@@ -1340,100 +1009,21 @@ def manage_access_key(args: Any) -> int:
         if state.enabled:
             print(f"Access gate: ON (source: {state.source} -> {state.source_detail})")
         else:
-            print(f"Access gate: OFF (unset; run 'heylookllm key create --vault <vault>' to enable)")
+            print("Access gate: OFF (unset; run 'heylookllm key create --copy' to enable)")
         if os.environ.get(_ADMIN_TOKEN_ENV, "").strip():
             print("Admin second factor: ON (HEYLOOK_ADMIN_TOKEN; note: web UI never sends this header)")
-
-        try:
-            configured_ref = resolve_configured_op_ref(
-                op_ref=arg_op_ref, vault=arg_vault, item=arg_item, key_path=target,
-            )
-        except ValueError as exc:
-            print(f"1Password: {exc}", file=sys.stderr)
-            return 0
-
-        if not configured_ref:
-            print("1Password: not linked (pass --vault <service-account-vault> to 'sync' or 'create')")
-            return 0
-
-        try:
-            op_secret = read_1password_secret(configured_ref)
-        except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
-            fallback = f"keeping existing {shown}" if state.enabled else "gate remains OFF"
-            print(f"1Password: unavailable ({exc}); {fallback}.")
-            return 0
-
-        if not state.enabled or not state.key:
-            print(
-                f"1Password: item present at {configured_ref}, but {shown} is absent "
-                "(run 'heylookllm key sync' to materialize mode-0600 file)."
-            )
-            return 0
-
-        if verify_api_key(state.key, op_secret):
-            print(f"1Password: IN SYNC ({configured_ref})")
-        else:
-            print(
-                f"1Password: OUT OF SYNC with {configured_ref} "
-                f"(run 'heylookllm key sync' to rewrite {shown} from 1Password)"
-            )
         return 0
 
     if action == "create":
         rotate = bool(getattr(args, "rotate", False))
         copy_to_clipboard = bool(getattr(args, "copy", False))
-        local_only = bool(getattr(args, "local_only", False))
-
-        if target.is_symlink():
-            print(f"Error: Refusing to write through symlink {shown}.", file=sys.stderr)
-            return 1
-        if target.exists() and not rotate:
-            print(
-                f"Error: Key file already exists at {shown}. Pass --rotate to replace it "
-                "(invalidates active browser sessions and requires updating clients).",
-                file=sys.stderr,
-            )
-            return 1
-
-        new_key = f"hlk_{secrets.token_urlsafe(32)}"
-        saved_op_ref: str | None = None
-
-        if not local_only:
-            try:
-                configured_ref = resolve_configured_op_ref(
-                    op_ref=arg_op_ref, vault=arg_vault, item=arg_item, key_path=target,
-                )
-            except ValueError as exc:
-                print(f"Error: {exc}", file=sys.stderr)
-                return 1
-            if not configured_ref:
-                print(
-                    "Error: 1Password vault required for master copy: pass --vault <vault> "
-                    "(not Private, Personal, Employee, or Shared so service accounts can read it), "
-                    "or pass --local-only to write only the mode-0600 file.",
-                    file=sys.stderr,
-                )
-                return 1
-            try:
-                saved_op_ref, _ = save_key_to_1password(
-                    new_key, op_ref=configured_ref, url=arg_url, overwrite=rotate,
-                )
-            except FileExistsError as exc:
-                print(f"Error: {exc}", file=sys.stderr)
-                return 1
-            except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
-                kept = f"; keeping existing {shown} unchanged" if target.exists() else ""
-                print(f"Error: 1Password unavailable ({exc}){kept}.", file=sys.stderr)
-                return 1
-
         try:
-            write_access_key_file(new_key, overwrite=rotate, key_path=target)
-            if saved_op_ref:
-                _atomic_write_0600(op_ref_sidecar_path(target), f"{saved_op_ref}\n")
+            new_key, target = create_access_key(rotate=rotate)
         except (FileExistsError, RuntimeError, OSError, ValueError) as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 1
 
+        shown = _display_path(target)
         verb = "Rotated" if rotate else "Created"
         if copy_to_clipboard:
             try:
@@ -1444,17 +1034,9 @@ def manage_access_key(args: Any) -> int:
                     file=sys.stderr,
                 )
                 return 1
-
-        if saved_op_ref:
-            clip_note = " and copied to clipboard" if copy_to_clipboard else ""
-            print(
-                f"{verb} access key in 1Password ({saved_op_ref}) and wrote {shown} (mode 0600){clip_note}."
-            )
-            print(f"Peer clients using a 1Password service account can read: op read \"{saved_op_ref}\"")
-        elif copy_to_clipboard:
-            print(f"{verb} local-only access key at {shown} (mode 0600) and copied to clipboard.")
+            print(f"{verb} access key at {shown} (mode 0600) and copied to clipboard.")
         else:
-            print(f"{verb} local-only access key at {shown} (mode 0600):")
+            print(f"{verb} access key at {shown} (mode 0600):")
             print(new_key)
 
         if os.environ.get(API_KEY_ENV, "").strip():
@@ -1464,64 +1046,6 @@ def manage_access_key(args: Any) -> int:
             )
         return 0
 
-    if action == "sync":
-        seed_from_file = bool(getattr(args, "seed", False))
-        try:
-            configured_ref = resolve_configured_op_ref(
-                op_ref=arg_op_ref, vault=arg_vault, item=arg_item, key_path=target,
-            )
-        except ValueError as exc:
-            print(f"Error: {exc}", file=sys.stderr)
-            return 1
-
-        if not configured_ref:
-            print(
-                "Error: 1Password vault required: pass --vault <vault> (not Private, Personal, "
-                "Employee, or Shared so service accounts can read it).",
-                file=sys.stderr,
-            )
-            return 1
-
-        if seed_from_file:
-            file_state = _read_key_file(target, explicit=True)
-            if file_state.error or not file_state.key:
-                print(
-                    f"Error: Cannot seed 1Password from {shown}: {file_state.error or 'file is empty'}.",
-                    file=sys.stderr,
-                )
-                return 1
-            try:
-                saved_ref, changed = save_key_to_1password(
-                    file_state.key, op_ref=configured_ref, url=arg_url, overwrite=False,
-                )
-                _atomic_write_0600(op_ref_sidecar_path(target), f"{saved_ref}\n")
-            except FileExistsError as exc:
-                print(f"Error: {exc}", file=sys.stderr)
-                return 1
-            except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
-                print(
-                    f"Error: 1Password unavailable ({exc}); keeping existing {shown} unchanged.",
-                    file=sys.stderr,
-                )
-                return 1
-            status_word = "Seeded" if changed else "Verified"
-            print(f"{status_word} 1Password master item ({saved_ref}) from existing {shown} (mode 0600).")
-            print(f"Peer clients using a 1Password service account can read: op read \"{saved_ref}\"")
-            return 0
-
-        try:
-            _, changed = sync_key_from_1password(op_ref=configured_ref, key_path=target)
-        except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
-            kept = f"; keeping existing {shown} unchanged" if target.exists() else ""
-            print(f"Error: 1Password unavailable ({exc}){kept}.", file=sys.stderr)
-            return 1
-
-        if changed:
-            print(f"Synced {shown} (mode 0600) from 1Password ({configured_ref}).")
-        else:
-            print(f"Already in sync: {shown} (mode 0600) matches 1Password ({configured_ref}).")
-        return 0
-
     if action == "clear":
         try:
             existed, target = clear_access_key()
@@ -1529,11 +1053,7 @@ def manage_access_key(args: Any) -> int:
             print(f"Error: {exc}", file=sys.stderr)
             return 1
         shown = _display_path(target)
-        print(
-            f"Removed local {shown} (1Password item left intact)."
-            if existed
-            else f"No key file at {shown}."
-        )
+        print(f"Removed {shown}." if existed else f"No key file at {shown}.")
         if os.environ.get(API_KEY_ENV, "").strip():
             print(
                 f"Warning: {API_KEY_ENV} is still set in the environment; unset it to turn the gate off.",

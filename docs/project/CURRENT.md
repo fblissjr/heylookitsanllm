@@ -1,6 +1,6 @@
 # Current Work
 
-Last updated: 2026-11-21, v2.0.265, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
+Last updated: 2026-11-21, v2.0.266, `main` (the span v2.0.177 - v2.0.190 is in CHANGELOG.md only).
 
 This file is STATUS: what is verified, what is open, where to start. Mechanisms
 live in `AGENTS.md` and `.claude/rules/`, the backlog in [TODO.md](./TODO.md) (triaged 2026-09-25 and refreshed 2026-10-30;
@@ -16,6 +16,7 @@ rather than carried forward as green.
 
 | Suite | Result | As of |
 |---|---|---|
+| v2.0.266 Simplify `heylookllm key [status\|create\|clear]` to plain mode-600 `~/.heylook/api_key` with zero `op` calls or sidecar files (`auth.py`, `server.py`, `test_access_gate.py`) | unit + contract `1829 passed, 2 subtests passed`; `check_version_sync.py`, `guard_stable_channel.sh`, and path-privacy scan clean. NOT run: `tests/smoke/`, `tests/eval/`, `scripts/perf_ab.py`, browser E2E (harness pending migration since `v2.0.240`) | 2026-11-21 |
 | v2.0.265 `heylookllm key [status\|create\|sync\|clear]` CLI with 1Password master copy + unattended-boot mode-600 `~/.heylook/api_key` (`auth.py`, `server.py`, `test_access_gate.py`) | unit + contract `1835 passed, 2 subtests passed`; live loopback probe against `:42193` confirmed `401` unauthenticated, `200` with `x-api-key`, and `403` cross-origin `POST`; `check_version_sync.py`, `guard_stable_channel.sh`, and path-privacy scan clean. NOT run: `tests/smoke/`, `tests/eval/`, `scripts/perf_ab.py`, browser E2E (harness pending migration since `v2.0.240`) | 2026-11-21 |
 | v2.0.264 Always-on state-changing `Origin` / `Sec-Fetch-Site` (`cross-site`/`same-site`) `403` guard + `tailscale serve` `X-Forwarded-Host` recognition + `Content-Security-Policy: frame-ancestors 'self'` (`auth.py`, `host_check.py`, `test_access_gate.py`) | unit + contract `1825 passed, 2 subtests passed`; `check_version_sync.py`, `guard_stable_channel.sh`, `vendor_frontend.py --check` (`marked` `18.2.0` / `dompurify` `3.4.18` match manifest; `Behind: marked`), and path-privacy scan clean. NOT run: `tests/smoke/`, `tests/eval/`, `scripts/perf_ab.py`, browser E2E (harness pending migration since `v2.0.240`) | 2026-11-21 |
 | v2.0.263 Single app-wide ASGI access gate (`auth.AccessGateMiddleware`, `auth_api.py`, `frontend/login.html`, `frontend/js/login.js`, `/health`, `/v1/admin/config` `access` view, `#/perf` + drawer **Sign out**, `batch-labeler` & live harness key support, `test_access_gate.py`) | unit + contract `1760 passed, 2 subtests passed`; `apps/batch-labeler` `65 passed`; `node --test tests/e2e/embed-kit.test.mjs` `11/11`; `node --check` clean on frontend/E2E JS modules; `check_version_sync.py`, `vendor_frontend.py --check` (`marked` `18.2.0` / `dompurify` `3.4.18` match manifest; `Behind: marked`), and path-privacy scan clean. NOT run: `tests/smoke/`, `tests/eval/`, `scripts/perf_ab.py`, browser E2E (harness pending migration since `v2.0.240`) | 2026-11-21 |
