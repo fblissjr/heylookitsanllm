@@ -73,7 +73,33 @@ Replayed the exact token IDs of the 14 Stock `xhigh` `<think>` traces (capped at
   - **`L63 mu_d ERASES`:** `' actually' (-16.3)`, `' maybe' (-16.0)`, `' wait' (-16.0)`, `' perhaps' (-15.5)`, `' possibly' (-15.2)`, `' instead' (-15.0)`, `' either' (-15.0)`, `' however' (-14.9)`
   - **`L63 mu_d ADDS`:** pure noise (`'' (+7.4)`, `'和' (+6.9)`, `'-Cds' (+6.7)`) — proving that at `L63` right before `lm_head`, 64 layers of distributed rank-32 LoRA updates funnel into a **massive, nearly rank-1 (`51.5%`) unidirectional hesitation-erasure event (`E_cos = +0.826`)**.
   - **Crucial causal-topology caveat (from H3 peer review):** Only `final_norm` + `lm_head` sit after `L63` (no transformer layers read `h_63` into KV/GDN on token `t`). So `L63` is where upstream `L00..L59` *contextual decisions* ("is this `'Wait'` catching a real sign error, or spinning on `2+2` for the 4th time?") converge onto the low-rank unembedding subspace of the 20 doubt words. Intervening *only* at `L63` cannot access the RL LoRA's upstream error-detection circuit, making `L63`-only subtraction an internal cousin of `NoWait` logit damping.
-  - **Decisive 3-arm test for `heylook`:** Benchmark **(1) `<think>`-gated Rank-32 LoRA (`L00..L63`)** vs. **(2) `L63`-only Half-Wave Ray-Gated `vr_diff` suppressor (`~160 KB`)** vs. **(3) 20-token `NoWait` logit damper (`0 KB`)** on tricky self-correction prompts (`code_bug`, `logic_knights`, `math_mod`, `code_brackets`, `sys_design`) to measure exactly how much upstream `L00..L62` calibration buys over terminal/logit suppression.
+
+### D. Empirical Shootouts (`Round 1` & Held-Out `Round 2a`) and Production Resolution
+
+Follow-up verification tested the MTP drafter diff, 7 intervention arms on Round 1 (`14` prompts), 7 arms on an unseen Round 2a hard self-correction stress suite (`12` new traps: CRT, inclusion-exclusion, Tuesday-boy probability, linear recurrence, 4-person hats, 3-person knights/knaves, Python late-binding closure, non-mutating interval merge, trunc-zero RPN, diamond-DAG cycle check, `2520` JSON factorization, and 4-bullet EOS cache clamping), and standalone 8-bit `Swift 1.5`:
+
+- **MTP drafter parity check (`Swift-1.5-mtp` vs. `Stock-mtp`):** All 8 linear projections (`fc`, `q/k/v/o_proj`, `gate/up/down_proj`) have `rel_frob = 0.000000` (bit-for-bit identical; norms differ only by MLX's `+1.0` sanitize shift). Stock's 8-bit MTP drafter pairs directly with 8-bit `Swift 1.5`.
+- **Round 1 shootout (`14` prompts, `Qwen3.8-27B-MLX-8bit`, `xhigh`, `seed=42`, `temp=1.0`, MTP active):**
+  - **49-token `NoWait` logit damping (`A_logit`):** Weak at `1.0` (`14/14`, `-15.8%` think); looped at `1.5` (`12/14`, `+13.0%`).
+  - **Tail-sliced rank-16 MLP LoRA (`L63` alone / `L56..63`):** Broke co-adapted multi-layer gating (`13/14`, `+30.3%` for `L63`; `14/14`, `-6.3%` for `L56..63`) without `L00..L55`.
+  - **`L63` residual steering (`B_L63_vec`):** Strong in-sample (`14/14` true pass, `-21.8%` at `0.6`, `-40.5%` at `1.0`; `S3` random-direction control `B_L63_random_1.0` regressed `+8.4%`), confirming the `L63` hesitation direction is real on in-distribution traces.
+- **Round 2a held-out hard self-correction shootout (`12` unseen traps, `xhigh`, `seed=42`, `temp=1.0`, MTP active):**
+
+| Arm (`12` Unseen Hard Traps, `xhigh`) | Pass | Total Think Tok | vs. Stock8 | Total Ans Tok | MTP Draft Share |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Stock 8-bit `xhigh`** | 12/12 | **6,247** | — | 1,373 | 0.615 |
+| `B_L63_vec_1.0` *(mean shift)* | 12/12 | 5,792 | -7.3% *(longer on 9/12)* | 1,269 | 0.618 |
+| `B_L63_vec_1.25` / `1.5` | 12/12 | 6,102 / 5,969 | -2.3% / -4.5% | — | — |
+| `B_L63_ray_r1` *(rank-1 ray)* | 11/12 | 10,740 | +71.9% *(1 trunc)* | — | — |
+| `B_L63_ray_vr_diff` *(`m0=0.08, w=0.22, r=8, boost=0`)* | 12/12 | 5,934 | -5.0% *(won 7/12)* | 1,355 | — |
+| **Swift 1.5 BF16 `xhigh`** | **12/12** | **4,842** | **-22.5%** *(won 10/12)* | **1,354** | 0.616 |
+| **Swift 1.5 8-bit `xhigh`** *(standalone 8-bit + MTP)* | **12/12** | **4,537** | **-27.4%** *(won 9/12)* | 1,584 | **0.618** |
+
+- **Causal-topology prediction confirmed:** Out-of-sample on dense unseen hard traps, `L63`-only steering collapsed from `-40.5%` to `-5.0%..-7.3%` (with `B_L63_vec_1.0` longer than Stock on 9/12 prompts and `B_L63_ray_vr_diff` recording `cos_p90 = 0.3193`, `gate_fire_frac = 0.414`, cutting verbose `open_eos_clamp` by `-34.2%` but barely moving dense math/code). Full-depth `Swift 1.5` (`L00..L63`) beat Stock on `9/12` (8-bit) to `10/12` (BF16) unseen traps while holding `12/12` accuracy.
+- **Standalone 8-bit `Swift 1.5` + clean template resolution:** Converting `ukisai_Swift-1.5-Qwen3.8-27b-mlx` to 8-bit affine MLX (`Swift-1.5-Qwen3.8-27B-MLX-8bit`, `bits=8, group_size=64`) paired with the bit-identical 8-bit MTP drafter (`Swift-1.5-Qwen3.8-27B-MLX-8bit-mtp`) and a minimal `chat_template.heylook.jinja` derived from upstream Swift HF's clean 3-level `chat_template.jinja` (no `/word` scanner, no HF `{%- generation %}` training tags, `medium` default with Qwen's `"prioritize correctness, consistency, and clarity in the final answer"` anchor):
+  - **Round 1 (`14` prompts):** `xhigh` `14/14` (`5,020` think, `-33.0%` vs. Stock8; `906` ans; `mtp = 0.606`); **`medium` `14/14` (`4,538` think, `-39.4%`; `851` ans — eliminating Stock `medium`'s `+135%` visible answer bloat of `2,314` tokens; `mtp = 0.604`)**; `low` `14/14` true pass (`4,464` think, `1,785` ans — still spills derivations into visible output).
+  - **Round 2a (`12` unseen traps):** `12/12` (`4,537` think, `-27.4%` vs. Stock8; `0` truncations; `mtp = 0.618`).
+  - **Runtime & vision parity:** `scripts/chain_probe.py` `5/5` `match=True`, `restored=reused`, `cause=None`; `scripts/vlm_parity_probe.py` `ok=true` (vision-after-text `NEAR-TIE` at `0.125`, vision-after-vision & cached features `MATCH` 64/64, `feature_cache_hit=true`, `equals_cold_run=true`). Timing and throughput records live in local session logs (`internal/log/log_2026-11-23.md`).
 
 ---
 
@@ -161,11 +187,11 @@ Across both **H3 DiT** and **Qwen3.8 LLM**, our experiments isolate a clean **3-
 | **Regime B — Pure Failure-Mode Suppression** *(no single Pole-B target; `ADDS = noise`)* | H3 `de_llm_slop`; LLM self-doubt/hesitation/sycophancy/refusal reflexes at `L63` (or output-space empirical `NoWait` + MTP spinning sensor / transactional `EAT`) | **Local-centered half-wave ray gate ($\cos(h - \bar{h}, -\hat{\boldsymbol{\mu}}_d)$ with deadzone $m_0$) + paired-shift basis $\mathbf{V}_{\text{diff}}$ + upper-cap-only (`boost = 0`)** (or targeted logit damping on the 20 doubt pivots) | Eliminates both forced-RMS noise amplification and full-prompt POS false triggers (`38x–50x` quieter on clean H3 prompts); prevents neutral co-occurring words (`focus`) from entering `V_r`; near-zero compute overhead, 100% APC-safe. |
 | **Regime C — Multi-Layer Contextual Policy** *(state-dependent upstream circuit)* | H3 Pika 6-step trajectory curvature; Qwen3.8 `Swift 1.5` `L00..L59` *"real sign error vs. anxious 4th re-check"* discrimination; uncensored/domain fine-tunes | **Unmerged per-component FP64 SVD `lora_branch` over quantized weights with step/phase gating (`_Window` / `in_thinking == True`)** | Cannot be reduced to a static Prelude/readout vector without losing upstream state sensitivity (`effR_D ~ 570`). Exact rank-32 weight recovery (`79–85%`), zero GDN hooks, continuous `s in [0, 1]`, zero requantization loss over 8-bit. |
 
-### Decisive Next Experiment in `heylookitsanllm`
-First run a quick 60s verification on `mlp`/`q_proj` SVD rank knees, `Swift-1.5-mtp` vs. `Stock-mtp`, and a clean BF16 `L47`/`L63` spot-check; then run a **3-arm benchmark** on the 14-prompt 4-bucket suite (focusing on tricky self-correction prompts: `code_bug`, `logic_knights`, `math_mod`, `code_brackets`, `sys_design`) comparing:
-1. **Regime C:** `<think>`-gated unmerged Rank-32 Swift-Delta LoRA (`L00..L63`, 7 FA/MLP modules, 0 GDN hooks),
-2. **Regime B (residual):** `L63`-only local-centered half-wave ray-gated `vr_diff` suppressor (`~160 KB`, `boost = 0`, deadzone margin $m_0$), and
-3. **Regime B (logit):** 20-token empirical `NoWait` logit damper (`0 KB`, applied to both target + MTP drafter logits).
+### Outcome & Decision in `heylookitsanllm`
+All three regimes were benchmarked end-to-end (Section 2D):
+1. **Regime B (`A_logit` `NoWait` damper & `L63`-only `B_L63_vec` / `B_L63_ray_vr_diff`):** Useful on verbose open-ended loops (`-34%` to `-40%` in-sample), but collapsed to `-5.0%..-7.3%` out-of-sample on dense unseen self-correction traps (`Round 2a`). Not added to `heylook`.
+2. **Regime C (`Swift 1.5` full-depth `L00..L63`):** Held `26/26` across both suites (`-33.0%` to `-39.4%` on Round 1, `-27.4%` on unseen hard traps, zero answer bloat on `medium`, `5/5` APC chain restore, and full VLM vision parity) when deployed directly as standalone 8-bit `Swift-1.5-Qwen3.8-27B-MLX-8bit` + bit-identical `Swift-1.5-Qwen3.8-27B-MLX-8bit-mtp` + clean `chat_template.heylook.jinja` (`medium` default).
+3. **Architecture decision:** Skip adding `L63` steering hooks or a 256-adapter unmerged Rank-32 LoRA runtime to `heylook` for Qwen 3.8 thinking; the standalone 8-bit checkpoint + clean `chat_template.heylook.jinja` achieves full Regime-C quality with zero engine complexity or decode overhead, while preserving the 3-Regime Control Law and local-centered half-wave ray gate for future multi-slider steering work.
 
 ### Known Traps to Avoid
 - **Anchoring Regime-B erasure at `mu_a` without `+mu_d`** (inverts self-damping) **OR applying raw dataset `h - mu_clean` across mixed-POS full prompts** (falsely triggers on `100%` of nouns/code/digits due to POS offset; use local centering + half-wave ray gate with deadzone $m_0$).
