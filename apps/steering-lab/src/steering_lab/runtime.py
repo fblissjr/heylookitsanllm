@@ -62,6 +62,8 @@ class SteeringPlan:
     m0_override: Optional[float] = None
     w_override: Optional[float] = None
     knee_override: Optional[float] = None
+    push_mode: str = "mu_d_norm"  # "mu_d_norm" | "norm_matched"
+    norm_matched_frac: float = 0.15
     label: str = ""
 
     def active_items(self) -> list[tuple[str, float]]:
@@ -366,6 +368,8 @@ class LayerSteeringController:
                         use_clamped_union=self.plan.use_clamped_union,
                         hold_basis=hold,
                         knee=knee,
+                        push_mode=self.plan.push_mode,
+                        norm_matched_frac=self.plan.norm_matched_frac,
                     )
                     if composed_grp is not None:
                         regime_a_groups.append((eff_phase, eff_mask, composed_grp))
@@ -781,23 +785,40 @@ class SteeringLabRuntime:
         self.image_pad_id = _tok_id("<|image_pad|>")
         self.eos_token_ids = eos
 
-        # Optional sibling `*-mtp` (or bundled) draft head for live Chain Lens readout.
+        self.draft_model = self._try_load_mtp_drafter(model_dir)
+        return fp
+
+    def _try_load_mtp_drafter(self, model_dir: Path) -> Any:
+        """Attach sibling ``*-mtp`` drafter or bundled ``mtp.*`` weights inside ``model_dir``.
+
+        Skips ``bind_mtp_drafter`` because Chain Lens calls ``_forward_hidden`` directly.
+        """
+        candidates: list[Path] = []
         mtp_sibling = model_dir.parent / f"{model_dir.name}-mtp"
         if mtp_sibling.is_dir():
-            try:
-                from mlx_vlm.speculative.drafters import (
-                    load_drafter,
-                    validate_drafter_compatibility,
-                )
+            candidates.append(mtp_sibling)
+        if model_dir.is_dir():
+            candidates.append(model_dir)
+        if not candidates:
+            return None
+        try:
+            from mlx_vlm.speculative.drafters import (
+                load_drafter,
+                validate_drafter_compatibility,
+            )
+        except Exception:  # noqa: BLE001
+            return None
 
-                drafter, kind = load_drafter(str(mtp_sibling))
+        for cand in candidates:
+            try:
+                drafter, kind = load_drafter(str(cand))
                 validate_drafter_compatibility(self.model, drafter, kind)
                 if hasattr(drafter, "bind"):
                     drafter.bind(self.model)
-                self.draft_model = drafter
+                return drafter
             except Exception:  # noqa: BLE001
-                self.draft_model = None
-        return fp
+                continue
+        return None
 
     def unload_model(self) -> None:
         self.model = None
@@ -1586,11 +1607,31 @@ class SteeringLabRuntime:
                 p for p in Path(image_dir).iterdir() if p.is_file() and p.suffix.lower() in exts
             )
 
-        def _subsample_rows(mat: np.ndarray, indices: Sequence[int], cap: int) -> Optional[np.ndarray]:
-            # Always drop position 0 attention sink unless it is the only position.
-            valid = [i for i in indices if 0 < i < mat.shape[0]]
-            if not valid:
-                valid = [i for i in indices if 0 <= i < mat.shape[0]]
+        tok = getattr(self.processor, "tokenizer", self.processor)
+        special_ids: set[int] = set(self.eos_token_ids)
+        for sid in (self.think_start_id, self.think_end_id):
+            if sid is not None:
+                special_ids.add(int(sid))
+        raw_special = getattr(tok, "all_special_ids", None)
+        if isinstance(raw_special, (list, tuple, set)):
+            special_ids.update(int(x) for x in raw_special)
+
+        def _subsample_rows(
+            mat: np.ndarray,
+            indices: Sequence[int],
+            cap: int,
+            *,
+            token_ids: Sequence[int],
+            filter_special: bool = True,
+        ) -> Optional[np.ndarray]:
+            # Strictly drop position 0 attention sink and special/chat-control tokens
+            # (<|im_start|>, <|im_end|>, <think>, </think>) on text/think/answer spans.
+            valid = [
+                i
+                for i in indices
+                if 0 < i < mat.shape[0]
+                and (not filter_special or int(token_ids[i]) not in special_ids)
+            ]
             if not valid:
                 return None
             if len(valid) > cap:
@@ -1650,31 +1691,57 @@ class SteeringLabRuntime:
                 ptxt_idx = [i for i, tt in enumerate(token_types) if tt == "prompt_text"]
                 dec_start = len(token_types)
                 if img_idx:
-                    rows = _subsample_rows(mat, img_idx, max_tokens_per_span)
+                    rows = _subsample_rows(
+                        mat, img_idx, max_tokens_per_span, token_ids=token_ids, filter_special=False
+                    )
                     if rows is not None:
                         out_by_span["image_pad"][lidx] = rows
                 if ptxt_idx:
-                    rows = _subsample_rows(mat, ptxt_idx, max_tokens_per_span)
+                    rows = _subsample_rows(
+                        mat, ptxt_idx, max_tokens_per_span, token_ids=token_ids, filter_special=True
+                    )
                     if rows is not None:
                         out_by_span["prompt_text"][lidx] = rows
                 if mat.shape[0] > dec_start:
                     if think_end_pos is not None and think_end_pos > dec_start:
-                        t_rows = _subsample_rows(mat, range(dec_start, think_end_pos), max_tokens_per_span)
+                        t_rows = _subsample_rows(
+                            mat,
+                            range(dec_start, think_end_pos),
+                            max_tokens_per_span,
+                            token_ids=token_ids,
+                            filter_special=True,
+                        )
                         if t_rows is not None:
                             out_by_span["think"][lidx] = t_rows
                         if mat.shape[0] > think_end_pos + 1:
                             a_rows = _subsample_rows(
-                                mat, range(think_end_pos + 1, mat.shape[0]), max_tokens_per_span
+                                mat,
+                                range(think_end_pos + 1, mat.shape[0]),
+                                max_tokens_per_span,
+                                token_ids=token_ids,
+                                filter_special=True,
                             )
                             if a_rows is not None:
                                 out_by_span["answer"][lidx] = a_rows
                     elif started_in_think and self.think_end_id is not None:
                         # Trace truncated inside <think> before emitting </think>: NEVER dump into answer!
-                        t_rows = _subsample_rows(mat, range(dec_start, mat.shape[0]), max_tokens_per_span)
+                        t_rows = _subsample_rows(
+                            mat,
+                            range(dec_start, mat.shape[0]),
+                            max_tokens_per_span,
+                            token_ids=token_ids,
+                            filter_special=True,
+                        )
                         if t_rows is not None:
                             out_by_span["think"][lidx] = t_rows
                     else:
-                        a_rows = _subsample_rows(mat, range(dec_start, mat.shape[0]), max_tokens_per_span)
+                        a_rows = _subsample_rows(
+                            mat,
+                            range(dec_start, mat.shape[0]),
+                            max_tokens_per_span,
+                            token_ids=token_ids,
+                            filter_special=True,
+                        )
                         if a_rows is not None:
                             out_by_span["answer"][lidx] = a_rows
             return out_by_span

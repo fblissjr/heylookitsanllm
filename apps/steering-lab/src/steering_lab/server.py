@@ -58,6 +58,8 @@ class ComposeRequest(BaseModel):
     use_s3_random: bool = False
     s3_seed: int = 1337
     knee: float = 0.0
+    push_mode: str = "mu_d_norm"  # "mu_d_norm" | "norm_matched"
+    norm_matched_frac: float = 0.15
     top_k: int = 10
 
 
@@ -102,6 +104,8 @@ class ArmPayload(BaseModel):
     m0_override: Optional[float] = None
     w_override: Optional[float] = None
     knee_override: Optional[float] = None
+    push_mode: str = "mu_d_norm"
+    norm_matched_frac: float = 0.15
 
 
 class SweepRequest(BaseModel):
@@ -196,6 +200,8 @@ def _plan_from_payload(arm: ArmPayload) -> SteeringPlan:
         m0_override=arm.m0_override,
         w_override=arm.w_override,
         knee_override=arm.knee_override,
+        push_mode=arm.push_mode,
+        norm_matched_frac=arm.norm_matched_frac,
         label=arm.label,
     )
 
@@ -613,6 +619,8 @@ def create_app(state: Optional[LabState] = None) -> FastAPI:
             use_clamped_union=req.use_clamped_union,
             hold_basis=hold,
             knee=req.knee,
+            push_mode=req.push_mode,
+            norm_matched_frac=req.norm_matched_frac,
         )
         if composed is None:
             return {"active": False, "layer": req.layer, "xray": None}
@@ -631,6 +639,7 @@ def create_app(state: Optional[LabState] = None) -> FastAPI:
             "clamped_eigs": composed.clamped_eigs,
             "peer_ros_applied": composed.peer_ros_applied,
             "holds_applied": composed.holds_applied,
+            "push_mode": composed.push_mode,
             "push_norm": round(float(np.linalg.norm(composed.mu_push)), 4),
             "xray": xray,
         }

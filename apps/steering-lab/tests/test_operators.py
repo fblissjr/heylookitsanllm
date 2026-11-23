@@ -178,6 +178,43 @@ def test_paired_token_diffs_row_softmax_handles_unequal_token_counts():
     assert lv_a.mu_d_norm > 3.5 and lv_b.mu_d_norm > 3.5
 
 
+def test_compose_regime_a_norm_matched_prevents_large_concept_drowning_peer():
+    d = 32
+    e0, e1 = np.eye(d, dtype=np.float32)[:2]
+    # Peer 1 has mu_d_norm=90, Peer 2 has mu_d_norm=20, both at a layer with median ||h||=300.
+    lv_big = build_regime_a_layer(
+        47,
+        np.zeros((8, d), dtype=np.float32),
+        np.broadcast_to(90.0 * e0, (8, d)).astype(np.float32),
+        rank=2,
+    )
+    lv_small = build_regime_a_layer(
+        47,
+        np.zeros((8, d), dtype=np.float32),
+        np.broadcast_to(20.0 * e1, (8, d)).astype(np.float32),
+        rank=2,
+    )
+    # Force equal layer median norm (300.0) on both concepts as occurs at the same layer.
+    from dataclasses import replace
+
+    lv_big = replace(lv_big, layer_median_norm=300.0)
+    lv_small = replace(lv_small, layer_median_norm=300.0)
+
+    comp_raw = compose_regime_a([(lv_big, 1.0, 0.0), (lv_small, 1.0, 0.0)], push_mode="mu_d_norm")
+    comp_eq = compose_regime_a(
+        [(lv_big, 1.0, 0.0), (lv_small, 1.0, 0.0)],
+        push_mode="norm_matched",
+        norm_matched_frac=0.15,
+    )
+    assert comp_raw is not None and comp_eq is not None
+    # Raw mode preserves 90 vs 20 ratio (4.5x).
+    assert abs(float(comp_raw.mu_push[0]) / max(float(comp_raw.mu_push[1]), 1e-6) - 4.5) < 0.05
+    # norm_matched mode scales BOTH to 0.15 * 300 = 45.0 (1.0x ratio — neither drowns the other!).
+    assert abs(float(comp_eq.mu_push[0]) - 45.0) < 1e-3
+    assert abs(float(comp_eq.mu_push[1]) - 45.0) < 1e-3
+    assert comp_eq.push_mode == "norm_matched"
+
+
 def test_regime_b_deadzone_ramp_and_boost_zero_cap():
     rng = np.random.default_rng(23)
     d = 32

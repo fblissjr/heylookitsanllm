@@ -49,6 +49,7 @@ function activeArmPayload(label, override = {}) {
     use_peer_ros: $("opt-peer-ros").checked,
     use_clamped_union: $("opt-clamped-union").checked,
     use_holds: $("opt-holds").checked,
+    push_mode: $("opt-norm-matched").checked ? "norm_matched" : "mu_d_norm",
     use_s3_random: $("opt-s3-random").checked,
     layer_filter: $("opt-layer-filter").value,
     phase_override: $("opt-phase").value || null,
@@ -196,6 +197,7 @@ async function analyzeBlend() {
         use_peer_ros: $("opt-peer-ros").checked,
         use_clamped_union: $("opt-clamped-union").checked,
         use_holds: $("opt-holds").checked,
+        push_mode: $("opt-norm-matched").checked ? "norm_matched" : "mu_d_norm",
         use_s3_random: $("opt-s3-random").checked,
       }),
     });
@@ -207,7 +209,7 @@ async function analyzeBlend() {
     const erases = (res.xray?.erases || []).slice(0, 5).map((x) => `${x.token.trim()}(${x.score.toFixed(2)})`).join(", ");
     $("compose-readout").textContent =
       `L${res.layer} | union_rank=${res.union_rank} | max_raw_eig=${res.max_raw_eig} (clamped=${res.clamped_eigs})\n` +
-      `peer_ros=${res.peer_ros_applied} | holds=${res.holds_applied} | ||push||=${res.push_norm}\n` +
+      `peer_ros=${res.peer_ros_applied} | holds=${res.holds_applied} | mode=${res.push_mode || "mu_d_norm"} | ||push||=${res.push_norm}\n` +
       (res.xray
         ? `[${res.xray.advisory ? "Advisory" : "Terminal"} X-Ray]\n  Adds:   ${adds}\n  Erases: ${erases}`
         : "No lm_head available for X-Ray.");

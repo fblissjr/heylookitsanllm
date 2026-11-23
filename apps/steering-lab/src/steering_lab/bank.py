@@ -237,6 +237,9 @@ def save_vector_spec(
             tensors[f"L{layer}__w_write"] = np.asarray(lv.w_write, dtype=np.float32)
         layer_stats[str(layer)] = {
             "mu_d_norm": round(float(lv.mu_d_norm), 5),
+            "layer_median_norm": (
+                None if lv.layer_median_norm is None else round(float(lv.layer_median_norm), 5)
+            ),
             "rank": int(lv.vr.shape[0]),
             "split_half_cos": (
                 None if lv.split_half_cos is None else round(float(lv.split_half_cos), 4)
@@ -281,6 +284,7 @@ def load_vector_spec(
             d_diag=tensors[f"L{layer}__d_diag"],
             mu_d_norm=float(lstat.get("mu_d_norm", 1.0)),
             mu_clean=tensors.get(f"L{layer}__mu_clean"),
+            layer_median_norm=lstat.get("layer_median_norm"),
             w_read=tensors.get(f"L{layer}__w_read"),
             w_write=tensors.get(f"L{layer}__w_write"),
             split_half_cos=lstat.get("split_half_cos"),

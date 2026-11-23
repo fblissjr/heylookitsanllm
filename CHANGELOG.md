@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.275] - 2026-11-23
+
+Three follow-up polish refinements in `apps/steering-lab/` (zero changes to `src/heylook_llm/` runtime/API routes):
+- **Special-token & attention-sink filtering (`runtime.py`)**: `capture_span_bank` strictly filters out index `0` and `tokenizer.all_special_ids` (`<|im_start|>`, `<|im_end|>`, `<think>`, `</think>`, EOS) when subsampling `prompt_text`/`think`/`answer` token rows for holds, SVD, and J-Lens while keeping `<|image_pad|>` intact for vision spans.
+- **Per-layer `mu_d_norms` & `norm_matched` multi-slider push mode (`operators.py`, `bank.py`, `runtime.py`, `server.py`, `ui/`)**: exposes `mu_d_norms` and `layer_median_norms` directly in `VectorSpec.public_meta()` and adds optional `push_mode="norm_matched"` (`norm_matched_frac * median(||h_layer||)`) in `compose_regime_a` + UI mixer toggle so high-`mu_d_norm` concepts cannot drown out peers in `peer_ros` blends.
+- **Bundled `mtp.*` fallback (`runtime.py`)**: `_try_load_mtp_drafter` checks sibling `*-mtp` first and falls back to `load_drafter(str(model_dir))` for checkpoints with bundled `mtp.*` tensors (skipping `bind_mtp_drafter` since Chain Lens calls `_forward_hidden` directly).
+- **Verification**: `apps/steering-lab/tests/` `28 passed` (`17` pure-NumPy + `11` `mx.cpu`, 0% Metal contention), `node --check apps/steering-lab/ui/app.js`, `check_version_sync.py`, `guard_stable_channel.sh`, and path-privacy scan clean.
+
 ## [2.0.274] - 2026-11-23
 
 Live-readiness fixes across `apps/steering-lab/` from cross-session code audit and H3 Day-1 review (zero changes to `src/heylook_llm/` runtime/API routes):

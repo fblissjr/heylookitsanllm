@@ -63,6 +63,7 @@ class LayerVector:
     d_diag: np.ndarray  # (r,) nonnegative weights in [0, 1]
     mu_d_norm: float = 1.0
     mu_clean: Optional[np.ndarray] = None  # (D,) clean Pole-B centroid (avoids T=1 cold-start zero)
+    layer_median_norm: Optional[float] = None  # median(||h_layer||) for norm-matched multi-slider blends
     w_read: Optional[np.ndarray] = None  # (D,) unit trigger axis for conditional
     w_write: Optional[np.ndarray] = None  # (D,) unit write axis for conditional
     split_half_cos: Optional[float] = None
@@ -110,6 +111,17 @@ class VectorSpec:
                 "knee": self.knee,
                 "erase_ratio": self.erase_ratio,
             },
+            "mu_d_norms": {
+                str(l): round(float(lv.mu_d_norm), 4) for l, lv in sorted(self.by_layer.items())
+            },
+            "layer_median_norms": {
+                str(l): (
+                    None
+                    if lv.layer_median_norm is None
+                    else round(float(lv.layer_median_norm), 4)
+                )
+                for l, lv in sorted(self.by_layer.items())
+            },
             "notes": self.notes,
         }
 
@@ -126,6 +138,7 @@ class ComposedRegimeA:
     clamped_eigs: bool = True
     peer_ros_applied: bool = True
     holds_applied: bool = False
+    push_mode: str = "mu_d_norm"
 
 
 @dataclass(frozen=True)
@@ -359,6 +372,7 @@ def build_regime_a_layer(
             vr = np.zeros((0, a.shape[1]), dtype=np.float32)
             d_diag = np.zeros((0,), dtype=np.float32)
 
+    med_h = float(np.median(np.linalg.norm(np.concatenate([a, b], axis=0), axis=-1)))
     return LayerVector(
         layer=int(layer),
         mu_d=mu_d,
@@ -366,6 +380,7 @@ def build_regime_a_layer(
         d_diag=d_diag,
         mu_d_norm=mu_norm,
         mu_clean=mu_b.astype(np.float32),
+        layer_median_norm=med_h,
         split_half_cos=split_half_cosine(a, b, seed=seed),
         flip_null_cos=flip_null_cosine(a, b, seed=seed),
     )
@@ -409,6 +424,7 @@ def build_regime_b_layer(
         vr = np.zeros((0, a.shape[1]), dtype=np.float32)
         d_diag = np.zeros((0,), dtype=np.float32)
 
+    med_h = float(np.median(np.linalg.norm(np.concatenate([a, b], axis=0), axis=-1)))
     return LayerVector(
         layer=int(layer),
         mu_d=mu_d,
@@ -416,6 +432,7 @@ def build_regime_b_layer(
         d_diag=d_diag,
         mu_d_norm=mu_norm,
         mu_clean=mu_b.astype(np.float32),
+        layer_median_norm=med_h,
         split_half_cos=split_half_cosine(a, b, seed=seed),
         flip_null_cos=flip_null_cosine(a, b, seed=seed),
     )
@@ -438,6 +455,7 @@ def build_conditional_layer(
     mu_rn = rn.mean(axis=0)
     w_read, _ = _unit_np(rp.mean(axis=0) - mu_rn)
     w_write, write_norm = _unit_np(wp.mean(axis=0) - wn.mean(axis=0))
+    med_h = float(np.median(np.linalg.norm(np.concatenate([rn, rp], axis=0), axis=-1)))
     return LayerVector(
         layer=int(layer),
         mu_d=w_write,
@@ -445,6 +463,7 @@ def build_conditional_layer(
         d_diag=np.ones((1,), dtype=np.float32),
         mu_d_norm=write_norm,
         mu_clean=mu_rn.astype(np.float32),
+        layer_median_norm=med_h,
         w_read=w_read,
         w_write=w_write,
         split_half_cos=split_half_cosine(rn, rp, seed=seed),
@@ -506,6 +525,7 @@ def build_s3_random_layer(vec: LayerVector, *, seed: int = 1337) -> LayerVector:
         d_diag=vec.d_diag[: vr_rand.shape[0]].copy(),
         mu_d_norm=vec.mu_d_norm,
         mu_clean=None if vec.mu_clean is None else vec.mu_clean.copy(),
+        layer_median_norm=vec.layer_median_norm,
         w_read=w_read,
         w_write=w_write,
         split_half_cos=0.0,
@@ -525,10 +545,15 @@ def compose_regime_a(
     use_clamped_union: bool = True,
     hold_basis: Optional[np.ndarray] = None,
     knee: float = 0.0,
+    push_mode: str = "mu_d_norm",  # "mu_d_norm" | "norm_matched"
+    norm_matched_frac: float = 0.15,
 ) -> Optional[ComposedRegimeA]:
     """Compose 1..N active Regime-A sliders ``(layer_vec, scale, erase_ratio)``.
 
     Exact identity when ``active`` is empty or every ``scale == 0``.
+    In ``push_mode="norm_matched"``, each slider's target push is scaled to
+    ``norm_matched_frac * median(||h_layer||)`` so a high-``mu_d_norm`` concept
+    cannot drown out a lower-``mu_d_norm`` peer in multi-slider ``peer_ros`` blends.
     """
     nonzero = [(lv, float(s), float(er)) for lv, s, er in active if abs(float(s)) > EPS]
     if not nonzero:
@@ -539,15 +564,41 @@ def compose_regime_a(
     if hold_basis is not None and hold_basis.size > 0:
         hold64 = _orthonormal_rows_fp64(hold_basis)
 
+    # Shared layer reference norm for `norm_matched` blends (preferring stored median ||h||).
+    layer_ref_norms = [
+        float(lv.layer_median_norm)
+        for lv, _, _ in nonzero
+        if lv.layer_median_norm is not None and float(lv.layer_median_norm) > EPS
+    ]
+    if not layer_ref_norms:
+        layer_ref_norms = [
+            float(np.linalg.norm(lv.mu_clean))
+            for lv, _, _ in nonzero
+            if lv.mu_clean is not None and float(np.linalg.norm(lv.mu_clean)) > EPS
+        ]
+    shared_layer_norm = float(np.median(layer_ref_norms)) if layer_ref_norms else None
+
     weighted_rows: list[np.ndarray] = []
     mu_push = np.zeros((dim,), dtype=np.float64)
 
     for idx, (lv, scale, erase_ratio) in enumerate(nonzero):
         sign = 1.0 if scale >= 0.0 else -1.0
         mag = abs(scale)
-        # Preserve calibrated contrast magnitude `mu_d_norm` so scale=1.0 moves a full
-        # Pole-A -> Pole-B step at any hidden dimension (e.g. D=5120 on Qwen 3.8).
-        eff_norm = float(lv.mu_d_norm) if float(lv.mu_d_norm) > EPS else 1.0
+        if push_mode == "norm_matched":
+            ref_h = (
+                float(lv.layer_median_norm)
+                if lv.layer_median_norm is not None and float(lv.layer_median_norm) > EPS
+                else shared_layer_norm
+            )
+            eff_norm = (
+                float(norm_matched_frac) * ref_h
+                if ref_h is not None and ref_h > EPS
+                else (float(lv.mu_d_norm) if float(lv.mu_d_norm) > EPS else 1.0)
+            )
+        else:
+            # Default: preserve calibrated contrast magnitude `mu_d_norm` so scale=1.0
+            # moves a full Pole-A -> Pole-B step at any hidden dimension (e.g. D=5120).
+            eff_norm = float(lv.mu_d_norm) if float(lv.mu_d_norm) > EPS else 1.0
         mu_push += (scale * eff_norm) * lv.mu_d.astype(np.float64)
 
         if lv.vr.shape[0] > 0 and erase_ratio > EPS:
@@ -606,6 +657,7 @@ def compose_regime_a(
         clamped_eigs=bool(use_clamped_union),
         peer_ros_applied=bool(use_peer_ros and len(nonzero) > 1),
         holds_applied=bool(hold64 is not None and hold64.shape[0] > 0),
+        push_mode=str(push_mode),
     )
 
 

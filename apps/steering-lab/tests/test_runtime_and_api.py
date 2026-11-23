@@ -460,6 +460,9 @@ def test_fastapi_server_and_cli_demo_bank_flow(tmp_path: Path):
 
     r_vecs = client.get("/api/vectors").json()
     assert len(r_vecs["vectors"]) >= 5
+    # Polish #2: per-layer mu_d_norms exposed directly in VectorSpec.public_meta()!
+    assert "mu_d_norms" in r_vecs["vectors"][0]
+    assert len(r_vecs["vectors"][0]["mu_d_norms"]) >= 1
 
     r_geom = client.get("/api/bank/geometry").json()
     assert r_geom["layers"]["47"]["effective_rank"] > r_geom["layers"]["63"]["effective_rank"]
@@ -709,3 +712,66 @@ def test_mlx_cpu_capture_span_bank_vision_conditional_nonsink_and_truncation(tmp
     )
     ans_rows = bank_ans.get_span("cond_hedge_to_concrete", "write_pos", "answer", 3)
     assert ans_rows is not None and ans_rows.shape[0] > 8
+
+
+def test_mlx_cpu_capture_filters_special_ids_and_bundled_mtp_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import sys
+    import types
+
+    rt = _make_runtime_with_vectors()
+    # Polish #1: Mark token 6 as a tokenizer special ID (e.g. <|im_start|>); verify prompt_text
+    # subsampling excludes both index 0 and special token 6 while keeping image_pad!
+    rt.processor.all_special_ids = [THINK_START, THINK_END, IMAGE_PAD, EOS_ID, 6]
+    # Encode returns [5, IMAGE_PAD, IMAGE_PAD, 6] for "[IMG]" prompts:
+    # index 0 is sink (5), indices 1,2 are IMAGE_PAD (kept in image_pad!), index 3 is special (6, dropped!).
+    bank = rt.capture_span_bank(
+        tmp_path / "bank_special",
+        corpus_ids=["vision_optical_vs_mood"],
+        layers=(3,),
+        max_tokens=4,
+        max_tokens_per_span=4,
+        enable_thinking=False,
+    )
+    assert bank.get_span("vision_optical_vs_mood", "a", "image_pad", 3) is not None
+    # Every prompt_text position in "[IMG]" was either index 0 (5) or special (6), so filtered out!
+    assert bank.get_span("vision_optical_vs_mood", "a", "prompt_text", 3) is None
+
+    # Polish #3: _try_load_mtp_drafter tries sibling `*-mtp` first, then falls back to bundled `model_dir`.
+    model_dir = tmp_path / "MyBundledModel"
+    model_dir.mkdir()
+    attempted: list[str] = []
+
+    class _DummyDrafter:
+        def __init__(self, src: str) -> None:
+            self.src = src
+            self.bound = False
+
+        def bind(self, model: Any) -> None:
+            self.bound = True
+
+    fake_drafters = types.ModuleType("mlx_vlm.speculative.drafters")
+
+    def _fake_load_drafter(path_str: str):
+        attempted.append(path_str)
+        return _DummyDrafter(path_str), "mtp"
+
+    fake_drafters.load_drafter = _fake_load_drafter
+    fake_drafters.validate_drafter_compatibility = lambda m, d, k: None
+    monkeypatch.setitem(sys.modules, "mlx_vlm", types.ModuleType("mlx_vlm"))
+    monkeypatch.setitem(sys.modules, "mlx_vlm.speculative", types.ModuleType("mlx_vlm.speculative"))
+    monkeypatch.setitem(sys.modules, "mlx_vlm.speculative.drafters", fake_drafters)
+
+    # Case A: No sibling `*-mtp` directory -> falls back cleanly to bundled `model_dir`!
+    d_bundled = rt._try_load_mtp_drafter(model_dir)
+    assert isinstance(d_bundled, _DummyDrafter)
+    assert d_bundled.src == str(model_dir) and d_bundled.bound is True
+
+    # Case B: Sibling `*-mtp` exists -> prefers sibling first!
+    sib_dir = tmp_path / "MyBundledModel-mtp"
+    sib_dir.mkdir()
+    attempted.clear()
+    d_sib = rt._try_load_mtp_drafter(model_dir)
+    assert isinstance(d_sib, _DummyDrafter)
+    assert d_sib.src == str(sib_dir) and attempted == [str(sib_dir)]
