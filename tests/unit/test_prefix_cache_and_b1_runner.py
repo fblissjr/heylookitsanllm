@@ -2457,3 +2457,31 @@ def test_gemma4_shared_kv_b1_caches_and_1023_maskless_swa():
             kv_valid_len=pos,
         )
         assert masks_1024["sliding_attention"] is None
+
+
+@pytest.mark.unit
+def test_b1_runner_and_speculative_session_share_generate_common_stream(monkeypatch):
+    """b1_runner and SpeculativeSession must both use mlx_vlm.generate.common.generation_stream."""
+    import mlx_vlm.speculative.common as spec_common
+    from mlx_vlm.generate.common import generation_stream
+    from heylook_llm.providers.common.speculative_session import SpeculativeSession
+
+    assert b1_runner._generation_stream() is generation_stream
+
+    # Poison speculative.common.generation_stream (which is a separate stream on PyPI 0.8.0)
+    # so SpeculativeSession._verify_tokens fails immediately if it ever imports from there.
+    monkeypatch.setattr(spec_common, "generation_stream", object())
+
+    outer, drafter = _make_toy_stateful_mtp_pair(vocab_size=32, hidden_dim=8)
+    lm = outer.language_model
+    cache = lm.make_cache()
+    out = lm(mx.array([[1, 2, 3, 4]], dtype=mx.int32), cache=cache, return_hidden=True)
+    drafter.planned_drafts = [[5, 6, 7]]
+    lm.planned_targets = [[5, 6, 9, 10]]
+
+    sess = SpeculativeSession(
+        outer, drafter, cache, out.hidden_states[-1], 8, 4, None, mx.int32, True
+    )
+    res = sess.step(8, 1, stop_tokens={31})
+    assert res.emitted_tokens == [5, 6, 9]
+

@@ -149,7 +149,7 @@ def get_or_create_b1_cache(apc_manager: Any) -> Optional[PrefixCacheStore]:
 
 def _generation_stream():
     try:
-        from mlx_vlm._generation_stream import generation_stream
+        from mlx_vlm.generate.common import generation_stream
 
         return generation_stream
     except ImportError:

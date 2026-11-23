@@ -2132,8 +2132,9 @@ accident. On 2026-11-15 (v2.0.247), the guard was briefly relaxed for exact
 `mlx-vlm>=0.8.0`, zero external git SHAs in public git history). Local
 bleeding-edge upstream tracking for all three engines now lives outside the repo
 under `~/.heylook/` (`build_llama.py` -> `~/.heylook/llama.cpp`,
-`build_mlx.py` -> `~/.heylook/mlx/overlay`, `sync_overlay.py` ->
-`~/.heylook/overlays/<pkg>`), auto-discovered by `mlx_overlay.activate_all_overlays()`
+`build_mlx.py` -> `~/.heylook/mlx/overlay` and `~/.heylook/overlays/<pkg>`
+(`sync_overlay.py` was folded into `build_mlx.py` in `v2.0.270`), auto-discovered by
+`mlx_overlay.activate_all_overlays()`
 with automatic stand-down once `.venv` PyPI is strictly newer. `guard_stable_channel.sh`
 once again blocks external git sources in staged `pyproject.toml`/`uv.lock`
 unless `HEYLOOK_ALLOW_CHANNEL_COMMIT=1` is set (`tests/unit/test_guard_stable_channel.py`).

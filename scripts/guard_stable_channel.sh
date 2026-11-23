@@ -5,7 +5,7 @@
 # pyproject.toml / uv.lock. Public history stays on clean PyPI releases (plus
 # `source = { editable = "." }` for the package itself); local bleeding-edge
 # upstream commits live outside the repo under ~/.heylook/ via
-# scripts/build_llama.py, scripts/build_mlx.py, and scripts/sync_overlay.py.
+# scripts/build_llama.py and scripts/build_mlx.py.
 #
 # Checks STAGED blobs (git show :<file>), not the working tree, so a clean
 # commit made while the worktree runs a local experiment passes.
@@ -64,7 +64,7 @@ if staged_has "pyproject.toml"; then
         fi
         [[ $line =~ $latest_re ]] && fail "staged pyproject.toml has a 'latest' channel override -- pins are local-only"
         if (( in_uv_sources )); then
-            [[ $line =~ $git_re ]] && fail "staged pyproject.toml uses a git source -- use ~/.heylook/overlays via scripts/sync_overlay.py"
+            [[ $line =~ $git_re ]] && fail "staged pyproject.toml uses a git source -- use ~/.heylook/overlays via scripts/build_mlx.py"
             [[ $line =~ $branch_re ]] && fail "staged pyproject.toml pins a floating git branch -- use local overlays"
             [[ $line =~ $tag_re ]] && fail "staged pyproject.toml pins a git tag -- use local overlays"
             [[ $line =~ $path_re ]] && fail "staged pyproject.toml uses a local path source -- pins are local-only"
@@ -91,7 +91,7 @@ fi
 if [ "$errors" -ne 0 ]; then
     echo ""
     echo "Public pyproject.toml / uv.lock stay on PyPI releases; use"
-    echo "scripts/sync_overlay.py (or scripts/build_mlx.py) for local git tracking."
+    echo "scripts/build_mlx.py for local git tracking."
     echo "To override intentionally:"
     echo "    HEYLOOK_ALLOW_CHANNEL_COMMIT=1 git commit ..."
     exit 1

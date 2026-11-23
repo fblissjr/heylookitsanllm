@@ -5,7 +5,7 @@ Mirrors ``LlamaServerProvider.DEFAULT_BUILD`` (``~/.heylook/llama.cpp/...``) for
 - the compiled MLX C++/Metal backend built out-of-repo by ``scripts/build_mlx.py``
   at ``~/.heylook/mlx/overlay`` (``$HEYLOOK_MLX_DIR/overlay``); and
 - pure-Python upstream overlays (e.g. ``mlx-vlm``, ``transformers``) staged
-  out-of-repo by ``scripts/sync_overlay.py`` at ``~/.heylook/overlays/<pkg>``
+  out-of-repo by ``scripts/build_mlx.py`` at ``~/.heylook/overlays/<pkg>``
   (``$HEYLOOK_OVERLAYS_DIR/<pkg>``).
 
 Precedence before importing a package:
@@ -551,7 +551,7 @@ def resolve_python_overlay(
         if not _has_package_target(override, imp):
             raise RuntimeError(
                 f"${env_var} points to '{override}', which has no '{imp}' package. "
-                f"Run `uv run scripts/sync_overlay.py {pkg}` or unset ${env_var}."
+                f"Run `uv run scripts/build_mlx.py --only {pkg}` or unset ${env_var}."
             )
         differs = canonical_exists and _safe_resolve(override) != _safe_resolve(canonical)
         warn = (
@@ -611,7 +611,7 @@ def resolve_python_overlay(
             warning=(
                 f".venv PyPI {pkg} {v_ver} is newer than canonical overlay {o_ver} at "
                 f"{canonical}; standing down to .venv PyPI. Run "
-                f"`uv run scripts/sync_overlay.py {pkg}` to refresh or set "
+                f"`uv run scripts/build_mlx.py --only {pkg}` to refresh or set "
                 f"{env_var}={canonical} to force."
             ),
             package=pkg,

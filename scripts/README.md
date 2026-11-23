@@ -1,6 +1,6 @@
 # scripts/
 
-Last updated: 2026-09-24
+Last updated: 2026-11-22
 
 Standalone developer/ops scripts. All are run with `uv run` (PEP 723 headers
 provision their own deps where noted, so they don't add anything to the project
@@ -11,12 +11,11 @@ would just create churn.
 | Script | What it does | Run |
 | --- | --- | --- |
 | `build_llama.py` | **Clones and builds llama-server** (llama.cpp) -- the one dependency `uv sync` cannot install, because it is a C++ binary. Builds three tools beside it, from the same commit: `llama-bench`, for any spawn-flag question (`build/bin/llama-bench -m X.gguf -p 512,4096 -n 128 -ub 512,2048 -fa 1 -r 3`), `llama-fit-params`, llama.cpp's own memory projector, which prints the per-device model/context/compute split without loading the weights (`build/bin/llama-fit-params -m X.gguf -ngl 999 -np 1 -ub 2048 -fitp on`), and `ggml-rpc-server`, the `ggml-rpc` worker daemon for distributed multi-Mac inference (`--rpc`). The projector flag is not accepted by `llama-fit-params`, so an mmproj is costed separately. Newest `b<N>` release tag by default (`--rev` for anything else, `--status` to report, `--rebuild` after an Xcode bump). Never touches pyproject/uv.lock. Build settings and their rationale: below. | `uv run scripts/build_llama.py [--rev REV] [--status] [--rebuild] [--clean] [--openmp] [--lto] [--ui]` |
-| `build_mlx.py` | **Clones and builds `ml-explore/mlx`** outside the repo into `~/.heylook/mlx` (mirroring `build_llama.py`), leaving `pyproject.toml` and `uv.lock` on PyPI `mlx`. Checks out any tag/branch/SHA (`--rev`), optionally merges upstream PRs (`--pr N`), builds a wheel with `mlx.metallib`/`libmlx.dylib`, and unpacks it to `~/.heylook/mlx/overlay` (or `--install`s into `--python`). `src/heylook_llm/mlx_overlay.py` auto-discovers `~/.heylook/mlx/overlay` at `heylookllm` and worker startup with zero config, standing down on ABI mismatch or once `.venv` PyPI `mlx` is strictly newer; `$HEYLOOK_MLX_OVERLAY=0` (or `$HEYLOOK_OVERLAYS=0`) disables it or points elsewhere and `$HEYLOOK_MLX_DIR` relocates the checkout. | `uv run scripts/build_mlx.py [--rev REV] [--pr N] [--status] [--rebuild] [--clean]` |
-| `sync_overlay.py` | **Syncs pure-Python upstream repos** (`mlx-vlm`, `transformers`, or any `--repo <url>`) outside the repo into `~/.heylook/overlays/<pkg>` (mirroring `build_llama.py` and `build_mlx.py`), keeping `pyproject.toml` and `uv.lock` on clean PyPI releases with zero external git SHAs. Stages the package via `uv pip install --no-deps --target`, warns if upstream `main` introduced any runtime dependency missing from `.venv`, and writes `heylook-build.json`. `mlx_overlay.activate_all_overlays()` auto-discovers every staged overlay at startup and stands down automatically when `.venv` PyPI is strictly newer; `$HEYLOOK_OVERLAYS=0` or `$HEYLOOK_<PKG>_OVERLAY=0` disables it. | `uv run scripts/sync_overlay.py mlx-vlm [--rev REV] [--pr N] [--status] [--remove]` |
+| `build_mlx.py` | **Unified MLX stack updater** outside the repo under `~/.heylook/`, keeping `pyproject.toml` and `uv.lock` on clean PyPI releases. Zero-flag `uv run scripts/build_mlx.py` syncs `mlx-vlm` (`origin/main` -> `~/.heylook/overlays/mlx-vlm`, pure git checkout with zero PR merging) and builds `mlx` (`origin/main` + recommended open PRs such as `#4826` -> `~/.heylook/mlx/overlay`, auto-skipping PRs already merged into `HEAD` and skipping rebuilds when unchanged). Supports `--only`, `--with` (e.g. `transformers`), `--rev`, `--pr`/`--no-prs` (mlx only), `--status`, `--remove`, and opt-in `--upgrade-pypi`. `src/heylook_llm/mlx_overlay.py` auto-discovers every overlay at startup with automatic stand-down when `.venv` PyPI is strictly newer; `$HEYLOOK_OVERLAYS=0` (or `$HEYLOOK_MLX_OVERLAY=0`) disables overlays. | `uv run scripts/build_mlx.py [--only PKG] [--with PKG] [--status] [--remove [TARGET]]` |
 | `rpc_worker.sh` | Starts `ggml-rpc-server` from the canonical `build_llama.py` build on a secondary Mac (e.g. over Thunderbolt Bridge `worker.local:50052`) with `-c` local SSD tensor hash caching enabled by default. | `scripts/rpc_worker.sh [--host <worker-ip>] [--port 50052] [--no-cache]` |
 | `mlx_pipeline_worker.py` | **Distributed MLX pipeline worker and 2-rank smoke runner.** Loads a model with `selective_pipeline_load` (filtering off-rank safetensors keys before `sanitize_weights`) and runs `run_pipeline_worker_loop` on Rank >= 1 (or a 2-rank greedy smoke prompt when `--smoke-prompt` is passed under `mlx.launch`). | `mlx.launch -n 2 uv run python scripts/mlx_pipeline_worker.py --model-path DIR [--ratios 0.8,0.2] [--smoke-prompt TEXT]` |
 | `distributed_probe.py` | **Multi-Mac distributed inference diagnostic & smoke harness.** `preflight` checks binaries (`llama-server` + `ggml-rpc-server`), `heylook-build.json` (`GGML_RPC=ON`), `bridge0`, and peer TCP; `mlx-local` runs a 1-rank vs 2-rank (`mlx.launch -n 2`) greedy parity test; `mlx-cluster` runs a multi-Mac `mlx.launch --backend ring --hostfile` test; `gguf-rpc` compares single-node vs distributed `ram_fit` and runs `llama-fit-params` against a remote `ggml-rpc-server`. | `uv run python scripts/distributed_probe.py preflight\|mlx-local\|mlx-cluster\|gguf-rpc ...` |
-| `guard_stable_channel.sh` | **Pre-commit guard** (wired into the git hook): keeps public `pyproject.toml` and `uv.lock` on clean PyPI releases (plus self `editable = "."`), blocking external git sources, local path sources, and `latest` channel overrides unless `HEYLOOK_ALLOW_CHANNEL_COMMIT=1`. Use `scripts/sync_overlay.py` / `scripts/build_mlx.py` for local git tracking. | runs from the hook; manual: `scripts/guard_stable_channel.sh` |
+| `guard_stable_channel.sh` | **Pre-commit guard** (wired into the git hook): keeps public `pyproject.toml` and `uv.lock` on clean PyPI releases (plus self `editable = "."`), blocking external git sources, local path sources, and `latest` channel overrides unless `HEYLOOK_ALLOW_CHANNEL_COMMIT=1`. Use `scripts/build_mlx.py` for local git tracking. | runs from the hook; manual: `scripts/guard_stable_channel.sh` |
 | `check_version_sync.py` | **Pre-commit guard** (wired into the git hook): the newest `## [x.y.z]` heading in `CHANGELOG.md` must equal `__version__`, read from the STAGED blobs. Stdlib only and fails closed. Replaced a hookify reminder that never ran while the plugin was disabled. | runs from the hook; manual: `scripts/check_version_sync.py` |
 | `hooks/git_add_guard.py` | **Claude Code PreToolUse hook** (Bash), wired in `.claude/settings.json`: refuses `git add -A/--all/-u/--update/./:/` and `git commit -a/--all`, because parallel sessions share this checkout. Stage files by name. Heredoc bodies are ignored. | runs from Claude Code; `tests/unit/test_git_add_guard.py` |
 | `hooks/config_toml_posttool.py` | **Claude Code PostToolUse hook**, wired in `.claude/settings.json`: after an edit to `heylook.toml` it runs the validation the server runs at startup, and exits 2 with the error so the model sees it at edit time. Ignores every other file. | runs from Claude Code; manual: pipe a hook payload into it |
@@ -42,13 +41,16 @@ uv lock --upgrade && uv sync              # everything, newest releases
 uv lock --upgrade-package mlx-vlm && uv sync  # one package
 ```
 
-The one committed git pin is mlx-vlm (`[tool.uv.sources]`, an exact 40-hex `rev`;
-owner decision 2026-09-05); everything else points at published releases.
-`guard_stable_channel.sh` allows exact 40-hex `rev` git pins (`#<40-hex>` in
-`uv.lock`) plus self `editable = "."` to commit directly, while blocking floating
-refs (`branch`, `tag`, unpinned `git`), non-40-hex revs, local path sources, and
-channel overrides so stray local experiments cannot land by accident. Committing
-one of those blocked overrides requires `HEYLOOK_ALLOW_CHANNEL_COMMIT=1`.
+Public `pyproject.toml` and `uv.lock` stay on published PyPI releases (`mlx`,
+`mlx-metal`, `mlx-vlm >= 0.8.0`, plus `editable = "."` for the repo itself).
+Local bleeding-edge git tracking lives outside the repo under `~/.heylook/`
+via `scripts/build_mlx.py` (`~/.heylook/mlx/overlay` and
+`~/.heylook/overlays/<pkg>`) and `scripts/build_llama.py`
+(`~/.heylook/llama.cpp`). `guard_stable_channel.sh` blocks external `git`
+sources, floating refs, local path sources, and `latest` channel overrides in
+staged `pyproject.toml` / `uv.lock` so stray local experiments cannot land by
+accident. Committing one of those blocked overrides requires
+`HEYLOOK_ALLOW_CHANNEL_COMMIT=1`.
 
 ## Vendored frontend libraries
 

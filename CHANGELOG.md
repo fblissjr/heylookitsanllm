@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.270] - 2026-11-22
+
+### Changed
+
+- **Unified MLX stack updater (`scripts/build_mlx.py`, retiring `scripts/sync_overlay.py`)**:
+  - Folded pure-Python upstream overlay syncing (`mlx-vlm` by default, plus optional `--with` / `--only` targets such as `transformers` or custom `--repo` URLs) into `scripts/build_mlx.py` and deleted `scripts/sync_overlay.py`, leaving two stack updaters (`scripts/build_llama.py` for GGUF and `scripts/build_mlx.py` for MLX).
+  - Updated bare `uv run scripts/build_mlx.py` to track `mlx-vlm` from latest `origin/main` (pure git checkout with no PR merging) alongside building `mlx` from `origin/main` with `RECOMMENDED_MLX_PRS = (4826,)` (dropping `ml-explore/mlx#4890`, now merged upstream on `main`).
+  - Added automatic ancestry (`git merge-base --is-ancestor`) and tree-equivalence checks in `apply_prs` so already-merged recommended MLX PRs are skipped cleanly, idempotent up-to-date checks (`mlx_is_up_to_date`, `python_overlay_is_up_to_date`) skipping unchanged staging and C++ compilation unless `--rebuild` / `--clean` is set, `--only` / `--with` / `--no-prs` / `--offline` / `--remove` / opt-in `--upgrade-pypi` flags, and a single combined `--status` report. Restricts `--pr` and `--no-prs` cleanly to `mlx`.
+  - Updated runtime hints, pre-commit guard text, docs, and unit tests (`src/heylook_llm/mlx_overlay.py`, `scripts/guard_stable_channel.sh`, `scripts/README.md`, `pyproject.toml`, `.claude/rules/dependencies.md`, `docs/architecture/sharp_edges.md`, `tests/unit/test_build_mlx.py`, deleting `tests/unit/test_sync_overlay.py`).
+
+### Fixed
+
+- **Unified `generation_stream` across PyPI `mlx-vlm 0.8.0` and `main` (`src/heylook_llm/providers/common/b1_runner.py`, `src/heylook_llm/providers/common/speculative_session.py`)**:
+  - Switched `b1_runner._generation_stream()` (which previously imported `mlx_vlm._generation_stream`, absent on PyPI `mlx-vlm 0.8.0`, and fell back to `mx.default_stream`) and `SpeculativeSession._verify_tokens` (which imported `mlx_vlm.speculative.common.generation_stream`, a separate thread-local stream prior to `mlx-vlm#2753`) onto `mlx_vlm.generate.common.generation_stream` so B=1 generation, `SpeculativeSession`, and `MLXProvider` share one identical generation stream on both PyPI `0.8.0` and `mlx-vlm main`.
+
+### Verification
+
+- `uv run --no-sync pytest tests/unit/ tests/contract/ -q`: `1847 passed, 2 subtests passed` on `.venv` (including consolidated `tests/unit/test_build_mlx.py` and `test_b1_runner_and_speculative_session_share_generate_common_stream` in `tests/unit/test_prefix_cache_and_b1_runner.py`).
+- `uv run scripts/build_mlx.py --status`: read-only check against local `~/.heylook/` confirmed unified reporting for both `mlx` (`~/.heylook/mlx/overlay`) and `mlx-vlm` (`~/.heylook/overlays/mlx-vlm`).
+- `scripts/check_version_sync.py` and `scripts/guard_stable_channel.sh` clean; zero active references to `sync_overlay` remaining. NOT run: live `uv run scripts/build_mlx.py` sync (live server untouched), `tests/smoke/`, `tests/eval/`, `scripts/perf_ab.py`, browser E2E (`puppeteer-core` removed in `v2.0.240`).
+
 ## [2.0.269] - 2026-11-22
 
 ### Changed

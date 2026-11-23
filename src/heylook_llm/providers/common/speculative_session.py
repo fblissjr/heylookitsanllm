@@ -367,7 +367,8 @@ class SpeculativeSession:
         budget: int,
         base_position: int,
     ) -> tuple[int, list[int]]:
-        from mlx_vlm.speculative.common import _speculative_walk, generation_stream
+        from mlx_vlm.generate.common import generation_stream
+        from mlx_vlm.speculative.common import _speculative_walk
         from mlx_vlm.speculative.mtp import _mtp_logits_from_hidden
 
         if verify.target_tokens is not None:

@@ -107,7 +107,7 @@ version = { attr = "heylook_llm.__version__" }
 override-dependencies = ["transformers>=5.15.0"]
 # Public pyproject.toml / uv.lock stay on clean PyPI releases (zero external git
 # SHAs). Local bleeding-edge builds live outside the repo under ~/.heylook/ via
-# scripts/build_llama.py, scripts/build_mlx.py, and scripts/sync_overlay.py.
+# scripts/build_llama.py and scripts/build_mlx.py.
 
 # ── Pytest ──────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
