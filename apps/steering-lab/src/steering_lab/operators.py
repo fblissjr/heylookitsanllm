@@ -274,6 +274,26 @@ def flip_null_cosine(
     return float(np.mean(vals)) if vals else 0.0
 
 
+def _paired_token_diffs_fp64(a: np.ndarray, b: np.ndarray, *, tau: float = 0.1) -> np.ndarray:
+    """Compute paired shift vectors ``B_matched - A`` in FP64.
+
+    Uses exact elementwise ``b - a`` when row counts match, and row-softmax cosine
+    barycenter matching (``softmax(a_hat @ b_hat^T / tau) @ b - a``) when Pole-A and
+    Pole-B token spans have different lengths.
+    """
+    if a.shape[0] == 0 or b.shape[0] == 0:
+        return np.zeros((0, a.shape[1]), dtype=np.float64)
+    if a.shape[0] == b.shape[0]:
+        return b - a
+    a_hat = a / np.maximum(np.linalg.norm(a, axis=-1, keepdims=True), EPS)
+    b_hat = b / np.maximum(np.linalg.norm(b, axis=-1, keepdims=True), EPS)
+    logits = (a_hat @ b_hat.T) / max(float(tau), 1e-3)
+    logits = logits - np.max(logits, axis=-1, keepdims=True)
+    weights = np.exp(logits)
+    weights = weights / np.maximum(np.sum(weights, axis=-1, keepdims=True), EPS)
+    return (weights @ b) - a
+
+
 def build_regime_a_layer(
     layer: int,
     acts_a: np.ndarray,
@@ -297,8 +317,9 @@ def build_regime_a_layer(
     mu_b = b.mean(axis=0)
     mu_d, mu_norm = _unit_np(mu_b - mu_a)
 
-    if use_paired_diff and a.shape[0] == b.shape[0]:
-        source = (b - a) - (mu_b - mu_a)[None, :]
+    if use_paired_diff and a.shape[0] > 0 and b.shape[0] > 0:
+        raw_diffs = _paired_token_diffs_fp64(a, b)
+        source = raw_diffs - raw_diffs.mean(axis=0, keepdims=True)
         # Include the mean-diff axis explicitly as row 0 if nonzero, then residual PCs.
         basis_rows: list[np.ndarray] = []
         weights: list[float] = []
@@ -371,8 +392,7 @@ def build_regime_b_layer(
 
     mu_b = b.mean(axis=0)
     mu_d, mu_norm = _unit_np(mu_b - a.mean(axis=0))
-    n = min(a.shape[0], b.shape[0])
-    diffs = b[:n] - a[:n] if n > 0 else np.zeros((0, a.shape[1]), dtype=np.float64)
+    diffs = _paired_token_diffs_fp64(a, b)
 
     if diffs.shape[0] > 0:
         _, s, vt = np.linalg.svd(diffs, full_matrices=False)
@@ -525,7 +545,10 @@ def compose_regime_a(
     for idx, (lv, scale, erase_ratio) in enumerate(nonzero):
         sign = 1.0 if scale >= 0.0 else -1.0
         mag = abs(scale)
-        mu_push += scale * lv.mu_d.astype(np.float64)
+        # Preserve calibrated contrast magnitude `mu_d_norm` so scale=1.0 moves a full
+        # Pole-A -> Pole-B step at any hidden dimension (e.g. D=5120 on Qwen 3.8).
+        eff_norm = float(lv.mu_d_norm) if float(lv.mu_d_norm) > EPS else 1.0
+        mu_push += (scale * eff_norm) * lv.mu_d.astype(np.float64)
 
         if lv.vr.shape[0] > 0 and erase_ratio > EPS:
             vr = lv.vr.astype(np.float64)
@@ -591,11 +614,14 @@ def compose_regime_a(
 # ---------------------------------------------------------------------------
 
 
-def _apply_tanh_knee_np(delta: np.ndarray, knee: float) -> np.ndarray:
+def _apply_tanh_knee_np(delta: np.ndarray, h: np.ndarray, knee: float) -> np.ndarray:
+    """Smoothly cap relative perturbation ``||Δh|| / ||h||`` at ``knee`` via ``tanh``."""
     if knee <= 0.0:
         return delta
-    norm = np.linalg.norm(delta, axis=-1, keepdims=True)
-    scale = (knee * np.tanh(norm / max(knee, EPS))) / np.maximum(norm, EPS)
+    h_norm = np.maximum(np.linalg.norm(h, axis=-1, keepdims=True), EPS)
+    cap = float(knee) * h_norm
+    d_norm = np.linalg.norm(delta, axis=-1, keepdims=True)
+    scale = (cap * np.tanh(d_norm / np.maximum(cap, EPS))) / np.maximum(d_norm, EPS)
     return delta * scale
 
 
@@ -618,7 +644,7 @@ def apply_regime_a_np(
         delta -= (coeff * composed.eig_erase[None, None, :]) @ composed.u_erase
     if float(np.linalg.norm(composed.mu_push)) > EPS:
         delta += composed.mu_push[None, None, :]
-    delta = _apply_tanh_knee_np(delta, composed.knee)
+    delta = _apply_tanh_knee_np(delta, arr, composed.knee)
     if token_mask is not None:
         delta = delta * np.asarray(token_mask, dtype=np.float32)
 
@@ -703,7 +729,8 @@ def apply_conditional_np(
         centered * lv.w_read.astype(np.float32)[None, None, :], axis=-1, keepdims=True
     ) / np.maximum(c_norm, EPS)
     g_t = np.clip((ray_cos - float(m0)) / max(float(w), EPS), 0.0, 1.0)
-    delta = float(scale) * g_t * lv.w_write.astype(np.float32)[None, None, :]
+    eff_norm = float(lv.mu_d_norm) if float(lv.mu_d_norm) > EPS else 1.0
+    delta = float(scale) * eff_norm * g_t * lv.w_write.astype(np.float32)[None, None, :]
 
     if e_cap > 0.0:
         d_norm_tok = np.linalg.norm(delta, axis=-1, keepdims=True)

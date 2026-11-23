@@ -124,9 +124,58 @@ def test_regime_a_capability_holds_and_tanh_knee():
     # Zero projection onto the protected hold subspace
     hold_leak = np.max(np.abs(delta @ hold_basis.T))
     assert float(hold_leak) < 1e-5
-    # Smooth tanh knee caps every token's perturbation norm <= 0.4
-    norms = np.linalg.norm(delta, axis=-1)
-    assert float(np.max(norms)) <= 0.4 + 1e-5
+    # Smooth relative tanh knee caps ||Δh|| / ||h|| <= 0.4 on every token
+    d_norms = np.linalg.norm(delta, axis=-1)
+    h_norms = np.linalg.norm(h, axis=-1)
+    assert float(np.max(d_norms / np.maximum(h_norms, 1e-8))) <= 0.4 + 1e-5
+
+
+def test_mu_d_norm_scaling_and_relative_knee_at_large_hidden_norm():
+    rng = np.random.default_rng(71)
+    d = 32
+    e0, e1, e2, e3 = np.eye(d, dtype=np.float32)[:4]
+    # Simulate 5120-D Qwen 3.8 scale: ||h|| ~ 200, contrast mu_d_norm ~ 50.
+    base = rng.normal(0.0, 2.0, size=(24, d))
+    a = (base + 25.0 * e0[None, :]).astype(np.float32)
+    b = (base + 25.0 * e1[None, :]).astype(np.float32)
+    lv_a = build_regime_a_layer(47, a, b, rank=4)
+    assert lv_a.mu_d_norm > 30.0
+
+    # Regime A push at scale=1.0 must preserve ~mu_d_norm (NOT unit 1.0!).
+    comp = compose_regime_a([(lv_a, 1.0, 0.0)], knee=0.25)
+    assert comp is not None
+    assert float(np.linalg.norm(comp.mu_push)) == np.testing.assert_allclose(
+        float(np.linalg.norm(comp.mu_push)), lv_a.mu_d_norm, rtol=1e-4
+    ) or abs(float(np.linalg.norm(comp.mu_push)) - lv_a.mu_d_norm) < 1e-3
+
+    # Relative knee=0.25 on ||h|| = 200 caps at ~50 (NOT crushed to 0.25!).
+    h_big = (e2 * 200.0).reshape(1, 1, d).astype(np.float32)
+    out, _ = apply_regime_a_np(h_big, comp, h_center=np.zeros_like(h_big))
+    d_norm = float(np.linalg.norm(out - h_big))
+    assert 20.0 < d_norm <= 50.0 + 1e-3
+
+    # Conditional write also preserves mu_d_norm (write_norm ~ 35) rather than unit 1.0!
+    r_neg = rng.normal(0.0, 1.0, size=(16, d)).astype(np.float32)
+    r_pos = (r_neg + 10.0 * e0[None, :]).astype(np.float32)
+    w_neg = rng.normal(0.0, 1.0, size=(16, d)).astype(np.float32)
+    w_pos = (w_neg + 35.0 * e3[None, :]).astype(np.float32)
+    lv_c = build_conditional_layer(47, r_pos, r_neg, w_pos, w_neg)
+    h_trig = (e0 * 200.0).reshape(1, 1, d).astype(np.float32)
+    out_c, _ = apply_conditional_np(h_trig, lv_c, scale=1.0, h_center=np.zeros_like(h_trig), e_cap=0.5)
+    assert float(np.linalg.norm(out_c - h_trig)) > 20.0
+
+
+def test_paired_token_diffs_row_softmax_handles_unequal_token_counts():
+    rng = np.random.default_rng(73)
+    d = 32
+    e0, e1 = np.eye(d, dtype=np.float32)[:2]
+    a = (rng.normal(0.0, 0.3, size=(19, d)) + 3.0 * e0[None, :]).astype(np.float32)
+    b = (rng.normal(0.0, 0.3, size=(27, d)) + 3.0 * e1[None, :]).astype(np.float32)
+    lv_a = build_regime_a_layer(47, a, b, rank=4, use_paired_diff=True)
+    lv_b = build_regime_b_layer(63, a, b, rank=4)
+    assert lv_a.vr.shape == (4, d)
+    assert lv_b.vr.shape == (4, d)
+    assert lv_a.mu_d_norm > 3.5 and lv_b.mu_d_norm > 3.5
 
 
 def test_regime_b_deadzone_ramp_and_boost_zero_cap():

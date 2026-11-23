@@ -496,9 +496,12 @@ def test_fastapi_server_and_cli_demo_bank_flow(tmp_path: Path):
     ).json()
     assert r_cl["mode"] == "demo_mtp"
     assert r_cl["jlens_applied"] is True
+    assert r_cl["jlens_val_r2"] is not None
     assert r_cl["used_corpus_prior"] is True
     assert len(r_cl["chains"]) == 4
     assert r_cl["chains"][0]["round_trip_cos"] is not None
+    assert r_cl["chains"][0]["round_trip_rank"] == 1
+    assert r_cl["chains"][0]["round_trip_percentile"] is not None
 
     r_sweep = client.post(
         "/api/sweep",
@@ -524,3 +527,185 @@ def test_fastapi_server_and_cli_demo_bank_flow(tmp_path: Path):
         },
     ).json()
     assert r_td["mode"] == "demo_synthetic" and len(r_td["adds"]) > 0
+
+
+def test_mlx_cpu_qwen35_mtp_adapter_forward_hidden_rope_kvcache_and_norm():
+    import mlx.core as mx
+    from steering_lab.chain_lens import Qwen35MTPAdapter, run_chain_lens
+
+    rt = _make_runtime_with_vectors()
+    lm = rt.lm
+
+    class _MiniKVCache:
+        def __init__(self) -> None:
+            self.keys = None
+            self.values = None
+            self.offset = 0
+
+    class _FakeQwen35MTPDraft:
+        """Exercises the exact Qwen3_5MTPDraftModel._forward_hidden contract."""
+
+        def __init__(self) -> None:
+            self._input_embed = lm.model.embed_tokens
+            self._input_embed_scale = 1.0
+            self.seen_positions: list[int] = []
+            self.seen_offsets: list[int] = []
+
+        def make_cache(self):
+            return [_MiniKVCache()]
+
+        def _forward_hidden(self, token_embed, hidden, cache, position_ids):
+            pos_val = int(position_ids[0, 0].item())
+            self.seen_positions.append(pos_val)
+            c = cache[0]
+            self.seen_offsets.append(c.offset)
+            # Append a 4D KV slice [1, 1, 1, D] to verify per-beam isolation on fork.
+            k_new = token_embed[:, None, :, :]
+            v_new = hidden[:, None, :, :]
+            if c.keys is None or c.offset == 0:
+                c.keys = k_new
+                c.values = v_new
+            else:
+                c.keys = mx.concatenate([c.keys[:, :, : c.offset, :], k_new], axis=2)
+                c.values = mx.concatenate([c.values[:, :, : c.offset, :], v_new], axis=2)
+            c.offset += 1
+            return 0.7 * hidden + 0.3 * token_embed + 0.01 * float(pos_val)
+
+    draft = _FakeQwen35MTPDraft()
+    adapter = Qwen35MTPAdapter(lm, draft, start_position=1)
+
+    # Initial state must ALREADY be post-target.model.norm (matching speculative_verify_hidden).
+    raw_h = np.ones((HIDDEN_DIM,), dtype=np.float32)
+    st0 = adapter.initial_state(raw_h)
+    expected_normed = lm.model.norm(mx.array(raw_h.reshape(1, 1, -1)))
+    mx.eval(expected_normed)
+    assert np.allclose(np.asarray(st0["h_mx"]), np.asarray(expected_normed), atol=1e-5)
+
+    # Fork two independent child beams from st0 and verify per-beam KVCache + RoPE isolation.
+    _, st_a1 = adapter.step(st0, token_id=5)
+    _, st_b1 = adapter.step(st0, token_id=8)
+    assert st_a1["pos"] == 2 and st_b1["pos"] == 2
+    assert st_a1["kv_states"][0][2] == 1 and st_b1["kv_states"][0][2] == 1
+    assert not np.allclose(np.asarray(st_a1["kv_states"][0][0]), np.asarray(st_b1["kv_states"][0][0]))
+
+    _, st_a2 = adapter.step(st_a1, token_id=6)
+    assert st_a2["pos"] == 3 and st_a2["kv_states"][0][2] == 2
+    assert 1 in draft.seen_positions and 2 in draft.seen_positions
+
+    # Full run_chain_lens + real residual encode_phrase_hidden + upper-layer transport
+    # Probe channels 2..5 (where norm_w == 0) so multiple plausible tokens pass plausibility_beta.
+    probe_h = np.zeros((HIDDEN_DIM,), dtype=np.float32)
+    probe_h[2:6] = 1.0
+    base_h = np.zeros((HIDDEN_DIM,), dtype=np.float32)
+    base_h[6:10] = 1.0
+    res = run_chain_lens(
+        probe_h,
+        adapter=adapter,
+        decode_token=rt._decode_token,
+        h_baseline=base_h,
+        steps=3,
+        beam_width=3,
+        embed_tokens_fn=lambda tids: rt.encode_phrase_hidden(tids, layer=3),
+    )
+    assert len(res["chains"]) == 3
+    assert all(len(c["token_ids"]) == 3 for c in res["chains"])
+    assert res["chains"][0]["round_trip_cos"] is not None
+
+    transported = rt.transport_upper_layers(raw_h, src_layer=1, dst_layer=3)
+    assert transported.shape == (HIDDEN_DIM,)
+
+
+def test_mlx_cpu_mixed_mask_regime_a_and_token_delta_phase_isolation():
+    rt = _make_runtime_with_vectors()
+    # Add a second Regime-A slider on the SAME layer (L3) with a DIFFERENT (phase, token_mask)!
+    e4 = np.eye(HIDDEN_DIM, dtype=np.float32)[4]
+    e6 = np.eye(HIDDEN_DIM, dtype=np.float32)[6]
+    rt.vectors["vision_img"] = VectorSpec(
+        id="vision_img",
+        label="Vision Img",
+        operator="regime_a",
+        phase="all",
+        token_mask="image_pad",
+        layers=(3,),
+        by_layer={
+            3: LayerVector(
+                layer=3,
+                mu_d=e6,
+                vr=e4.reshape(1, -1),
+                d_diag=np.array([1.0], dtype=np.float32),
+                mu_d_norm=2.0,
+            )
+        },
+    )
+
+    # Mix both sliders on L3 simultaneously: vision_img (image_pad) + style_mid (content/decode).
+    ctrl = LayerSteeringController(
+        SteeringPlan(scales={"vision_img": 1.0, "style_mid": 1.0}),
+        rt.vectors,
+        num_layers=4,
+        hidden_size=HIDDEN_DIM,
+        layer_is_linear=rt._layer_is_linear_flags(),
+    )
+    assert len(ctrl.compiled[3].regime_a_groups) == 2
+
+    # Position 0: prompt_text (neither fires), Position 1: image_pad (ONLY vision_img fires),
+    # Position 2: decode/think (neither fires), Position 3: decode/content (ONLY style_mid fires)!
+    ctrl.set_phase("content")
+    ctrl.set_token_phases(["prompt", "prompt", "think", "content"])
+    ctrl.set_prompt_token_types(["prompt_text", "image_pad", "decode", "decode"])
+    h = np.zeros((1, 4, HIDDEN_DIM), dtype=np.float32)
+    out = ctrl.apply_layer_np(3, h, commit_center=False)
+    assert np.allclose(out[0, 0], 0.0, atol=1e-6)  # prompt_text untouched
+    assert float(out[0, 1, 6]) > 1.0 and abs(float(out[0, 1, 2])) < 1e-5  # ONLY vision_img (e6)
+    assert np.allclose(out[0, 2], 0.0, atol=1e-6)  # <think> untouched!
+    assert float(out[0, 3, 2]) > 0.5 and abs(float(out[0, 3, 6])) < 1e-5  # ONLY style_mid (e2)
+
+    # Click-a-token token_delta_logprob MUST NOT steer inside <think> prefix for content-only slider!
+    gen_seq = [8, 9, THINK_END, 10, 11]
+    plan_content = SteeringPlan(scales={"style_mid": 1.5}, phase_override="content")
+    td_think = rt.token_delta_logprob(
+        "hello", gen_seq, target_index=1, plan=plan_content, enable_thinking=True, top_k=4
+    )
+    td_content = rt.token_delta_logprob(
+        "hello", gen_seq, target_index=4, plan=plan_content, enable_thinking=True, top_k=4
+    )
+    assert max(abs(x["delta_logprob"]) for x in td_think["adds"]) < 1e-5
+    assert max(abs(x["delta_logprob"]) for x in td_content["adds"]) > 0.05
+
+
+def test_mlx_cpu_capture_span_bank_vision_conditional_nonsink_and_truncation(tmp_path: Path):
+    rt = _make_runtime_with_vectors()
+    # Capture vision + 4-pole conditional + calibration on CPU MLX toy model.
+    # Because toy model never emits </think>, enable_thinking=True tests truncation routing
+    # (decoded tokens MUST land in "think" and NEVER be mislabeled into "answer"!).
+    bank_think = rt.capture_span_bank(
+        tmp_path / "bank_think_trunc",
+        corpus_ids=["vision_optical_vs_mood", "cond_hedge_to_concrete", "jlens_calibration"],
+        layers=(1, 3),
+        max_tokens=6,
+        max_tokens_per_span=4,
+        enable_thinking=True,
+    )
+    # 1. Vision corpus actually attached images and captured image_pad tokens!
+    assert bank_think.get_span("vision_optical_vs_mood", "a", "image_pad", 3) is not None
+    assert bank_think.get_span("vision_optical_vs_mood", "b", "image_pad", 3) is not None
+    # 2. 4-pole conditional corpus captured all four poles!
+    for pole in ("read_neg", "read_pos", "write_neg", "write_pos"):
+        assert bank_think.get_span("cond_hedge_to_concrete", pole, "think", 3) is not None
+    # 3. Truncated <think> traces were NOT mislabeled into "answer"!
+    assert bank_think.get_span("cond_hedge_to_concrete", "read_pos", "answer", 3) is None
+    # 4. Non-sink multi-token subsampling produced >1 row per prompt for calibration!
+    cal_think = bank_think.get_span("jlens_calibration", "clean", "think", 3)
+    assert cal_think is not None and cal_think.shape[0] > 12
+
+    # With enable_thinking=False, decoded tokens cleanly populate "answer" with >1 row per prompt.
+    bank_ans = rt.capture_span_bank(
+        tmp_path / "bank_ans",
+        corpus_ids=["cond_hedge_to_concrete"],
+        layers=(1, 3),
+        max_tokens=6,
+        max_tokens_per_span=4,
+        enable_thinking=False,
+    )
+    ans_rows = bank_ans.get_span("cond_hedge_to_concrete", "write_pos", "answer", 3)
+    assert ans_rows is not None and ans_rows.shape[0] > 8

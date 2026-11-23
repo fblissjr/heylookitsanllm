@@ -62,7 +62,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         default=",".join(str(x) for x in DEFAULT_QWEN38_LAYERS),
         help="Comma-separated layer indices",
     )
-    p_cap.add_argument("--max-tokens", type=int, default=192)
+    p_cap.add_argument("--max-tokens", type=int, default=384)
+    p_cap.add_argument("--max-tokens-per-span", type=int, default=24)
+    p_cap.add_argument("--image-dir", help="Optional folder of real photos/screenshots for VLM Dual-Lock capture")
     p_cap.add_argument("--seed", type=int, default=42)
 
     p_build = sub.add_parser("build", help="Build Regime A/B/Conditional packs from a cached SpanBank (CPU)")
@@ -148,7 +150,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         layers = [int(x.strip()) for x in args.layers.split(",") if x.strip()]
         cids = None if args.corpus == "all" else [x.strip() for x in args.corpus.split(",") if x.strip()]
         bank = rt.capture_span_bank(
-            Path(args.out), corpus_ids=cids, layers=layers, max_tokens=args.max_tokens, seed=args.seed
+            Path(args.out),
+            corpus_ids=cids,
+            layers=layers,
+            max_tokens=args.max_tokens,
+            max_tokens_per_span=args.max_tokens_per_span,
+            image_dir=Path(args.image_dir) if args.image_dir else None,
+            seed=args.seed,
         )
         print(f"Captured {len(bank.tensors)} span tensors to {args.out}")
         return 0
@@ -196,9 +204,11 @@ def main(argv: Optional[list[str]] = None) -> int:
             beam_width=args.beam_width,
             alpha=args.alpha,
             embed_tokens_fn=lambda tids: lm_head[np.asarray(list(tids), dtype=np.int64) % lm_head.shape[0]].mean(axis=0),
+            calibration_states=bank.corpus_states(terminal if jlens is not None else args.layer),
         )
         out["jlens_applied"] = jlens is not None
         out["jlens_train_r2"] = None if jlens is None else jlens.train_r2
+        out["jlens_val_r2"] = None if jlens is None else jlens.val_r2
         print(json.dumps(out, indent=2))
         return 0
 

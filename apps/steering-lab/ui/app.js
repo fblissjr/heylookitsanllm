@@ -262,11 +262,15 @@ async function runChainLens() {
         (c) => `
       <div class="chain-item">
         <span class="chain-item__text">${escapeHtml(c.text)}</span>
-        <span class="chain-item__score">score ${c.score.toFixed(2)}${c.round_trip_cos !== null ? ` · rt ${c.round_trip_cos.toFixed(2)}` : ""}</span>
+        <span class="chain-item__score">score ${c.score.toFixed(2)}${c.round_trip_cos !== null ? ` · rt ${c.round_trip_cos.toFixed(2)}` : ""}${c.round_trip_rank !== null ? ` (#${c.round_trip_rank})` : ""}${c.round_trip_percentile !== null ? ` p${Math.round(c.round_trip_percentile)}` : ""}</span>
       </div>`
       )
       .join("");
-    const jlensTag = res.jlens_applied ? ` · J-Lens R²=${res.jlens_train_r2}` : " · direct";
+    const jlensTag = res.exact_upper_applied
+      ? " · exact L_mid→L63"
+      : res.jlens_applied
+      ? ` · J-Lens val R²=${res.jlens_val_r2 ?? res.jlens_train_r2}`
+      : " · direct";
     $("chain-lens-out").innerHTML =
       `<p class="note-line"><code>${escapeHtml(res.mode)}</code> · ${escapeHtml(res.source)} @ L${res.layer} (${escapeHtml(res.layer_kind || "")})${jlensTag} · α=${res.alpha}</p>` +
       rows;

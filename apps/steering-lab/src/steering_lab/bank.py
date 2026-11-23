@@ -111,18 +111,23 @@ class SpanBank:
         # Qwen 3.8 3:1 hybrid layout default: Full Attention sits strictly at idx % 4 == 3.
         return "FA" if int(layer) % 4 == 3 else "GDN"
 
-    def corpus_mean(self, layer: int, *, span_kind: str = "answer") -> Optional[np.ndarray]:
-        """Mean hidden state across all captured rows at ``layer`` (Chain Lens prior baseline)."""
+    def corpus_states(self, layer: int, *, span_kind: str = "answer") -> Optional[np.ndarray]:
+        """All captured rows at ``layer`` (preferring diverse calibration rows when present)."""
         rows: list[np.ndarray] = []
-        for cid, cmeta in self.concepts.items():
+        for cid, cmeta in sorted(self.concepts.items()):
             sk = str(cmeta.get("default_span", span_kind))
-            for pole in ("b", "a", "clean", "write_pos", "write_neg"):
+            for pole in ("clean", "b", "a", "write_pos", "write_neg"):
                 arr = self.get_span(cid, pole, sk, layer)
                 if arr is not None and arr.shape[0] > 0:
                     rows.append(arr)
         if not rows:
             return None
-        return np.concatenate(rows, axis=0).mean(axis=0).astype(np.float32)
+        return np.concatenate(rows, axis=0).astype(np.float32)
+
+    def corpus_mean(self, layer: int, *, span_kind: str = "answer") -> Optional[np.ndarray]:
+        """Mean hidden state across all captured rows at ``layer`` (Chain Lens prior baseline)."""
+        states = self.corpus_states(layer, span_kind=span_kind)
+        return None if states is None else states.mean(axis=0).astype(np.float32)
 
     def paired_layer_states(
         self,
@@ -191,7 +196,7 @@ class SpanBank:
         for layer in self.layers:
             vecs: dict[str, np.ndarray] = {}
             for cid, cmeta in self.concepts.items():
-                if cmeta.get("kind") == "hold":
+                if cmeta.get("kind") in ("hold", "calibration"):
                     continue
                 sk = cmeta.get("default_span", span_kind)
                 a = self.get_span(cid, "a", sk, layer)
@@ -367,7 +372,7 @@ def build_packs_from_bank(
 
     # 2. Concept vector packs
     for cid, cmeta in bank.concepts.items():
-        if cmeta.get("kind") == "hold":
+        if cmeta.get("kind") in ("hold", "calibration"):
             continue
         op = str(cmeta.get("operator", "regime_a"))
         sk = str(cmeta.get("default_span", "answer"))

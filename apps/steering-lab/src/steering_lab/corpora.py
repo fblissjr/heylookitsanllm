@@ -21,6 +21,9 @@ class ContrastivePair:
     system_a: str  # Pole A (source / unwanted / baseline)
     system_b: str  # Pole B (target / clean)
     image_variant: Optional[int] = None  # optional synthetic image for VLM capture
+    # Optional extra poles for 4-pole `conditional` (`IF X -> THEN Y`) corpora:
+    write_system_a: Optional[str] = None
+    write_system_b: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -34,11 +37,11 @@ class CorpusSpec:
     layers: tuple[int, ...]
     pairs: tuple[ContrastivePair, ...]
     notes: str = ""
-    kind: str = "contrast"  # "contrast" | "hold"
+    kind: str = "contrast"  # "contrast" | "hold" | "calibration"
 
 
-def make_synthetic_image_data_uri(variant: int) -> str:
-    """Create a deterministic synthetic RGB PNG data URI for VLM steering probes."""
+def make_synthetic_image(variant: int) -> Any:
+    """Create a deterministic synthetic RGB PIL Image for CPU/VLM steering probes."""
     from PIL import Image, ImageDraw
 
     im = Image.new("RGB", (384, 384), (24, 34, 48))
@@ -56,6 +59,12 @@ def make_synthetic_image_data_uri(variant: int) -> str:
         for x in range(24, 360, 56):
             draw.rectangle((x, 48, x + 28, 336), fill=(190, 210, 185))
         draw.ellipse((142, 142, 242, 242), fill=(235, 195, 65))
+    return im
+
+
+def make_synthetic_image_data_uri(variant: int) -> str:
+    """Create a deterministic synthetic RGB PNG data URI for VLM steering probes."""
+    im = make_synthetic_image(variant)
     buf = io.BytesIO()
     im.save(buf, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
@@ -125,6 +134,31 @@ _HOLD_PROMPTS = (
     ("hold_code_2", "Write a Python function has_cycle(graph) for a directed graph using 3-color DFS."),
     ("hold_json_1", "Return ONLY valid JSON with keys 'primes' (first 5 primes) and 'sum' (their integer sum)."),
     ("hold_json_2", "Return ONLY valid JSON factoring 2520 into [{'prime': p, 'exp': e}]."),
+)
+
+
+_COND_READ_NEG = _BLUNT_SYS_B
+_COND_READ_POS = _BLUNT_SYS_A
+_COND_WRITE_NEG = (
+    "Explain using abstract, general concepts and high-level principles without naming physical materials or measurements."
+)
+_COND_WRITE_POS = (
+    "Ground every sentence in concrete physical materials, dimensions, tools, and observable measurements (steel, millimeters, kelvin, joules)."
+)
+
+_CALIBRATION_PROMPTS = (
+    ("cal_1", "Summarize the key differences between TCP and QUIC connection establishment."),
+    ("cal_2", "Write a concise Python dataclass for a ring buffer with push and snapshot methods."),
+    ("cal_3", "Give a short dialogue between a machinist and an architect debating tolerance stacks."),
+    ("cal_4", "Explain how sourdough fermentation balances lactic acid bacteria and wild yeast."),
+    ("cal_5", "Describe how a seismograph converts ground velocity into an electrical signal."),
+    ("cal_6", "List three failure modes of naive retry loops in distributed RPC services."),
+    ("cal_7", "Draft a two-paragraph travel journal entry arriving at a harbor town in fog."),
+    ("cal_8", "Compare B-trees and LSM-trees for write-heavy time-series storage."),
+    ("cal_9", "Explain why high-altitude baking requires adjusting leavening and oven temperature."),
+    ("cal_10", "Write a SQL query using a window function to compute a 7-day rolling average."),
+    ("cal_11", "Explain the role of the vestibular system in gaze stabilization."),
+    ("cal_12", "Give a concise troubleshooting checklist for an intermittent DNS timeout."),
 )
 
 
@@ -201,6 +235,27 @@ def default_corpora() -> dict[str, CorpusSpec]:
             ),
             notes="VLM Dual-Lock probe comparing <|image_pad|>-only vs content-only steering.",
         ),
+        "cond_hedge_to_concrete": CorpusSpec(
+            id="cond_hedge_to_concrete",
+            label="IF Hedging -> THEN Concrete Nouns",
+            operator="conditional",
+            phase="content",
+            token_mask="decode",
+            default_span="answer",
+            layers=(43, 47),
+            pairs=tuple(
+                ContrastivePair(
+                    f"cond_{tid}",
+                    prompt,
+                    _COND_READ_NEG,
+                    _COND_READ_POS,
+                    write_system_a=_COND_WRITE_NEG,
+                    write_system_b=_COND_WRITE_POS,
+                )
+                for tid, prompt in _SHARED_TOPICS
+            ),
+            notes="Decoupled 4-pole IF X -> THEN Y starter corpus on mid FA layers (L43, L47).",
+        ),
         "capability_holds": CorpusSpec(
             id="capability_holds",
             label="Math / Code / JSON Capability Holds",
@@ -215,6 +270,21 @@ def default_corpora() -> dict[str, CorpusSpec]:
             ),
             notes="Clean structured-reasoning spans projected out of Regime-A sliders.",
             kind="hold",
+        ),
+        "jlens_calibration": CorpusSpec(
+            id="jlens_calibration",
+            label="Diverse General Calibration Corpus (J-Lens & Round-Trip Percentile)",
+            operator="regime_a",
+            phase="all",
+            token_mask="all",
+            default_span="answer",
+            layers=(15, 27, 39, 43, 47, 49, 51, 55, 62, 63),
+            pairs=tuple(
+                ContrastivePair(cid, prompt, "", "")
+                for cid, prompt in _CALIBRATION_PROMPTS
+            ),
+            notes="Diverse prose/code/dialogue/technical non-sink rows for J-Lens transport and anisotropy-free round-trip percentiles.",
+            kind="calibration",
         ),
     }
 

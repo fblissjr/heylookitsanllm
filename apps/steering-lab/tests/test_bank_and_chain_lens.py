@@ -88,6 +88,14 @@ def test_jlens_transport_recovers_layer_rotation():
 
     jlens = fit_jlens_transport(h_src, h_dst, src_layer=47, dst_layer=63, ridge=1e-4)
     assert jlens.train_r2 > 0.99
+    assert jlens.val_r2 is not None and jlens.val_r2 > 0.99
+    assert jlens.sample_count == 80
+
+    # Norm-relative probe scaling keeps probe strength invariant to high-D ||h_prior|| ~ 400!
+    big_prior = np.ones((d,), dtype=np.float32) * (400.0 / np.sqrt(d))
+    unit_v = np.eye(d, dtype=np.float32)[0]
+    h_t, h_b, _ = build_probe_pair(unit_v, h_prior=big_prior, probe_scale=0.5, norm_relative=True)
+    assert abs(float(np.linalg.norm(h_t - h_b)) - 200.0) < 1e-2
 
     v_test = rng.normal(0.0, 1.0, size=(d,)).astype(np.float32)
     v_rot_true = (v_test @ q).astype(np.float32)
@@ -116,8 +124,14 @@ def test_chain_lens_contrastive_sign_flip_and_round_trip(tmp_path: Path):
     decode = lambda tid: bank.xray_vocab[tid % len(bank.xray_vocab)]
     embed_fn = lambda tids: lm_head[np.asarray(list(tids), dtype=np.int64) % lm_head.shape[0]].mean(axis=0)
 
-    ht_pos, hb_pos, _ = build_probe_pair(lv.mu_d, h_prior=h_prior, probe_scale=3.0, jlens=jlens)
-    ht_neg, hb_neg, _ = build_probe_pair(-lv.mu_d, h_prior=h_prior, probe_scale=3.0, jlens=jlens)
+    ht_pos, hb_pos, _ = build_probe_pair(lv.mu_d, h_prior=h_prior, probe_scale=1.5, jlens=jlens)
+    ht_neg, hb_neg, _ = build_probe_pair(-lv.mu_d, h_prior=h_prior, probe_scale=1.5, jlens=jlens)
+
+    peer_dirs = {}
+    for cid in ("clinical_vs_poetic", "blunt_vs_hedged", "socratic_vs_declarative"):
+        sp, _ = load_vector_spec(vec_dir / cid)
+        peer_dirs[cid] = jlens.transport_vector(sp.by_layer[47].mu_d)
+    cal_states = bank.corpus_states(63)
 
     out_pos = run_chain_lens(
         ht_pos,
@@ -128,6 +142,9 @@ def test_chain_lens_contrastive_sign_flip_and_round_trip(tmp_path: Path):
         beam_width=5,
         alpha=0.75,
         embed_tokens_fn=embed_fn,
+        bank_directions=peer_dirs,
+        target_direction_key="clinical_vs_poetic",
+        calibration_states=cal_states,
     )
     out_neg = run_chain_lens(
         ht_neg,
@@ -149,3 +166,6 @@ def test_chain_lens_contrastive_sign_flip_and_round_trip(tmp_path: Path):
     assert out_neg["chains"][0]["token_ids"][0] in set(range(6, 12))
     assert out_pos["chains"][0]["round_trip_cos"] is not None
     assert out_pos["chains"][0]["round_trip_cos"] > 0.1
+    assert out_pos["chains"][0]["round_trip_rank"] == 1
+    assert out_pos["chains"][0]["round_trip_percentile"] is not None
+    assert out_pos["chains"][0]["round_trip_percentile"] > 50.0

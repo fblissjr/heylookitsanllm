@@ -77,7 +77,8 @@ class ChainLensRequest(BaseModel):
     use_clamped_union: bool = True
     use_holds: bool = False
     use_jlens: bool = True
-    probe_scale: float = Field(default=2.0, ge=0.1, le=10.0)
+    use_exact_upper_layers: bool = False
+    probe_scale: float = Field(default=1.0, ge=0.05, le=5.0)
     direction_sign: float = 1.0  # +1 for target pole / Adds, -1 for Pole A / Erases
     steps: int = Field(default=4, ge=1, le=6)
     beam_width: int = Field(default=6, ge=1, le=12)
@@ -482,7 +483,8 @@ def create_app(state: Optional[LabState] = None) -> FastAPI:
         if h_prior is None and lab.runtime.bank is not None:
             h_prior = lab.runtime.bank.corpus_mean(req.layer)
 
-        # Optional J-Lens linear ridge transport (L_mid -> terminal L63) from paired SpanBank states.
+        # Optional transport from mid-layer `req.layer` -> `terminal_layer` (`L63`):
+        # either exact upper-layer forward (when live model loaded & requested) or Ridge J-Lens.
         num_layers = (
             lab.runtime.fingerprint.num_hidden_layers
             if lab.runtime.fingerprint is not None
@@ -490,18 +492,55 @@ def create_app(state: Optional[LabState] = None) -> FastAPI:
         )
         terminal_layer = num_layers - 1
         jlens = None
-        if req.use_jlens and req.layer < terminal_layer and lab.runtime.bank is not None:
-            paired = lab.runtime.bank.paired_layer_states(req.layer, terminal_layer)
-            if paired is not None and paired[0].shape[0] >= 4:
-                jlens = fit_jlens_transport(
-                    paired[0], paired[1], src_layer=req.layer, dst_layer=terminal_layer
-                )
+        exact_upper = False
+        target_frame_layer = req.layer
 
-        h_target, h_base, _ = build_probe_pair(
-            target_vec,
-            h_prior=h_prior,
-            probe_scale=req.probe_scale,
-            jlens=jlens,
+        if req.use_exact_upper_layers and lab.runtime.is_loaded and req.layer < terminal_layer:
+            base_mid = np.zeros_like(target_vec) if h_prior is None else np.asarray(h_prior, dtype=np.float32)
+            base_norm = float(np.linalg.norm(base_mid))
+            v_norm = float(np.linalg.norm(target_vec))
+            step_vec = (
+                (float(req.probe_scale) * base_norm / v_norm) * target_vec
+                if base_norm > 1e-6 and v_norm > 1e-8
+                else float(req.probe_scale) * target_vec
+            )
+            h_base = lab.runtime.transport_upper_layers(base_mid, src_layer=req.layer, dst_layer=terminal_layer)
+            h_target = lab.runtime.transport_upper_layers(
+                base_mid + step_vec, src_layer=req.layer, dst_layer=terminal_layer
+            )
+            exact_upper = True
+            target_frame_layer = terminal_layer
+        else:
+            if req.use_jlens and req.layer < terminal_layer and lab.runtime.bank is not None:
+                paired = lab.runtime.bank.paired_layer_states(req.layer, terminal_layer)
+                if paired is not None and paired[0].shape[0] >= 4:
+                    jlens = fit_jlens_transport(
+                        paired[0], paired[1], src_layer=req.layer, dst_layer=terminal_layer
+                    )
+                    target_frame_layer = terminal_layer
+            h_target, h_base, _ = build_probe_pair(
+                target_vec,
+                h_prior=h_prior,
+                probe_scale=req.probe_scale,
+                jlens=jlens,
+                norm_relative=True,
+            )
+
+        # Build peer bank directions & calibration states in `target_frame_layer` for
+        # anisotropy-resistant round-trip rank + percentile checks.
+        bank_dirs: dict[str, np.ndarray] = {}
+        for cid, sp in lab.runtime.vectors.items():
+            other_lv = sp.by_layer.get(req.layer)
+            if other_lv is None:
+                continue
+            dvec = other_lv.mu_d
+            if jlens is not None:
+                dvec = jlens.transport_vector(dvec)
+            bank_dirs[cid] = dvec
+        cal_states = (
+            lab.runtime.bank.corpus_states(target_frame_layer)
+            if lab.runtime.bank is not None
+            else None
         )
 
         draft_model = getattr(lab.runtime, "draft_model", None)
@@ -509,15 +548,9 @@ def create_app(state: Optional[LabState] = None) -> FastAPI:
         if lab.runtime.is_loaded and draft_model is not None:
             adapter = Qwen35MTPAdapter(lab.runtime.lm, draft_model)
             mode = "live_mtp"
-
-            def _live_embed(tids: Any) -> np.ndarray:
-                import mlx.core as mx
-
-                e = lab.runtime.lm.model.embed_tokens(mx.array([list(tids)], dtype=mx.int32))
-                mx.eval(e)
-                return np.asarray(e[0].astype(mx.float32)).mean(axis=0)
-
-            embed_fn = _live_embed
+            # Forward the 3..5 token phrase to `target_frame_layer` (NOT Layer-0 embed_tokens!)
+            # so round-trip cosine compares states in the exact same residual coordinate frame.
+            embed_fn = lambda tids: lab.runtime.encode_phrase_hidden(tids, layer=target_frame_layer)
         elif lab.runtime.bank is not None and lab.runtime.bank.xray_lm_head is not None:
             lm_head = lab.runtime.bank.xray_lm_head
             adapter = LinearDemoMTPAdapter(lm_head)
@@ -539,14 +572,21 @@ def create_app(state: Optional[LabState] = None) -> FastAPI:
             alpha=req.alpha,
             plausibility_beta=req.plausibility_beta,
             embed_tokens_fn=embed_fn,
+            bank_directions=bank_dirs,
+            target_direction_key=req.concept_id,
+            calibration_states=cal_states,
         )
         out["mode"] = mode
         out["layer"] = req.layer
+        out["target_frame_layer"] = target_frame_layer
         out["layer_kind"] = lab.runtime.layer_kinds().get(req.layer, "FA" if req.layer % 4 == 3 else "GDN")
         out["source"] = source_label
         out["direction_sign"] = req.direction_sign
         out["jlens_applied"] = jlens is not None
         out["jlens_train_r2"] = None if jlens is None else jlens.train_r2
+        out["jlens_val_r2"] = None if jlens is None else jlens.val_r2
+        out["jlens_sample_count"] = None if jlens is None else jlens.sample_count
+        out["exact_upper_applied"] = exact_upper
         out["used_corpus_prior"] = h_prior is not None
         return out
 

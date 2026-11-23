@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.274] - 2026-11-23
+
+Live-readiness fixes across `apps/steering-lab/` from cross-session code audit and H3 Day-1 review (zero changes to `src/heylook_llm/` runtime/API routes):
+- **Live MTP draft loading & `Qwen35MTPAdapter` (`runtime.py`, `chain_lens.py`)**:
+  - Replaced nonexistent `heylook_llm.providers.common.qwen3_5_mtp` import in `load_model_dir` with `mlx_vlm.speculative.drafters.load_drafter` + `validate_drafter_compatibility` + `drafter.bind(self.model)`.
+  - Upgraded `Qwen35MTPAdapter` to apply `target_lm.model.norm` once in `initial_state` (matching `speculative_verify_hidden` post-norm parity on both step 0 and step 1), call `draft._forward_hidden(tok_emb, h_normed, cache=beam_cache, position_ids=...)` with advancing RoPE `position_ids`, and clone per-beam 1-layer `KVCache` slices on beam fork.
+- **High-D (`5120`-D) norm scaling & relative `tanh` knee (`operators.py`, `chain_lens.py`, `server.py`)**:
+  - Scaled `compose_regime_a` target push and `apply_conditional_np` write deltas by `lv.mu_d_norm` so `scale=1.0` produces a calibrated Pole-A -> Pole-B step at `D=5120` rather than a unit-norm `1.0` nudge.
+  - Switched `_apply_tanh_knee_np` to cap relative `||Δh|| / ||h||` (matching `e_cap`) instead of absolute L2 norm.
+  - Switched Chain Lens `build_probe_pair` to scale perturbations relative to `||h_prior||` (`norm_relative=True`).
+- **Chain Lens round-trip frame alignment & J-Lens calibration (`chain_lens.py`, `runtime.py`, `server.py`, `bank.py`, `corpora.py`)**:
+  - Replaced Layer-0 `embed_tokens` in live Chain Lens round-trip scoring with `encode_phrase_hidden(..., layer=target_frame_layer)` and added peer-concept `round_trip_rank` + calibration-corpus `round_trip_percentile` to counter high-D anisotropy.
+  - Added held-out `val_r2` to `fit_jlens_transport`, optional `transport_upper_layers` (`L_mid+1..L63` exact forward toggle), and a diverse `jlens_calibration` starter corpus (`kind="calibration"`).
+- **Capture & masking fixes (`runtime.py`, `corpora.py`, `cli.py`, `operators.py`)**:
+  - Wired VLM capture images (`make_synthetic_image` + `--image-dir` real photos) through `mlx_vlm.utils.prepare_inputs` + `pixel_values` instead of discarding them.
+  - Fixed `capture_span_bank` truncation mislabeling (never dumps truncated `<think>` traces into `"answer"`), switched capture to subsampled non-sink token rows (`--max-tokens-per-span 24`, skipping token 0), added row-softmax paired diff matching in `operators.py` when Pole-A/B token counts differ, and added a starter 4-pole `cond_hedge_to_concrete` (`L43, L47`) conditional corpus.
+  - Grouped Regime-A sliders on the same layer by `(eff_phase, eff_mask)` so mixed masks (`image_pad` + `decode`) never clobber each other, and passed exact per-position `token_phases` in `token_delta_logprob` so `content`-only sliders never steer `<think>` prefix tokens.
+- **Verification**:
+  - `apps/steering-lab/tests/` (`26 passed`, 100% CPU-only with `mx.set_default_device(mx.cpu)`, zero Metal GPU contention): `test_operators.py` (`11/11`), `test_bank_and_chain_lens.py` (`5/5`), `test_runtime_and_api.py` (`10/10`).
+  - `node --check apps/steering-lab/ui/app.js`, `scripts/check_version_sync.py`, `scripts/guard_stable_channel.sh`, and path-privacy scan clean.
+
 ## [2.0.273] - 2026-11-23
 
 Standalone MLX Steering & Mechanistic Lab (`apps/steering-lab/`, zero changes to `heylook` inference/API routes):

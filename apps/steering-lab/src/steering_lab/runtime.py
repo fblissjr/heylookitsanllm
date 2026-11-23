@@ -24,7 +24,7 @@ from .bank import (
     logit_lens_xray,
     span_key,
 )
-from .corpora import default_corpora, make_synthetic_image_data_uri
+from .corpora import default_corpora, make_synthetic_image
 from .operators import (
     ComposedRegimeA,
     LayerVector,
@@ -259,9 +259,7 @@ class GenerationTrace:
 @dataclass
 class _CompiledLayerPlan:
     layer: int
-    regime_a: Optional[ComposedRegimeA]
-    regime_a_phase: str
-    regime_a_mask: str
+    regime_a_groups: list[tuple[str, str, ComposedRegimeA]]  # (eff_phase, eff_mask, composed)
     regime_b: list[tuple[VectorSpec, LayerVector, float]]
     conditionals: list[tuple[VectorSpec, LayerVector, float]]
 
@@ -344,25 +342,33 @@ class LayerSteeringController:
             b_items = per_layer_b.get(layer_idx, [])
             c_items = per_layer_c.get(layer_idx, [])
 
-            composed_a = None
-            a_phase = "content"
-            a_mask = "decode"
+            regime_a_groups: list[tuple[str, str, ComposedRegimeA]] = []
             if a_items:
-                knee = (
-                    self.plan.knee_override
-                    if self.plan.knee_override is not None
-                    else max(sp.knee for sp, _, _ in a_items)
-                )
+                # Group Regime-A sliders by effective (phase, token_mask) so mixing e.g.
+                # `image_pad` + `decode` sliders on the same layer never clobbers masks.
+                grouped: dict[tuple[str, str], list[tuple[VectorSpec, LayerVector, float]]] = {}
+                for sp, lv, s in a_items:
+                    key = (
+                        self.plan.phase_override or sp.phase,
+                        self.plan.token_mask_override or sp.token_mask,
+                    )
+                    grouped.setdefault(key, []).append((sp, lv, s))
                 hold = self.holds_by_layer.get(layer_idx) if self.plan.use_holds else None
-                composed_a = compose_regime_a(
-                    [(lv, s, sp.erase_ratio) for sp, lv, s in a_items],
-                    use_peer_ros=self.plan.use_peer_ros,
-                    use_clamped_union=self.plan.use_clamped_union,
-                    hold_basis=hold,
-                    knee=knee,
-                )
-                a_phase = self.plan.phase_override or a_items[0][0].phase
-                a_mask = self.plan.token_mask_override or a_items[0][0].token_mask
+                for (eff_phase, eff_mask), grp_items in grouped.items():
+                    knee = (
+                        self.plan.knee_override
+                        if self.plan.knee_override is not None
+                        else max(sp.knee for sp, _, _ in grp_items)
+                    )
+                    composed_grp = compose_regime_a(
+                        [(lv, s, sp.erase_ratio) for sp, lv, s in grp_items],
+                        use_peer_ros=self.plan.use_peer_ros,
+                        use_clamped_union=self.plan.use_clamped_union,
+                        hold_basis=hold,
+                        knee=knee,
+                    )
+                    if composed_grp is not None:
+                        regime_a_groups.append((eff_phase, eff_mask, composed_grp))
 
             # Pick a clean centroid prior for RunningCenter if available.
             mu_clean = None
@@ -378,9 +384,7 @@ class LayerSteeringController:
             )
             self.compiled[layer_idx] = _CompiledLayerPlan(
                 layer=layer_idx,
-                regime_a=composed_a,
-                regime_a_phase=a_phase,
-                regime_a_mask=a_mask,
+                regime_a_groups=regime_a_groups,
                 regime_b=b_items,
                 conditionals=c_items,
             )
@@ -437,11 +441,16 @@ class LayerSteeringController:
         if eff == "all":
             return None
         if eff == "decode":
+            if self.current_token_types is not None:
+                flags = [1.0 if tt == "decode" else 0.0 for tt in self.current_token_types[:seq_len]]
+                if len(flags) < seq_len:
+                    flags.extend([1.0 if self.current_phase != "prompt" else 0.0] * (seq_len - len(flags)))
+                return np.asarray(flags, dtype=np.float32).reshape(1, seq_len, 1)
             if self.current_phase == "prompt":
                 return np.zeros((1, seq_len, 1), dtype=np.float32)
             return None
         if eff in ("image_pad", "prompt_text"):
-            if self.current_phase != "prompt" or self.current_token_types is None:
+            if self.current_token_types is None:
                 return np.zeros((1, seq_len, 1), dtype=np.float32)
             flags = [1.0 if tt == eff else 0.0 for tt in self.current_token_types[:seq_len]]
             if len(flags) < seq_len:
@@ -499,11 +508,11 @@ class LayerSteeringController:
         out = arr
         fired_any = False
 
-        # 1. Regime A
-        if cplan.regime_a is not None:
-            ok, tmask = self._build_phase_token_mask(seq_len, cplan.regime_a_phase, cplan.regime_a_mask)
+        # 1. Regime A (grouped by effective phase + token mask)
+        for eff_phase, eff_mask, composed_a in cplan.regime_a_groups:
+            ok, tmask = self._build_phase_token_mask(seq_len, eff_phase, eff_mask)
             if ok:
-                out, tel = apply_regime_a_np(out, cplan.regime_a, h_center=h_means, token_mask=tmask)
+                out, tel = apply_regime_a_np(out, composed_a, h_center=h_means, token_mask=tmask)
                 self._last_step_telemetry.append(tel)
                 fired_any = True
 
@@ -772,13 +781,20 @@ class SteeringLabRuntime:
         self.image_pad_id = _tok_id("<|image_pad|>")
         self.eos_token_ids = eos
 
-        # Optional sibling `*-mtp` draft head for live Chain Lens readout (never fails load).
+        # Optional sibling `*-mtp` (or bundled) draft head for live Chain Lens readout.
         mtp_sibling = model_dir.parent / f"{model_dir.name}-mtp"
         if mtp_sibling.is_dir():
             try:
-                from heylook_llm.providers.common.qwen3_5_mtp import load_qwen3_5_mtp_draft
+                from mlx_vlm.speculative.drafters import (
+                    load_drafter,
+                    validate_drafter_compatibility,
+                )
 
-                self.draft_model = load_qwen3_5_mtp_draft(mtp_sibling, target_lm=self.lm)
+                drafter, kind = load_drafter(str(mtp_sibling))
+                validate_drafter_compatibility(self.model, drafter, kind)
+                if hasattr(drafter, "bind"):
+                    drafter.bind(self.model)
+                self.draft_model = drafter
             except Exception:  # noqa: BLE001
                 self.draft_model = None
         return fp
@@ -886,8 +902,174 @@ class SteeringLabRuntime:
         )
         return res
 
-    def _forward_logits(self, lm: Any, token_ids_mx: Any, cache: Any) -> Any:
-        out = lm(token_ids_mx, cache=cache)
+    def _prepare_multimodal_inputs(
+        self,
+        prompt: str,
+        *,
+        system: str = "",
+        image: Any = None,
+        enable_thinking: bool = True,
+        reasoning_effort: Optional[str] = None,
+    ) -> tuple[list[int], list[str], dict[str, Any]]:
+        """Prepare text or VLM (image + text) prefill inputs and token-type labels."""
+        if image is None:
+            ids, types = self._encode_prompt(
+                prompt,
+                system=system,
+                enable_thinking=enable_thinking,
+                reasoning_effort=reasoning_effort,
+            )
+            return ids, types, {}
+
+        pil_img = image
+        if isinstance(image, (str, Path)):
+            from PIL import Image
+
+            pil_img = Image.open(Path(image)).convert("RGB")
+
+        tok = getattr(self.processor, "tokenizer", self.processor)
+        rendered: Optional[str] = None
+        if tok is not None and callable(getattr(tok, "apply_chat_template", None)):
+            msgs: list[dict[str, Any]] = []
+            if system:
+                msgs.append({"role": "system", "content": system})
+            msgs.append(
+                {
+                    "role": "user",
+                    "content": [{"type": "image"}, {"type": "text", "text": prompt}],
+                }
+            )
+            kwargs: dict[str, Any] = {
+                "tokenize": False,
+                "add_generation_prompt": True,
+                "enable_thinking": enable_thinking,
+            }
+            if reasoning_effort is not None:
+                kwargs["reasoning_effort"] = reasoning_effort
+            try:
+                rendered = tok.apply_chat_template(msgs, **kwargs)
+            except TypeError:
+                kwargs.pop("reasoning_effort", None)
+                rendered = tok.apply_chat_template(msgs, **kwargs)
+
+        if rendered is not None and self.processor is not None:
+            try:
+                from mlx_vlm.utils import prepare_inputs as _vlm_prepare_inputs
+
+                img_tok_idx = getattr(getattr(self.model, "config", None), "image_token_index", None)
+                raw = _vlm_prepare_inputs(
+                    self.processor,
+                    images=[pil_img],
+                    prompts=rendered,
+                    image_token_index=img_tok_idx,
+                )
+                input_ids_arr = raw["input_ids"]
+                ids = [int(x) for x in input_ids_arr.reshape(-1).tolist()]
+                extra = {k: v for k, v in raw.items() if k not in ("input_ids", "attention_mask") and v is not None}
+                types = [
+                    "image_pad" if (self.image_pad_id is not None and tid == self.image_pad_id) else "prompt_text"
+                    for tid in ids
+                ]
+                return ids, types, extra
+            except Exception:  # noqa: BLE001
+                pass
+
+        # Fallback for synthetic CPU test models without a full HuggingFace VLM processor.
+        ids, types = self._encode_prompt(
+            f"[IMG] {prompt}",
+            system=system,
+            enable_thinking=enable_thinking,
+            reasoning_effort=reasoning_effort,
+        )
+        return ids, types, {"_image_attached": True}
+
+    def encode_phrase_hidden(self, token_ids: Sequence[int], *, layer: int) -> np.ndarray:
+        """Forward a short decoded Chain Lens phrase through ``lm`` and capture ``layer`` hidden state.
+
+        Avoids the Layer-0 ``embed_tokens`` vs. ``L63`` frame mismatch on untied-head models
+        such as Qwen 3.8 27B (``tie_word_embeddings=False``).
+        """
+        if self.model is None:
+            raise RuntimeError("No MLX model loaded.")
+        import mlx.core as mx
+
+        lm = self.lm
+        inner = getattr(lm, "model", lm)
+        lm_layers = getattr(inner, "layers", ())
+        target_l = max(0, min(int(layer), len(lm_layers) - 1))
+        captured: list[np.ndarray] = []
+        orig = lm_layers[target_l]
+
+        class _SingleCap:
+            def __call__(self, *args: Any, **kwargs: Any) -> Any:
+                out = orig(*args, **kwargs)
+                h = out[0] if isinstance(out, tuple) else out
+                mx.eval(h)
+                captured.append(np.asarray(h[0].astype(mx.float32)))
+                return out
+
+            def __getattr__(self, name: str) -> Any:
+                return getattr(orig, name)
+
+        try:
+            lm_layers[target_l] = _SingleCap()
+            cache = lm.make_cache()
+            ids_mx = mx.array([[int(t) for t in token_ids]], dtype=mx.int32)
+            self._forward_logits(lm, ids_mx, cache)
+        finally:
+            lm_layers[target_l] = orig
+
+        if not captured:
+            raise RuntimeError(f"Failed to capture hidden state at layer {target_l}.")
+        mat = captured[0]  # (T, D)
+        # Skip position 0 attention sink when phrase has >= 2 tokens.
+        rows = mat[1:] if mat.shape[0] > 1 else mat
+        return rows.mean(axis=0).astype(np.float32)
+
+    def transport_upper_layers(
+        self,
+        h_vec: np.ndarray,
+        *,
+        src_layer: int,
+        dst_layer: int,
+    ) -> np.ndarray:
+        """Exact ground-truth forward transport of ``h_vec`` through layers ``src_layer+1..dst_layer``."""
+        if self.model is None:
+            raise RuntimeError("No MLX model loaded.")
+        import mlx.core as mx
+
+        lm = self.lm
+        inner = getattr(lm, "model", lm)
+        lm_layers = getattr(inner, "layers", ())
+        start = int(src_layer) + 1
+        end = min(int(dst_layer), len(lm_layers) - 1)
+        if start > end:
+            return np.asarray(h_vec, dtype=np.float32).reshape(-1)
+        cur = mx.array(np.asarray(h_vec, dtype=np.float32).reshape(1, 1, -1))
+        cache = lm.make_cache()
+        for idx in range(start, end + 1):
+            layer = lm_layers[idx]
+            try:
+                out = layer(cur, mask=None, cache=cache[idx])
+            except TypeError:
+                out = layer(cur, cache=cache[idx])
+            cur = out[0] if isinstance(out, tuple) else out
+        mx.eval(cur)
+        return np.asarray(cur[0, -1, :].astype(mx.float32))
+
+    def _forward_logits(
+        self,
+        lm: Any,
+        token_ids_mx: Any,
+        cache: Any,
+        *,
+        extra_model_kwargs: Optional[dict[str, Any]] = None,
+    ) -> Any:
+        if extra_model_kwargs and "pixel_values" in extra_model_kwargs and self.model is not None:
+            model_kwargs = {k: v for k, v in extra_model_kwargs.items() if not k.startswith("_")}
+            out = self.model(token_ids_mx, cache=cache, **model_kwargs)
+        else:
+            out = lm(token_ids_mx, cache=cache)
         return out.logits if hasattr(out, "logits") else out
 
     def _sample_token(self, logits_1d_mx: Any, *, temperature: float) -> int:
@@ -906,6 +1088,8 @@ class SteeringLabRuntime:
         self,
         prompt_ids: Sequence[int],
         gen_ids: Sequence[int],
+        *,
+        extra_model_kwargs: Optional[dict[str, Any]] = None,
     ) -> np.ndarray:
         """Compute unsteered ``s = 0`` next-token log-probabilities at every generated position."""
         import mlx.core as mx
@@ -913,7 +1097,9 @@ class SteeringLabRuntime:
         lm = self.lm
         cache = lm.make_cache()
         full = list(prompt_ids) + list(gen_ids[:-1])
-        logits = self._forward_logits(lm, mx.array([full], dtype=mx.int32), cache)
+        logits = self._forward_logits(
+            lm, mx.array([full], dtype=mx.int32), cache, extra_model_kwargs=extra_model_kwargs
+        )
         # Position len(prompt_ids)-1 predicts gen_ids[0], ..., last predicts gen_ids[-1].
         start = len(prompt_ids) - 1
         sliced = logits[0, start : start + len(gen_ids), :].astype(mx.float32)
@@ -929,6 +1115,7 @@ class SteeringLabRuntime:
         *,
         plan: SteeringPlan,
         system: str = "",
+        image: Any = None,
         max_tokens: int = 128,
         temperature: float = 0.0,
         seed: int = 42,
@@ -948,9 +1135,10 @@ class SteeringLabRuntime:
         t0 = time.perf_counter()
         mx.random.seed(int(seed))
         lm = self.lm
-        prompt_ids, prompt_types = self._encode_prompt(
+        prompt_ids, prompt_types, extra_vlm_kwargs = self._prepare_multimodal_inputs(
             prompt,
             system=system,
+            image=image,
             enable_thinking=enable_thinking,
             reasoning_effort=reasoning_effort,
         )
@@ -996,7 +1184,7 @@ class SteeringLabRuntime:
             ctrl.set_prompt_token_types(prompt_types)
             ctrl.begin_step()
             inp = mx.array([prompt_ids], dtype=mx.int32)
-            logits = self._forward_logits(lm, inp, cache)
+            logits = self._forward_logits(lm, inp, cache, extra_model_kwargs=extra_vlm_kwargs)
             last_logits = logits[0, -1, :]
             mx.eval(last_logits)
             ctrl.set_prompt_token_types(None)
@@ -1143,7 +1331,9 @@ class SteeringLabRuntime:
             if plan.is_noop():
                 kls = [0.0] * len(tokens_out)
             else:
-                base_lps = self._teacher_forced_logprobs(prompt_ids, generated_ids)
+                base_lps = self._teacher_forced_logprobs(
+                    prompt_ids, generated_ids, extra_model_kwargs=extra_vlm_kwargs
+                )
                 kls = [
                     _kl_from_logprobs_np(steered_logprobs_rows[i], base_lps[i])
                     for i in range(len(tokens_out))
@@ -1228,6 +1418,7 @@ class SteeringLabRuntime:
         arms: Sequence[SteeringPlan],
         *,
         system: str = "",
+        image: Any = None,
         max_tokens: int = 128,
         temperature: float = 0.0,
         seed: int = 42,
@@ -1252,6 +1443,7 @@ class SteeringLabRuntime:
                 prompt,
                 plan=arm,
                 system=system,
+                image=image,
                 max_tokens=max_tokens,
                 temperature=temperature,
                 seed=seed,
@@ -1302,13 +1494,22 @@ class SteeringLabRuntime:
                 layer_is_linear=self._layer_is_linear_flags(),
                 holds_by_layer=self.holds_by_layer,
             )
-            # Determine phase at the target position.
+            # Build exact per-position phases so a `content`-only slider NEVER steers
+            # `prompt` or `<think>` prefix tokens during click-a-token Δ logprob.
+            pos_phases: list[str] = ["prompt"] * len(prompt_ids)
             in_think = bool(enable_thinking)
+            if self.think_end_id is not None and prompt_ids and prompt_ids[-1] == self.think_end_id:
+                in_think = False
             for tid in prefix_gen:
+                pos_phases.append("think" if in_think else "content")
                 if self.think_end_id is not None and tid == self.think_end_id:
                     in_think = False
+                elif self.think_start_id is not None and tid == self.think_start_id:
+                    in_think = True
+
             with ctrl.attach_to_lm(lm):
                 ctrl.set_phase("think" if in_think else "content")
+                ctrl.set_token_phases(pos_phases)
                 ctrl.set_prompt_token_types(prompt_types + ["decode"] * len(prefix_gen))
                 logits = self._forward_logits(lm, inp, cache)
                 last = logits[0, -1, :].astype(mx.float32)
@@ -1353,10 +1554,20 @@ class SteeringLabRuntime:
         *,
         corpus_ids: Optional[Sequence[str]] = None,
         layers: Sequence[int] = DEFAULT_QWEN38_LAYERS,
-        max_tokens: int = 192,
+        max_tokens: int = 384,
+        max_tokens_per_span: int = 24,
+        enable_thinking: bool = True,
+        reasoning_effort: Optional[str] = "low",
+        image_dir: Optional[Path] = None,
         seed: int = 42,
     ) -> SpanBank:
-        """Generate traces and teacher-force capture raw multi-layer spans into a SpanBank."""
+        """Generate traces and teacher-force capture non-sink multi-layer spans into a SpanBank.
+
+        Captures subsampled non-sink token rows (always skipping token position 0) per span so
+        SVD, capability holds, and J-Lens ridge regression have rich rank (hundreds/thousands of
+        rows rather than ``N = 6..8`` prompt means). Never mislabels truncated ``<think>`` traces
+        as ``answer`` spans, and wires real or synthetic images through VLM ``pixel_values``.
+        """
         if self.model is None or self.fingerprint is None:
             raise RuntimeError("No MLX model loaded. Call load_model_dir() first.")
         import mlx.core as mx
@@ -1368,7 +1579,32 @@ class SteeringLabRuntime:
         lm_layers = getattr(inner, "layers", ())
         valid_layers = tuple(sorted(l for l in layers if 0 <= int(l) < len(lm_layers)))
 
-        def _capture_forward(token_ids: list[int], token_types: list[str], think_end_pos: Optional[int]) -> dict[str, dict[int, np.ndarray]]:
+        real_images: list[Path] = []
+        if image_dir is not None and Path(image_dir).is_dir():
+            exts = {".png", ".jpg", ".jpeg", ".webp"}
+            real_images = sorted(
+                p for p in Path(image_dir).iterdir() if p.is_file() and p.suffix.lower() in exts
+            )
+
+        def _subsample_rows(mat: np.ndarray, indices: Sequence[int], cap: int) -> Optional[np.ndarray]:
+            # Always drop position 0 attention sink unless it is the only position.
+            valid = [i for i in indices if 0 < i < mat.shape[0]]
+            if not valid:
+                valid = [i for i in indices if 0 <= i < mat.shape[0]]
+            if not valid:
+                return None
+            if len(valid) > cap:
+                pick = np.linspace(0, len(valid) - 1, num=cap, dtype=np.int64)
+                valid = [valid[int(p)] for p in pick]
+            return mat[valid].astype(np.float32)
+
+        def _capture_forward(
+            token_ids: list[int],
+            token_types: list[str],
+            think_end_pos: Optional[int],
+            started_in_think: bool,
+            extra_model_kwargs: Optional[dict[str, Any]],
+        ) -> dict[str, dict[int, np.ndarray]]:
             captured: dict[int, np.ndarray] = {}
             originals: dict[int, Any] = {}
 
@@ -1393,7 +1629,12 @@ class SteeringLabRuntime:
                     originals[lidx] = lm_layers[lidx]
                     lm_layers[lidx] = _CapProxy(lm_layers[lidx], lidx)
                 cache = lm.make_cache()
-                self._forward_logits(lm, mx.array([token_ids], dtype=mx.int32), cache)
+                self._forward_logits(
+                    lm,
+                    mx.array([token_ids], dtype=mx.int32),
+                    cache,
+                    extra_model_kwargs=extra_model_kwargs,
+                )
             finally:
                 for lidx, orig in originals.items():
                     lm_layers[lidx] = orig
@@ -1409,20 +1650,33 @@ class SteeringLabRuntime:
                 ptxt_idx = [i for i, tt in enumerate(token_types) if tt == "prompt_text"]
                 dec_start = len(token_types)
                 if img_idx:
-                    out_by_span["image_pad"][lidx] = mat[img_idx].mean(axis=0, keepdims=True)
+                    rows = _subsample_rows(mat, img_idx, max_tokens_per_span)
+                    if rows is not None:
+                        out_by_span["image_pad"][lidx] = rows
                 if ptxt_idx:
-                    out_by_span["prompt_text"][lidx] = mat[ptxt_idx].mean(axis=0, keepdims=True)
+                    rows = _subsample_rows(mat, ptxt_idx, max_tokens_per_span)
+                    if rows is not None:
+                        out_by_span["prompt_text"][lidx] = rows
                 if mat.shape[0] > dec_start:
                     if think_end_pos is not None and think_end_pos > dec_start:
-                        out_by_span["think"][lidx] = mat[dec_start:think_end_pos].mean(
-                            axis=0, keepdims=True
-                        )
+                        t_rows = _subsample_rows(mat, range(dec_start, think_end_pos), max_tokens_per_span)
+                        if t_rows is not None:
+                            out_by_span["think"][lidx] = t_rows
                         if mat.shape[0] > think_end_pos + 1:
-                            out_by_span["answer"][lidx] = mat[think_end_pos + 1 :].mean(
-                                axis=0, keepdims=True
+                            a_rows = _subsample_rows(
+                                mat, range(think_end_pos + 1, mat.shape[0]), max_tokens_per_span
                             )
+                            if a_rows is not None:
+                                out_by_span["answer"][lidx] = a_rows
+                    elif started_in_think and self.think_end_id is not None:
+                        # Trace truncated inside <think> before emitting </think>: NEVER dump into answer!
+                        t_rows = _subsample_rows(mat, range(dec_start, mat.shape[0]), max_tokens_per_span)
+                        if t_rows is not None:
+                            out_by_span["think"][lidx] = t_rows
                     else:
-                        out_by_span["answer"][lidx] = mat[dec_start:].mean(axis=0, keepdims=True)
+                        a_rows = _subsample_rows(mat, range(dec_start, mat.shape[0]), max_tokens_per_span)
+                        if a_rows is not None:
+                            out_by_span["answer"][lidx] = a_rows
             return out_by_span
 
         tensors: dict[str, list[np.ndarray]] = {}
@@ -1440,37 +1694,62 @@ class SteeringLabRuntime:
                 "layers": [l for l in corpus.layers if l in valid_layers] or list(valid_layers),
                 "notes": corpus.notes,
             }
-            for pair in corpus.pairs:
-                poles = (("clean", pair.system_a),) if corpus.kind == "hold" else (
-                    ("a", pair.system_a),
-                    ("b", pair.system_b),
-                )
+            for pair_idx, pair in enumerate(corpus.pairs):
+                if corpus.kind in ("hold", "calibration"):
+                    poles: tuple[tuple[str, str], ...] = (("clean", pair.system_a),)
+                elif corpus.operator == "conditional" and pair.write_system_a is not None and pair.write_system_b is not None:
+                    poles = (
+                        ("read_neg", pair.system_a),
+                        ("read_pos", pair.system_b),
+                        ("write_neg", pair.write_system_a),
+                        ("write_pos", pair.write_system_b),
+                    )
+                else:
+                    poles = (("a", pair.system_a), ("b", pair.system_b))
+
+                pil_img: Any = None
+                if pair.image_variant is not None:
+                    if real_images:
+                        pil_img = real_images[pair_idx % len(real_images)]
+                    else:
+                        pil_img = make_synthetic_image(pair.image_variant)
+
                 for pole_name, sys_prompt in poles:
-                    _ = make_synthetic_image_data_uri(pair.image_variant) if pair.image_variant is not None else None
                     tr = self.generate_steered(
                         pair.user_prompt,
                         plan=SteeringPlan(),
                         system=sys_prompt,
+                        image=pil_img,
                         max_tokens=max_tokens,
                         temperature=0.0,
                         seed=seed,
-                        enable_thinking=True,
+                        enable_thinking=enable_thinking,
+                        reasoning_effort=reasoning_effort,
                     )
-                    p_ids, p_types = self._encode_prompt(
-                        pair.user_prompt, system=sys_prompt, enable_thinking=True
+                    p_ids, p_types, vlm_kwargs = self._prepare_multimodal_inputs(
+                        pair.user_prompt,
+                        system=sys_prompt,
+                        image=pil_img,
+                        enable_thinking=enable_thinking,
+                        reasoning_effort=reasoning_effort,
                     )
                     gen_ids = [t.token_id for t in tr.tokens]
                     full_ids = p_ids + gen_ids
+                    started_in_think = bool(enable_thinking) and not (
+                        self.think_end_id is not None and p_ids and p_ids[-1] == self.think_end_id
+                    )
                     think_end_pos = None
                     if self.think_end_id is not None:
                         for offset, tid in enumerate(gen_ids):
                             if tid == self.think_end_id:
                                 think_end_pos = len(p_ids) + offset
                                 break
-                    cap = _capture_forward(full_ids, p_types, think_end_pos)
+                    cap = _capture_forward(
+                        full_ids, p_types, think_end_pos, started_in_think, vlm_kwargs
+                    )
                     for sk, by_l in cap.items():
-                        for lidx, row in by_l.items():
-                            tensors.setdefault(span_key(cid, pole_name, sk, lidx), []).append(row)
+                        for lidx, rows in by_l.items():
+                            tensors.setdefault(span_key(cid, pole_name, sk, lidx), []).append(rows)
 
         stacked = {
             k: np.concatenate(rows, axis=0).astype(np.float32)
