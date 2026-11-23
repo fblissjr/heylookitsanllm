@@ -532,6 +532,9 @@ def build_wheel(
                 shutil.rmtree(tree)
         for old_whl in dist_dir.glob("mlx-*.whl"):
             old_whl.unlink(missing_ok=True)
+    if build_dir.is_dir():
+        for stale in build_dir.glob("bdist.*"):
+            shutil.rmtree(stale, ignore_errors=True)
     if tmp_dist.exists():
         shutil.rmtree(tmp_dist)
     tmp_dist.mkdir(parents=True, exist_ok=True)
@@ -1099,7 +1102,7 @@ def sync_python_package(
     if dirty:
         run(["git", "-C", str(repo_dir), "merge", "--abort"], check=False)
     run(["git", "-C", str(repo_dir), "checkout", "--detach", "--force", sha])
-    run(["git", "-C", str(repo_dir), "clean", "-fd"])
+    run(["git", "-C", str(repo_dir), "clean", "-fdx"])
 
     if not clean and not rebuild:
         existing = python_overlay_is_up_to_date(

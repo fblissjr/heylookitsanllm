@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.272] - 2026-11-22
+
+Incremental overlay cleanup fix in `scripts/build_mlx.py` and live overlay build verification:
+- **`scripts/build_mlx.py`**:
+  - Switch `sync_python_package` from `git clean -fd` to `git clean -fdx` so gitignored `build/` and `*.egg-info` directories left in isolated `.repos/<pkg>` clones cannot collide (`Errno 17 File exists`) with setuptools wheel staging during incremental updates.
+  - Prune stale `build_dir/bdist.*` directories before `build_wheel` invokes `uv build --wheel`, preserving incremental CMake/Metal objects while preventing stale wheel staging collisions.
+- **`tests/unit/test_build_mlx.py`**: added `test_sync_python_package_cleans_gitignored_build_dir` regression test.
+- **Verification**:
+  - Updated live machine overlays via `uv run scripts/build_mlx.py`: `mlx-vlm` (`0.8.0 @ 8a8f264d46`) and `mlx` (`0.32.5.dev20261122+88e3f5c4`, base `be0564a3` + `#4826@d5467515`, `metal=True`, `window_size=True`).
+  - Canonical overlay pytest (`tests/unit/test_qwen3_5_runtime.py`, `tests/unit/test_prefix_cache_and_b1_runner.py`, `tests/contract/test_mlxvlm_surface.py`, `tests/unit/test_build_mlx.py`): `87 passed`.
+  - Live probes on freshly built overlays: `chain_probe.py --model Qwen3.8-27B-MLX-8bit --max-tokens 48` (exit 0; all 5 hops restored) and `vlm_parity_probe.py --model Qwen3.8-27B-MLX-8bit` (`"ok": true`).
+
 ## [2.0.271] - 2026-11-22
 
 Owned Qwen 3.5 / 3.8 runtime and shared per-`T` adaptive 8-bit QMV dispatch (Slice 3):

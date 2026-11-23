@@ -498,3 +498,59 @@ class TestUnifiedBuildMlx:
         assert not (py_root / "transformers").exists()
         assert (mlx_dir / ".git").exists()
         assert (repo_keep / "keep.txt").exists()
+
+
+def test_sync_python_package_cleans_gitignored_build_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    upstream = tmp_path / "upstream"
+    upstream.mkdir()
+    _git(upstream, "init", "-q", "-b", "main")
+    _git(upstream, "config", "user.email", "t@e.st")
+    _git(upstream, "config", "user.name", "test")
+    (upstream / ".gitignore").write_text("build/\n*.egg-info/\n")
+    (upstream / "pkg.py").write_text("VALUE = 1\n")
+    _git(upstream, "add", ".gitignore", "pkg.py")
+    _git(upstream, "commit", "-qm", "init")
+
+    overlays_root = tmp_path / "overlays"
+    repo_dir = overlays_root / ".repos" / "pkg"
+    repo_dir.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["git", "clone", "-q", str(upstream), str(repo_dir)],
+        check=True,
+    )
+
+    stale_meta = (
+        repo_dir / "build" / "bdist.macosx-11.0-arm64" / "wheel" / "pkg-0.1.0.dist-info" / "METADATA"
+    )
+    stale_meta.parent.mkdir(parents=True, exist_ok=True)
+    stale_meta.write_text("Name: pkg\n")
+    stale_egg = repo_dir / "pkg.egg-info" / "PKG-INFO"
+    stale_egg.parent.mkdir(parents=True, exist_ok=True)
+    stale_egg.write_text("Name: pkg\n")
+
+    staged_calls: list[Path] = []
+
+    def _fake_stage(rdir: Path, *_a, **_kw) -> dict:
+        assert not (rdir / "build").exists()
+        assert not (rdir / "pkg.egg-info").exists()
+        staged_calls.append(rdir)
+        return {"package": "pkg", "version": "0.1.0", "sha": _sha(rdir, "HEAD")}
+
+    monkeypatch.setattr(build_mlx, "stage_python_overlay", _fake_stage)
+
+    manifest = build_mlx.sync_python_package(
+        "pkg",
+        overlays_root=overlays_root,
+        target_py=Path(sys.executable),
+        repo_url=str(upstream),
+        import_name="pkg",
+        rev="main",
+        rebuild=False,
+        clean=False,
+        offline=True,
+    )
+    assert staged_calls == [repo_dir]
+    assert manifest["version"] == "0.1.0"
+
