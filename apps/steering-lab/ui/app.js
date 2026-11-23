@@ -13,6 +13,10 @@ async function api(path, opts = {}) {
     headers: { "Content-Type": "application/json" },
     ...opts,
   });
+  if (res.status === 401) {
+    window.location.assign("/login");
+    throw new Error("Authentication required");
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error(data.detail || `HTTP ${res.status}`);
@@ -81,6 +85,8 @@ function renderStatus() {
   if (s.default_model_path && !$("input-model-path").value) {
     $("input-model-path").value = s.default_model_path;
   }
+  const logoutBtn = $("btn-logout");
+  if (logoutBtn) logoutBtn.hidden = !s.access_gate_enabled;
 }
 
 function renderSliders() {
@@ -480,6 +486,14 @@ $("btn-unload").addEventListener("click", async () => {
   await api("/api/model/unload", { method: "POST" });
   await refreshAll();
 });
+
+const logoutBtn = $("btn-logout");
+if (logoutBtn) {
+  logoutBtn.addEventListener("click", async () => {
+    await fetch("/logout", { method: "POST" }).catch(() => {});
+    window.location.assign("/login");
+  });
+}
 
 refreshAll().catch((err) => {
   $("status-pill").textContent = `Init error: ${err.message}`;

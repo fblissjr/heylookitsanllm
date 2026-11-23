@@ -21,18 +21,26 @@ See [PLAN.md](./PLAN.md) for the full math, operator specs, six lab instruments,
 
 ## Quickstart (Using Root `heylookitsanllm` Environment)
 
-No second venv is needed — run directly from the repo root with `PYTHONPATH=apps/steering-lab/src`:
+No second venv or `PYTHONPATH` is needed — launch directly via `uv run heylookllm`:
 
 ```bash
-# 1. Run CPU-only test suite (safe while heylook / H3 is active on Metal)
-PYTHONPATH=apps/steering-lab/src uv run --no-sync pytest apps/steering-lab/tests/ -q
+# List companion apps
+uv run heylookllm --apps
 
-# 2. Generate a tiny synthetic demo bank on CPU and launch the workbench UI (zero GPU load)
-PYTHONPATH=apps/steering-lab/src uv run --no-sync python -m steering_lab.cli demo-bank --out apps/steering-lab/data/banks/demo_synth
-PYTHONPATH=apps/steering-lab/src uv run --no-sync python -m steering_lab.cli serve --port 8111 --bank apps/steering-lab/data/banks/demo_synth
+# Spin up the Steering Lab UI (defaults to `serve` on :8111 and auto-attaches the newest bank/vectors under data/)
+uv run heylookllm --steering-lab
+
+# Or pass flags / subcommands directly
+uv run heylookllm --steering-lab --host 127.0.0.1 --port 8111
+uv run heylookllm --steering-lab demo-bank --out apps/steering-lab/data/banks/demo_synth
+uv run heylookllm --steering-lab capture --model Swift-1.5-Qwen3.8-27B-MLX-8bit --out apps/steering-lab/data/banks/swift_qwen38_core
+uv run heylookllm --steering-lab build --bank apps/steering-lab/data/banks/swift_qwen38_core --out apps/steering-lab/data/vectors/swift_qwen38_core
+
+# Run CPU-only test suite (safe while heylook / H3 is active on Metal)
+PYTHONPATH=apps/steering-lab/src uv run --no-sync pytest apps/steering-lab/tests/ -q
 ```
 
-Open `http://127.0.0.1:8111/` in your browser.
+Open `http://127.0.0.1:8111/` in your browser. When `~/.heylook/api_key` or `HEYLOOK_API_KEY` is configured, Steering Lab automatically shares `heylook`'s `AccessGateMiddleware`, `HostCheckMiddleware` (`heylook.toml` `allowed_hosts`), `/login` browser session cookie, `x-api-key` / `Bearer` auth, and always-on Origin/CSP guards.
 
 ### Live Qwen 3.8 MLX Workflow (When GPU Is Idle)
 

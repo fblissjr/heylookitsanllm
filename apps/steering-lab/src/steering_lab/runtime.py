@@ -672,6 +672,7 @@ class SteeringLabRuntime:
         self.model = model
         self.processor = processor
         self.draft_model: Any = None
+        self.draft_kind: str = "mtp"
         self.fingerprint = fingerprint
         self.think_start_id = think_start_id
         self.think_end_id = think_end_id
@@ -830,6 +831,7 @@ class SteeringLabRuntime:
                 validate_drafter_compatibility(self.model, drafter, kind)
                 if hasattr(drafter, "bind"):
                     drafter.bind(self.model)
+                self.draft_kind = str(kind or "mtp")
                 return drafter
             except Exception:  # noqa: BLE001
                 continue
@@ -839,6 +841,7 @@ class SteeringLabRuntime:
         self.model = None
         self.processor = None
         self.draft_model = None
+        self.draft_kind = "mtp"
         try:
             import mlx.core as mx
 
@@ -1093,6 +1096,16 @@ class SteeringLabRuntime:
         mx.eval(cur)
         return np.asarray(cur[0, -1, :].astype(mx.float32))
 
+    def _reset_mrope(self, lm: Any) -> None:
+        """Clear stale mRoPE deltas/positions before a fresh-cache prefill."""
+        for obj in (lm, self.model):
+            if obj is None:
+                continue
+            if hasattr(obj, "_position_ids"):
+                obj._position_ids = None
+            if hasattr(obj, "_rope_deltas"):
+                obj._rope_deltas = None
+
     def _forward_logits(
         self,
         lm: Any,
@@ -1161,6 +1174,7 @@ class SteeringLabRuntime:
         baseline_mtp_share: Optional[float] = None,
         simulated_draft_fn: Optional[Callable[[list[int]], list[int]]] = None,
         compute_kl_vs_base: bool = False,
+        score_posthoc_mtp: bool = True,
     ) -> GenerationTrace:
         """Run one isolated steered generation with fresh GDN/FA cache and per-token telemetry."""
         if self.model is None or self.fingerprint is None:
@@ -1188,6 +1202,7 @@ class SteeringLabRuntime:
         )
 
         # Fresh GDN/FA cache per run so recurrent state never leaks across sweep arms!
+        self._reset_mrope(lm)
         cache = lm.make_cache()
         tokens_out: list[TokenRecord] = []
         generated_ids: list[int] = []
@@ -1389,7 +1404,12 @@ class SteeringLabRuntime:
         mtp_share: Optional[float] = (
             mtp_accepted_count / mtp_total_count if mtp_total_count > 0 else None
         )
-        if mtp_share is None and self.draft_model is not None and len(generated_ids) >= 2:
+        if (
+            score_posthoc_mtp
+            and mtp_share is None
+            and self.draft_model is not None
+            and len(generated_ids) >= 2
+        ):
             posthoc_flags = self._score_posthoc_mtp_agreement(
                 prompt_ids,
                 prompt_types,
@@ -1565,6 +1585,7 @@ class SteeringLabRuntime:
 
                 try:
                     lm_layers[last_idx] = _LastCap()
+                    self._reset_mrope(lm)
                     cache = lm.make_cache()
                     self._forward_logits(
                         lm,
@@ -1749,6 +1770,52 @@ class SteeringLabRuntime:
             ],
         }
 
+    def _generate_unsteered_ids_mtp(
+        self,
+        prompt_ids: Sequence[int],
+        *,
+        max_tokens: int,
+        seed: int = 42,
+        extra_model_kwargs: Optional[dict[str, Any]] = None,
+    ) -> Optional[list[int]]:
+        """Fast unsteered greedy decode using ``mlx_vlm``'s native MTP speculative loop.
+
+        Returns exact greedy token IDs (stopping before EOS) or ``None`` if unavailable.
+        """
+        if self.model is None or self.draft_model is None:
+            return None
+        try:
+            import mlx.core as mx
+            from mlx_vlm.generate.ar import generate_step
+
+            mx.random.seed(int(seed))
+            kw = dict(extra_model_kwargs or {})
+            pixel_values = kw.pop("pixel_values", None)
+            mask = kw.pop("mask", None)
+            inp = mx.array([[int(t) for t in prompt_ids]], dtype=mx.int32)
+            gen_ids: list[int] = []
+            for tok, _ in generate_step(
+                inp,
+                self.model,
+                pixel_values,
+                mask,
+                max_tokens=int(max_tokens),
+                temperature=0.0,
+                seed=int(seed),
+                draft_model=self.draft_model,
+                draft_kind=self.draft_kind,
+                **kw,
+            ):
+                tid = int(tok.item()) if hasattr(tok, "item") else int(tok)
+                if tid in self.eos_token_ids:
+                    break
+                gen_ids.append(tid)
+                if len(gen_ids) >= int(max_tokens):
+                    break
+            return gen_ids
+        except Exception:  # noqa: BLE001
+            return None
+
     def capture_span_bank(
         self,
         out_dir: Path,
@@ -1761,6 +1828,8 @@ class SteeringLabRuntime:
         reasoning_effort: Optional[str] = "medium",
         image_dir: Optional[Path] = None,
         seed: int = 42,
+        use_mtp: bool = True,
+        progress_cb: Optional[Callable[[dict[str, Any]], None]] = None,
     ) -> SpanBank:
         """Generate traces and teacher-force capture non-sink multi-layer spans into a SpanBank.
 
@@ -1849,6 +1918,7 @@ class SteeringLabRuntime:
                 for lidx in valid_layers:
                     originals[lidx] = lm_layers[lidx]
                     lm_layers[lidx] = _CapProxy(lm_layers[lidx], lidx)
+                self._reset_mrope(lm)
                 cache = lm.make_cache()
                 self._forward_logits(
                     lm,
@@ -1929,6 +1999,30 @@ class SteeringLabRuntime:
         tensors: dict[str, list[np.ndarray]] = {}
         concepts_meta: dict[str, dict[str, Any]] = {}
 
+        def _poles_for_pair(corpus: Any, pair: Any) -> tuple[tuple[str, str], ...]:
+            if corpus.kind in ("hold", "calibration"):
+                return (("clean", pair.system_a),)
+            if (
+                corpus.operator == "conditional"
+                and pair.write_system_a is not None
+                and pair.write_system_b is not None
+            ):
+                return (
+                    ("read_neg", pair.system_a),
+                    ("read_pos", pair.system_b),
+                    ("write_neg", pair.write_system_a),
+                    ("write_pos", pair.write_system_b),
+                )
+            return (("a", pair.system_a), ("b", pair.system_b))
+
+        total_gens = sum(
+            len(_poles_for_pair(all_corpora[cid], pair))
+            for cid in selected_ids
+            for pair in all_corpora[cid].pairs
+        )
+        done_gens = 0
+        t_cap_start = time.perf_counter()
+
         for cid in selected_ids:
             corpus = all_corpora[cid]
             concepts_meta[cid] = {
@@ -1942,17 +2036,7 @@ class SteeringLabRuntime:
                 "notes": corpus.notes,
             }
             for pair_idx, pair in enumerate(corpus.pairs):
-                if corpus.kind in ("hold", "calibration"):
-                    poles: tuple[tuple[str, str], ...] = (("clean", pair.system_a),)
-                elif corpus.operator == "conditional" and pair.write_system_a is not None and pair.write_system_b is not None:
-                    poles = (
-                        ("read_neg", pair.system_a),
-                        ("read_pos", pair.system_b),
-                        ("write_neg", pair.write_system_a),
-                        ("write_pos", pair.write_system_b),
-                    )
-                else:
-                    poles = (("a", pair.system_a), ("b", pair.system_b))
+                poles = _poles_for_pair(corpus, pair)
 
                 pil_img: Any = None
                 if pair.image_variant is not None:
@@ -1962,17 +2046,7 @@ class SteeringLabRuntime:
                         pil_img = make_synthetic_image(pair.image_variant)
 
                 for pole_name, sys_prompt in poles:
-                    tr = self.generate_steered(
-                        pair.user_prompt,
-                        plan=SteeringPlan(),
-                        system=sys_prompt,
-                        image=pil_img,
-                        max_tokens=max_tokens,
-                        temperature=0.0,
-                        seed=seed,
-                        enable_thinking=enable_thinking,
-                        reasoning_effort=reasoning_effort,
-                    )
+                    t_item = time.perf_counter()
                     p_ids, p_types, vlm_kwargs = self._prepare_multimodal_inputs(
                         pair.user_prompt,
                         system=sys_prompt,
@@ -1980,7 +2054,30 @@ class SteeringLabRuntime:
                         enable_thinking=enable_thinking,
                         reasoning_effort=reasoning_effort,
                     )
-                    gen_ids = [t.token_id for t in tr.tokens]
+                    gen_ids: Optional[list[int]] = None
+                    mtp_used = False
+                    if use_mtp and self.draft_model is not None:
+                        gen_ids = self._generate_unsteered_ids_mtp(
+                            p_ids,
+                            max_tokens=max_tokens,
+                            seed=seed,
+                            extra_model_kwargs=vlm_kwargs,
+                        )
+                        mtp_used = gen_ids is not None
+                    if gen_ids is None:
+                        tr = self.generate_steered(
+                            pair.user_prompt,
+                            plan=SteeringPlan(),
+                            system=sys_prompt,
+                            image=pil_img,
+                            max_tokens=max_tokens,
+                            temperature=0.0,
+                            seed=seed,
+                            enable_thinking=enable_thinking,
+                            reasoning_effort=reasoning_effort,
+                            score_posthoc_mtp=False,
+                        )
+                        gen_ids = [t.token_id for t in tr.tokens]
                     full_ids = p_ids + gen_ids
                     started_in_think = bool(enable_thinking) and not (
                         self.think_end_id is not None and p_ids and p_ids[-1] == self.think_end_id
@@ -1997,6 +2094,26 @@ class SteeringLabRuntime:
                     for sk, by_l in cap.items():
                         for lidx, rows in by_l.items():
                             tensors.setdefault(span_key(cid, pole_name, sk, lidx), []).append(rows)
+                    done_gens += 1
+                    if progress_cb is not None:
+                        wall_s = time.perf_counter() - t_item
+                        elapsed_s = time.perf_counter() - t_cap_start
+                        eta_s = (elapsed_s / max(done_gens, 1)) * max(total_gens - done_gens, 0)
+                        progress_cb(
+                            {
+                                "done": done_gens,
+                                "total": total_gens,
+                                "corpus": cid,
+                                "pair_id": pair.id,
+                                "pole": pole_name,
+                                "tokens": len(gen_ids),
+                                "truncated_think": bool(started_in_think and think_end_pos is None),
+                                "mtp_used": mtp_used,
+                                "wall_s": round(wall_s, 2),
+                                "elapsed_s": round(elapsed_s, 2),
+                                "eta_s": round(eta_s, 1),
+                            }
+                        )
 
         stacked = {
             k: np.concatenate(rows, axis=0).astype(np.float32)

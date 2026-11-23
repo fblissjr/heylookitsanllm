@@ -169,3 +169,20 @@ def test_chain_lens_contrastive_sign_flip_and_round_trip(tmp_path: Path):
     assert out_pos["chains"][0]["round_trip_rank"] == 1
     assert out_pos["chains"][0]["round_trip_percentile"] is not None
     assert out_pos["chains"][0]["round_trip_percentile"] > 50.0
+
+
+def test_jlens_auto_ridge_cv_beats_overfit_small_ridge() -> None:
+    """When N < D with observation noise, auto-CV ridge picks stronger regularization & higher val_r2."""
+    rng = np.random.default_rng(7)
+    n, d = 60, 128
+    h_src = rng.normal(size=(n, d)).astype(np.float32)
+    # True mapping is a low-rank linear shift + isotropic noise (classic N < D overfitting regime).
+    u = rng.normal(size=(d, 4))
+    v = rng.normal(size=(4, d)) * 0.25
+    h_dst = (h_src + h_src @ (u @ v) + 0.9 * rng.normal(size=(n, d))).astype(np.float32)
+
+    jl_overfit = fit_jlens_transport(h_src, h_dst, src_layer=43, dst_layer=63, ridge=1e-4)
+    jl_auto = fit_jlens_transport(h_src, h_dst, src_layer=43, dst_layer=63, ridge="auto")
+    assert jl_overfit.val_r2 is not None and jl_auto.val_r2 is not None
+    assert jl_auto.ridge >= 0.1
+    assert jl_auto.val_r2 > jl_overfit.val_r2

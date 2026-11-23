@@ -88,6 +88,14 @@ def main():
         )
         sys.exit(1)
 
+    # Dispatch companion apps (`heylookllm --steering-lab ...`, `--apps`, `app <name> ...`)
+    # before argparse / MLX imports so app flags pass through untouched.
+    from heylook_llm.app_launcher import maybe_dispatch_app_shortcut
+
+    app_rc = maybe_dispatch_app_shortcut(sys.argv[1:])
+    if app_rc is not None:
+        sys.exit(app_rc)
+
     parser = argparse.ArgumentParser(description="Hey Look It's an LLM Server")
 
     # Create subcommands
@@ -196,6 +204,21 @@ def main():
         type=str,
         default=None,
         help="Optional ID of a model to load on startup.",
+    )
+    parser.add_argument(
+        "--apps",
+        action="store_true",
+        help="List companion apps under apps/ launchable via --<app> or 'heylookllm app <name>'",
+    )
+    parser.add_argument(
+        "--steering-lab",
+        action="store_true",
+        help="Launch the MLX Steering Lab workbench (defaults to 'serve'; pass subcommands/flags after)",
+    )
+    parser.add_argument(
+        "--batch-labeler",
+        action="store_true",
+        help="Launch the batch-labeler companion CLI (pass its flags after)",
     )
 
     args = parser.parse_args()

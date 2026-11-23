@@ -75,6 +75,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="Disable <think> generation during span capture",
     )
     p_cap.add_argument("--image-dir", help="Optional folder of real photos/screenshots for VLM Dual-Lock capture")
+    p_cap.add_argument(
+        "--no-mtp",
+        action="store_true",
+        help="Disable native MTP speculative decoding during unsteered span capture",
+    )
     p_cap.add_argument("--seed", type=int, default=42)
 
     p_build = sub.add_parser("build", help="Build Regime A/B/Conditional packs from a cached SpanBank (CPU)")
@@ -160,6 +165,22 @@ def main(argv: Optional[list[str]] = None) -> int:
         layers = [int(x.strip()) for x in args.layers.split(",") if x.strip()]
         cids = None if args.corpus == "all" else [x.strip() for x in args.corpus.split(",") if x.strip()]
         effort = None if str(args.reasoning_effort).lower() in ("none", "") else str(args.reasoning_effort)
+        def _on_progress(ev: dict[str, object]) -> None:
+            done = int(ev["done"])
+            total = int(ev["total"])
+            toks = int(ev["tokens"])
+            wall = float(ev["wall_s"])
+            eta = float(ev["eta_s"])
+            tps = toks / max(wall, 1e-6)
+            mode = "MTP" if ev["mtp_used"] else "AR"
+            trunc = " [TRUNC-THINK]" if ev.get("truncated_think") else ""
+            print(
+                f"[{done:3d}/{total:3d}] {ev['corpus']}/{ev['pair_id']}:{ev['pole']} "
+                f"| {toks:3d} tok in {wall:5.1f}s ({tps:4.1f} tok/s, {mode}) "
+                f"| ETA {eta/60.0:4.1f}m{trunc}",
+                flush=True,
+            )
+
         bank = rt.capture_span_bank(
             Path(args.out),
             corpus_ids=cids,
@@ -170,6 +191,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             reasoning_effort=effort,
             image_dir=Path(args.image_dir) if args.image_dir else None,
             seed=args.seed,
+            use_mtp=not args.no_mtp,
+            progress_cb=_on_progress,
         )
         print(f"Captured {len(bank.tensors)} span tensors to {args.out}")
         return 0
@@ -228,6 +251,16 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.cmd == "serve":
         import uvicorn
 
+        try:
+            from heylook_llm.auth import log_startup_access_state
+
+            log_startup_access_state(args.host, args.port)
+        except ImportError:
+            pass
+        except RuntimeError as exc:
+            print(f"Refusing to start Steering Lab: {exc}", file=sys.stderr)
+            return 1
+
         default_model = None
         if args.model:
             try:
@@ -239,7 +272,11 @@ def main(argv: Optional[list[str]] = None) -> int:
             vectors_dir=Path(args.vectors) if args.vectors else None,
             default_model_path=default_model,
         )
-        app = create_app(state)
+        app = create_app(state, enable_access_gate=True)
+        print(
+            f"Starting MLX Steering Lab on http://{args.host}:{args.port}/ "
+            f"(bank={args.bank or 'none'}, vectors={args.vectors or 'none'})"
+        )
         uvicorn.run(app, host=args.host, port=args.port, log_level="info")
         return 0
 

@@ -341,10 +341,60 @@ def _demo_synthetic_sweep(state: LabState, req: SweepRequest) -> dict[str, Any]:
     return {"mode": "demo_synthetic", "arms": arms_out}
 
 
-def create_app(state: Optional[LabState] = None) -> FastAPI:
+def _mount_heylook_access_gate(app: FastAPI) -> bool:
+    """Attach heylook's HostCheckMiddleware, AccessGateMiddleware, and /login routes.
+
+    Reuses ``~/.heylook/api_key`` / ``HEYLOOK_API_KEY``, browser session cookies,
+    and always-on Origin/Sec-Fetch-Site/CSP guards so exposing Steering Lab behind
+    a reverse proxy or subdomain shares identical security posture to ``heylook``.
+    """
+    try:
+        from heylook_llm.auth import AccessGateMiddleware
+        from heylook_llm.auth_api import auth_router
+        from heylook_llm.frontend_static import FRONTEND_DIR
+        from heylook_llm.host_check import HostCheckMiddleware
+    except Exception:  # noqa: BLE001
+        return False
+
+    app.add_middleware(AccessGateMiddleware)
+    app.add_middleware(HostCheckMiddleware)
+    app.include_router(auth_router)
+
+    @app.get("/health", include_in_schema=False)
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    # Serve the exact four static assets listed in auth.EXEMPT_ROUTES for /login.
+    login_assets = {
+        "/css/app.css": FRONTEND_DIR / "css" / "app.css",
+        "/js/login.js": FRONTEND_DIR / "js" / "login.js",
+        "/icon.svg": FRONTEND_DIR / "icon.svg",
+        "/favicon.ico": FRONTEND_DIR / "favicon.ico",
+    }
+    for route_path, asset_path in login_assets.items():
+        if not asset_path.is_file():
+            continue
+
+        def _make_handler(p: Path) -> Any:
+            def _serve() -> Any:
+                return FileResponse(str(p))
+
+            return _serve
+
+        app.add_api_route(
+            route_path,
+            _make_handler(asset_path),
+            methods=["GET", "HEAD"],
+            include_in_schema=False,
+        )
+    return True
+
+
+def create_app(state: Optional[LabState] = None, *, enable_access_gate: bool = True) -> FastAPI:
     lab = state or LabState()
     app = FastAPI(title="MLX Steering Lab", version="0.1.0")
     app.state.lab = lab
+    gate_installed = _mount_heylook_access_gate(app) if enable_access_gate else False
 
     if UI_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=str(UI_DIR)), name="static")
@@ -359,6 +409,14 @@ def create_app(state: Optional[LabState] = None) -> FastAPI:
     @app.get("/api/status")
     def get_status() -> dict[str, Any]:
         rt = lab.runtime
+        gate_on = False
+        if gate_installed:
+            try:
+                from heylook_llm.auth import resolve_access_key
+
+                gate_on = bool(resolve_access_key().enabled)
+            except Exception:  # noqa: BLE001
+                gate_on = False
         return {
             "model_loaded": rt.is_loaded,
             "default_model_path": lab.default_model_path,
@@ -370,6 +428,7 @@ def create_app(state: Optional[LabState] = None) -> FastAPI:
             "vector_ids": sorted(rt.vectors.keys()),
             "hold_layers": sorted(rt.holds_by_layer.keys()),
             "corpora": list_corpora_summary(),
+            "access_gate_enabled": gate_on,
         }
 
     @app.get("/api/vectors")

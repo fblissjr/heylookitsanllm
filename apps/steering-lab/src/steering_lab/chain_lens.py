@@ -84,40 +84,98 @@ def _solve_residual_ridge(
     return mu_src, mu_dst, xc, dual, max(0.0, 1.0 - ss_res / ss_tot)
 
 
+def _select_best_ridge_cv(
+    xs_tr: np.ndarray,
+    xd_tr: np.ndarray,
+    xs_val: np.ndarray,
+    xd_val: np.ndarray,
+    *,
+    ridge_grid: Sequence[float],
+) -> tuple[float, float]:
+    """Select the ridge value maximizing held-out ``val_r2`` via one Gram eigendecomposition."""
+    mu_s = xs_tr.mean(axis=0)
+    mu_d = xd_tr.mean(axis=0)
+    xc = xs_tr - mu_s
+    yc = xd_tr - mu_d
+    y_res = yc - xc
+    n = xc.shape[0]
+    gram = xc @ xc.T
+    scale = max(float(np.trace(gram)) / max(n, 1), 1e-6)
+    eigvals, eigvecs = np.linalg.eigh(gram)
+    eigvals = np.maximum(eigvals, 0.0)
+
+    dx_val = xs_val - mu_s
+    # Project validation kernels and targets into the Gram eigenbasis once.
+    k_val_q = (dx_val @ xc.T) @ eigvecs  # (N_val, N_tr)
+    qt_yres = eigvecs.T @ y_res  # (N_tr, D)
+    y_val_c = xd_val - xd_val.mean(axis=0, keepdims=True)
+    ss_tot_v = max(float(np.sum(y_val_c ** 2)), 1e-12)
+
+    best_ridge = float(ridge_grid[0])
+    best_r2 = -1.0
+    for cand in ridge_grid:
+        r = float(cand)
+        inv = 1.0 / (eigvals + r * scale)
+        pred_val = mu_d + dx_val + (k_val_q * inv[None, :]) @ qt_yres
+        ss_res_v = float(np.sum((xd_val - pred_val) ** 2))
+        val_r2 = max(0.0, 1.0 - ss_res_v / ss_tot_v)
+        if val_r2 > best_r2:
+            best_r2 = val_r2
+            best_ridge = r
+    return best_ridge, best_r2
+
+
+DEFAULT_JLENS_RIDGE_GRID: tuple[float, ...] = (0.01, 0.03, 0.1, 0.3, 1.0, 3.0, 10.0)
+
+
 def fit_jlens_transport(
     h_src: np.ndarray,
     h_dst: np.ndarray,
     *,
     src_layer: int,
     dst_layer: int,
-    ridge: float = 1e-2,
+    ridge: float | str = "auto",
+    ridge_grid: Sequence[float] = DEFAULT_JLENS_RIDGE_GRID,
     val_frac: float = 0.2,
     seed: int = 42,
 ) -> JLensTransport:
-    """Fit an FP64 residual ridge J-Lens transport with held-out ``val_r2``."""
+    """Fit an FP64 residual ridge J-Lens transport with held-out ``val_r2``.
+
+    When ``ridge="auto"`` (default) and ``N >= 10``, picks the ridge multiplier in
+    ``ridge_grid`` maximizing held-out ``val_r2`` using a single Gram eigendecomposition
+    (preventing small-ridge overfitting when ``N < D``, e.g. 1k-2k rows in ``D=5120``).
+    """
     xs = np.asarray(h_src, dtype=np.float64)
     xd = np.asarray(h_dst, dtype=np.float64)
     if xs.ndim != 2 or xd.ndim != 2 or xs.shape != xd.shape:
         raise ValueError(f"Expected matched 2D arrays, got {xs.shape} and {xd.shape}")
 
     val_r2: Optional[float] = None
+    chosen_ridge: float = 0.3 if isinstance(ridge, str) else float(ridge)
     n = xs.shape[0]
     n_val = int(round(n * float(val_frac)))
     if n >= 10 and 2 <= n_val < n - 2:
         rng = np.random.default_rng(seed)
         perm = rng.permutation(n)
         val_idx, tr_idx = perm[:n_val], perm[n_val:]
-        mu_s_tr, mu_d_tr, xc_tr, dual_tr, _ = _solve_residual_ridge(
-            xs[tr_idx], xd[tr_idx], ridge=ridge
-        )
-        dx_val = xs[val_idx] - mu_s_tr
-        pred_val = mu_d_tr + dx_val + (dx_val @ xc_tr.T) @ dual_tr
-        y_val = xd[val_idx]
-        ss_res_v = float(np.sum((y_val - pred_val) ** 2))
-        ss_tot_v = max(float(np.sum((y_val - y_val.mean(axis=0, keepdims=True)) ** 2)), 1e-12)
-        val_r2 = round(max(0.0, 1.0 - ss_res_v / ss_tot_v), 4)
+        if isinstance(ridge, str):
+            grid = tuple(float(g) for g in ridge_grid) or DEFAULT_JLENS_RIDGE_GRID
+            chosen_ridge, raw_val_r2 = _select_best_ridge_cv(
+                xs[tr_idx], xd[tr_idx], xs[val_idx], xd[val_idx], ridge_grid=grid
+            )
+            val_r2 = round(raw_val_r2, 4)
+        else:
+            mu_s_tr, mu_d_tr, xc_tr, dual_tr, _ = _solve_residual_ridge(
+                xs[tr_idx], xd[tr_idx], ridge=chosen_ridge
+            )
+            dx_val = xs[val_idx] - mu_s_tr
+            pred_val = mu_d_tr + dx_val + (dx_val @ xc_tr.T) @ dual_tr
+            y_val = xd[val_idx]
+            ss_res_v = float(np.sum((y_val - pred_val) ** 2))
+            ss_tot_v = max(float(np.sum((y_val - y_val.mean(axis=0, keepdims=True)) ** 2)), 1e-12)
+            val_r2 = round(max(0.0, 1.0 - ss_res_v / ss_tot_v), 4)
 
-    mu_src, mu_dst, xc, dual, train_r2 = _solve_residual_ridge(xs, xd, ridge=ridge)
+    mu_src, mu_dst, xc, dual, train_r2 = _solve_residual_ridge(xs, xd, ridge=chosen_ridge)
     return JLensTransport(
         src_layer=int(src_layer),
         dst_layer=int(dst_layer),
@@ -125,7 +183,7 @@ def fit_jlens_transport(
         mu_dst=mu_dst,
         x_centered=xc,
         dual_weights=dual,
-        ridge=float(ridge),
+        ridge=float(chosen_ridge),
         train_r2=round(train_r2, 4),
         val_r2=val_r2,
         sample_count=int(n),

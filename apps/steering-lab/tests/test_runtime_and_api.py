@@ -447,7 +447,7 @@ def test_fastapi_server_and_cli_demo_bank_flow(tmp_path: Path):
     )
 
     state = LabState(bank_dir=bank_dir, vectors_dir=vec_dir)
-    client = TestClient(create_app(state))
+    client = TestClient(create_app(state, enable_access_gate=False))
 
     r_html = client.get("/")
     assert r_html.status_code == 200 and "MLX Steering Lab" in r_html.text
@@ -706,7 +706,9 @@ def test_mlx_cpu_capture_span_bank_vision_conditional_nonsink_and_truncation(tmp
     cal_think = bank_think.get_span("jlens_calibration", "clean", "think", 3)
     assert cal_think is not None and cal_think.shape[0] > 12
 
-    # With enable_thinking=False, decoded tokens cleanly populate "answer" with >1 row per prompt.
+    # With enable_thinking=False, decoded tokens cleanly populate "answer" with >1 row per prompt,
+    # and progress_cb emits monotonic done/total telemetry for every generated pole.
+    events: list[dict[str, object]] = []
     bank_ans = rt.capture_span_bank(
         tmp_path / "bank_ans",
         corpus_ids=["cond_hedge_to_concrete"],
@@ -714,9 +716,15 @@ def test_mlx_cpu_capture_span_bank_vision_conditional_nonsink_and_truncation(tmp
         max_tokens=6,
         max_tokens_per_span=4,
         enable_thinking=False,
+        progress_cb=events.append,
     )
     ans_rows = bank_ans.get_span("cond_hedge_to_concrete", "write_pos", "answer", 3)
     assert ans_rows is not None and ans_rows.shape[0] > 8
+    assert len(events) == 32  # 8 pairs x 4 poles
+    assert [int(e["done"]) for e in events] == list(range(1, 33))
+    assert all(int(e["total"]) == 32 and int(e["tokens"]) > 0 for e in events)
+    assert events[-1]["eta_s"] == 0.0
+    assert bank_ans.paired_layer_states(1, 3) is not None
 
 
 def test_mlx_cpu_capture_filters_special_ids_and_bundled_mtp_fallback(
@@ -850,3 +858,57 @@ def test_mlx_cpu_layer_scale_budget_and_posthoc_mtp_share_at_temp_gt_0():
         assert tr.mtp_share is not None and 0.0 <= tr.mtp_share <= 1.0
         assert tr.tokens[0].mtp_accepted is None
         assert all(isinstance(t.mtp_accepted, bool) for t in tr.tokens[1:])
+
+
+def test_steering_lab_heylook_access_gate_and_login_flow(tmp_path: Path, monkeypatch):
+    """Steering Lab shares heylook's AccessGateMiddleware, /login cookie, and CSRF/Host guards."""
+    from fastapi.testclient import TestClient
+
+    from steering_lab.cli import main as cli_main
+    from steering_lab.server import LabState, create_app
+
+    bank_dir = tmp_path / "gate_bank"
+    assert cli_main(["demo-bank", "--out", str(bank_dir), "--dim", "32"]) == 0
+    monkeypatch.setenv("HEYLOOK_API_KEY", "test-steering-secret-key-1234")
+
+    client = TestClient(
+        create_app(LabState(bank_dir=bank_dir), enable_access_gate=True),
+        base_url="http://127.0.0.1:8111",
+    )
+
+    # Exempt /health and /login render without credentials.
+    assert client.get("/health").status_code == 200
+    r_login = client.get("/login")
+    assert r_login.status_code == 200 and "login-form" in r_login.text
+    assert client.get("/css/app.css").status_code == 200
+
+    # Protected API routes return 401 without credentials, 200 with x-api-key.
+    assert client.get("/api/status").status_code == 401
+    r_ok = client.get("/api/status", headers={"x-api-key": "test-steering-secret-key-1234"})
+    assert r_ok.status_code == 200 and r_ok.json()["access_gate_enabled"] is True
+
+    # Cross-origin POST is blocked with 403 even with a valid key.
+    r_csrf = client.post(
+        "/api/model/unload",
+        headers={
+            "x-api-key": "test-steering-secret-key-1234",
+            "Origin": "https://evil.example",
+        },
+    )
+    assert r_csrf.status_code == 403
+
+    # Browser /login POST sets heylook_session cookie granting UI + API access.
+    r_post = client.post(
+        "/login",
+        data={"api_key": "test-steering-secret-key-1234"},
+        headers={"Origin": "http://127.0.0.1:8111"},
+        follow_redirects=False,
+    )
+    assert r_post.status_code == 303
+    assert "heylook_session" in r_post.cookies
+    r_cookie_status = client.get("/api/status")
+    assert r_cookie_status.status_code == 200
+
+    # Rebound Host header is rejected by HostCheckMiddleware.
+    r_rebind = client.get("/health", headers={"Host": "evil.example"})
+    assert r_rebind.status_code == 403

@@ -135,18 +135,28 @@ class SpanBank:
         dst_layer: int,
         *,
         span_kind: str = "answer",
+        include_think: bool = True,
     ) -> Optional[tuple[np.ndarray, np.ndarray]]:
         """Return aligned ``(H_src, H_dst)`` rows across all concepts for J-Lens ridge transport."""
         src_rows: list[np.ndarray] = []
         dst_rows: list[np.ndarray] = []
         for cid, cmeta in sorted(self.concepts.items()):
-            sk = str(cmeta.get("default_span", span_kind))
-            for pole in ("a", "b", "clean", "read_pos", "read_neg", "write_pos", "write_neg"):
-                s_arr = self.get_span(cid, pole, sk, src_layer)
-                d_arr = self.get_span(cid, pole, sk, dst_layer)
-                if s_arr is not None and d_arr is not None and s_arr.shape[0] == d_arr.shape[0] and s_arr.shape[0] > 0:
-                    src_rows.append(s_arr)
-                    dst_rows.append(d_arr)
+            default_sk = str(cmeta.get("default_span", span_kind))
+            spans_to_pull = [default_sk]
+            if include_think and default_sk == "answer" and "think" not in spans_to_pull:
+                spans_to_pull.append("think")
+            for sk in spans_to_pull:
+                for pole in ("a", "b", "clean", "read_pos", "read_neg", "write_pos", "write_neg"):
+                    s_arr = self.get_span(cid, pole, sk, src_layer)
+                    d_arr = self.get_span(cid, pole, sk, dst_layer)
+                    if (
+                        s_arr is not None
+                        and d_arr is not None
+                        and s_arr.shape[0] == d_arr.shape[0]
+                        and s_arr.shape[0] > 0
+                    ):
+                        src_rows.append(s_arr)
+                        dst_rows.append(d_arr)
         if not src_rows:
             return None
         return (

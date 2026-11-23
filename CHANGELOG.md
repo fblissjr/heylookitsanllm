@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.278] - 2026-11-23
+
+Companion app launcher (`heylookllm --<app>` / `app <name>`), shared `heylook` access gate in Steering Lab, native MTP unsteered capture with live progress, and auto-CV J-Lens regularization:
+- **Companion app launcher (`src/heylook_llm/app_launcher.py`, `src/heylook_llm/server.py`)**: added `--apps` / `app list`, `--steering-lab` (alias `--steering`, defaulting to `serve` with auto-attached newest local bank/vectors under `apps/steering-lab/data/` and `Swift-1.5-Qwen3.8-27B-MLX-8bit`), and `--batch-labeler` (alias `--labeler`) before MLX imports.
+- **Shared `heylook` access gate in Steering Lab (`apps/steering-lab/src/steering_lab/server.py`, `cli.py`, `ui/`)**: wired `HostCheckMiddleware`, `AccessGateMiddleware`, `auth_router` (`/login`, `/logout`), `/health`, login static assets, startup non-loopback key enforcement, `401 -> /login` UI redirect, and a **Sign out** button sharing `~/.heylook/api_key` and `heylook.toml` `allowed_hosts`.
+- **Unsteered MTP capture + progress telemetry (`apps/steering-lab/src/steering_lab/runtime.py`, `cli.py`, `.gitignore`)**: added `_generate_unsteered_ids_mtp()` via `mlx_vlm.generate.ar.generate_step(..., draft_model=..., draft_kind=...)`, mRoPE state reset between fresh prefills, per-pole `progress_cb` + CLI ETA logging, `--no-mtp` toggle, and gitignored `apps/steering-lab/data/*` (keeping `.gitkeep`).
+- **Auto-CV J-Lens ridge & paired think+answer pool (`apps/steering-lab/src/steering_lab/chain_lens.py`, `bank.py`)**: `fit_jlens_transport(..., ridge="auto")` selects optimal ridge regularization on held-out `val_r2` via a single Gram eigendecomposition, and `SpanBank.paired_layer_states()` pools aligned `answer` and `think` rows for stronger high-D generalization.
+- **Verification**: `apps/steering-lab/tests/` `31 passed`, `tests/unit/ tests/contract/` `1856 passed, 2 subtests passed` (including `test_app_launcher.py`, `test_access_gate.py`, `test_mlx_overlay.py`, `test_rule_paths.py`), live Metal end-to-end verification on `Swift-1.5-Qwen3.8-27B-MLX-8bit` + `-mtp` (model/MTP load, `Qwen35MTPAdapter` 1-step parity vs `training_logits`, post-hoc MTP agreement at `temp > 0`, VLM `<|image_pad|>` smoke, 4-corpus core bank capture, vector build, in-manifold content sweep, cross-`</think>` causal `Δ logprob` phase isolation, live tangent X-Ray, and live MTP Chain Lens; full details in `internal/log/log_2026-11-23.md`), `node --check`, `check_version_sync.py`, `guard_stable_channel.sh`, and path-privacy scan clean.
+
 ## [2.0.277] - 2026-11-23
 
 Multi-layer scale budgeting, post-hoc MTP agreement telemetry, and `</think>` phase-transition parity in `apps/steering-lab/` (zero changes to `src/heylook_llm/` runtime/API routes):
