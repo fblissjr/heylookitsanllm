@@ -1575,10 +1575,10 @@ class SteeringLabRuntime:
         *,
         corpus_ids: Optional[Sequence[str]] = None,
         layers: Sequence[int] = DEFAULT_QWEN38_LAYERS,
-        max_tokens: int = 384,
+        max_tokens: int = 896,
         max_tokens_per_span: int = 24,
         enable_thinking: bool = True,
-        reasoning_effort: Optional[str] = "low",
+        reasoning_effort: Optional[str] = "medium",
         image_dir: Optional[Path] = None,
         seed: int = 42,
     ) -> SpanBank:

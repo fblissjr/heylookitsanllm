@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.276] - 2026-11-23
+
+Capture defaults & CLI flags in `apps/steering-lab/` aligned with `Swift-1.5-Qwen3.8-27B-MLX-8bit` Round 1 empirical behavior:
+- **`apps/steering-lab/src/steering_lab/runtime.py`, `cli.py`**: changed `capture_span_bank` and `steering_lab.cli capture` defaults from `max_tokens=384, reasoning_effort="low"` to `max_tokens=896, reasoning_effort="medium"` (preventing `<think>` truncation on harder `capability_holds` math/code pairs and avoiding `low`'s derivation spill into visible `"answer"` spans) and exposed `--reasoning-effort` and `--no-thinking` CLI flags.
+- **Verification**: `apps/steering-lab/tests/` `28 passed` (CPU-only, `0%` Metal contention), `check_version_sync.py`, `guard_stable_channel.sh`, and path-privacy scan clean.
+
 ## [2.0.275] - 2026-11-23
 
 Three follow-up polish refinements in `apps/steering-lab/` (zero changes to `src/heylook_llm/` runtime/API routes):

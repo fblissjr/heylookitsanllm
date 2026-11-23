@@ -62,8 +62,18 @@ def main(argv: Optional[list[str]] = None) -> int:
         default=",".join(str(x) for x in DEFAULT_QWEN38_LAYERS),
         help="Comma-separated layer indices",
     )
-    p_cap.add_argument("--max-tokens", type=int, default=384)
+    p_cap.add_argument("--max-tokens", type=int, default=896)
     p_cap.add_argument("--max-tokens-per-span", type=int, default=24)
+    p_cap.add_argument(
+        "--reasoning-effort",
+        default="medium",
+        help="Reasoning effort passed to chat template (default: medium; use 'none' to omit)",
+    )
+    p_cap.add_argument(
+        "--no-thinking",
+        action="store_true",
+        help="Disable <think> generation during span capture",
+    )
     p_cap.add_argument("--image-dir", help="Optional folder of real photos/screenshots for VLM Dual-Lock capture")
     p_cap.add_argument("--seed", type=int, default=42)
 
@@ -149,12 +159,15 @@ def main(argv: Optional[list[str]] = None) -> int:
         rt.load_model_dir(model_dir, model_id=model_dir.name)
         layers = [int(x.strip()) for x in args.layers.split(",") if x.strip()]
         cids = None if args.corpus == "all" else [x.strip() for x in args.corpus.split(",") if x.strip()]
+        effort = None if str(args.reasoning_effort).lower() in ("none", "") else str(args.reasoning_effort)
         bank = rt.capture_span_bank(
             Path(args.out),
             corpus_ids=cids,
             layers=layers,
             max_tokens=args.max_tokens,
             max_tokens_per_span=args.max_tokens_per_span,
+            enable_thinking=not args.no_thinking,
+            reasoning_effort=effort,
             image_dir=Path(args.image_dir) if args.image_dir else None,
             seed=args.seed,
         )
