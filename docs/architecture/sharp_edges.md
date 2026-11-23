@@ -1991,6 +1991,19 @@ until a reload; `stale` on the response is the file-backed equivalent of
 `stale_reload_fields` (which cannot see it, since no config field moved), and
 it is null for an unloaded model, which is not the same as false.
 
+HuggingFace's training-only `{%- generation %}` / `{%- endgeneration %}` Jinja
+block extension is not part of standard Jinja2 (`chat_template_files._engine_environment()`),
+so a vendor MLX `chat_template.jinja` carrying those tags fails template parse
+and causes `thinking_controls.detect()` to return `None`, silently dropping
+`reasoning_effort` from capabilities (observed 2026-11-23 on
+`Qwen3.8-27B-MLX-8bit/chat_template.jinja`). Removing those tags in a clean
+`chat_template.heylook.jinja` (or replacing the vendor copy with the upstream
+inference template) restores detection; setting the template's own default
+depth there (keeping `('xhigh', 'medium', 'low')` order ahead of the fallback)
+also keeps the UI's `Default (<level>)` label, `/v1/models`, and API callers
+omitting `reasoning_effort` aligned without duplicating defaults in
+`model.heylook.toml`.
+
 ### Streaming latency checks
 
 When live-verifying streaming or latency changes, the 31B dense gemma natively

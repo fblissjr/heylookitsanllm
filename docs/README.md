@@ -1,6 +1,6 @@
 # Documentation index
 
-Last updated: 2026-09-24
+Last updated: 2026-11-23
 
 **Start with the wiki: [wiki/README.md](./wiki/README.md).** It explains how the
 system works end to end -- the backend, the frontend, the two providers, how
@@ -83,6 +83,10 @@ on, and both of these found checks that could not.
   selective `.safetensors` loading).
 
 ## Research / design
+- [research/2026-11-23_qwen38_svd_erasure_and_steering.md](./research/2026-11-23_qwen38_svd_erasure_and_steering.md) --
+  Qwen 3.8 27B weight-delta SVD, teacher-forced `<think>` activation/logit X-ray,
+  3-regime steering shootouts (`NoWait`, `L63` ray-gated erasure, `Swift 1.5`),
+  and production resolution (`Swift-1.5-Qwen3.8-27B-MLX-8bit` + clean `medium`-default template)
 - [frontend_v3_user_guide.md](./frontend_v3_user_guide.md) -- how the UI behaves, for the person USING it
   (the state model behind presets vs ad-hoc settings, the generation lifecycle, editing; ends with the
   known rough edges it exposed)
