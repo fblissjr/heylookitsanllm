@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.273] - 2026-11-23
+
+Standalone MLX Steering & Mechanistic Lab (`apps/steering-lab/`, zero changes to `heylook` inference/API routes):
+- **Design & playbook (`apps/steering-lab/PLAN.md`, `README.md`)**:
+  - Documents the decoupled MLX-only steering lab targeting `Swift-1.5-Qwen3.8-27B-MLX-8bit` + `-mtp` first across 4 non-1D operators (Regime A multi-slider replacement, Regime B active noise cancellation, conditional `IF X -> THEN Y` ReLU neurons, `S3` matched-rank random control) and 6 lab instruments, without coupling to `heylook` chat routes, presets, GGUF, or DuckDB.
+- **Core non-1D operators & span bank (`src/steering_lab/operators.py`, `bank.py`, `corpora.py`)**:
+  - Implements Regime A (`peer_ros` peer-target orthogonalization, clamped `[0, 1]` union SVD, capability `holds` orthogonal projection, smooth `tanh` RMS knee), Regime B (rollback-safe `RunningCenter` with `prior_ema`/`mu_clean`/`running` modes + per-phase reset on `<think> -> content`, half-wave deadzone ramp, paired-shift `vr_diff`, `boost=0`), decoupled `IF X -> THEN Y` ReLU neurons, `S3` random control, and FP64 SVD/geometry diagnostics (`effective_rank`, `split_half_cosine`, `flip_null_cosine`).
+  - Adds multi-layer `SpanBank` I/O (`image_pad` / `prompt_text` / `think` / `answer` spans), strict `ModelFingerprint` validation, dynamic `FA` (`idx % 4 == 3`: `L39, L43, L47, L51`) vs. `GDN` (`is_linear=True`: `L49, L62`) layer-kind tagging, balanced text + synthetic-Pillow vision corpora, and a CPU-only `demo-bank` generator.
+- **The Chain Lens (`src/steering_lab/chain_lens.py`)**:
+  - Implements residual Ridge J-Lens transport (`L_mid -> L63` via dual Woodbury FP64 solve), corpus-mean prior contrastive beam decoding over Qwen 3.8's native 1-layer MTP head (`Qwen35MTPAdapter` + CPU `LinearDemoMTPAdapter`), and round-trip cosine fidelity scoring.
+- **White-box MLX runtime, FastAPI server, CLI & vanilla UI (`runtime.py`, `server.py`, `cli.py`, `ui/`)**:
+  - Adds `LayerSteeringController` with dynamic `FA`/`GDN` layer filters, per-position `[1, seq_len, 1]` phase + `<|image_pad|>` token masks (supporting verify batches straddling `</think> -> content`), unrolled `speculative_verify_hidden` bypass guard, rollback-safe `commit_verify_slice`, tangent zero-centered `(1+w)` RMSNorm `lm_head` X-ray, seed-locked `sweep()` (forcing `MTP=off` when `temperature > 0` for PRNG alignment + computing exact teacher-forced `KL(p_steered || p_s0)` and 4-gram repetition loop detection), and click-a-token causal `Δ logprob`.
+  - Adds local FastAPI workbench on port `8111` (lazy on-demand model loading via modal `<dialog>`, non-modal `<dialog popover="manual">` Token Microscope, multi-slider mixer, Seed-Locked Sweep Strip, Chain Lens panel, and Subspace Geometry bench).
+- **Verification**:
+  - `apps/steering-lab/tests/` (`21 passed`, 100% CPU-only with `mx.set_default_device(mx.cpu)`, zero Metal GPU contention): `test_operators.py` (`9/9`), `test_bank_and_chain_lens.py` (`5/5`), `test_runtime_and_api.py` (`7/7`).
+  - `node --check apps/steering-lab/ui/app.js`, `scripts/check_version_sync.py`, `scripts/guard_stable_channel.sh`, and path-privacy scan clean.
+  - Full `tests/unit/` + `tests/contract/` Metal-bearing collection deferred while live `:42193` `heylook` server serves H3; non-MLX repo guard unit tests green.
+
 ## [2.0.272] - 2026-11-22
 
 Incremental overlay cleanup fix in `scripts/build_mlx.py` and live overlay build verification:

@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>MLX Steering Lab — Qwen 3.8 White-Box Workbench</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar__title">
+      <h1>MLX Steering Lab</h1>
+      <span id="status-pill" class="pill pill--muted">Checking status…</span>
+    </div>
+    <div class="topbar__actions">
+      <button type="button" id="btn-open-load" class="btn btn--secondary">Model…</button>
+      <button type="button" id="btn-unload" class="btn btn--ghost" hidden>Unload</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <!-- Left Rail: Non-1D Multi-Slider Mixer & Operator Controls -->
+    <aside class="panel mixer" aria-label="Steering Mixer">
+      <div class="panel__head">
+        <h2>1. Non-1D Operator Mixer</h2>
+        <button type="button" id="btn-reset-scales" class="btn btn--xs btn--ghost">Reset</button>
+      </div>
+
+      <div id="slider-list" class="slider-list"></div>
+
+      <section class="control-group">
+        <h3>Composition &amp; Math Toggles</h3>
+        <label class="toggle"><input type="checkbox" id="opt-peer-ros" checked><span><code>peer_ros</code> orthogonalize peers</span></label>
+        <label class="toggle"><input type="checkbox" id="opt-clamped-union" checked><span>Clamped <code>[0, 1]</code> union SVD</span></label>
+        <label class="toggle"><input type="checkbox" id="opt-holds"><span>Capability <code>holds</code> (math/code/JSON)</span></label>
+        <label class="toggle"><input type="checkbox" id="opt-s3-random"><span><code>S3</code> matched-rank random control</span></label>
+
+        <div class="field-grid">
+          <label>
+            <span>Layer Filter</span>
+            <select id="opt-layer-filter">
+              <option value="all">All (GDN + FA)</option>
+              <option value="fa_only">FA Only (idx % 4 == 3)</option>
+              <option value="gdn_only">GDN Only (Recurrent)</option>
+              <option value="mid_only">Mid Only (&lt; L63)</option>
+              <option value="terminal_only">Terminal Only (L63)</option>
+            </select>
+          </label>
+          <label>
+            <span>Phase Gate</span>
+            <select id="opt-phase">
+              <option value="">Vector default</option>
+              <option value="content">content only (0 in think)</option>
+              <option value="think">think only</option>
+              <option value="all">all phases</option>
+            </select>
+          </label>
+          <label>
+            <span>Token Mask</span>
+            <select id="opt-token-mask">
+              <option value="">Vector default</option>
+              <option value="decode">decode tokens</option>
+              <option value="image_pad">&lt;|image_pad|&gt; only (VLM)</option>
+              <option value="prompt_text">prompt_text only</option>
+              <option value="all">all tokens</option>
+            </select>
+          </label>
+          <label>
+            <span>Centering (Regime B)</span>
+            <select id="opt-center-mode">
+              <option value="prior_ema">prior_ema (mu_clean warmup)</option>
+              <option value="mu_clean">mu_clean (fixed)</option>
+              <option value="running">running (raw causal)</option>
+            </select>
+          </label>
+          <label>
+            <span>Basis Rank Limit</span>
+            <select id="opt-rank-limit">
+              <option value="">Full (r=8)</option>
+              <option value="1">r=1 (brittle test)</option>
+              <option value="4">r=4</option>
+            </select>
+          </label>
+          <label>
+            <span>Compose Layer</span>
+            <select id="opt-compose-layer"></select>
+          </label>
+        </div>
+      </section>
+
+      <section class="control-group">
+        <div class="panel__head">
+          <h3>Live Composition &amp; Union Eigenvalues</h3>
+          <button type="button" id="btn-compose" class="btn btn--xs">Analyze Blend</button>
+        </div>
+        <div id="compose-readout" class="readout-box">Move a slider or click Analyze Blend.</div>
+      </section>
+    </aside>
+
+    <!-- Main Column: Sweep Strip + Token Microscope + Chain Lens + Bank Geometry -->
+    <section class="stage">
+      <!-- Instrument 5 & 4: Seed-Locked Sweep Strip & Token Microscope -->
+      <section class="panel">
+        <div class="panel__head">
+          <h2>2. Seed-Locked Sweep Strip &amp; Token Microscope</h2>
+          <div class="inline-controls">
+            <label class="inline-label">
+              <span>Heatmap</span>
+              <select id="heatmap-metric">
+                <option value="g_t">Gate fire g_t</option>
+                <option value="rel_delta">Relative ||Δh|| / ||h||</option>
+                <option value="kl_vs_base">KL(p_steered || p_s0)</option>
+                <option value="ray_cos">Ray cos(h - h̄, -μ_d)</option>
+                <option value="entropy">Next-token entropy</option>
+              </select>
+            </label>
+            <label class="inline-label">
+              <span>Seed</span>
+              <input type="number" id="sweep-seed" value="42" class="input-sm">
+            </label>
+            <label class="inline-label">
+              <span>Max tok</span>
+              <input type="number" id="sweep-max-tokens" value="96" min="8" max="512" class="input-sm">
+            </label>
+            <button type="button" id="btn-run-sweep" class="btn btn--primary">Run Sweep</button>
+          </div>
+        </div>
+
+        <div class="prompt-row">
+          <textarea id="sweep-prompt" rows="2" placeholder="Enter a prompt to compare Baseline (s=0) vs. Active Mixer vs. S3 Control…">Explain unified memory bandwidth tradeoffs on Apple Silicon during single-batch decoding.</textarea>
+          <label class="toggle"><input type="checkbox" id="opt-compare-s3" checked><span>Include <code>S3</code> random control arm</span></label>
+        </div>
+
+        <div id="sweep-mode-banner" class="note-line" hidden></div>
+        <div id="sweep-grid" class="sweep-grid">
+          <p class="empty-hint">Click <strong>Run Sweep</strong> to compare Baseline (s=0) against your active non-1D mixer side by side. Click any emitted token to inspect causal <code>Δ logprob</code>.</p>
+        </div>
+      </section>
+
+      <!-- Instrument 6 & 2: The Chain Lens (MTP Contrastive Multi-Token) + Advisory lm_head X-Ray -->
+      <div class="two-up">
+        <section class="panel">
+          <div class="panel__head">
+            <h2>3. The Chain Lens (MTP Multi-Token)</h2>
+            <button type="button" id="btn-chain-lens" class="btn btn--xs btn--primary">Decode Chains</button>
+          </div>
+          <div class="field-grid field-grid--compact">
+            <label>
+              <span>Source</span>
+              <select id="cl-source"></select>
+            </label>
+            <label>
+              <span>Layer</span>
+              <select id="cl-layer"></select>
+            </label>
+            <label>
+              <span>Pole Sign</span>
+              <select id="cl-sign">
+                <option value="1">+1 (Target / Adds)</option>
+                <option value="-1">-1 (Pole A / Erases)</option>
+              </select>
+            </label>
+            <label>
+              <span>Contrastive α</span>
+              <input type="number" id="cl-alpha" value="0.75" step="0.1" min="0" max="2">
+            </label>
+            <label>
+              <span>Steps</span>
+              <input type="number" id="cl-steps" value="4" min="1" max="6">
+            </label>
+            <label>
+              <span>Beams</span>
+              <input type="number" id="cl-beams" value="6" min="1" max="12">
+            </label>
+          </div>
+          <label class="toggle" style="margin-bottom:0.5rem"><input type="checkbox" id="cl-jlens" checked><span>J-Lens ridge transport (<code>L_mid → L63</code>) + corpus-mean prior</span></label>
+          <div id="chain-lens-out" class="chain-list">
+            <p class="empty-hint">Contrastively unrolls multi-token latent phrases via the MTP head (<code>log P_MTP − α log P_base</code>).</p>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel__head">
+            <h2>4. Subspace Geometry &amp; lm_head X-Ray</h2>
+            <div class="inline-controls">
+              <select id="geom-layer"></select>
+              <button type="button" id="btn-xray" class="btn btn--xs">X-Ray Selected</button>
+            </div>
+          </div>
+          <div id="rank-strip" class="rank-strip"></div>
+          <div id="cosine-wrap" class="cosine-wrap"></div>
+          <div id="xray-out" class="xray-out"></div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <!-- Non-modal top-layer Token Microscope Inspector (<dialog popover="manual">) -->
+  <dialog id="token-inspector" popover="manual" class="inspector-panel" aria-labelledby="inspector-title">
+    <div class="panel__head">
+      <h2 id="inspector-title">Token Microscope</h2>
+      <button type="button" id="btn-close-inspector" class="btn btn--xs btn--ghost" popovertarget="token-inspector" popovertargetaction="hide">Close</button>
+    </div>
+    <div id="inspector-body" class="inspector-body"></div>
+  </dialog>
+
+  <!-- Modal dialog for on-demand MLX model load (never auto-loads on boot) -->
+  <dialog id="load-dialog" closedby="any" class="modal-dialog" aria-labelledby="load-dialog-title">
+    <h1 id="load-dialog-title">Load MLX Model On Demand</h1>
+    <p class="note-line">Check that heavy H3 / <code>heylook</code> Metal jobs are idle before loading a 28 GB checkpoint.</p>
+    <form method="dialog" id="load-form" class="modal-form">
+      <label>
+        <span>Local Model Directory</span>
+        <input type="text" id="input-model-path" placeholder="Path to Swift-1.5-Qwen3.8-27B-MLX-8bit" autofocus>
+      </label>
+      <div class="modal-actions">
+        <button type="submit" value="cancel" class="btn btn--ghost">Cancel</button>
+        <button type="submit" value="load" class="btn btn--primary">Load Checkpoint</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>
