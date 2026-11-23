@@ -33,6 +33,7 @@ from .gemma4_vision import (
     bind_text_masks,
     mlx_sdpa_supports_window_size,
 )
+from .prefix_cache import detach_for_cache
 
 MIN_QMV_OUT_ROWS = 32768
 MIN_VERIFY_T = 2
@@ -718,7 +719,7 @@ def _bind_router_subclass(router) -> bool:
                     or getattr(self, "_heylook_root_size", None) != root_size
                 ):
                     norm_weight = scale * root_size
-                    mx.eval(norm_weight)
+                    detach_for_cache(norm_weight)
                     self._heylook_scaled_norm_weight = norm_weight
                     self._heylook_scale_id = id(scale)
                     self._heylook_root_size = root_size

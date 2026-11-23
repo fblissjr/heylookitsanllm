@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.268] - 2026-11-22
+
+### Changed
+
+- **Harden `PrefixCacheStore` CoW accounting, sibling compaction, drafter cache slot, and unified stream-detach boundary (`src/heylook_llm/providers/common/prefix_cache.py`, `src/heylook_llm/providers/common/vision_feature_cache.py`, `src/heylook_llm/providers/common/gemma4_runtime.py`)**:
+  - **Unified `detach_for_cache(*items)` helper**: walks nested lists, tuples, dicts, and `_LayerSnapshot` trees to evaluate every lazy MLX view on the producer stream before publishing across threads, routing `PrefixCacheStore`, `snapshot_rotating_fallbacks`, `capture_rotating_fallbacks_before_evict`, `VisionFeatureCache.put`, and `_HeylookGemma4Router` through one boundary.
+  - **Physical CoW backing-buffer byte accounting (`_BackingTracker` + `_compute_entries_bytes`)**: tracks live backing-buffer identity (`keys`/`values`/shape/offset) and deduplicates shared CoW slices across `[prompt]` and `[prompt + gen]` so storing both no longer double-counts against `memory_max_bytes` or evicts `[prompt]` prematurely, while `_make_room_locked` tracks actual projected/evicted physical bytes.
+  - **Sibling-aware `compact_pending()`**: groups `"kv"` snapshots by `backing_token` so oversized slabs (`backing_len > widest.offset + 256`) compact once onto a single contiguous buffer shared via detached child slices across siblings instead of copying twice, and skips compaction when a wider sibling already pins the backing slab within the 256-token slack.
+  - **Per-kind handler registry & optional `drafter_cache` slot (`CacheLookupResult`, `lookup_full`)**: refactored `_snapshot_layer` and `_restore_layer` onto explicit per-cache-type handler tables, and added optional `drafter_cache` / `drafter_trim_tail` / `drafter_target_len` storage and trimmed restore in `lookup_full(...)` (keeping `lookup(...)` signature unchanged).
+- **Real-Metal cross-worker torture tests (`tests/unit/test_prefix_cache_and_b1_runner.py`)**: added `test_detach_for_cache_handles_nested_and_snapshots`, `test_prefix_cache_cow_physical_bytes_and_sibling_compaction`, `test_prefix_cache_drafter_cache_store_restore_and_cross_worker_detach`, and `test_cross_worker_torture_all_cache_classes_rotating_eviction_and_cancel` exercising pure `KVCache`, `BufferedRotatingKVCache` across eviction + mid-stream cancel, and hybrid `ArraysCache` across quarantined worker threads.
+
+### Verification
+
+- `uv run pytest tests/unit/ tests/contract/ -q`: `1835 passed, 2 subtests passed` on `.venv`, plus `27 passed` in `tests/unit/test_prefix_cache_and_b1_runner.py` + `tests/unit/test_streaming_executor_pool.py` against active canonical MLX (`0.32.5`) + `mlx-vlm` overlays.
+- `scripts/chain_probe.py` on canonical overlays: `Qwen3.8-27B-MLX-8bit` (converted from `Qwen/Qwen3.8-27B` + extracted `qwen3_5_mtp` drafter) `5/5` hops `match=True`, `restored=reused`, `cause=None` (`chain_Qwen3.8-27B-MLX-8bit_20261122-180232.json`); `gemma-4-26B-A4B-it-8bit` `5/5` `restored=reused`, `4/5 match=True` + known `extend-3` `"Moon"`/`"moon"` tie at token 11 (`margin=0.25`, `chain_gemma-4-26B-A4B-it-8bit_20261122-180324.json`). (Also recorded `v2.0.267` baselines: `gemma-4-31B-it-8bit` `chain_probe.py` `5/5 match=True`, `restored=reused`, and `Qwen3.8-27B-MLX-8bit` `vlm_parity_probe.py` `ok=true`.)
+- `scripts/check_version_sync.py` and `scripts/guard_stable_channel.sh` clean. NOT run: `tests/smoke/`, `tests/eval/`, `scripts/perf_ab.py`, browser E2E (`puppeteer-core` removed in `v2.0.240`).
+
 ## [2.0.267] - 2026-11-21
 
 ### Fixed

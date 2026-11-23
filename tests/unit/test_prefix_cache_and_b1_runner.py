@@ -1403,3 +1403,406 @@ def test_b1_runner_and_caches_survive_quarantined_worker_thread_switch(monkeypat
     assert out_chunks[0].cache is not None
     assert out_chunks[0].cache.outcome == "reused"
     assert out_chunks[0].cache.cached_tokens == 6
+
+
+@pytest.mark.unit
+def test_detach_for_cache_handles_nested_and_snapshots():
+    import queue
+    import threading
+    from heylook_llm.providers.common.prefix_cache import (
+        _LayerSnapshot,
+        detach_for_cache,
+    )
+
+    new_tls = getattr(mx, "new_thread_local_stream", None)
+    tls_a = new_tls(mx.default_device()) if callable(new_tls) else mx.default_stream(mx.default_device())
+    tls_b = new_tls(mx.default_device()) if callable(new_tls) else mx.default_stream(mx.default_device())
+
+    box: dict = {}
+    ready_q: queue.Queue = queue.Queue()
+    release_q: queue.Queue = queue.Queue()
+    errors: list[Exception] = []
+
+    def worker_a():
+        try:
+            with mx.stream(tls_a):
+                base = mx.arange(6, dtype=mx.float32).reshape(1, 1, 6, 1)
+                snap = _LayerSnapshot(
+                    kind="cache_list",
+                    children=(
+                        _LayerSnapshot(
+                            kind="kv",
+                            keys=base[..., :4, :] + 1.0,
+                            values=base[..., :4, :] * 2.0,
+                            offset=4,
+                            idx=4,
+                        ),
+                        _LayerSnapshot(
+                            kind="arrays",
+                            arrays=[None, base[..., 2:5, :] + 10.0],
+                        ),
+                    ),
+                )
+                payload = {
+                    "snap": snap,
+                    "list": [None, "ignored", (base[..., :2, :] + 3.0,)],
+                }
+                detach_for_cache(None, payload)
+                box["payload"] = payload
+        except Exception as exc:  # pragma: no cover
+            errors.append(exc)
+        finally:
+            ready_q.put(True)
+            release_q.get(timeout=10)
+
+    t_a = threading.Thread(target=worker_a, daemon=True)
+    t_a.start()
+    ready_q.get(timeout=10)
+    assert not errors
+
+    def worker_b():
+        try:
+            with mx.stream(tls_b):
+                p = box["payload"]
+                kv_snap = p["snap"].children[0]
+                arr_snap = p["snap"].children[1]
+                assert (kv_snap.keys + 0.0).reshape(-1).tolist() == [1.0, 2.0, 3.0, 4.0]
+                assert (arr_snap.arrays[1] + 0.0).reshape(-1).tolist() == [12.0, 13.0, 14.0]
+                assert (p["list"][2][0] + 0.0).reshape(-1).tolist() == [3.0, 4.0]
+        except Exception as exc:
+            errors.append(exc)
+
+    try:
+        t_b = threading.Thread(target=worker_b, daemon=True)
+        t_b.start()
+        t_b.join(timeout=10)
+    finally:
+        release_q.put(True)
+        t_a.join(timeout=5)
+
+    assert not errors, f"Worker B hit stream error after detach_for_cache: {errors}"
+
+
+@pytest.mark.unit
+def test_prefix_cache_cow_physical_bytes_and_sibling_compaction():
+    from mlx_vlm.models.cache import KVCache
+
+    # Case A: [prompt] (100 tok, allow_kv_compact=False) + [prompt+gen] (150 tok,
+    # allow_kv_compact=True) sharing one oversized backing slab (backing_len >= 600).
+    kv = KVCache()
+    chunk = mx.arange(1, 151, dtype=mx.float32).reshape(1, 1, 150, 1)
+    k = mx.broadcast_to(chunk, (1, 1, 150, 2))
+    kv.update_and_fetch(k, k * 2.0)
+    mx.eval(kv.keys, kv.values)
+    mx.eval(*kv.prefix_cache_reserve(600))
+    assert kv.keys.shape[2] >= 600
+    assert kv.offset == 150
+
+    bytes_per_tok = 2 * 4 * 2  # K + V, 2 dims, float32
+    bytes_150 = 150 * bytes_per_tok  # 2400 bytes
+
+    # Budget fits 150 tok (2600B) cleanly, but would evict [prompt] if 100+150 (4000B) double-counted.
+    store = PrefixCacheStore(memory_max_bytes=bytes_150 + 200, max_entries=8)
+    tokens = list(range(1000, 1150))
+
+    assert store.store(
+        tokens,
+        [kv],
+        extra_hash=5,
+        cache_trim_tail=50,
+        trim_tail=50,
+        allow_kv_compact=False,
+    )
+    assert store.total_bytes() == 100 * bytes_per_tok
+
+    assert store.store(
+        tokens,
+        [kv],
+        extra_hash=5,
+        cache_trim_tail=0,
+        trim_tail=0,
+        allow_kv_compact=True,
+    )
+    snap_stats = store.stats_snapshot()
+    assert snap_stats["entries"] == 2
+    assert snap_stats["memory_evictions"] == 0
+    assert store.total_bytes() == bytes_150
+
+    entries = list(store._entries.values())
+    assert entries[0].layers[0].backing_token is entries[1].layers[0].backing_token
+
+    # Sibling-aware compact_pending compacts both siblings onto ONE 150-token buffer.
+    assert store.compact_pending() == 1
+    assert store.compact_pending() == 0
+    entries = list(store._entries.values())
+    assert entries[0].layers[0].backing_token is entries[1].layers[0].backing_token
+    assert entries[0].layers[0].backing_len == 150
+    assert entries[1].layers[0].backing_len == 150
+    assert store.total_bytes() == bytes_150
+
+    r_prompt, m_prompt, _ = store.lookup(tokens[:100] + [9999], extra_hash=5)
+    assert m_prompt == 100
+    assert r_prompt[0].keys.shape[2] == 100
+    assert r_prompt[0].keys[0, 0, :3, 0].tolist() == [1.0, 2.0, 3.0]
+    assert r_prompt[0].keys[0, 0, -2:, 0].tolist() == [99.0, 100.0]
+
+    r_full, m_full, _ = store.lookup(tokens + [9999], extra_hash=5)
+    assert m_full == 150
+    assert r_full[0].keys.shape[2] == 150
+    assert r_full[0].keys[0, 0, -2:, 0].tolist() == [149.0, 150.0]
+
+    # Case B: widest sibling (500 tok on 512-tok backing slab) already fits within +256 slack,
+    # so shorter sibling (100 tok, allow_kv_compact=True) must NOT copy a duplicate buffer.
+    kv2 = KVCache()
+    chunk2 = mx.arange(1, 501, dtype=mx.float32).reshape(1, 1, 500, 1)
+    k2 = mx.broadcast_to(chunk2, (1, 1, 500, 2))
+    kv2.update_and_fetch(k2, k2 * 2.0)
+    mx.eval(kv2.keys, kv2.values)
+    assert kv2.keys.shape[2] == 512
+
+    store2 = PrefixCacheStore(memory_max_bytes=1024 * 1024, max_entries=8)
+    toks2 = list(range(2000, 2500))
+    assert store2.store(toks2, [kv2], extra_hash=1, trim_tail=0, allow_kv_compact=False)
+    assert store2.store(
+        toks2, [kv2], extra_hash=1, trim_tail=400, cache_trim_tail=400, allow_kv_compact=True
+    )
+    assert store2.compact_pending() == 0
+
+
+@pytest.mark.unit
+def test_prefix_cache_drafter_cache_store_restore_and_cross_worker_detach():
+    import queue
+    import threading
+    from mlx_vlm.models.cache import ArraysCache, KVCache
+
+    new_tls = getattr(mx, "new_thread_local_stream", None)
+    tls_a = new_tls(mx.default_device()) if callable(new_tls) else mx.default_stream(mx.default_device())
+    tls_b = new_tls(mx.default_device()) if callable(new_tls) else mx.default_stream(mx.default_device())
+
+    store = PrefixCacheStore(memory_max_bytes=64 * 1024 * 1024, max_entries=8)
+    tokens = list(range(500, 600))
+    ready_q: queue.Queue = queue.Queue()
+    release_q: queue.Queue = queue.Queue()
+    errors: list[Exception] = []
+
+    def worker_a():
+        try:
+            with mx.stream(tls_a):
+                t_kv = KVCache()
+                tk = mx.arange(1, 101, dtype=mx.float32).reshape(1, 1, 100, 1)
+                t_kv.update_and_fetch(tk, tk * 2.0)
+                t_arr = ArraysCache(1)
+                t_arr.cache[0] = mx.array([[42.0, 43.0]], dtype=mx.float32)
+
+                d_kv = KVCache()
+                dk = mx.arange(1, 100, dtype=mx.float32).reshape(1, 1, 99, 1)
+                d_kv.update_and_fetch(dk, dk * 3.0)
+                mx.eval(t_kv.keys, t_kv.values, t_arr.cache[0], d_kv.keys, d_kv.values)
+                mx.eval(*d_kv.prefix_cache_reserve(512))
+
+                assert store.store(
+                    tokens,
+                    [t_kv, t_arr],
+                    extra_hash=9,
+                    drafter_cache=[d_kv],
+                )
+                assert store.compact_pending() >= 1
+        except Exception as exc:  # pragma: no cover
+            errors.append(exc)
+        finally:
+            ready_q.put(True)
+            release_q.get(timeout=10)
+
+    t_a = threading.Thread(target=worker_a, daemon=True)
+    t_a.start()
+    ready_q.get(timeout=10)
+    assert not errors
+
+    def worker_b():
+        try:
+            with mx.stream(tls_b):
+                res = store.lookup_full(tokens + [999], extra_hash=9)
+                assert res.matched_tokens == 100
+                assert res.layers is not None and res.layers[0].offset == 100
+                assert res.drafter_layers is not None
+                assert res.drafter_layers[0].offset == 99
+                assert res.drafter_layers[0].keys.shape[2] == 99
+
+                ext = mx.array([[[[777.0]]]], dtype=mx.float32)
+                res.layers[0].update_and_fetch(ext, ext)
+                res.drafter_layers[0].update_and_fetch(ext, ext)
+                mx.eval(
+                    res.layers[0].keys,
+                    res.layers[1].cache[0],
+                    res.drafter_layers[0].keys,
+                )
+                assert res.drafter_layers[0].offset == 100
+                assert res.drafter_layers[0].state[0][0, 0, 0, 0].item() == 1.0
+                assert res.drafter_layers[0].state[0][0, 0, -1, 0].item() == 777.0
+        except Exception as exc:
+            errors.append(exc)
+
+    try:
+        t_b = threading.Thread(target=worker_b, daemon=True)
+        t_b.start()
+        t_b.join(timeout=10)
+    finally:
+        release_q.put(True)
+        t_a.join(timeout=5)
+
+    assert not errors, f"Worker B failed restoring drafter cache: {errors}"
+
+    # Pure trimmable target verifies partial prefix trim & drafter_token_len - drop_tail <= 0.
+    store_trim = PrefixCacheStore(memory_max_bytes=64 * 1024 * 1024, max_entries=8)
+    t_only = KVCache()
+    tk = mx.arange(1, 101, dtype=mx.float32).reshape(1, 1, 100, 1)
+    t_only.update_and_fetch(tk, tk)
+    d_only = KVCache()
+    dk = mx.arange(1, 100, dtype=mx.float32).reshape(1, 1, 99, 1)
+    d_only.update_and_fetch(dk, dk)
+    mx.eval(t_only.keys, t_only.values, d_only.keys, d_only.values)
+    assert store_trim.store(tokens, [t_only], extra_hash=1, drafter_cache=[d_only])
+
+    partial = store_trim.lookup_full(tokens[:80] + [999], extra_hash=1)
+    assert partial.matched_tokens == 80
+    assert partial.drafter_layers is not None
+    assert partial.drafter_layers[0].offset == 79
+    assert partial.drafter_layers[0].keys[0, 0, -1, 0].item() == 79.0
+
+    too_short = store_trim.lookup_full(tokens[:1] + [999], extra_hash=1)
+    assert too_short.matched_tokens == 1
+    assert too_short.drafter_layers is None
+
+
+@pytest.mark.unit
+def test_cross_worker_torture_all_cache_classes_rotating_eviction_and_cancel(monkeypatch):
+    import queue
+    import threading
+    from mlx_vlm import apc as apc_mod
+    from mlx_vlm.models.cache import ArraysCache, KVCache, RotatingKVCache
+
+    monkeypatch.setattr(apc_mod, "hash_image_payload", lambda **_k: 0)
+    monkeypatch.setattr(apc_mod, "semantic_extra_hash", lambda **_k: 31)
+
+    new_tls = getattr(mx, "new_thread_local_stream", None)
+    tls_a = new_tls(mx.default_device()) if callable(new_tls) else mx.default_stream(mx.default_device())
+    tls_b = new_tls(mx.default_device()) if callable(new_tls) else mx.default_stream(mx.default_device())
+
+    def _run_cross_worker(model, prompt_1, prompt_2, *, use_buffered_rot: bool, cancel_after_tokens: int | None):
+        apc_main = _make_fake_apc()
+        apc_cold = _make_fake_apc()
+
+        if use_buffered_rot:
+            monkeypatch.setattr(b1_runner, "_should_use_buffered_rotating", lambda *a, **k: True)
+            monkeypatch.setattr(b1_runner, "_buffer_rotating_size", lambda *a, **k: 4)
+        else:
+            monkeypatch.setattr(b1_runner, "_should_use_buffered_rotating", lambda *a, **k: False)
+
+        # Reference cold run of prompt_2 for greedy token parity.
+        cold_tokens = [
+            c.token
+            for c in vlm_engine.generate(
+                model=model,
+                processor=None,
+                apc_manager=apc_cold,
+                input_ids=prompt_2,
+                raw_inputs={"input_ids": prompt_2},
+                sampler=None,
+                processors=[],
+                stop_tokens=[99],
+                max_tokens=4,
+                greedy=True,
+                detokenizer=_DummyDetok(),
+            )
+            if c.token is not None
+        ]
+
+        ready_q: queue.Queue = queue.Queue()
+        release_q: queue.Queue = queue.Queue()
+        errors: list[Exception] = []
+        worker_b_chunks = []
+
+        def worker_a():
+            try:
+                monkeypatch.setattr(b1_runner, "_generation_stream", lambda: tls_a)
+                with mx.stream(tls_a):
+                    gen1 = vlm_engine.generate(
+                        model=model,
+                        processor=None,
+                        apc_manager=apc_main,
+                        input_ids=prompt_1,
+                        raw_inputs={"input_ids": prompt_1},
+                        sampler=None,
+                        processors=[],
+                        stop_tokens=[99],
+                        max_tokens=8,
+                        greedy=True,
+                        detokenizer=_DummyDetok(),
+                    )
+                    if cancel_after_tokens is not None:
+                        for _ in range(cancel_after_tokens):
+                            next(gen1)
+                        gen1.close()
+                    else:
+                        list(gen1)
+            except Exception as exc:  # pragma: no cover
+                errors.append(exc)
+            finally:
+                ready_q.put(True)
+                release_q.get(timeout=10)
+
+        t_a = threading.Thread(target=worker_a, daemon=True)
+        t_a.start()
+        ready_q.get(timeout=10)
+        assert not errors
+
+        def worker_b():
+            try:
+                monkeypatch.setattr(b1_runner, "_generation_stream", lambda: tls_b)
+                with mx.stream(tls_b):
+                    worker_b_chunks.extend(
+                        vlm_engine.generate(
+                            model=model,
+                            processor=None,
+                            apc_manager=apc_main,
+                            input_ids=prompt_2,
+                            raw_inputs={"input_ids": prompt_2},
+                            sampler=None,
+                            processors=[],
+                            stop_tokens=[99],
+                            max_tokens=4,
+                            greedy=True,
+                            detokenizer=_DummyDetok(),
+                        )
+                    )
+            except Exception as exc:
+                errors.append(exc)
+
+        try:
+            t_b = threading.Thread(target=worker_b, daemon=True)
+            t_b.start()
+            t_b.join(timeout=10)
+        finally:
+            release_q.put(True)
+            t_a.join(timeout=5)
+
+        assert not errors, f"Worker B hit cross-worker error: {errors}"
+        assert worker_b_chunks and worker_b_chunks[0].cache is not None
+        assert worker_b_chunks[0].cache.outcome == "reused"
+        warm_tokens = [c.token for c in worker_b_chunks if c.token is not None]
+        assert warm_tokens == cold_tokens
+
+    # 1. Pure KVCache model.
+    kv_only_model, _ = _make_toy_vlm(vocab_size=32, window_size=8, with_recurrent=False)
+    kv_only_model.language_model.make_cache = lambda: [KVCache()]
+    p1 = mx.array([[10 + i for i in range(6)]], dtype=mx.int32)
+    p2 = mx.array([[10 + i for i in range(8)]], dtype=mx.int32)
+    _run_cross_worker(kv_only_model, p1, p2, use_buffered_rot=False, cancel_after_tokens=None)
+
+    # 2. BufferedRotatingKVCache crossing max_size=4 eviction + mid-stream gen.close() cancel.
+    rot_model, _ = _make_toy_vlm(vocab_size=32, window_size=4, with_recurrent=False)
+    _run_cross_worker(rot_model, p1, p2, use_buffered_rot=True, cancel_after_tokens=6)
+
+    # 3. Hybrid ArraysCache recurrent model (completes on Worker A -> reused on Worker B).
+    rec_model, _ = _make_toy_vlm(vocab_size=32, window_size=8, with_recurrent=True)
+    _run_cross_worker(rec_model, p1, p2, use_buffered_rot=False, cancel_after_tokens=None)

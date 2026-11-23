@@ -27,6 +27,8 @@ from collections import OrderedDict
 
 import mlx.core as mx
 
+from .prefix_cache import detach_for_cache
+
 
 def image_content_key(images) -> str:
     """The cache key for a request's loaded images (PIL), in order.
@@ -94,12 +96,8 @@ class VisionFeatureCache:
         # A model may store one array or a list of per-image arrays
         # (deepseek_v4); both count against the byte cap.
         try:
+            detach_for_cache(features)
             parts = features if isinstance(features, (list, tuple)) else [features]
-            arrays = [
-                f for f in parts if isinstance(mx.array, type) and isinstance(f, mx.array)
-            ]
-            if arrays:
-                mx.eval(arrays)
             new_bytes = sum(int(f.nbytes) for f in parts)
         except Exception:
             new_bytes = 0
