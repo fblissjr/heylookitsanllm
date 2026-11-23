@@ -73,21 +73,43 @@ Replayed the exact token IDs of the 14 Stock `xhigh` `<think>` traces (capped at
   - **`L63 mu_d ERASES`:** `' actually' (-16.3)`, `' maybe' (-16.0)`, `' wait' (-16.0)`, `' perhaps' (-15.5)`, `' possibly' (-15.2)`, `' instead' (-15.0)`, `' either' (-15.0)`, `' however' (-14.9)`
   - **`L63 mu_d ADDS`:** pure noise (`'' (+7.4)`, `'和' (+6.9)`, `'-Cds' (+6.7)`) — proving that at `L63` right before `lm_head`, 64 layers of distributed rank-32 LoRA updates funnel into a **massive, nearly rank-1 (`51.5%`) unidirectional hesitation-erasure event (`E_cos = +0.826`)**.
   - **Crucial causal-topology caveat (from H3 peer review):** Only `final_norm` + `lm_head` sit after `L63` (no transformer layers read `h_63` into KV/GDN on token `t`). So `L63` is where upstream `L00..L59` *contextual decisions* ("is this `'Wait'` catching a real sign error, or spinning on `2+2` for the 4th time?") converge onto the low-rank unembedding subspace of the 20 doubt words. Intervening *only* at `L63` cannot access the RL LoRA's upstream error-detection circuit, making `L63`-only subtraction an internal cousin of `NoWait` logit damping.
-  - **Decisive 3-arm test for `heylook`:** Benchmark **(1) `<think>`-gated Rank-32 LoRA (`L00..L63`)** vs. **(2) `L63`-only `ACE` hook (`~160 KB`)** vs. **(3) 20-token `NoWait` logit damper (`0 KB`)** on tricky self-correction prompts (`code_bug`, `logic_knights`, `math_mod`, `code_brackets`, `sys_design`) to measure exactly how much upstream `L00..L62` calibration buys over terminal/logit suppression.
+  - **Decisive 3-arm test for `heylook`:** Benchmark **(1) `<think>`-gated Rank-32 LoRA (`L00..L63`)** vs. **(2) `L63`-only Half-Wave Ray-Gated `vr_diff` suppressor (`~160 KB`)** vs. **(3) 20-token `NoWait` logit damper (`0 KB`)** on tricky self-correction prompts (`code_bug`, `logic_knights`, `math_mod`, `code_brackets`, `sys_design`) to measure exactly how much upstream `L00..L62` calibration buys over terminal/logit suppression.
 
 ---
 
-## 3. Fixed Causal-LLM Erasure Math (`ACE` Anchor + Regime B Gate)
+## 3. Regime-B Erasure Math & The `~75%`-Depth Routing Law (H3 Disk Verification)
 
-To make Tikhonov subspace erasure **genuinely self-damping** in an autoregressive LLM (fixing the backwards `h - mu_a` anchor without `+mu_d`):
+### A. Why Naive `h - mu_a` AND Naive `h - mu_clean` Both Fail on Full Prompts (and the Exact Fix)
 
-$$h' = h \;-\; \operatorname{clip}(s, 0, 1) \cdot g(h) \cdot e_{\text{cap}} \cdot \big((h - \boldsymbol{\mu}_{\text{clean}})\,\mathbf{V}_r^\top \mathbf{D}\,\mathbf{V}_r\big)$$
+Zero-GPU checks on `ComfyUI-h3-explorations`'s `50` shipped `fl2va` bank stems and cached `5376`-D full-scene prompts exposed **two traps** in naive Regime-B erasure:
 
-- **Anchor at $\boldsymbol{\mu}_{\text{clean}}$ (matching `ACE`, Marshall et al., 2024):** $\mathbf{V}_r$ spans isolated Pole-A deviations $\mathbf{H}_{\text{unwanted}} - \boldsymbol{\mu}_{\text{clean}}$ (with capability `holds` projected out via two-pass MGS before SVD).
-  - Clean work ($h \approx \boldsymbol{\mu}_{\text{clean}}$): $h - \boldsymbol{\mu}_{\text{clean}} \approx \mathbf{0} \implies$ **zero perturbation**.
-  - Unwanted drift ($h \approx \boldsymbol{\mu}_{\text{unwanted}}$): $h - \boldsymbol{\mu}_{\text{clean}}$ projects cleanly onto $\mathbf{V}_r$ and gets erased straight back toward $\boldsymbol{\mu}_{\text{clean}}$.
-- **One-sided gate $g(h)$ (H3's Regime B `de_llm_slop` rule):** $g(h) = \mathbb{1}[\langle h - \boldsymbol{\mu}_{\text{clean}}, \hat{\mathbf{v}}_{\text{unwanted}} \rangle > 0]$ (or smooth ramp) prevents accidental inversion when a clean token lies on the opposite side of $\boldsymbol{\mu}_{\text{clean}}$.
-- **Upper energy clamp only (no forced RMS floor):** Cap $\|e(h)\| \le \text{cap} \cdot \|h\|$ (plus `soft_cap_stacked_rms` `tanh` knee when stacking sliders), never inflating near-zero projections up to a fixed RMS target.
+1. **Backwards Pole-A centering (`h - mu_a` without `+mu_d`):** Zeroes out at the unwanted center and perturbs clean states.
+2. **Full-prompt Part-of-Speech trap on dataset `h - mu_clean`:** Clean-anchored `ACE` (`h - mu_clean`) self-damps cleanly by `8.6x–30.5x` on *isolated attribute clauses*, **but falsely fires on `100.0%` of tokens (`RMS = 12.2–31.6`) on full `383`-token prompts** (`covered_market.pt`) because `mu_clean` is an adjective centroid and `h_noun - mu_clean` carries a large part-of-speech offset. (The exact same trap hits mixed code/math/digit/punctuation tokens inside an LLM `<think>` trace.)
+3. **Unsupervised `SVD(A_c)` drags in neutral co-occurring words:** In H3's `de_llm_slop` (`mu_d_positive_words = []`, identical to Qwen3.8 `L63`'s `ADDS = noise`), unsupervised `SVD(A_c)` placed `focus (+1.20)` and `focused (+0.93)` into `vr[2]` right alongside `blur`, cutting clean sharpness by `-33%..-39%`.
+
+**Disk-verified fix (`Local-Centered Half-Wave Ray Gate + Paired-Shift Basis vr_diff`):**
+
+$$g_t = \operatorname{clip}\!\left(\frac{\cos(h_t - \bar{h},\; -\hat{\boldsymbol{\mu}}_d) - m_0}{w},\; 0,\; 1\right), \qquad \Delta h_t = -\operatorname{clip}(s, 0, 1) \cdot g_t \cdot e_{\text{cap}} \cdot \big((h_t - \bar{h})\,\mathbf{V}_{\text{diff}}^\top \mathbf{D}\,\mathbf{V}_{\text{diff}}\big)$$
+
+- **Local centering ($h_t - \bar{h}$):** Uses prompt-local mean $\bar{h}$ in DiT or a running `<think>` mean $\bar{h}_t$ in causal LLM decode, canceling scene / part-of-speech scaffolding.
+- **Half-wave ray gate with deadzone ($m_0 > 0$):** Only fires when a token aligns positively with the unwanted Pole-A ray $-\hat{\boldsymbol{\mu}}_d$; clean math/code/digit/scene tokens sit below $m_0 \implies g_t = 0$. On H3's clean scene prompts (`covered_market`, `indoor_evening`, `indoor_neutral`), this dropped `de_llm_slop` RMS from **`67.50 -> 1.36–1.77` (`38x–50x` quieter!)** with zero rebuild of existing banks.
+- **Paired-shift basis $\mathbf{V}_{\text{diff}}$ + `boost = 0` + upper energy clamp only:** Extracting $\mathbf{V}_r$ from paired diffs $\mathbf{D}_p = \mathbf{B}_p - \mathbf{A}_p$ (`vr_diff`) instead of unsupervised $\mathbf{A}_c$ keeps neutral co-occurring concepts (like `focus`) out of the eraser; dropping `+s·mu_d` and the RMS floor prevents amplifying noise on clean inputs.
+
+### B. The Universal `~75%`-Depth Phase Transition (`Qwen3-VL-32B` & `Qwen3.8-27B`)
+
+Projecting H3's `N = 50` shipped `fl2va` control vectors across `Qwen3-VL-32B`'s `L49`, H3's `TokenRefiner`, and `L63` / `lm_head` (via `J_49_to_63` and `M_union`) reveals the **exact same `~75%`-depth phase transition** we measured on `Qwen3.8-27B`:
+
+| Stage (`N = 50` H3 `fl2va` Stems, Max Rank = `49`) | Dim | Bank Eff. Rank | Top-5 PC Energy | Mean `\|cos\|` | `p90 \|cos\|` | Geometric Role |
+| :--- | :---: | :---: | :---: | :---: | :---: | :--- |
+| **1. `Qwen3-VL L49`** (`~75%` depth, `vector.encoder`) | 5,120 | **31.48 / 49** | 37.9% | 0.2438 | 0.4244 | Peak world-model breadth; concepts stay orthogonal |
+| **2. `H3 Post-Refiner`** (`vector.post_refiner`) | 5,376 | **30.04 / 49** | 38.2% | **0.2235** | **0.4185** | Preserves `95.4%` rank while improving orthogonality |
+| **3. `Qwen3-VL L63` pre-head** (`J_49_to_63 @ v_enc`) | 5,120 | **18.99 / 49** (`-40%`) | 57.1% | 0.3423 | **0.6247** | Autoregressive funnel crushes `40%` of concept rank |
+| **4. `Qwen3-VL L63 lm_head`** (`M_union @ v_enc`) | 27,407 | **14.04 / 49** (`-55%`) | 64.4% | 0.4416 | **0.7633** | Next-token BPE bottleneck (`p90 \|cos\| = 0.76`) |
+
+**Resulting Depth-Routing Law for LLM Steering:**
+- **Regime A multi-slider semantic/tone composition** must tap **`~75%` depth (`L43..L49`)**, *before* `L50..L63` crushes 40–55% of independent concept dimensions into `p90 |cos| = 0.62–0.76` collisions.
+- **Regime B single-trait lexical/reflex suppressors** (hesitation, sycophancy, AI-slop) tap **`L63` (or output logits)** precisely *because* the autoregressive funnel has already collapsed the failure mode onto a single clean direction (`r1 = 51.5%`, `E_cos = +0.826`).
+- **J-Lens advisory rule:** Because `j_lens` projects forward into `L63`/`lm_head`, two vectors whose English readouts overlap (`p90 |cos| = 0.763`) can be `~2x` more orthogonal inside the model (`p90 |cos| = 0.419`); treat word-readout overlap as an advisory diagnostic, not a hard collision gate.
 
 ---
 
@@ -103,8 +125,8 @@ $$h' = h \;-\; \operatorname{clip}(s, 0, 1) \cdot g(h) \cdot e_{\text{cap}} \cdo
      - **`<think>` phase:** Run anti-overthinking (Swift-Delta LoRA, `L63` hesitation eraser, or empirical `NoWait`) while keeping style sliders off.
      - **Visible `content` phase:** Drop `<think>` steering to `0` and engage voice / tone / anti-slop sliders — full-rigor thinking, custom voice on output.
      - **`<tool_call>` / structured JSON phase:** Hard-zero *all* style/persona sliders (`s = 0`) so personality controls can never corrupt tool syntax or JSON schemas.
-3. **Depth-Banded Routing on Hybrid GDN+FA LLMs (H3 `blocks.20..29` -> Qwen3.8 Terminal FA Band):**
-   - Routing persona/slop/hesitation erasers into **late Full-Attention layers only** (`L51..L63` or `L63`-only) protects early reasoning scaffolding (`L00..L47`), avoids integrating DC offsets into all 48 GDN recurrent states, and adds near-zero compute cost.
+3. **Depth-Banded Routing on Hybrid GDN+FA LLMs (H3 `blocks.20..29` & `L49` -> Qwen3.8 Split-Depth Routing):**
+   - Route **Regime A multi-slider semantic/tone steering** into the **`~75%`-depth Full-Attention band (`L43..L49`)** where concepts stay `~2x` more orthogonal (`p90 |cos| = 0.42`), and route **Regime B single-trait lexical/reflex suppressors** (hesitation, slop, sycophancy) into **`L63` (or logits)** — keeping early reasoning scaffolding (`L00..L39`) and all 48 GDN recurrent states untouched.
 4. **Composable Unmerged Behavioral LoRA Bank on One 8-bit Base (`MiniMaxH3LoRABranch` -> `heylook`):**
    - Instead of storing multiple full 28 GB quantized copies of Qwen3.8 (stock, Swift 1.5, uncensored/heretic, coding fine-tunes), extract per-component FP64 SVD deltas against the single BF16 base and load them as compact unmerged sidecar branches on top of one 8-bit MLX checkpoint — continuously dialable (`s in [0, 1]`), phase-gated (`<think>` vs. `content`), and composable.
 5. **Ad-Hoc On-the-Fly Concept Faders (`MiniMaxH3WordVector` -> `heylook` UI):**
@@ -135,17 +157,18 @@ Across both **H3 DiT** and **Qwen3.8 LLM**, our experiments isolate a clean **3-
 
 | Regime | Examples (H3 DiT & Qwen3.8 LLM) | Required Operator | Why |
 | :--- | :--- | :--- | :--- |
-| **Regime A — Attribute Manifold Replacement** *(coherent target pole)* | H3 visual/audio styles (`noir`, `charcoal`, `reverb_cathedral`); explicit LLM tone/persona shifts under a static prompt | **Span-isolated Pole-A erasure** $-\mathbf{P}_{\mathbf{V}_r,\lambda}(\mathbf{H} - \bar{\mathbf{h}})$ **+ target push** $+s\hat{\boldsymbol{\mu}}_d$ **+ `peer_ros` + clamped `[0, 1]` union SVD + `holds`** | Beats the frozen-anchor veto, protects capabilities via `holds`, and stacks multiple sliders cleanly without cancellation or eigenvalue sign flips. |
-| **Regime B — Pure Failure-Mode Suppression** *(no single Pole-B target; `ADDS = noise`)* | H3 `de_llm_slop`; LLM self-doubt/hesitation/sycophancy/refusal reflexes at `L63` (or output-space empirical `NoWait` + MTP spinning sensor / transactional `EAT`) | **Clean-anchor $\boldsymbol{\mu}_{\text{clean}}$ (`ACE`) + one-sided `ReLU` + upper-cap-only (`boost = 0`)** (or targeted logit damping on the 20 doubt pivots) | Symmetric centering and forced RMS floors inject noise on clean inputs when no Pole-B look exists. Stays `0` on clean states, near-zero compute overhead, 100% APC-safe. |
+| **Regime A — Attribute Manifold Replacement** *(coherent target pole)* | H3 visual/audio styles (`noir`, `charcoal`, `reverb_cathedral`); explicit LLM tone/persona shifts under a static prompt (`~75%`-depth `L43..L49` band) | **Span-isolated Pole-A erasure** $-\mathbf{P}_{\mathbf{V}_r,\lambda}(\mathbf{H} - \bar{\mathbf{h}})$ **+ target push** $+s\hat{\boldsymbol{\mu}}_d$ **+ `peer_ros` + clamped `[0, 1]` union SVD + `holds`** | Beats the frozen-anchor veto, protects capabilities via `holds`, avoids `L50..L63` concept collision, and stacks multiple sliders cleanly without cancellation or eigenvalue sign flips. |
+| **Regime B — Pure Failure-Mode Suppression** *(no single Pole-B target; `ADDS = noise`)* | H3 `de_llm_slop`; LLM self-doubt/hesitation/sycophancy/refusal reflexes at `L63` (or output-space empirical `NoWait` + MTP spinning sensor / transactional `EAT`) | **Local-centered half-wave ray gate ($\cos(h - \bar{h}, -\hat{\boldsymbol{\mu}}_d)$ with deadzone $m_0$) + paired-shift basis $\mathbf{V}_{\text{diff}}$ + upper-cap-only (`boost = 0`)** (or targeted logit damping on the 20 doubt pivots) | Eliminates both forced-RMS noise amplification and full-prompt POS false triggers (`38x–50x` quieter on clean H3 prompts); prevents neutral co-occurring words (`focus`) from entering `V_r`; near-zero compute overhead, 100% APC-safe. |
 | **Regime C — Multi-Layer Contextual Policy** *(state-dependent upstream circuit)* | H3 Pika 6-step trajectory curvature; Qwen3.8 `Swift 1.5` `L00..L59` *"real sign error vs. anxious 4th re-check"* discrimination; uncensored/domain fine-tunes | **Unmerged per-component FP64 SVD `lora_branch` over quantized weights with step/phase gating (`_Window` / `in_thinking == True`)** | Cannot be reduced to a static Prelude/readout vector without losing upstream state sensitivity (`effR_D ~ 570`). Exact rank-32 weight recovery (`79–85%`), zero GDN hooks, continuous `s in [0, 1]`, zero requantization loss over 8-bit. |
 
 ### Decisive Next Experiment in `heylookitsanllm`
-Run a clean **3-arm benchmark** on the 14-prompt 4-bucket suite (focusing on tricky self-correction prompts: `code_bug`, `logic_knights`, `math_mod`, `code_brackets`, `sys_design`) comparing:
+First run a quick 60s verification on `mlp`/`q_proj` SVD rank knees, `Swift-1.5-mtp` vs. `Stock-mtp`, and a clean BF16 `L47`/`L63` spot-check; then run a **3-arm benchmark** on the 14-prompt 4-bucket suite (focusing on tricky self-correction prompts: `code_bug`, `logic_knights`, `math_mod`, `code_brackets`, `sys_design`) comparing:
 1. **Regime C:** `<think>`-gated unmerged Rank-32 Swift-Delta LoRA (`L00..L63`, 7 FA/MLP modules, 0 GDN hooks),
-2. **Regime B (residual):** `L63`-only clean-anchor `ACE` + ReLU hook (`~160 KB`), and
+2. **Regime B (residual):** `L63`-only local-centered half-wave ray-gated `vr_diff` suppressor (`~160 KB`, `boost = 0`, deadzone margin $m_0$), and
 3. **Regime B (logit):** 20-token empirical `NoWait` logit damper (`0 KB`, applied to both target + MTP drafter logits).
 
 ### Known Traps to Avoid
-- **Anchoring causal LLM erasure at `mu_a` without `+mu_d`** (inverts self-damping; always anchor at `mu_clean` + one-sided `ReLU` gate).
-- **Running Pole-A SVD over unsegmented mixed traces** (topic/syntax variance floods `V_r`; isolate opposing spans first, matching H3's `differing_span` rule).
+- **Anchoring Regime-B erasure at `mu_a` without `+mu_d`** (inverts self-damping) **OR applying raw dataset `h - mu_clean` across mixed-POS full prompts** (falsely triggers on `100%` of nouns/code/digits due to POS offset; use local centering + half-wave ray gate with deadzone $m_0$).
+- **Extracting Regime-B `V_r` via unsupervised `SVD(A_c)` over unsegmented traces** (drags neutral co-occurring words like `focus` or topic/syntax variance into `V_r`; use paired-shift `vr_diff` and isolate opposing spans first).
+- **Stacking multi-slider Regime-A concepts at `L63`** (`L50..L63` collapses `40%–55%` of concept rank with `p90 |cos| = 0.62–0.76`; stack at `~75%` depth `L43..L49` instead).
 - **Static global `</think>` bias, high `presence_penalty` in `<think>`, greedy `temp=0`, prompt word limits, solo 1-layer MTP thinking, GDN decay-gate hacking, or continuous embedding-mixture Soft Thinking on GDN** — all either backfire on quality/loops or break MTP + APC + hybrid state stability.
