@@ -25,6 +25,12 @@ from .prefix_cache import (
     capture_rotating_fallbacks_before_evict,
     snapshot_rotating_fallbacks,
 )
+from .speculative_session import (
+    SpeculativeSession,
+    StatefulDrafterPrefiller,
+    _SessionSamplerProxy,
+    is_stateful_drafter,
+)
 
 _DEFAULT_PREFILL_STEP_SIZE = 1024
 _DEFAULT_CHECKPOINT_ENTRIES = 32
@@ -494,12 +500,12 @@ def generate_b1(
         else:
             logging.debug(f"{model_id}: not drafting this request: {blocker}")
 
+    raw_procs: list[Any] = []
     mtp_gen_tokens: Optional[list[int]] = None
     eff_greedy = greedy
     if drafting and active:
         mtp_gen_tokens = []
         raw_procs = [getattr(p, "_heylook_raw_processor", p) for p in active]
-        sampler._heylook_mtp_penalties = (raw_procs, mtp_gen_tokens)
         eff_greedy = False
 
     b1_cache = get_or_create_b1_cache(apc_manager)
@@ -517,8 +523,7 @@ def generate_b1(
     accepted = 0
     prompt_cache: list[Any] = []
     cache_tokens = list(prompt_list)
-    stopped_mid_mtp_round = False
-    postgen_cache_trim_tail = 0
+    cache_aligned = True
     has_media = any(
         raw_inputs.get(k) is not None
         for k in ("pixel_values", "pixel_values_videos", "audio_features", "input_features")
@@ -527,6 +532,8 @@ def generate_b1(
     pregen_fallbacks: dict[int, Any] = {}
     has_recurrent = False
     has_uncaptured_rotating = False
+    draft_prefiller: Optional[StatefulDrafterPrefiller] = None
+    spec_session: Optional[SpeculativeSession] = None
 
     try:
         use_buf_rot = _should_use_buffered_rotating(lm, drafting=drafting)
@@ -546,17 +553,23 @@ def generate_b1(
         with mx.stream(_generation_stream()):
             cached = 0
             restored_rd = None
+            restored_drafter_layers = None
+            restored_drafter_last_hidden = None
             if b1_cache is not None:
                 salt = _ve.semantic_hash(raw_inputs, model, processor)
-                restored_cache, cached, restored_rd = b1_cache.lookup(
+                lookup_res = b1_cache.lookup_full(
                     prompt_list,
                     extra_hash=salt,
                     suffix_is_text_only=suffix_is_text,
                     use_buffered_rotating=use_buf_rot,
                     buffer_size=buf_size,
                 )
-                if restored_cache is not None and cached > 0:
-                    prompt_cache = restored_cache
+                if lookup_res.layers is not None and lookup_res.matched_tokens > 0:
+                    prompt_cache = lookup_res.layers
+                    cached = lookup_res.matched_tokens
+                    restored_rd = lookup_res.rope_deltas
+                    restored_drafter_layers = lookup_res.drafter_layers
+                    restored_drafter_last_hidden = lookup_res.drafter_last_hidden
                 else:
                     cached = 0
             if not prompt_cache:
@@ -623,9 +636,34 @@ def generate_b1(
                 if "rope_deltas" not in rem_kwargs:
                     rem_kwargs["rope_deltas"] = restored_rd
 
+            spec_prefill_kw: dict[str, Any] = {}
+            if drafting:
+                from mlx_vlm.speculative.utils import (
+                    speculative_hidden_state,
+                    speculative_prefill_kwargs,
+                )
+
+                spec_prefill_kw = speculative_prefill_kwargs(draft[1], draft[0])
+                if is_stateful_drafter(draft[0]):
+                    draft_prefiller = StatefulDrafterPrefiller(
+                        model,
+                        draft[0],
+                        token_dtype=input_ids.dtype,
+                        greedy=eff_greedy,
+                        proxy_sampler=_SessionSamplerProxy(
+                            sampler, greedy=eff_greedy
+                        ),
+                        cached_len=cached,
+                        restored_drafter_layers=restored_drafter_layers,
+                        restored_last_hidden=restored_drafter_last_hidden,
+                    )
+
             chunk_policy = getattr(lm, "chunked_prefill_policy", None)
             allow_chunk = True
             if callable(chunk_policy):
+                policy_kw = (
+                    {**rem_kwargs, **spec_prefill_kw} if drafting else rem_kwargs
+                )
                 allow_chunk = bool(
                     chunk_policy(
                         input_ids=suffix_ids,
@@ -633,7 +671,7 @@ def generate_b1(
                         prompt_cache=prompt_cache,
                         draft_model=draft[0] if drafting else None,
                         draft_kind=draft[1] if drafting else None,
-                        prefill_kwargs=rem_kwargs,
+                        prefill_kwargs=policy_kw,
                     )
                 )
             step_size = (
@@ -662,40 +700,56 @@ def generate_b1(
 
             report_progress = getattr(abort_event, "set_prefill_progress", None)
             pos = cached
-            spec_prefill_kw: dict[str, Any] = {}
-            if drafting:
-                from mlx_vlm.speculative.utils import (
-                    speculative_hidden_state,
-                    speculative_prefill_kwargs,
-                )
+            chunk_draft_kw: dict[str, Any] = (
+                {"return_hidden": True}
+                if (draft_prefiller is not None and draft_prefiller.enabled)
+                else {}
+            )
 
-                spec_prefill_kw = speculative_prefill_kwargs(draft[1], draft[0])
+            def _prefiller_eval_extras() -> list[Any]:
+                if draft_prefiller is None or not draft_prefiller.enabled:
+                    return []
+                extras: list[Any] = [c.state for c in draft_prefiller.draft._cache]
+                if draft_prefiller.pending_prev_hidden is not None:
+                    extras.append(draft_prefiller.pending_prev_hidden)
+                return extras
 
             for stop_pos in chunk_stops:
                 if abort_event is not None and abort_event.is_set():
                     aborted = True
                     return
-                k = stop_pos - pos
                 rel_start = pos - cached
                 rel_end = stop_pos - cached
                 step_kw = _slice_prompt_kwargs(
                     rem_kwargs, full_len=rem_len, start=rel_start, stop=rel_end
                 )
-                lm(
-                    suffix_ids[:, rel_start:rel_end],
+                chunk_ids = suffix_ids[:, rel_start:rel_end]
+                chunk_out = lm(
+                    chunk_ids,
                     cache=prompt_cache,
                     inputs_embeds=suffix_embeds[:, rel_start:rel_end],
                     logits_to_keep=1,
                     **step_kw,
+                    **chunk_draft_kw,
                 )
+                if draft_prefiller is not None:
+                    out_hidden = getattr(chunk_out, "hidden_states", None)
+                    if out_hidden:
+                        draft_prefiller.feed_chunk(chunk_ids, out_hidden[-1])
                 if stop_pos in snap_stops and b1_cache is not None:
-                    mx.eval([c.state for c in prompt_cache])
+                    mx.eval([c.state for c in prompt_cache], *_prefiller_eval_extras())
+                    snap_drafter_kw = (
+                        draft_prefiller.cache_snapshot_args()
+                        if draft_prefiller is not None
+                        else {}
+                    )
                     b1_cache.store(
                         prompt_list[:stop_pos],
                         prompt_cache,
                         extra_hash=salt or 0,
                         trim_tail=0,
                         rope_deltas=_extract_rope_deltas(lm, gen_kwargs),
+                        **snap_drafter_kw,
                     )
                 else:
                     mx.async_eval([c.state for c in prompt_cache])
@@ -722,32 +776,48 @@ def generate_b1(
                 pre_kw = _slice_prompt_kwargs(
                     final_kw, full_len=tail_len, start=0, stop=tail_len - 1
                 )
-                lm(
+                pre_out = lm(
                     pre_ids,
                     cache=prompt_cache,
                     inputs_embeds=pre_embeds,
                     logits_to_keep=1,
                     **pre_kw,
+                    **chunk_draft_kw,
                 )
-                mx.eval([c.state for c in prompt_cache])
+                if draft_prefiller is not None:
+                    out_hidden = getattr(pre_out, "hidden_states", None)
+                    if out_hidden:
+                        draft_prefiller.feed_chunk(pre_ids, out_hidden[-1])
+                mx.eval([c.state for c in prompt_cache], *_prefiller_eval_extras())
+                pre_drafter_kw = (
+                    draft_prefiller.cache_snapshot_args()
+                    if draft_prefiller is not None
+                    else {}
+                )
                 b1_cache.store(
                     prompt_list[: n - 1],
                     prompt_cache,
                     extra_hash=salt or 0,
                     trim_tail=0,
                     rope_deltas=_extract_rope_deltas(lm, gen_kwargs),
+                    **pre_drafter_kw,
                 )
                 last_kw = _slice_prompt_kwargs(
                     final_kw, full_len=tail_len, start=tail_len - 1, stop=tail_len
                 )
+                last_ids = final_ids[:, -1:]
                 prefill_out = lm(
-                    final_ids[:, -1:],
+                    last_ids,
                     cache=prompt_cache,
                     inputs_embeds=final_embeds[:, -1:],
                     logits_to_keep=1,
                     **last_kw,
                     **spec_prefill_kw,
                 )
+                if draft_prefiller is not None:
+                    out_hidden = getattr(prefill_out, "hidden_states", None)
+                    if out_hidden:
+                        draft_prefiller.feed_chunk(last_ids, out_hidden[-1])
             else:
                 prefill_out = lm(
                     final_ids,
@@ -757,6 +827,10 @@ def generate_b1(
                     **final_kw,
                     **spec_prefill_kw,
                 )
+                if draft_prefiller is not None:
+                    out_hidden = getattr(prefill_out, "hidden_states", None)
+                    if out_hidden:
+                        draft_prefiller.feed_chunk(final_ids, out_hidden[-1])
 
             raw_logits = (
                 prefill_out.logits if hasattr(prefill_out, "logits") else prefill_out
@@ -771,16 +845,22 @@ def generate_b1(
                 position=0,
             )
             rope_deltas = _extract_rope_deltas(lm, gen_kwargs)
-            mx.eval(first_y, [c.state for c in prompt_cache])
+            mx.eval(first_y, [c.state for c in prompt_cache], *_prefiller_eval_extras())
             first_tok = int(first_y.item())
 
             if b1_cache is not None and has_recurrent:
+                prompt_drafter_kw = (
+                    draft_prefiller.cache_snapshot_args()
+                    if draft_prefiller is not None
+                    else {}
+                )
                 b1_cache.store(
                     prompt_list,
                     prompt_cache,
                     extra_hash=salt or 0,
                     trim_tail=0,
                     rope_deltas=rope_deltas,
+                    **prompt_drafter_kw,
                 )
 
             prefill_done_at = time.perf_counter()
@@ -940,17 +1020,15 @@ def generate_b1(
                         mx.eval([c.state for c in prompt_cache])
                     next_input_tok = tok
             else:
-                from mlx_vlm.speculative.mtp import MTPBatch
-
                 block_size = draft_block_size or int(
                     getattr(getattr(draft[0], "config", None), "block_size", 5) or 5
                 )
-                mtp_batch = MTPBatch(
-                    lm,
+                spec_session = SpeculativeSession(
+                    model,
                     draft[0],
                     prompt_cache,
                     speculative_hidden_state(draft[1], prefill_out),
-                    mx.array([first_tok], dtype=input_ids.dtype),
+                    first_tok,
                     block_size,
                     sampler,
                     input_ids.dtype,
@@ -958,9 +1036,11 @@ def generate_b1(
                     shared_kv_states=getattr(prefill_out, "shared_kv_states", None),
                     prompt_tokens=input_ids,
                     rope_deltas=rope_deltas,
+                    penalty_processors=raw_procs if active else None,
+                    gen_history=mtp_gen_tokens,
+                    prefiller=draft_prefiller,
                 )
                 active_crit = thinking_budget
-                crit_arg = [active_crit] if active_crit is not None else None
 
                 while generated < max_tokens:
                     if abort_event is not None and abort_event.is_set():
@@ -976,7 +1056,6 @@ def generate_b1(
                             crit.thinking_budget = 0
                             crit.budget_exceeded = True
                             active_crit = crit
-                            crit_arg = [crit]
 
                     if has_uncaptured_rotating:
                         has_uncaptured_rotating = capture_rotating_fallbacks_before_evict(
@@ -985,55 +1064,24 @@ def generate_b1(
                             incoming=block_size + 1,
                             captured=pregen_fallbacks,
                         )
-                    prev_bonus = int(mtp_batch.rows[0].bonus)
-                    round_tokens = mtp_batch.step(
-                        [max_tokens - generated],
-                        [generated],
-                        thinking_budget_criteria=crit_arg,
+                    step_res = spec_session.step(
+                        max_tokens - generated,
+                        generated,
+                        stop_tokens=stop,
+                        thinking_budget_criteria=active_crit,
                     )
-                    raw_toks = [int(t) for t in round_tokens[0]]
+                    accepted += step_res.accepted_count
 
-                    toks: list[int] = []
-                    round_finish: Optional[str] = None
-                    stop_idx: Optional[int] = None
-                    for idx, tok in enumerate(raw_toks):
-                        if tok in stop:
-                            round_finish = "stop"
-                            stop_idx = idx
-                            break
-                        toks.append(tok)
-                    delivered = len(toks) + (1 if round_finish == "stop" else 0)
-                    accepted += max(0, delivered - 1)
-                    if round_finish is None and generated + len(toks) >= max_tokens:
-                        round_finish = "length"
-
-                    if raw_toks:
-                        committed_total = len(raw_toks)
-                        if round_finish != "stop":
-                            committed_in_round = [prev_bonus, *raw_toks[:-1]]
-                            if len(cache_tokens) + committed_total == mtp_batch.rows[0].position:
-                                cache_tokens.extend(committed_in_round)
-                            else:
-                                stopped_mid_mtp_round = True
-                        else:
-                            # MTPBatch.step() commits [prev_bonus, *raw_toks[:-1]] into prompt_cache.
-                            # Keep pre-EOS reply tokens in cache_tokens, trimming any trailing
-                            # committed draft tokens past stop_idx on non-recurrent caches.
-                            assert stop_idx is not None
-                            if len(cache_tokens) + committed_total == mtp_batch.rows[0].position:
-                                if stop_idx == committed_total - 1:
-                                    cache_tokens.extend([prev_bonus, *raw_toks[:-1]])
-                                    postgen_cache_trim_tail = 0
-                                elif not has_recurrent:
-                                    cache_tokens.extend([prev_bonus, *raw_toks[:stop_idx]])
-                                    postgen_cache_trim_tail = (committed_total - 1) - stop_idx
-                                else:
-                                    stopped_mid_mtp_round = True
-                            else:
-                                stopped_mid_mtp_round = True
+                    if step_res.committed_tokens and (
+                        len(cache_tokens) + len(step_res.committed_tokens)
+                        == spec_session.position
+                    ):
+                        cache_tokens.extend(step_res.committed_tokens)
                     else:
-                        stopped_mid_mtp_round = True
+                        cache_aligned = False
 
+                    toks = step_res.emitted_tokens
+                    round_finish = step_res.finish_reason
                     if mtp_gen_tokens is not None and toks:
                         mtp_gen_tokens.extend(toks)
                     if active_crit is None and end_thinking_criteria is not None:
@@ -1055,23 +1103,34 @@ def generate_b1(
                         if is_final:
                             return
     finally:
-        if hasattr(sampler, "_heylook_mtp_penalties"):
-            sampler._heylook_mtp_penalties = None
         if b1_cache is not None:
             if salt is not None and boundaries:
                 b1_cache.touch(prompt_list, boundaries, extra_hash=salt)
             with mx.stream(_generation_stream()):
+                drafter_post_kw = (
+                    spec_session.drafter_cache_for_store(len(cache_tokens))
+                    if spec_session is not None
+                    else {}
+                )
+                post_eval_extras: list[Any] = []
+                if drafter_post_kw.get("drafter_cache"):
+                    post_eval_extras.extend(
+                        c.state for c in drafter_post_kw["drafter_cache"]
+                    )
+                if drafter_post_kw.get("drafter_last_hidden") is not None:
+                    post_eval_extras.append(drafter_post_kw["drafter_last_hidden"])
+
                 if not has_recurrent and prompt_cache:
                     cur_off = _uniform_cache_offset(prompt_cache)
                     if cur_off is not None and cur_off >= n:
-                        mx.eval([c.state for c in prompt_cache])
+                        mx.eval([c.state for c in prompt_cache], *post_eval_extras)
                         will_store_postgen = (
                             not aborted
                             and generated > 0
                             and finish in ("stop", "length")
-                            and not stopped_mid_mtp_round
+                            and cache_aligned
                             and len(cache_tokens) > n
-                            and cur_off - postgen_cache_trim_tail == len(cache_tokens)
+                            and cur_off == len(cache_tokens)
                         )
                         b1_cache.store(
                             prompt_list,
@@ -1089,24 +1148,26 @@ def generate_b1(
                                 prompt_cache,
                                 extra_hash=salt or 0,
                                 trim_tail=0,
-                                cache_trim_tail=postgen_cache_trim_tail,
+                                cache_trim_tail=0,
                                 rope_deltas=rope_deltas,
+                                **drafter_post_kw,
                             )
                     pregen_fallbacks.clear()
                 elif (
                     not aborted
                     and generated > 0
                     and finish in ("stop", "length")
-                    and not stopped_mid_mtp_round
+                    and cache_aligned
                     and len(cache_tokens) > n
                     and _uniform_cache_offset(prompt_cache) == len(cache_tokens)
                 ):
-                    mx.eval([c.state for c in prompt_cache])
+                    mx.eval([c.state for c in prompt_cache], *post_eval_extras)
                     b1_cache.store(
                         cache_tokens,
                         prompt_cache,
                         extra_hash=salt or 0,
                         trim_tail=0,
                         rope_deltas=rope_deltas,
+                        **drafter_post_kw,
                     )
                 b1_cache.compact_pending()

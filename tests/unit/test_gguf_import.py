@@ -145,6 +145,53 @@ def test_an_mlx_drafter_folder_pairs_onto_its_models_and_is_not_one(importer, tm
 
 
 @pytest.mark.unit
+def test_mlx_nested_and_quantized_drafter_discovery(importer, tmp_path):
+    """Nested drafters (`<model>/mtp/`) and quantized siblings (`*-MTP-mxfp4`) pair accurately."""
+    def mlx_dir(parent, name, model_type, hidden):
+        d = parent / name
+        d.mkdir(parents=True)
+        (d / "config.json").write_text(json.dumps(
+            {"model_type": model_type, "text_config": {"hidden_size": hidden}}))
+        _write_bytes(d / "model.safetensors", 1000)
+        return d
+
+    # 1. Nested drafter inside model dir pairs onto the model and is not imported alone.
+    nested_root = tmp_path / "nested-case"
+    parent_model = mlx_dir(nested_root, "Qwen3.8-27B", "qwen3_5", 5120)
+    nested_mtp = mlx_dir(parent_model, "mtp", "qwen3_5_mtp", 5120)
+
+    # 2. Ambiguous multiple nested drafters inside one model dir pair neither.
+    ambig_root = tmp_path / "ambig-nested"
+    ambig_model = mlx_dir(ambig_root, "AmbModel", "qwen3_5", 5120)
+    mlx_dir(ambig_model, "mtp-a", "qwen3_5_mtp", 5120)
+    mlx_dir(ambig_model, "mtp-b", "qwen3_5_mtp", 5120)
+
+    # 3. Quantized sibling drafter pairs onto differently quantized variants with matching width,
+    #    never onto a different-width model or a numeric-prefix neighbor like qwen30-8bit.
+    sib_root = tmp_path / "quantized-siblings"
+    mlx_dir(sib_root, "mlx-community_Qwen3.8-27B-4bit", "qwen3_5", 5120)
+    mlx_dir(sib_root, "mlx-community_Qwen3.8-27B-8bit", "qwen3_5", 5120)
+    mlx_dir(sib_root, "mlx-community_Qwen3.8-27B-wide", "qwen3_5", 8192)
+    quant_mtp = mlx_dir(sib_root, "mlx-community_Qwen3.8-27B-MTP-mxfp4", "qwen3_5_mtp", 5120)
+
+    mlx_dir(sib_root, "qwen3-8bit", "qwen3_5", 2048)
+    mlx_dir(sib_root, "qwen30-8bit", "qwen3_5", 2048)
+    narrow_mtp = mlx_dir(sib_root, "qwen3-mtp-8bit", "qwen3_5_mtp", 2048)
+
+    found = {e["id"]: e["config"].get("draft_model_path")
+             for e in importer.scan_directory(str(tmp_path))}
+    assert found == {
+        "Qwen3.8-27B": str(nested_mtp),
+        "AmbModel": None,
+        "mlx-community_Qwen3.8-27B-4bit": str(quant_mtp),
+        "mlx-community_Qwen3.8-27B-8bit": str(quant_mtp),
+        "mlx-community_Qwen3.8-27B-wide": None,
+        "qwen3-8bit": str(narrow_mtp),
+        "qwen30-8bit": None,
+    }
+
+
+@pytest.mark.unit
 def test_asymmetric_mlx_drafters_pair_by_backbone_or_target_hidden_size(importer, tmp_path):
     """Standalone drafters like ``gemma4_assistant`` (``backbone_hidden_size``)
     and asymmetric ``dflash``/``dspark`` checkpoints (``target_hidden_size``) carry

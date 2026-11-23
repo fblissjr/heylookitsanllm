@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.269] - 2026-11-22
+
+### Changed
+
+- **Owned B=1 `SpeculativeSession` (`src/heylook_llm/providers/common/speculative_session.py`, `src/heylook_llm/providers/common/b1_runner.py`, `src/heylook_llm/providers/common/prefix_cache.py`)**:
+  - Replaced `mlx_vlm.speculative.mtp.MTPBatch` inside `b1_runner` with a dedicated single-row `SpeculativeSession` driver while keeping `MTPBatch` + `PATCH_MTP_B1_WALK` intact on the `BatchGenerator` (`HEYLOOK_B1_RUNNER=0`) fallback path.
+  - **Stop-before-commit clamping**: scans verified round tokens for `stop_tokens` and clamps `commit_accepted = stop_idx` before calling `accept_verified_tokens` and `verify.commit`, preventing post-EOS tokens from entering either `ArraysCache` or `KVCache` and preserving `[prompt + gen]` cache storage across mid-round EOS stops on hybrid recurrent models (verified live on `Qwen3.8-27B-MLX-8bit`).
+  - **Session-local sampler proxy (`_SessionSamplerProxy`) & greedy `argmax` fast path**: keeps pending Leviathan draft distributions (`_heylook_pending_draft`) and generated-token penalty history local to the session rather than mutating caller `sampler` attributes, and skips `mx.logsumexp` when greedy sampling runs without active penalty processors or `speculative_argmax_from_hidden`.
+  - **Incremental stateful-drafter prefill & warm KV persistence (`StatefulDrafterPrefiller` + `drafter_last_hidden`)**: feeds target hidden states across prefill chunks, `N - 1`+`1` recurrent splits, and warm cache hits (`CacheLookupResult.drafter_last_hidden` in `PrefixCacheStore`) so stateful 1-layer drafters such as Qwen 3.8's `Qwen3_5MTPDraftModel` retain full prompt and post-generation KV context across turns and worker threads.
+- **Gemma 4 shared-KV fast path & maskless SWA (`src/heylook_llm/providers/common/gemma4_runtime.py`, `src/heylook_llm/providers/common/speculative_session.py`)**:
+  - Extended `gemma4_runtime._bind_shared_kv_from_cache` with direct single-row extraction for `KVCache`, `BufferedRotatingKVCache`, and `RotatingKVCache` matching upstream output without fallback allocation, and added `slice_gemma4_maskless_swa` (wired into `SpeculativeSession._bind_shared`) to trim `sliding_attention` shared KV to `window - 1` once `position > window` so `make_drafter_masks` returns `None` and SDPA executes maskless.
+- **MLX nested & quantized drafter auto-discovery (`src/heylook_llm/model_importer.py`)**:
+  - Extended `ModelImporter._pick_mlx_drafter` to scan immediate child directories (`<model>/mtp/`, matching GGUF's `MTP/` subfolder check) and sibling quantized drafter names (`*-MTP-<quant>`) stripped via `_MLX_DRAFTER_SUFFIX_RE` with delimiter boundaries (`-`/`_`) while keeping `hidden_size` compatibility gating.
+
+### Verification
+
+- `uv run pytest tests/unit/ tests/contract/ -q`: `1842 passed, 2 subtests passed` on `.venv` (including new tests for stop-before-commit on `ArraysCache`, stateful drafter chunked/`N-1`+`1`/cross-worker warm restore, greedy no-`logsumexp` & Leviathan sampler isolation, Gemma 4 shared-KV + maskless SWA boundary + SDPA parity, and nested/quantized MLX drafter discovery), plus `33 passed` in `tests/unit/test_prefix_cache_and_b1_runner.py` + `tests/unit/test_streaming_executor_pool.py` against active canonical MLX (`0.32.5`) + `mlx-vlm` overlays.
+- `scripts/chain_probe.py` (`--max-tokens 48`) on canonical overlays: `Qwen3.8-27B-MLX-8bit` `5/5` hops `restored=reused` (`extend-1` now caches `247/271` with a `0.0`-margin `NEAR-TIE` at token 6 and `extend-2` reuses all 30 generated tokens `301/321` `match=True`, `chain_Qwen3.8-27B-MLX-8bit_20261122-182724.json`); `gemma-4-26B-A4B-it-8bit` `5/5` `restored=reused`, `4/5 match=True` + known `extend-3` `"Moon"`/`"moon"` tie (`margin=0.25`, `chain_gemma-4-26B-A4B-it-8bit_20261122-182814.json`); `gemma-4-31B-it-8bit` `5/5` `match=True`, `restored=reused`, `cause=None` (`chain_gemma-4-31B-it-8bit_20261122-182917.json`).
+- `scripts/check_version_sync.py` and `scripts/guard_stable_channel.sh` clean. NOT run: `tests/smoke/`, `tests/eval/`, `scripts/perf_ab.py`, browser E2E (`puppeteer-core` removed in `v2.0.240`).
+
 ## [2.0.268] - 2026-11-22
 
 ### Changed

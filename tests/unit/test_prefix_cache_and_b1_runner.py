@@ -854,8 +854,11 @@ def test_b1_runner_recurrent_uses_capture_lengths_near_end_checkpoints(monkeypat
 def test_b1_runner_mtp_natural_eos_caches_postgen_on_bonus_and_draft_stop(monkeypatch):
     """MTP replies ending naturally on EOS (bonus or accepted draft) must cache [prompt + gen]."""
     from mlx_vlm import apc as apc_mod
-    from mlx_vlm.speculative import mtp as mtp_mod
     from mlx_vlm.speculative import utils as spec_utils
+    from heylook_llm.providers.common.speculative_session import (
+        SpeculativeStepResult,
+        _apply_thinking_budget_single,
+    )
 
     monkeypatch.setattr(apc_mod, "hash_image_payload", lambda **_k: 0)
     monkeypatch.setattr(apc_mod, "semantic_extra_hash", lambda **_k: 123)
@@ -863,28 +866,49 @@ def test_b1_runner_mtp_natural_eos_caches_postgen_on_bonus_and_draft_stop(monkey
     monkeypatch.setattr(spec_utils, "speculative_hidden_state", lambda *_a, **_k: mx.zeros((1, 1, 1)))
 
     # Case 1: bonus token is EOS (raw_toks = [11, 12, 99], stop=99 at index 2).
-    # Prefill emits first_tok=8, MTPBatch commits [8, 11, 12] -> offset = 10 + 3 = 13.
-    class _FakeMTPBatch:
+    # Prefill emits first_tok=14, SpeculativeSession commits [14, 15, 16] -> offset = 10 + 3 = 13.
+    class _FakeSpeculativeSession:
         planned_rounds: list[list[int]] = []
 
-        def __init__(self, lm, draft, prompt_cache, hidden, first_y, block_size, *_a, **_k):
+        def __init__(self, model, draft, prompt_cache, hidden, first_token, block_size, *_a, **_k):
             self.cache = prompt_cache
-            first_tok = int(first_y.item())
-            start_pos = int(prompt_cache[0].offset)
-            self.rows = [SimpleNamespace(bonus=first_tok, position=start_pos)]
+            self.bonus = int(first_token)
+            self.position = int(prompt_cache[0].offset)
             self._rounds = list(self.planned_rounds)
 
-        def step(self, budgets, positions, thinking_budget_criteria=None):
-            raw = self._rounds.pop(0)
-            committed = [int(self.rows[0].bonus), *raw[:-1]]
+        def step(self, budget, position, *, stop_tokens, thinking_budget_criteria=None):
+            raw = list(self._rounds.pop(0))
+            accepted = max(0, len(raw) - 1)
+            accepted, raw = _apply_thinking_budget_single(accepted, raw, thinking_budget_criteria)
+            stop_idx = next((i for i, t in enumerate(raw) if t in stop_tokens), None)
+            prev_bonus = self.bonus
+            if stop_idx is not None:
+                emitted = raw[:stop_idx]
+                commit_acc = stop_idx
+                committed = [prev_bonus, *emitted]
+                finish_reason = "stop"
+            else:
+                emitted = raw
+                commit_acc = accepted
+                committed = [prev_bonus, *emitted[:-1]] if emitted else [prev_bonus]
+                finish_reason = "length" if len(emitted) >= budget else None
             k = mx.arange(len(committed), dtype=mx.float32).reshape(1, 1, len(committed), 1)
             for c in self.cache:
                 c.update_and_fetch(k, k)
-            self.rows[0].position += len(committed)
-            self.rows[0].bonus = raw[-1]
-            return [raw]
+            self.position += len(committed)
+            self.bonus = raw[-1]
+            return SpeculativeStepResult(
+                emitted_tokens=emitted,
+                committed_tokens=committed,
+                finish_reason=finish_reason,
+                accepted_count=commit_acc,
+                stopped_on_eos=stop_idx is not None,
+            )
 
-    monkeypatch.setattr(mtp_mod, "MTPBatch", _FakeMTPBatch)
+        def drafter_cache_for_store(self, target_token_len: int):
+            return {}
+
+    monkeypatch.setattr(b1_runner, "SpeculativeSession", _FakeSpeculativeSession)
     draft_stub = (SimpleNamespace(config=SimpleNamespace(block_size=4)), "mtp")
 
     model, _ = _make_toy_vlm(vocab_size=32, window_size=8)
@@ -893,7 +917,7 @@ def test_b1_runner_mtp_natural_eos_caches_postgen_on_bonus_and_draft_stop(monkey
     ids1 = mx.array([prompt1], dtype=mx.int32)
 
     # first_tok = (offset=10 + 4) % 32 = 14; round commits [14, 15, 16], bonus EOS=99.
-    _FakeMTPBatch.planned_rounds = [[15, 16, 99]]
+    _FakeSpeculativeSession.planned_rounds = [[15, 16, 99]]
     c1 = list(
         vlm_engine.generate(
             model=model,
@@ -916,7 +940,7 @@ def test_b1_runner_mtp_natural_eos_caches_postgen_on_bonus_and_draft_stop(monkey
     # Turn 2 continues after the Turn 1 assistant reply [14, 15, 16] -> must reuse all 13 tokens!
     prompt2 = [*prompt1, 14, 15, 16, 20, 21]
     ids2 = mx.array([prompt2], dtype=mx.int32)
-    _FakeMTPBatch.planned_rounds = [[99]]
+    _FakeSpeculativeSession.planned_rounds = [[99]]
     c2 = list(
         vlm_engine.generate(
             model=model,
@@ -937,9 +961,9 @@ def test_b1_runner_mtp_natural_eos_caches_postgen_on_bonus_and_draft_stop(monkey
     assert c2[0].cache.cached_tokens == 13
 
     # Case 2: EOS lands on an accepted draft token mid-round (raw_toks = [25, 99, 27]).
-    # MTPBatch commits [first_tok, 25, 99] (3 tokens); cache_trim_tail=1 trims 99, keeping [prompt3, first_tok, 25].
+    # SpeculativeSession stops before commit so only [first_tok, 25] (12 tokens total) enter cache.
     apc2 = _make_fake_apc()
-    _FakeMTPBatch.planned_rounds = [[25, 99, 27]]
+    _FakeSpeculativeSession.planned_rounds = [[25, 99, 27]]
     c3 = list(
         vlm_engine.generate(
             model=model,
@@ -960,7 +984,7 @@ def test_b1_runner_mtp_natural_eos_caches_postgen_on_bonus_and_draft_stop(monkey
     assert c3[-1].finish_reason == "stop"
 
     ids4 = mx.array([[*prompt1, 14, 25, 30, 31]], dtype=mx.int32)
-    _FakeMTPBatch.planned_rounds = [[99]]
+    _FakeSpeculativeSession.planned_rounds = [[99]]
     c4 = list(
         vlm_engine.generate(
             model=model,
@@ -1145,8 +1169,11 @@ def test_mlx_provider_describe_observed_reports_b1_runner_and_cow_prefix(monkeyp
 def test_b1_runner_standby_end_thinking_criteria_not_enforced_until_triggered(monkeypatch):
     """Standby end_thinking_criteria (budget=0) must stay inactive until pop_end_reasoning()."""
     from mlx_vlm import apc as apc_mod
-    from mlx_vlm.speculative import mtp as mtp_mod
     from mlx_vlm.speculative import utils as spec_utils
+    from heylook_llm.providers.common.speculative_session import (
+        SpeculativeStepResult,
+        _apply_thinking_budget_single,
+    )
 
     monkeypatch.setattr(apc_mod, "hash_image_payload", lambda **_k: 0)
     monkeypatch.setattr(apc_mod, "semantic_extra_hash", lambda **_k: 123)
@@ -1184,28 +1211,49 @@ def test_b1_runner_standby_end_thinking_criteria_not_enforced_until_triggered(mo
     #    thinking_budget_criteria=None until pop_end_reasoning() fires.
     seen_crit_args: list[Any] = []
 
-    class _FakeMTPBatch:
+    class _FakeSpeculativeSession:
         planned_rounds: list[list[int]] = []
 
-        def __init__(self, lm, draft, prompt_cache, hidden, first_y, block_size, *_a, **_k):
+        def __init__(self, model, draft, prompt_cache, hidden, first_token, block_size, *_a, **_k):
             self.cache = prompt_cache
-            first_tok = int(first_y.item())
-            start_pos = int(prompt_cache[0].offset)
-            self.rows = [SimpleNamespace(bonus=first_tok, position=start_pos)]
+            self.bonus = int(first_token)
+            self.position = int(prompt_cache[0].offset)
             self._rounds = list(self.planned_rounds)
 
-        def step(self, budgets, positions, thinking_budget_criteria=None):
+        def step(self, budget, position, *, stop_tokens, thinking_budget_criteria=None):
             seen_crit_args.append(thinking_budget_criteria)
-            raw = self._rounds.pop(0)
-            committed = [int(self.rows[0].bonus), *raw[:-1]]
+            raw = list(self._rounds.pop(0))
+            accepted = max(0, len(raw) - 1)
+            accepted, raw = _apply_thinking_budget_single(accepted, raw, thinking_budget_criteria)
+            stop_idx = next((i for i, t in enumerate(raw) if t in stop_tokens), None)
+            prev_bonus = self.bonus
+            if stop_idx is not None:
+                emitted = raw[:stop_idx]
+                commit_acc = stop_idx
+                committed = [prev_bonus, *emitted]
+                finish_reason = "stop"
+            else:
+                emitted = raw
+                commit_acc = accepted
+                committed = [prev_bonus, *emitted[:-1]] if emitted else [prev_bonus]
+                finish_reason = "length" if len(emitted) >= budget else None
             k = mx.arange(len(committed), dtype=mx.float32).reshape(1, 1, len(committed), 1)
             for c in self.cache:
                 c.update_and_fetch(k, k)
-            self.rows[0].position += len(committed)
-            self.rows[0].bonus = raw[-1]
-            return [raw]
+            self.position += len(committed)
+            self.bonus = raw[-1]
+            return SpeculativeStepResult(
+                emitted_tokens=emitted,
+                committed_tokens=committed,
+                finish_reason=finish_reason,
+                accepted_count=commit_acc,
+                stopped_on_eos=stop_idx is not None,
+            )
 
-    monkeypatch.setattr(mtp_mod, "MTPBatch", _FakeMTPBatch)
+        def drafter_cache_for_store(self, target_token_len: int):
+            return {}
+
+    monkeypatch.setattr(b1_runner, "SpeculativeSession", _FakeSpeculativeSession)
     draft_stub = (SimpleNamespace(config=SimpleNamespace(block_size=4)), "mtp")
 
     model, _ = _make_toy_vlm(vocab_size=32, window_size=8)
@@ -1213,7 +1261,7 @@ def test_b1_runner_standby_end_thinking_criteria_not_enforced_until_triggered(mo
 
     # Round 1: no end_reasoning -> crit_arg is None, standby criteria untouched.
     standby_mtp = _StandbyCriteria(preopened=True)
-    _FakeMTPBatch.planned_rounds = [[11, 12], [13, 99]]
+    _FakeSpeculativeSession.planned_rounds = [[11, 12], [13, 99]]
     chunks = list(
         vlm_engine.generate(
             model=model,
@@ -1238,11 +1286,11 @@ def test_b1_runner_standby_end_thinking_criteria_not_enforced_until_triggered(mo
     assert [c.token for c in chunks] == [10, 11, 12, 13]
 
     # Round 2: standby starts outside thinking, enters via token 15 in round 1,
-    # then pop_end_reasoning fires before round 2 -> crit_arg activates [standby].
+    # then pop_end_reasoning fires before round 2 -> crit_arg activates standby_mtp2.
     seen_crit_args.clear()
     standby_mtp2 = _StandbyCriteria(preopened=False)
     abort = _AbortSignal()
-    _FakeMTPBatch.planned_rounds = [[15, 16], [28, 29, 99]]
+    _FakeSpeculativeSession.planned_rounds = [[15, 16], [28, 29, 99]]
     gen = vlm_engine.generate(
         model=model,
         processor=None,
@@ -1264,8 +1312,7 @@ def test_b1_runner_standby_end_thinking_criteria_not_enforced_until_triggered(mo
     assert standby_mtp2.in_thinking is True
     abort.end_reasoning_once = True
     out.extend(list(gen))
-    assert seen_crit_args[0] is None
-    assert seen_crit_args[1] == [standby_mtp2]
+    assert seen_crit_args == [None, standby_mtp2]
     assert standby_mtp2.budget_exceeded is True
 
     # 2. Non-drafting: pop_end_reasoning with thinking_budget=None and standby
@@ -1806,3 +1853,607 @@ def test_cross_worker_torture_all_cache_classes_rotating_eviction_and_cancel(mon
     # 3. Hybrid ArraysCache recurrent model (completes on Worker A -> reused on Worker B).
     rec_model, _ = _make_toy_vlm(vocab_size=32, window_size=8, with_recurrent=True)
     _run_cross_worker(rec_model, p1, p2, use_buffered_rot=False, cancel_after_tokens=None)
+
+
+def _make_toy_stateful_mtp_pair(*, vocab_size: int = 32, hidden_dim: int = 8):
+    """Toy recurrent target (KVCache + ArraysCache) paired with a stateful KVCache drafter."""
+    from mlx_vlm.models.cache import ArraysCache, KVCache
+    from mlx_vlm.speculative.cache_state import SpeculativeCacheTransaction
+
+    mx.random.seed(19)
+    embed_w = mx.random.normal((vocab_size, hidden_dim)).astype(mx.float32) * 0.25
+    head_w = mx.random.normal((vocab_size, hidden_dim)).astype(mx.float32) * 0.25
+    draft_fc = mx.random.normal((hidden_dim, 2 * hidden_dim)).astype(mx.float32) * 0.25
+    draft_head = mx.random.normal((vocab_size, hidden_dim)).astype(mx.float32) * 0.25
+
+    class _RecurrentLM:
+        def __init__(self):
+            self.config = SimpleNamespace(eos_token_id=vocab_size - 1)
+            self.planned_targets: list[list[int]] = []
+
+        def make_cache(self):
+            return [KVCache(), ArraysCache(size=1)]
+
+        def _hidden_for_token(self, tok: int, pos: int) -> mx.array:
+            base = embed_w[int(tok) % vocab_size]
+            return base + float(pos + 1) * 0.05
+
+        def speculative_verify_hidden(self, inputs: mx.array, cache):
+            seq_len = int(inputs.shape[1])
+            start_pos = int(cache[0].offset)
+            toks = [int(t) for t in inputs[0].tolist()]
+
+            # Speculative transaction across KVCache + ArraysCache(size=1).
+            arr_cache = cache[1]
+            arr_cache.start_speculation(seq_len)
+            state_steps = []
+            prev = arr_cache.cache[0] if arr_cache.cache[0] is not None else mx.zeros((1, 2))
+            cur = prev
+            hidden_steps = []
+            k_list = []
+            v_list = []
+            for idx, tok in enumerate(toks):
+                pos = start_pos + idx
+                h_t = self._hidden_for_token(tok, pos)
+                hidden_steps.append(h_t)
+                k_t = h_t.reshape(1, 1, 1, hidden_dim)
+                k_list.append(k_t)
+                v_list.append(k_t * 1.5)
+                cur = cur + mx.array([[float(tok), float(pos + 1)]], dtype=mx.float32)
+                state_steps.append(cur)
+
+            ks = mx.concatenate(k_list, axis=2)
+            vs = mx.concatenate(v_list, axis=2)
+            cache[0].update_and_fetch(ks, vs)
+            inter = mx.stack(state_steps[:-1], axis=1) if len(state_steps) > 1 else None
+            arr_cache.record_speculative_states(0, inter, state_steps[-1])
+            arr_cache.cache[0] = state_steps[-1]
+
+            tx = SpeculativeCacheTransaction([(arr_cache, arr_cache._speculation["generation"])], {}, (cache[0], arr_cache), seq_len)
+            return mx.stack(hidden_steps, axis=0)[None, :, :], {}, tx
+
+        def speculative_logits_from_hidden(self, hidden: mx.array) -> mx.array:
+            if self.planned_targets:
+                row = self.planned_targets.pop(0)
+                t_len = int(hidden.shape[1])
+                rows = []
+                for idx in range(t_len):
+                    tok = row[idx] if idx < len(row) else 1
+                    rows.append((mx.arange(vocab_size) == tok).astype(mx.float32) * 20.0)
+                return mx.stack(rows, axis=0)[None, :, :]
+            return hidden @ head_w.T
+
+        def __call__(self, inputs: mx.array, cache=None, inputs_embeds=None, logits_to_keep=1, **kwargs):
+            seq_len = int(inputs.shape[1])
+            start_pos = int(cache[0].offset)
+            toks = [int(t) for t in inputs[0].tolist()]
+            h_list = [self._hidden_for_token(tok, start_pos + i) for i, tok in enumerate(toks)]
+            hs = mx.stack(h_list, axis=0)[None, :, :]
+            ks = hs.reshape(1, 1, seq_len, hidden_dim)
+            cache[0].update_and_fetch(ks, ks * 1.5)
+            prev = cache[1].cache[0] if cache[1].cache[0] is not None else mx.zeros((1, 2))
+            for idx, tok in enumerate(toks):
+                prev = prev + mx.array([[float(tok), float(start_pos + idx + 1)]], dtype=mx.float32)
+            cache[1].cache[0] = prev
+            logits = hs[:, -1:, :] @ head_w.T
+            if kwargs.get("return_hidden", False):
+                return SimpleNamespace(logits=logits, hidden_states=[hs], shared_kv_states={})
+            return SimpleNamespace(logits=logits)
+
+    class _OuterTarget:
+        def __init__(self):
+            self.language_model = _RecurrentLM()
+            self.config = self.language_model.config
+
+        def get_input_embeddings(self, input_ids, pixel_values=None, mask=None, **kw):
+            emb = embed_w[input_ids % vocab_size]
+            return SimpleNamespace(to_dict=lambda: {"inputs_embeds": emb})
+
+    class _StatefulDrafter:
+        def __init__(self):
+            self.config = SimpleNamespace(block_size=4)
+            self._cache: list[Any] = []
+            self._seed_token = None
+            self._seed_hidden = None
+            self._next_position = 0
+            self._round_appended = 0
+            self.accept_lens: list[int] = []
+            self.draft_lens: list[int] = []
+            self.planned_drafts: list[list[int]] = []
+
+        def make_cache(self):
+            return [KVCache()]
+
+        def reset(self, target_model):
+            self._cache = self.make_cache()
+            self._seed_token = None
+            self._seed_hidden = None
+            self._next_position = 0
+            self._round_appended = 0
+            self.accept_lens = []
+            self.draft_lens = []
+            return self._cache
+
+        def set_shared_kv(self, shared_kv_states, kv_offset, position=None, kv_valid_len=None, left_padding=None):
+            del shared_kv_states, position, left_padding
+            if kv_valid_len is None:
+                kv_valid_len = kv_offset
+            if not self._cache or self._cache[0].empty():
+                self._next_position = kv_valid_len
+
+        def _forward_tokens(self, tokens: mx.array, hidden: mx.array, token_dtype):
+            del token_dtype
+            steps = int(tokens.shape[1])
+            t_emb = embed_w[tokens % vocab_size]
+            combined = mx.concatenate([t_emb, hidden[:, :steps, :]], axis=-1)
+            proj = combined @ draft_fc.T
+            pos_bias = (mx.arange(steps, dtype=mx.float32) + int(self._next_position)).reshape(1, steps, 1) * 0.01
+            out_h = proj + pos_bias
+            k_in = out_h.reshape(1, 1, steps, hidden_dim)
+            self._cache[0].update_and_fetch(k_in, k_in * 0.5)
+            self._next_position += steps
+            return out_h
+
+        def _set_seed_from_hidden(self, hidden: mx.array, sampler, greedy: bool):
+            logits = hidden @ draft_head.T
+            self._seed_token = mx.argmax(logits, axis=-1) if greedy else sampler(logits)
+            self._seed_hidden = hidden
+
+        def prefill_from_target_hidden(self, input_ids, hidden, bonus_token, sampler, token_dtype=mx.int32, greedy=False):
+            if int(input_ids.shape[1]) == 0:
+                return
+            bonus = mx.array([[int(bonus_token)]], dtype=token_dtype)
+            shifted = mx.concatenate([input_ids[:, 1:].astype(token_dtype), bonus], axis=1)
+            self._next_position = 0
+            h = self._forward_tokens(shifted, hidden[:, : shifted.shape[1], :], token_dtype)
+            self._set_seed_from_hidden(h[:, -1:, :], sampler, greedy)
+
+        def draft_block(self, last_bonus, hidden, cache, block_size, sampler, token_dtype=mx.int32, greedy=False):
+            del cache, hidden
+            if self.planned_drafts:
+                row = self.planned_drafts.pop(0)
+                toks = mx.array([row[: block_size - 1]], dtype=token_dtype)
+                self._round_appended = int(toks.shape[1])
+                dummy_h = mx.zeros((1, self._round_appended, hidden_dim), dtype=mx.float32)
+                self._forward_tokens(toks, dummy_h, token_dtype)
+                return toks
+            h_prev = self._seed_hidden
+            tok = self._seed_token.astype(token_dtype)
+            self._seed_token = None
+            self._seed_hidden = None
+            out = [tok]
+            self._round_appended = 0
+            while len(out) < block_size - 1:
+                h_prev = self._forward_tokens(tok, h_prev, token_dtype)
+                self._round_appended += 1
+                logits = h_prev @ draft_head.T
+                tok = mx.argmax(logits, axis=-1) if greedy else sampler(logits)
+                out.append(tok)
+            return mx.concatenate(out, axis=1)
+
+        def accept_verified_tokens(self, verify_hidden, draft_tokens, accepted, new_tokens, sampler, token_dtype=mx.int32, greedy=False):
+            keep = min(int(accepted), self._round_appended)
+            trim = self._round_appended - keep
+            if trim > 0:
+                for c in self._cache:
+                    c.trim(trim)
+                self._next_position -= trim
+            t_chunks = []
+            h_chunks = []
+            for d_i in range(keep, int(accepted)):
+                t_chunks.append(draft_tokens[:, d_i : d_i + 1])
+                h_chunks.append(verify_hidden[:, d_i : d_i + 1, :])
+            if new_tokens:
+                t_chunks.append(mx.array([[int(new_tokens[-1])]], dtype=token_dtype))
+                h_chunks.append(verify_hidden[:, int(accepted) : int(accepted) + 1, :])
+            if t_chunks:
+                tokens = mx.concatenate(t_chunks, axis=1).astype(token_dtype)
+                hiddens = mx.concatenate(h_chunks, axis=1)
+                h = self._forward_tokens(tokens, hiddens, token_dtype)
+                self._set_seed_from_hidden(h[:, -1:, :], sampler, greedy)
+            self._round_appended = 0
+
+    return _OuterTarget(), _StatefulDrafter()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("stop_idx", [0, 1, 2])
+def test_speculative_session_stop_before_commit_arrays_cache_and_drafter_store(stop_idx):
+    """Stop tokens clamp target/drafter commits BEFORE verify.commit so ArraysCache never sees EOS."""
+    from heylook_llm.providers.common.speculative_session import (
+        SpeculativeSession,
+        StatefulDrafterPrefiller,
+        _SessionSamplerProxy,
+    )
+
+    outer, drafter = _make_toy_stateful_mtp_pair(vocab_size=32, hidden_dim=8)
+    lm = outer.language_model
+    stop_id = 31
+
+    prompt = [1, 2, 3, 4]
+    prompt_ids = mx.array([prompt], dtype=mx.int32)
+    cache = lm.make_cache()
+    out = lm(prompt_ids, cache=cache, return_hidden=True)
+    first_tok = 10
+
+    prefiller = StatefulDrafterPrefiller(
+        outer,
+        drafter,
+        token_dtype=mx.int32,
+        greedy=True,
+        proxy_sampler=_SessionSamplerProxy(None, greedy=True),
+        cached_len=0,
+    )
+    prefiller.feed_chunk(prompt_ids, out.hidden_states[-1])
+
+    session = SpeculativeSession(
+        outer,
+        drafter,
+        cache,
+        out.hidden_states[-1],
+        first_tok,
+        4,
+        None,
+        mx.int32,
+        True,
+        prompt_tokens=prompt_ids,
+        prefiller=prefiller,
+    )
+
+    draft_row = [11, 12, 13]
+    target_row = list(draft_row) + [14]
+    target_row[stop_idx] = stop_id
+    drafter.planned_drafts = [draft_row]
+    session.draft.planned_drafts = [draft_row]
+    lm.planned_targets = [target_row]
+
+    res = session.step(16, 1, stop_tokens={stop_id})
+    assert res.stopped_on_eos is True
+    assert res.finish_reason == "stop"
+    assert res.accepted_count == stop_idx
+    assert res.emitted_tokens == draft_row[:stop_idx]
+    assert res.committed_tokens == [first_tok, *draft_row[:stop_idx]]
+
+    # Prompt cache + ArraysCache must match a clean sequential forward of ONLY committed tokens.
+    full_committed = prompt + res.committed_tokens
+    assert session.position == len(full_committed)
+    assert cache[0].offset == len(full_committed)
+
+    ref_cache = lm.make_cache()
+    lm(mx.array([full_committed], dtype=mx.int32), cache=ref_cache)
+    mx.eval(cache[0].state, cache[1].cache[0], ref_cache[0].state, ref_cache[1].cache[0])
+    assert mx.array_equal(cache[0].state[0], ref_cache[0].state[0]).item()
+    assert mx.allclose(cache[1].cache[0], ref_cache[1].cache[0], atol=1e-5).item()
+
+    # Store [prompt + gen] in PrefixCacheStore and verify drafter_layers + drafter_last_hidden.
+    store = PrefixCacheStore(memory_max_bytes=64 * 1024 * 1024, max_entries=8)
+    d_kw = session.drafter_cache_for_store(len(full_committed))
+    assert d_kw["drafter_target_len"] == len(full_committed) - 1
+    assert d_kw["drafter_trim_tail"] == 0
+    assert tuple(d_kw["drafter_last_hidden"].shape) == (1, 1, 8)
+    assert store.store(full_committed, cache, extra_hash=5, **d_kw)
+
+    lookup = store.lookup_full([*full_committed, 19], extra_hash=5)
+    assert lookup.matched_tokens == len(full_committed)
+    assert lookup.drafter_layers is not None
+    assert lookup.drafter_layers[0].offset == len(full_committed) - 1
+    assert lookup.drafter_last_hidden is not None
+    assert tuple(lookup.drafter_last_hidden.shape) == (1, 1, 8)
+
+
+@pytest.mark.unit
+def test_stateful_drafter_prefiller_chunked_n_minus_1_and_cross_worker_warm_restore(monkeypatch):
+    """Chunked + N-1+1 prefill and cross-worker warm restore match single-shot drafter state."""
+    import queue
+    import threading
+    from heylook_llm.providers.common.speculative_session import (
+        StatefulDrafterPrefiller,
+        _SessionSamplerProxy,
+    )
+    from mlx_vlm.speculative.common import _SpeculativeSamplerRNG
+
+    outer, drafter = _make_toy_stateful_mtp_pair(vocab_size=32, hidden_dim=8)
+    lm = outer.language_model
+    tokens = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    first_tok = 14
+    prompt_ids = mx.array([tokens], dtype=mx.int32)
+
+    # 1. Single-shot reference.
+    ref_t_cache = lm.make_cache()
+    ref_out = lm(prompt_ids, cache=ref_t_cache, return_hidden=True)
+    ref_draft = drafter
+    ref_draft.reset(outer)
+    ref_draft.prefill_from_target_hidden(
+        prompt_ids, ref_out.hidden_states[-1], first_tok, None, mx.int32, greedy=True
+    )
+    mx.eval(ref_draft._cache[0].keys, ref_draft._cache[0].values, ref_draft._seed_token)
+
+    # 2. Chunked [0:5], pre-tail [5:9] (N-1 store), last [9:10] + store at N=10.
+    store = PrefixCacheStore(memory_max_bytes=64 * 1024 * 1024, max_entries=8)
+    c_cache = lm.make_cache()
+    pref = StatefulDrafterPrefiller(
+        outer,
+        drafter,
+        token_dtype=mx.int32,
+        greedy=True,
+        proxy_sampler=_SessionSamplerProxy(None, greedy=True),
+        cached_len=0,
+    )
+    for sl in (slice(0, 5), slice(5, 9), slice(9, 10)):
+        c_ids = prompt_ids[:, sl]
+        c_out = lm(c_ids, cache=c_cache, return_hidden=True)
+        pref.feed_chunk(c_ids, c_out.hidden_states[-1])
+        if sl.stop == 9:
+            mx.eval(c_cache[0].state, c_cache[1].cache[0], pref.draft._cache[0].state, pref.pending_prev_hidden)
+            assert store.store(tokens[:9], c_cache, extra_hash=9, **pref.cache_snapshot_args())
+        elif sl.stop == 10:
+            mx.eval(c_cache[0].state, c_cache[1].cache[0], pref.draft._cache[0].state, pref.pending_prev_hidden)
+            assert store.store(tokens, c_cache, extra_hash=9, **pref.cache_snapshot_args())
+
+    rng = _SpeculativeSamplerRNG(pref.draft, enabled=False)
+    pref.finish_with_first_token(first_tok, rng)
+    mx.eval(pref.draft._cache[0].keys, pref.draft._cache[0].values, pref.draft._seed_token)
+
+    assert pref.draft._cache[0].offset == ref_draft._cache[0].offset
+    assert mx.allclose(pref.draft._cache[0].keys, ref_draft._cache[0].keys, atol=1e-5).item()
+    assert mx.allclose(pref.draft._cache[0].values, ref_draft._cache[0].values, atol=1e-5).item()
+    assert int(pref.draft._seed_token.item()) == int(ref_draft._seed_token.item())
+
+    # 3. Turn 2 extension [tokens + [11, 12]] on a separate worker thread with quarantined thread A.
+    follow = [11, 12]
+    full2 = [*tokens, *follow]
+    full2_ids = mx.array([full2], dtype=mx.int32)
+    ref2_cache = lm.make_cache()
+    ref2_out = lm(full2_ids, cache=ref2_cache, return_hidden=True)
+    _, ref2_draft = _make_toy_stateful_mtp_pair(vocab_size=32, hidden_dim=8)
+    ref2_draft.reset(outer)
+    ref2_draft.prefill_from_target_hidden(
+        full2_ids, ref2_out.hidden_states[-1], 15, None, mx.int32, greedy=True
+    )
+    mx.eval(ref2_draft._cache[0].keys, ref2_draft._seed_token)
+
+    new_tls = getattr(mx, "new_thread_local_stream", None)
+    tls_b = new_tls(mx.default_device()) if callable(new_tls) else mx.default_stream(mx.default_device())
+    result_q: queue.Queue = queue.Queue()
+
+    def worker_b():
+        try:
+            with mx.stream(tls_b):
+                res = store.lookup_full(full2, extra_hash=9)
+                assert res.matched_tokens == 10
+                assert res.drafter_layers is not None
+                assert res.drafter_last_hidden is not None
+                w_pref = StatefulDrafterPrefiller(
+                    outer,
+                    drafter,
+                    token_dtype=mx.int32,
+                    greedy=True,
+                    proxy_sampler=_SessionSamplerProxy(None, greedy=True),
+                    cached_len=res.matched_tokens,
+                    restored_drafter_layers=res.drafter_layers,
+                    restored_last_hidden=res.drafter_last_hidden,
+                )
+                assert w_pref.enabled is True
+                suf_ids = mx.array([follow], dtype=mx.int32)
+                suf_out = lm(suf_ids, cache=res.layers, return_hidden=True)
+                w_pref.feed_chunk(suf_ids, suf_out.hidden_states[-1])
+                w_pref.finish_with_first_token(15, _SpeculativeSamplerRNG(w_pref.draft, enabled=False))
+                got_state_k = w_pref.draft._cache[0].state[0]
+                mx.eval(got_state_k, w_pref.draft._seed_token)
+                result_q.put((got_state_k.tolist(), int(w_pref.draft._seed_token.item()), None))
+        except Exception as exc:  # pragma: no cover
+            result_q.put((None, None, exc))
+
+    t_b = threading.Thread(target=worker_b, daemon=True)
+    t_b.start()
+    got_keys, got_seed, err = result_q.get(timeout=10)
+    t_b.join(timeout=5)
+    assert err is None
+    assert mx.allclose(mx.array(got_keys, dtype=mx.float32), ref2_draft._cache[0].state[0], atol=1e-5).item()
+    assert got_seed == int(ref2_draft._seed_token.item())
+
+
+@pytest.mark.unit
+def test_speculative_session_greedy_no_logsumexp_and_non_greedy_sampler_isolation(monkeypatch):
+    """Greedy B=1 verify skips mx.logsumexp; non-greedy Leviathan leaves caller sampler unmutated."""
+    from heylook_llm.providers.common import samplers as heylook_samplers
+    from heylook_llm.providers.common.speculative_session import (
+        SpeculativeSession,
+        _SessionSamplerProxy,
+    )
+
+    outer, drafter = _make_toy_stateful_mtp_pair(vocab_size=32, hidden_dim=8)
+    lm = outer.language_model
+    prompt = [1, 2, 3, 4]
+    prompt_ids = mx.array([prompt], dtype=mx.int32)
+
+    # 1. Greedy fast path (target lacks speculative_argmax_from_hidden -> uses _walk greedy branch).
+    cache_g = lm.make_cache()
+    out_g = lm(prompt_ids, cache=cache_g, return_hidden=True)
+    drafter.planned_drafts = [[5, 6, 7]]
+    lm.planned_targets = [[5, 6, 9, 10]]
+
+    sess_g = SpeculativeSession(
+        outer, drafter, cache_g, out_g.hidden_states[-1], 8, 4, None, mx.int32, True
+    )
+    logsumexp_calls = 0
+    orig_lse = mx.logsumexp
+
+    def spy_lse(*a, **kw):
+        nonlocal logsumexp_calls
+        logsumexp_calls += 1
+        return orig_lse(*a, **kw)
+
+    monkeypatch.setattr(mx, "logsumexp", spy_lse)
+    res_g = sess_g.step(8, 1, stop_tokens={31})
+    assert logsumexp_calls == 0
+    assert res_g.emitted_tokens == [5, 6, 9]
+    assert res_g.accepted_count == 2
+    monkeypatch.setattr(mx, "logsumexp", orig_lse)
+
+    # 2. Non-greedy Leviathan path with penalties: caller sampler must NEVER be mutated.
+    sampler, procs = heylook_samplers.build(
+        {"temperature": 0.8, "top_p": 0.9, "min_p": 0.0, "top_k": 0, "presence_penalty": 0.5, "seed": 7}
+    )
+    assert hasattr(sampler, "_heylook_spec_probs")
+    assert getattr(sampler, "_heylook_pending_draft", None) is None
+
+    # Emit non-greedy drafts + capture q_probs through proxy.
+    def _sampling_draft_block(last_bonus, hidden, cache, block_size, s, token_dtype=mx.int32, greedy=False):
+        del last_bonus, hidden, cache
+        q_rows = []
+        toks = []
+        buf: list[mx.array] = []
+        s._heylook_captured_q = buf
+        try:
+            for step_i in range(block_size - 1):
+                row_logits = mx.arange(32, dtype=mx.float32).reshape(1, 32) * 0.05 + step_i
+                tok = s(row_logits[:, None, :])
+                toks.append(tok.reshape(1, 1).astype(token_dtype))
+        finally:
+            s._heylook_captured_q = None
+        if buf:
+            q_mat = mx.concatenate(buf, axis=0)
+            mx.async_eval(q_mat)
+            s._heylook_pending_draft = (mx.concatenate(toks, axis=1), q_mat)
+        return mx.concatenate(toks, axis=1)
+
+    drafter.draft_block = _sampling_draft_block
+    lm.planned_targets = []
+    cache_s = lm.make_cache()
+    out_s = lm(prompt_ids, cache=cache_s, return_hidden=True)
+    gen_hist = [8]
+    sess_s = SpeculativeSession(
+        outer,
+        drafter,
+        cache_s,
+        out_s.hidden_states[-1],
+        8,
+        4,
+        sampler,
+        mx.int32,
+        False,
+        penalty_processors=procs,
+        gen_history=gen_hist,
+    )
+    res_s = sess_s.step(8, 1, stop_tokens={31})
+    assert len(res_s.emitted_tokens) >= 1
+    assert getattr(sampler, "_heylook_pending_draft", None) is None
+    assert getattr(sampler, "_heylook_mtp_penalties", None) is None
+    assert getattr(sampler, "_heylook_captured_q", None) is None
+
+
+@pytest.mark.unit
+def test_gemma4_shared_kv_b1_caches_and_1023_maskless_swa():
+    """Gemma 4 B=1 shared_kv matches upstream and slices SWA to window-1 for maskless SDPA."""
+    import copy
+    from mlx_vlm.models.cache import BufferedRotatingKVCache, KVCache, RotatingKVCache
+    from mlx_vlm.models.gemma4.config import TextConfig
+    from mlx_vlm.models.gemma4.language import LanguageModel
+    from mlx_vlm.speculative.drafters.gemma4_assistant.masks import make_drafter_masks
+    from heylook_llm.providers.common.gemma4_runtime import (
+        bind_gemma4_runtime,
+        slice_gemma4_maskless_swa,
+    )
+
+    mx.random.seed(11)
+    cfg = TextConfig(
+        hidden_size=64,
+        intermediate_size=64,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        num_global_key_value_heads=1,
+        head_dim=32,
+        global_head_dim=32,
+        vocab_size=64,
+        hidden_size_per_layer_input=0,
+        sliding_window=8,
+        sliding_window_pattern=2,
+        num_kv_shared_layers=0,
+        layer_types=["sliding_attention", "full_attention"],
+        rope_parameters={
+            "sliding_attention": {"rope_theta": 10000.0},
+            "full_attention": {"rope_theta": 10000.0},
+        },
+        final_logit_softcapping=30.0,
+    )
+    lm_up = LanguageModel(cfg)
+    lm_bd = copy.deepcopy(lm_up)
+    wrapper = SimpleNamespace(language_model=lm_bd)
+    assert bind_gemma4_runtime(wrapper) is True
+
+    for cache_cls in (RotatingKVCache, BufferedRotatingKVCache):
+        for step_len in (4, 7, 8, 9, 15):
+            if cache_cls is BufferedRotatingKVCache:
+                c0 = BufferedRotatingKVCache(8, keep=0, buffer_size=4)
+            else:
+                c0 = RotatingKVCache(8, keep=0)
+            c1 = KVCache()
+            k0 = mx.random.normal((1, 2, step_len, 32))
+            v0 = mx.random.normal((1, 2, step_len, 32))
+            k1 = mx.random.normal((1, 1, step_len, 32))
+            v1 = mx.random.normal((1, 1, step_len, 32))
+            c0.update_and_fetch(k0, v0)
+            c1.update_and_fetch(k1, v1)
+            mx.eval(c0.keys, c0.values, c1.keys, c1.values)
+
+            su = lm_up.shared_kv_from_cache([c0, c1])
+            sb = lm_bd.shared_kv_from_cache([c0, c1])
+            assert set(su) == set(sb) == {"sliding_attention", "full_attention"}
+            for lt in su:
+                assert mx.array_equal(su[lt][0], sb[lt][0]).item()
+                assert mx.array_equal(su[lt][1], sb[lt][1]).item()
+
+            # Maskless SWA slice across offset<=window (mask=None already) and offset>window (7 keys).
+            sliced = slice_gemma4_maskless_swa(sb, position=step_len, window=8)
+            masks_fast = make_drafter_masks(
+                sliced,
+                query_len=1,
+                query_offset=step_len - 1,
+                sliding_window=8,
+                dtype=mx.float32,
+                kv_valid_len=step_len,
+            )
+            assert masks_fast["sliding_attention"] is None
+            if step_len > 8:
+                assert int(sliced["sliding_attention"][0].shape[2]) == 7
+
+                # Verify SDPA output parity against upstream masked 8-key attention.
+                masks_up = make_drafter_masks(
+                    su,
+                    query_len=1,
+                    query_offset=step_len - 1,
+                    sliding_window=8,
+                    dtype=mx.float32,
+                    kv_valid_len=step_len,
+                )
+                assert masks_up["sliding_attention"] is not None
+                q = mx.random.normal((1, 4, 1, 32))
+                uk, uv = su["sliding_attention"]
+                fk, fv = sliced["sliding_attention"]
+                out_up = mx.fast.scaled_dot_product_attention(
+                    q, uk, uv, scale=1.0, mask=masks_up["sliding_attention"]
+                )
+                out_fast = mx.fast.scaled_dot_product_attention(
+                    q, fk, fv, scale=1.0, mask=masks_fast["sliding_attention"]
+                )
+                mx.eval(out_up, out_fast)
+                assert mx.allclose(out_up, out_fast, atol=1e-5).item()
+
+    # Exact 1024 -> 1023 Gemma 4 window boundary check.
+    for pos, expect_len in ((512, 512), (1023, 1023), (1024, 1024), (1025, 1023), (1500, 1023)):
+        buf_len = min(pos, 1024)
+        k_sw = mx.zeros((1, 2, buf_len, 32), dtype=mx.float32)
+        v_sw = mx.zeros((1, 2, buf_len, 32), dtype=mx.float32)
+        sliced_1024 = slice_gemma4_maskless_swa({"sliding_attention": (k_sw, v_sw)}, position=pos, window=1024)
+        assert int(sliced_1024["sliding_attention"][0].shape[2]) == expect_len
+        masks_1024 = make_drafter_masks(
+            sliced_1024,
+            query_len=1,
+            query_offset=pos - 1,
+            sliding_window=1024,
+            dtype=mx.float32,
+            kv_valid_len=pos,
+        )
+        assert masks_1024["sliding_attention"] is None

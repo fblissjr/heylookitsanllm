@@ -851,6 +851,35 @@ def _extract_unpadded_single_row_kv(cache):
     return cache.keys[..., : cache._idx, :], cache.values[..., : cache._idx, :]
 
 
+def slice_gemma4_maskless_swa(
+    shared: dict[str, Any], *, position: int, window: Optional[int]
+) -> dict[str, Any]:
+    """Trim sliding-attention shared KV to ``window - 1`` once ``position > window``.
+
+    Once decoded/prefill position exceeds ``sliding_window``, ``make_drafter_masks``
+    maps ``local_query_offset = window`` over ``window`` keys and masks key index
+    ``0`` to ``-inf`` (distance ``== window``). Slicing to ``window - 1`` keys drops
+    only that masked-out slot so ``bidirectional_swa_mask`` returns ``None`` and SDPA
+    runs maskless.
+    """
+    if not shared or not window or int(window) <= 1:
+        return shared
+    win = int(window)
+    kv = shared.get("sliding_attention")
+    if kv is None:
+        return shared
+    keys, values = kv
+    if keys is None or values is None or int(position) <= win:
+        return shared
+    klen = int(keys.shape[2])
+    keep = win - 1 if klen >= win else 0
+    if not keep or klen == keep:
+        return shared
+    out = dict(shared)
+    out["sliding_attention"] = (keys[..., -keep:, :], values[..., -keep:, :])
+    return out
+
+
 def _bind_shared_kv_from_cache(lm) -> bool:
     import types
 
@@ -860,8 +889,13 @@ def _bind_shared_kv_from_cache(lm) -> bool:
     if not callable(current) or tuple(inspect.signature(current).parameters) != ("caches",):
         return False
 
-    import mlx.core as mx
-    from mlx_vlm.models.cache import BatchKVCache, BatchRotatingKVCache
+    from mlx_vlm.models.cache import (
+        BatchKVCache,
+        BatchRotatingKVCache,
+        BufferedRotatingKVCache,
+        KVCache,
+        RotatingKVCache,
+    )
 
     upstream = current
 
@@ -873,16 +907,54 @@ def _bind_shared_kv_from_cache(lm) -> bool:
         }
         shared = {}
         for layer_type, cache in selected.items():
-            if not isinstance(cache, (BatchKVCache, BatchRotatingKVCache)):
+            if isinstance(cache, (BatchKVCache, BatchRotatingKVCache)):
+                if cache.keys is None or cache.values is None:
+                    continue
+                if not _is_unpadded_single_row_batch_cache(cache):
+                    return upstream(caches)
+                kv = _extract_unpadded_single_row_kv(cache)
+                if kv is None:
+                    return upstream(caches)
+                shared[layer_type] = kv
+            elif isinstance(cache, BufferedRotatingKVCache):
+                if int(getattr(cache, "keep", 0) or 0) != 0:
+                    return upstream(caches)
+                if cache.keys is None or cache.values is None:
+                    continue
+                if isinstance(cache.keys, tuple) or isinstance(cache.values, tuple):
+                    return upstream(caches)
+                end = int(cache._idx)
+                start = max(0, end - int(cache.max_size))
+                shared[layer_type] = (
+                    cache.keys[..., start:end, :],
+                    cache.values[..., start:end, :],
+                )
+            elif isinstance(cache, RotatingKVCache):
+                if cache.keys is None or cache.values is None:
+                    continue
+                if isinstance(cache.keys, tuple) or isinstance(cache.values, tuple):
+                    return upstream(caches)
+                keys, values = cache.state[:2]
+                if keys is None or values is None:
+                    continue
+                keys = cache._temporal_order(keys)
+                values = cache._temporal_order(values)
+                max_sz = int(cache.max_size)
+                shared[layer_type] = (
+                    keys[..., -max_sz:, :],
+                    values[..., -max_sz:, :],
+                )
+            elif isinstance(cache, KVCache):
+                if cache.keys is None or cache.values is None:
+                    continue
+                if isinstance(cache.keys, tuple) or isinstance(cache.values, tuple):
+                    return upstream(caches)
+                keys, values = cache.state[:2]
+                if keys is None or values is None:
+                    continue
+                shared[layer_type] = (keys, values)
+            else:
                 return upstream(caches)
-            if cache.keys is None or cache.values is None:
-                continue
-            if not _is_unpadded_single_row_batch_cache(cache):
-                return upstream(caches)
-            kv = _extract_unpadded_single_row_kv(cache)
-            if kv is None:
-                return upstream(caches)
-            shared[layer_type] = kv
         return shared
 
     setattr(shared_kv_from_cache, "_heylook_patch", _PATCH_SHARED_KV)

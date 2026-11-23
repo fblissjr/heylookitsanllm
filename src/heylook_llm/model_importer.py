@@ -12,6 +12,7 @@ folder.
 import glob
 import logging
 import os
+import re
 import tomllib
 from pathlib import Path
 from typing import Any, Optional
@@ -35,6 +36,11 @@ __all__ = ["ModelImporter"]
 # The `<what>.heylook.<ext>` shape of chat_template.heylook.jinja: no vendor
 # ships the name, so a re-download never overwrites it.
 SIDECAR_FILENAME = "model.heylook.toml"
+
+_MLX_DRAFTER_SUFFIX_RE = re.compile(
+    r"-(?:mtp|dspark|dflash|eagle3|assistant)(?:-[^-]+)?$",
+    re.IGNORECASE,
+)
 
 
 class ModelImporter:
@@ -462,38 +468,59 @@ class ModelImporter:
         return None, None, None
 
     def _pick_mlx_drafter(self, path: Path, config_data: Optional[dict]) -> Optional[Path]:
-        """The standalone or bundled mlx-vlm drafter for this MLX model, or None.
+        """The standalone, nested, or bundled mlx-vlm drafter for this MLX model, or None.
 
-        1. A neighbouring folder (same parent) that is a standalone drafter
-           (``mlx_drafter_kind``) and whose name, less its last ``-segment``,
-           begins this model's name: ``mlx_vlm.convert --mtp`` writes
-           ``<model>-mtp``, and one drafter serves every conversion of the model
-           beside it (``<model>``, ``<model>-8bit``). Its target hidden size
-           (``drafter_target_hidden_size``: ``backbone_hidden_size``,
-           ``target_hidden_size``, else ``hidden_size``) must match this model's,
-           which keeps a smaller sibling's drafter off a bigger model whose
-           name it prefixes while still pairing asymmetric-width drafters such
-           as ``gemma4_assistant``. Exactly one candidate or none: an ambiguous
-           sibling pairing falls through.
-        2. An MTP head bundled inside the checkpoint's own weights
+        1. A dedicated drafter inside a child folder (``<model>/mtp/``, matching
+           GGUF's ``MTP/`` subfolder rule) whose target hidden size matches.
+        2. A neighbouring folder (same parent) that is a standalone drafter
+           (``mlx_drafter_kind``) matching either ``<stem>-<suffix>`` (e.g.
+           ``<model>-mtp``) or quantized forms like ``<model>-MTP-mxfp4`` where
+           stripping ``-(mtp|dspark|dflash|eagle3|assistant)(-<quant>)?`` yields
+           the model stem. Its target hidden size must match this model's.
+        3. An MTP head bundled inside the checkpoint's own weights
            (``has_bundled_mlx_mtp``, mlx-vlm#2457): returns ``path`` itself so
-           ``load_drafter`` splits the ``mtp.*`` tensors in memory at load,
-           matching GGUF's built-in ``draft-mtp`` rule.
+           ``load_drafter`` splits the ``mtp.*`` tensors in memory at load.
         """
         if config_data is None:
             config_data = self._read_model_config(path)
         want = hidden_size(config_data)
+        path_low = path.name.lower()
+
+        def _is_matching_drafter(cand: Path) -> bool:
+            cfg = self._read_model_config(cand)
+            if mlx_drafter_kind(cfg) is None:
+                return False
+            if want is not None and drafter_target_hidden_size(cfg) not in (None, want):
+                return False
+            return True
+
+        nested = [sub for sub in self._subdirs(path) if _is_matching_drafter(sub)]
+        if len(nested) > 1:
+            logging.info(f"[import] {path.name}: {len(nested)} nested drafters "
+                         f"({', '.join(f.name for f in nested)}); pairing none")
+            return None
+        if len(nested) == 1:
+            return nested[0]
+
         found = []
         for sib in self._subdirs(path.parent):
+            if sib == path:
+                continue
             stem, sep, _ = sib.name.rpartition("-")
-            if sib == path or not sep or not path.name.lower().startswith(stem.lower()):
+            matched = bool(sep and path_low.startswith(stem.lower()))
+            if not matched:
+                stripped = _MLX_DRAFTER_SUFFIX_RE.sub("", sib.name)
+                if stripped and stripped != sib.name:
+                    stripped_low = stripped.lower()
+                    matched = (
+                        path_low == stripped_low
+                        or path_low.startswith(stripped_low + "-")
+                        or path_low.startswith(stripped_low + "_")
+                    )
+            if not matched:
                 continue
-            cfg = self._read_model_config(sib)
-            if mlx_drafter_kind(cfg) is None:
-                continue
-            if want is not None and drafter_target_hidden_size(cfg) not in (None, want):
-                continue
-            found.append(sib)
+            if _is_matching_drafter(sib):
+                found.append(sib)
         if len(found) > 1:
             logging.info(f"[import] {path.name}: {len(found)} neighbouring drafters "
                          f"({', '.join(f.name for f in found)}); pairing none")

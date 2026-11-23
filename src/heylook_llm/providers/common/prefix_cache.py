@@ -791,6 +791,7 @@ class CacheLookupResult:
     matched_tokens: int
     rope_deltas: Optional[mx.array]
     drafter_layers: Optional[list[Any]] = None
+    drafter_last_hidden: Optional[mx.array] = None
 
 
 @dataclass
@@ -804,6 +805,7 @@ class _CacheEntry:
     needs_compact: bool = field(default=False)
     drafter_layers: Optional[list[_LayerSnapshot]] = None
     drafter_token_len: int = 0
+    drafter_last_hidden: Optional[mx.array] = None
 
     @property
     def trimmable_all(self) -> bool:
@@ -816,6 +818,7 @@ def _compute_entries_bytes(entries: Sequence[_CacheEntry]) -> int:
     unshared = 0
     for entry in entries:
         unshared += _nbytes(entry.rope_deltas)
+        unshared += _nbytes(entry.drafter_last_hidden)
         all_snaps = list(entry.layers)
         if entry.drafter_layers:
             all_snaps.extend(entry.drafter_layers)
@@ -1050,8 +1053,19 @@ class PrefixCacheStore:
                         )
                         for dl_snap in best_entry.drafter_layers
                     ]
+            drafter_last_hidden = (
+                _array_view(best_entry.drafter_last_hidden)
+                if drafter_restored is not None and best_len == len(best_entry.token_ids)
+                else None
+            )
             rd = _array_view(best_entry.rope_deltas)
-            return CacheLookupResult(restored, best_len, rd, drafter_restored)
+            return CacheLookupResult(
+                restored,
+                best_len,
+                rd,
+                drafter_restored,
+                drafter_last_hidden=drafter_last_hidden,
+            )
 
     def lookup(
         self,
@@ -1089,6 +1103,7 @@ class PrefixCacheStore:
         drafter_cache: Optional[Sequence[Any]] = None,
         drafter_trim_tail: int = 0,
         drafter_target_len: Optional[int] = None,
+        drafter_last_hidden: Optional[mx.array] = None,
     ) -> bool:
         target_len = len(token_ids) - int(trim_tail)
         kv_trim = int(trim_tail) if cache_trim_tail is None else int(cache_trim_tail)
@@ -1149,7 +1164,12 @@ class PrefixCacheStore:
                         d_target = d_raw_target
 
         rd_view = _array_view(rope_deltas)
-        detach_for_cache(layers, drafter_layers, rd_view)
+        dh_view = (
+            mx.contiguous(drafter_last_hidden)
+            if drafter_layers is not None and drafter_last_hidden is not None
+            else None
+        )
+        detach_for_cache(layers, drafter_layers, rd_view, dh_view)
         all_snaps = list(layers)
         if drafter_layers:
             all_snaps.extend(drafter_layers)
@@ -1165,6 +1185,7 @@ class PrefixCacheStore:
             needs_compact=any(s.needs_compact for s in all_snaps),
             drafter_layers=drafter_layers,
             drafter_token_len=d_target,
+            drafter_last_hidden=dh_view,
         )
         entry.nbytes = _compute_entries_bytes([entry])
         if self.memory_max_bytes > 0 and entry.nbytes > self.memory_max_bytes:
