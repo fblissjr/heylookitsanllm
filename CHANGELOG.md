@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.277] - 2026-11-23
+
+Multi-layer scale budgeting, post-hoc MTP agreement telemetry, and `</think>` phase-transition parity in `apps/steering-lab/` (zero changes to `src/heylook_llm/` runtime/API routes):
+- **Multi-layer `K`-layer scale budget (`runtime.py`, `server.py`, `ui/`)**: added `layer_scale_mode` (`"divide_k"` default, `"divide_sqrt_k"`, `"raw"`) on `SteeringPlan`, `ArmPayload`, `cache_signature()`, `LayerSteeringController._compile()`, and the UI mixer so a `1.0` slider across `K=4` FA layers (`[39, 43, 47, 51]`) stays on a comparable push budget to `K=1` `terminal_only` (`L63`) without `4x` compounding.
+- **Post-hoc teacher-forced MTP agreement (`runtime.py`)**: added `_score_posthoc_mtp_agreement()` using one causal teacher-forced steered pass + `draft_model._forward_hidden(...)` whenever live speculative verify is off (`temperature > 0` sweeps or unpatched verify), giving live `mtp_share` + per-token `mtp_accepted` telemetry with zero RNG drift across arms.
+- **Unified `</think>` decode phase helper (`runtime.py`)**: extracted `_decode_input_phases()` across speculative verify, `_score_posthoc_mtp_agreement`, and `token_delta_logprob` so flipping `</think> -> content` matches single-token decode starting on the very first content token.
+- **Verification**: `apps/steering-lab/tests/` `29 passed` (`17` pure-NumPy + `12` `mx.cpu`, 0% Metal GPU contention), `node --check apps/steering-lab/ui/app.js`, `scripts/check_version_sync.py`, `scripts/guard_stable_channel.sh`, and path-privacy scan clean.
+
 ## [2.0.276] - 2026-11-23
 
 Capture defaults & CLI flags in `apps/steering-lab/` aligned with `Swift-1.5-Qwen3.8-27B-MLX-8bit` Round 1 empirical behavior:

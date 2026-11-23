@@ -106,6 +106,7 @@ class ArmPayload(BaseModel):
     knee_override: Optional[float] = None
     push_mode: str = "mu_d_norm"
     norm_matched_frac: float = 0.15
+    layer_scale_mode: str = "divide_k"  # "divide_k" | "divide_sqrt_k" | "raw"
 
 
 class SweepRequest(BaseModel):
@@ -202,6 +203,7 @@ def _plan_from_payload(arm: ArmPayload) -> SteeringPlan:
         knee_override=arm.knee_override,
         push_mode=arm.push_mode,
         norm_matched_frac=arm.norm_matched_frac,
+        layer_scale_mode=arm.layer_scale_mode,
         label=arm.label,
     )
 

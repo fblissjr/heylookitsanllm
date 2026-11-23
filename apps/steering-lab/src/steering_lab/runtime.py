@@ -64,6 +64,7 @@ class SteeringPlan:
     knee_override: Optional[float] = None
     push_mode: str = "mu_d_norm"  # "mu_d_norm" | "norm_matched"
     norm_matched_frac: float = 0.15
+    layer_scale_mode: str = "divide_k"  # "divide_k" | "divide_sqrt_k" | "raw"
     label: str = ""
 
     def active_items(self) -> list[tuple[str, float]]:
@@ -91,7 +92,8 @@ class SteeringPlan:
                 mid_items.append(
                     f"{cid}:{scale:.6f}:{layers}:{self.layer_filter}:{self.phase_override}:"
                     f"{self.token_mask_override}:{self.use_peer_ros}:{self.use_clamped_union}:"
-                    f"{self.use_holds}:{self.use_s3_random}:{self.s3_seed}"
+                    f"{self.use_holds}:{self.use_s3_random}:{self.s3_seed}:{self.push_mode}:"
+                    f"{self.layer_scale_mode}"
                 )
         if not mid_items:
             return ""
@@ -323,20 +325,33 @@ class LayerSteeringController:
             spec = self.vectors.get(cid)
             if spec is None:
                 continue
-            for layer_idx, lv in spec.by_layer.items():
-                if not self._layer_allowed(layer_idx):
-                    continue
+            allowed_layers = [
+                (layer_idx, lv)
+                for layer_idx, lv in spec.by_layer.items()
+                if self._layer_allowed(layer_idx)
+            ]
+            if not allowed_layers:
+                continue
+            k_layers = len(allowed_layers)
+            if self.plan.layer_scale_mode == "divide_k" and k_layers > 1:
+                layer_scale = float(scale) / float(k_layers)
+            elif self.plan.layer_scale_mode == "divide_sqrt_k" and k_layers > 1:
+                layer_scale = float(scale) / math.sqrt(float(k_layers))
+            else:
+                layer_scale = float(scale)
+
+            for layer_idx, lv in allowed_layers:
                 eff_lv = (
                     build_s3_random_layer(lv, seed=self.plan.s3_seed)
                     if self.plan.use_s3_random
                     else lv
                 )
                 if spec.operator == "regime_b":
-                    per_layer_b.setdefault(layer_idx, []).append((spec, eff_lv, scale))
+                    per_layer_b.setdefault(layer_idx, []).append((spec, eff_lv, layer_scale))
                 elif spec.operator == "conditional":
-                    per_layer_c.setdefault(layer_idx, []).append((spec, eff_lv, scale))
+                    per_layer_c.setdefault(layer_idx, []).append((spec, eff_lv, layer_scale))
                 else:
-                    per_layer_a.setdefault(layer_idx, []).append((spec, eff_lv, scale))
+                    per_layer_a.setdefault(layer_idx, []).append((spec, eff_lv, layer_scale))
 
         all_layers = sorted(set(per_layer_a) | set(per_layer_b) | set(per_layer_c))
         for layer_idx in all_layers:
@@ -1221,15 +1236,8 @@ class SteeringLabRuntime:
                     draft_toks = simulated_draft_fn(prompt_ids + generated_ids + [first_tok])
                     if draft_toks and step_idx + 1 < max_tokens:
                         verify_seq = [first_tok, *draft_toks]
-                        # Build per-position phase mask so verify chunks straddling </think> mask cleanly!
-                        pos_phases: list[str] = []
-                        sim_think = in_think
-                        for tok_p in verify_seq:
-                            pos_phases.append("think" if sim_think else "content")
-                            if self.think_end_id is not None and tok_p == self.think_end_id:
-                                sim_think = False
-                            elif self.think_start_id is not None and tok_p == self.think_start_id:
-                                sim_think = True
+                        # Build per-position phase mask matching single-token decode at </think>.
+                        pos_phases, _ = self._decode_input_phases(verify_seq, start_in_think=in_think)
 
                         verify_in = mx.array([verify_seq], dtype=mx.int32)
                         ctrl.set_token_phases(pos_phases)
@@ -1376,6 +1384,40 @@ class SteeringLabRuntime:
             ]
             mean_kl = float(np.mean(kls))
 
+        # Post-hoc teacher-forced MTP agreement check when live speculative verify was off:
+        # gives real `mtp_share` telemetry even at `temperature > 0` with zero RNG drift!
+        mtp_share: Optional[float] = (
+            mtp_accepted_count / mtp_total_count if mtp_total_count > 0 else None
+        )
+        if mtp_share is None and self.draft_model is not None and len(generated_ids) >= 2:
+            posthoc_flags = self._score_posthoc_mtp_agreement(
+                prompt_ids,
+                prompt_types,
+                generated_ids,
+                plan=plan,
+                enable_thinking=enable_thinking,
+                extra_model_kwargs=extra_vlm_kwargs,
+            )
+            if posthoc_flags is not None and len(posthoc_flags) == len(tokens_out):
+                valid_flags = [f for f in posthoc_flags if f is not None]
+                if valid_flags:
+                    mtp_share = float(sum(1 for f in valid_flags if f) / len(valid_flags))
+                    tokens_out = [
+                        TokenRecord(
+                            index=t.index,
+                            token_id=t.token_id,
+                            text=t.text,
+                            phase=t.phase,
+                            g_t=t.g_t,
+                            ray_cos=t.ray_cos,
+                            rel_delta=t.rel_delta,
+                            entropy=t.entropy,
+                            kl_vs_base=t.kl_vs_base,
+                            mtp_accepted=posthoc_flags[i],
+                        )
+                        for i, t in enumerate(tokens_out)
+                    ]
+
         rep4 = ngram_repetition_rate(generated_ids, n=4)
         think_text = "".join(t.text for t in tokens_out if t.phase == "think")
         content_text = "".join(t.text for t in tokens_out if t.phase == "content")
@@ -1388,9 +1430,6 @@ class SteeringLabRuntime:
         )
         mean_rel = float(np.mean([t.rel_delta for t in tokens_out])) if tokens_out else 0.0
         mean_ent = float(np.mean([t.entropy for t in tokens_out])) if tokens_out else 0.0
-        mtp_share = (
-            mtp_accepted_count / mtp_total_count if mtp_total_count > 0 else None
-        )
         manifold = classify_manifold_state(
             mean_entropy=mean_ent,
             baseline_entropy=baseline_entropy,
@@ -1413,6 +1452,8 @@ class SteeringLabRuntime:
                 "token_mask_override": plan.token_mask_override,
                 "center_mode": plan.center_mode,
                 "rank_limit": plan.rank_limit,
+                "push_mode": plan.push_mode,
+                "layer_scale_mode": plan.layer_scale_mode,
             },
             prompt=prompt,
             thinking=think_text,
@@ -1432,6 +1473,150 @@ class SteeringLabRuntime:
             ngram_repeat_4=rep4,
             mean_kl_vs_base=mean_kl,
         )
+
+    def _decode_input_phases(
+        self, token_ids: Sequence[int], *, start_in_think: bool
+    ) -> tuple[list[str], bool]:
+        """Per-position phase labels for decode-input tokens, matching single-token decode.
+
+        In ``generate_steered``, receiving ``</think>`` flips ``in_think = False`` *before*
+        feeding ``</think>`` back into the model to predict the first content token.
+        """
+        phases: list[str] = []
+        in_think = bool(start_in_think)
+        for tid in token_ids:
+            if self.think_end_id is not None and tid == self.think_end_id:
+                in_think = False
+            elif self.think_start_id is not None and tid == self.think_start_id:
+                in_think = True
+            phases.append("think" if in_think else "content")
+        return phases, in_think
+
+    def _score_posthoc_mtp_agreement(
+        self,
+        prompt_ids: Sequence[int],
+        prompt_types: Sequence[str],
+        gen_ids: Sequence[int],
+        *,
+        plan: SteeringPlan,
+        enable_thinking: bool = True,
+        extra_model_kwargs: Optional[dict[str, Any]] = None,
+    ) -> Optional[list[Optional[bool]]]:
+        """Compute exact post-hoc 1-step MTP agreement via ``draft._forward_hidden``.
+
+        Runs one causal teacher-forced steered pass to capture post-norm terminal ``L63``
+        hidden states and checks ``argmax(MTP(tok_i, h_{i-1})) == tok_{i+1}`` across
+        the entire sequence. Yields real ``mtp_share`` telemetry even at ``temperature > 0``
+        without breaking seed-locked PRNG alignment or touching ``speculative_verify_hidden``.
+        """
+        if self.model is None or self.draft_model is None or len(gen_ids) < 2:
+            return None
+        forward_hidden = getattr(self.draft_model, "_forward_hidden", None)
+        if not callable(forward_hidden):
+            return None
+        try:
+            import mlx.core as mx
+
+            lm = self.lm
+            inner = getattr(lm, "model", lm)
+            lm_layers = getattr(inner, "layers", ())
+            if not lm_layers:
+                return None
+
+            full = [int(t) for t in prompt_ids] + [int(t) for t in gen_ids]
+            seq_in = full[:-1]  # length L - 1; position t predicts full[t + 1]
+            p_len = len(prompt_ids)
+            m_len = len(gen_ids)
+
+            ctrl = LayerSteeringController(
+                plan,
+                self.vectors,
+                num_layers=self.fingerprint.num_hidden_layers,
+                hidden_size=self.fingerprint.hidden_size,
+                layer_is_linear=self._layer_is_linear_flags(),
+                holds_by_layer=self.holds_by_layer,
+            )
+            in_think = bool(enable_thinking)
+            if self.think_end_id is not None and prompt_ids and prompt_ids[-1] == self.think_end_id:
+                in_think = False
+            dec_phases, in_think = self._decode_input_phases(
+                gen_ids[:-1], start_in_think=in_think
+            )
+            pos_phases: list[str] = ["prompt"] * p_len + dec_phases
+
+            # Capture terminal layer output AFTER steering hooks (and before lm_head).
+            captured: list[Any] = []
+            with ctrl.attach_to_lm(lm):
+                ctrl.set_phase("think" if in_think else "content")
+                ctrl.set_token_phases(pos_phases)
+                ctrl.set_prompt_token_types(list(prompt_types) + ["decode"] * max(0, m_len - 1))
+                last_idx = len(lm_layers) - 1
+                prev_last = lm_layers[last_idx]
+
+                class _LastCap:
+                    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+                        out = prev_last(*args, **kwargs)
+                        h = out[0] if isinstance(out, tuple) else out
+                        captured.append(h)
+                        return out
+
+                    def __getattr__(self, name: str) -> Any:
+                        return getattr(prev_last, name)
+
+                try:
+                    lm_layers[last_idx] = _LastCap()
+                    cache = lm.make_cache()
+                    self._forward_logits(
+                        lm,
+                        mx.array([seq_in], dtype=mx.int32),
+                        cache,
+                        extra_model_kwargs=extra_model_kwargs,
+                    )
+                finally:
+                    lm_layers[last_idx] = prev_last
+
+            if not captured:
+                return None
+            h_last = captured[0]  # [1, L - 1, D]
+            norm_fn = getattr(inner, "norm", None)
+            h_post_norm = norm_fn(h_last) if callable(norm_fn) else h_last
+
+            # Pair (token = full[1 : L - 1], hidden = h_post_norm[:, : L - 2, :]) -> predicts full[2 : L].
+            pair_len = len(full) - 2
+            if pair_len <= 0:
+                return None
+            tok_pair = mx.array([full[1 : len(full) - 1]], dtype=mx.int32)
+            h_pair = h_post_norm[:, :pair_len, :]
+            embed_fn = (
+                getattr(self.draft_model, "_input_embed", None)
+                or getattr(self.draft_model, "embed_tokens", None)
+                or inner.embed_tokens
+            )
+            embed_scale = float(
+                getattr(self.draft_model, "_input_embed_scale", getattr(inner, "embed_scale", 1.0))
+            )
+            tok_emb = embed_fn(tok_pair) * embed_scale
+            pos_ids = mx.arange(1, pair_len + 1, dtype=mx.int32)[None, :]
+            mtp_h = forward_hidden(tok_emb, h_pair.astype(tok_emb.dtype), None, pos_ids)
+
+            head = getattr(lm, "lm_head", None)
+            mtp_logits = head(mtp_h) if head is not None else inner.embed_tokens.as_linear(mtp_h)
+            preds = mx.argmax(mtp_logits[0], axis=-1)
+            mx.eval(preds)
+            preds_list = [int(x) for x in preds.tolist()]
+
+            # Index `p_len - 1` corresponds to (gen_0, h[p_len - 1]) -> predicts gen_1.
+            start = p_len - 1
+            flags: list[Optional[bool]] = [None]  # token 0 has no prior generated token for 1-step MTP
+            for g_i in range(1, m_len):
+                p_idx = start + (g_i - 1)
+                if 0 <= p_idx < len(preds_list):
+                    flags.append(preds_list[p_idx] == int(gen_ids[g_i]))
+                else:
+                    flags.append(None)
+            return flags
+        except Exception:  # noqa: BLE001
+            return None
 
     def sweep(
         self,
@@ -1516,17 +1701,12 @@ class SteeringLabRuntime:
                 holds_by_layer=self.holds_by_layer,
             )
             # Build exact per-position phases so a `content`-only slider NEVER steers
-            # `prompt` or `<think>` prefix tokens during click-a-token Δ logprob.
-            pos_phases: list[str] = ["prompt"] * len(prompt_ids)
+            # `prompt` or `<think>` prefix tokens, while matching single-token decode at `</think>`.
             in_think = bool(enable_thinking)
             if self.think_end_id is not None and prompt_ids and prompt_ids[-1] == self.think_end_id:
                 in_think = False
-            for tid in prefix_gen:
-                pos_phases.append("think" if in_think else "content")
-                if self.think_end_id is not None and tid == self.think_end_id:
-                    in_think = False
-                elif self.think_start_id is not None and tid == self.think_start_id:
-                    in_think = True
+            dec_phases, in_think = self._decode_input_phases(prefix_gen, start_in_think=in_think)
+            pos_phases: list[str] = ["prompt"] * len(prompt_ids) + dec_phases
 
             with ctrl.attach_to_lm(lm):
                 ctrl.set_phase("think" if in_think else "content")

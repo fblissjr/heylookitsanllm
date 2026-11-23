@@ -84,6 +84,14 @@
             </select>
           </label>
           <label>
+            <span>Layer Budget</span>
+            <select id="opt-layer-scale-mode">
+              <option value="divide_k">1 / K per layer (no 4× stack)</option>
+              <option value="divide_sqrt_k">1 / √K per layer</option>
+              <option value="raw">Raw (full scale every layer)</option>
+            </select>
+          </label>
+          <label>
             <span>Compose Layer</span>
             <select id="opt-compose-layer"></select>
           </label>

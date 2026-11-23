@@ -310,8 +310,8 @@ def test_mlx_cpu_unrolled_verify_bypass_guard_and_parity():
     out = ctrl.apply_layer_np(3, h, commit_center=False)
     assert np.allclose(out[0, 0], 0.0, atol=1e-6)
     assert np.allclose(out[0, 1], 0.0, atol=1e-6)
-    assert float(np.linalg.norm(out[0, 2])) > 0.5
-    assert float(np.linalg.norm(out[0, 3])) > 0.5
+    assert np.isclose(float(np.linalg.norm(out[0, 2])), 0.5, atol=1e-5)  # 1.5 / 3 active layers (divide_k default)
+    assert np.isclose(float(np.linalg.norm(out[0, 3])), 0.5, atol=1e-5)
 
 
 def test_mlx_cpu_tangent_rmsnorm_respects_zero_centered_weights():
@@ -661,18 +661,23 @@ def test_mlx_cpu_mixed_mask_regime_a_and_token_delta_phase_isolation():
     assert np.allclose(out[0, 0], 0.0, atol=1e-6)  # prompt_text untouched
     assert float(out[0, 1, 6]) > 1.0 and abs(float(out[0, 1, 2])) < 1e-5  # ONLY vision_img (e6)
     assert np.allclose(out[0, 2], 0.0, atol=1e-6)  # <think> untouched!
-    assert float(out[0, 3, 2]) > 0.5 and abs(float(out[0, 3, 6])) < 1e-5  # ONLY style_mid (e2)
+    assert float(out[0, 3, 2]) > 0.25 and abs(float(out[0, 3, 6])) < 1e-5  # ONLY style_mid (e2, 1/3 per layer)
 
-    # Click-a-token token_delta_logprob MUST NOT steer inside <think> prefix for content-only slider!
+    # Click-a-token token_delta_logprob MUST NOT steer inside <think> prefix for content-only slider,
+    # and MUST match live decode starting at target_index=3 (first content token predicted from </think>)!
     gen_seq = [8, 9, THINK_END, 10, 11]
     plan_content = SteeringPlan(scales={"style_mid": 1.5}, phase_override="content")
     td_think = rt.token_delta_logprob(
         "hello", gen_seq, target_index=1, plan=plan_content, enable_thinking=True, top_k=4
     )
+    td_first_content = rt.token_delta_logprob(
+        "hello", gen_seq, target_index=3, plan=plan_content, enable_thinking=True, top_k=4
+    )
     td_content = rt.token_delta_logprob(
         "hello", gen_seq, target_index=4, plan=plan_content, enable_thinking=True, top_k=4
     )
     assert max(abs(x["delta_logprob"]) for x in td_think["adds"]) < 1e-5
+    assert max(abs(x["delta_logprob"]) for x in td_first_content["adds"]) > 0.05
     assert max(abs(x["delta_logprob"]) for x in td_content["adds"]) > 0.05
 
 
@@ -775,3 +780,73 @@ def test_mlx_cpu_capture_filters_special_ids_and_bundled_mtp_fallback(
     d_sib = rt._try_load_mtp_drafter(model_dir)
     assert isinstance(d_sib, _DummyDrafter)
     assert d_sib.src == str(sib_dir) and attempted == [str(sib_dir)]
+
+
+def test_mlx_cpu_layer_scale_budget_and_posthoc_mtp_share_at_temp_gt_0():
+    import mlx.core as mx
+
+    rt = _make_runtime_with_vectors(supports_verify_hook=True)
+    # 1. Layer scale budget prevents 3x/4x compounding across multi-layer FA concepts!
+    c_div = LayerSteeringController(
+        SteeringPlan(scales={"style_mid": 1.2}, layer_scale_mode="divide_k"),
+        rt.vectors,
+        num_layers=4,
+        hidden_size=HIDDEN_DIM,
+        layer_is_linear=rt._layer_is_linear_flags(),
+    )
+    c_sqrt = LayerSteeringController(
+        SteeringPlan(scales={"style_mid": 1.2}, layer_scale_mode="divide_sqrt_k"),
+        rt.vectors,
+        num_layers=4,
+        hidden_size=HIDDEN_DIM,
+        layer_is_linear=rt._layer_is_linear_flags(),
+    )
+    c_raw = LayerSteeringController(
+        SteeringPlan(scales={"style_mid": 1.2}, layer_scale_mode="raw"),
+        rt.vectors,
+        num_layers=4,
+        hidden_size=HIDDEN_DIM,
+        layer_is_linear=rt._layer_is_linear_flags(),
+    )
+    n_div = float(np.linalg.norm(c_div.compiled[3].regime_a_groups[0][2].mu_push))
+    n_sqrt = float(np.linalg.norm(c_sqrt.compiled[3].regime_a_groups[0][2].mu_push))
+    n_raw = float(np.linalg.norm(c_raw.compiled[3].regime_a_groups[0][2].mu_push))
+    assert abs(n_div - 0.4) < 1e-4  # 1.2 / 3
+    assert abs(n_sqrt - (1.2 / np.sqrt(3.0))) < 1e-4
+    assert abs(n_raw - 1.2) < 1e-4
+
+    # 2. Post-hoc teacher-forced MTP agreement works EVEN AT temp > 0 with zero RNG drift!
+    class _PosthocDraft:
+        def __init__(self) -> None:
+            self._input_embed = rt.lm.model.embed_tokens
+            self._input_embed_scale = 1.0
+            self.calls = 0
+
+        def _forward_hidden(self, token_embed, hidden, cache, position_ids):
+            self.calls += 1
+            assert cache is None
+            assert position_ids.shape[1] == token_embed.shape[1]
+            return 0.7 * hidden + 0.3 * token_embed
+
+    rt.draft_model = _PosthocDraft()
+    arms = [
+        SteeringPlan(label="base"),
+        SteeringPlan(label="steered", scales={"style_mid": 1.2}, phase_override="all"),
+    ]
+    traces = rt.sweep(
+        "hello",
+        arms,
+        max_tokens=6,
+        temperature=0.7,
+        seed=42,
+        enable_thinking=False,
+        use_mtp=True,
+        simulated_draft_fn=lambda seq: [8, 9],
+    )
+    # Live verify stayed OFF (PRNG safe at temp > 0), yet post-hoc MTP agreement populated mtp_share!
+    assert rt.lm.verify_calls == 0
+    assert rt.draft_model.calls == 2
+    for tr in traces:
+        assert tr.mtp_share is not None and 0.0 <= tr.mtp_share <= 1.0
+        assert tr.tokens[0].mtp_accepted is None
+        assert all(isinstance(t.mtp_accepted, bool) for t in tr.tokens[1:])

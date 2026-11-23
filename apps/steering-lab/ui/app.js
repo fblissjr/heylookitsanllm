@@ -52,6 +52,7 @@ function activeArmPayload(label, override = {}) {
     push_mode: $("opt-norm-matched").checked ? "norm_matched" : "mu_d_norm",
     use_s3_random: $("opt-s3-random").checked,
     layer_filter: $("opt-layer-filter").value,
+    layer_scale_mode: $("opt-layer-scale-mode").value,
     phase_override: $("opt-phase").value || null,
     token_mask_override: $("opt-token-mask").value || null,
     center_mode: $("opt-center-mode").value,
