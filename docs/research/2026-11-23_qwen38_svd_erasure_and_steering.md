@@ -38,6 +38,8 @@ Prompts span 4 verifiable buckets: **Easy** (`4`: TCP/UDP, capital, 1-word chemi
 
 ### B. Exact BF16 Weight-Delta SVD (`BF16 Swift-1.5 - BF16 Stock Qwen3.8`, `851` Language-Model Tensors)
 
+- **Published UkisAI `Swift 1.5` recipe:** Post-trained from Stock `Qwen3.8-27B` by (1) identifying and penalizing pathological overthinking-loop tokens, (2) reclaiming accuracy via RL + Online Policy Distillation (OPD), and (3) multi-turn agent SFT (`ukisai/Qwen3.8-27B-multi-turn-agent-sft`), released under *Swift Open License v1.0* (free for personal, research, educational, and commercial use up to US \$1M annual gross revenue).
+
 Computed on exact unquantized BF16 checkpoints (accounting for HF-to-MLX `conv1d` axis transpose and zero-centered RMSNorm `+1.0` sanitize offset), with chunked Gram `eigvalsh` spectra across 32 sampled layers (all 16 Full-Attention + 16 paired GDN layers):
 
 - **Active 7-module LoRA targets (`rel_frob = ||ΔW||_F / ||W||_F`):**
@@ -88,14 +90,14 @@ Follow-up verification tested the MTP drafter diff, 7 intervention arms on Round
 | Arm (`12` Unseen Hard Traps, `xhigh`) | Pass | Total Think Tok | vs. Stock8 | Total Ans Tok | MTP Draft Share |
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | **Stock 8-bit `xhigh`** | 12/12 | **6,247** | — | 1,373 | 0.615 |
-| `B_L63_vec_1.0` *(mean shift)* | 12/12 | 5,792 | -7.3% *(longer on 9/12)* | 1,269 | 0.618 |
-| `B_L63_vec_1.25` / `1.5` | 12/12 | 6,102 / 5,969 | -2.3% / -4.5% | — | — |
-| `B_L63_ray_r1` *(rank-1 ray)* | 11/12 | 10,740 | +71.9% *(1 trunc)* | — | — |
-| `B_L63_ray_vr_diff` *(`m0=0.08, w=0.22, r=8, boost=0`)* | 12/12 | 5,934 | -5.0% *(won 7/12)* | 1,355 | — |
+| `B_L63_vec_1.0` *(mean shift)* | 12/12 | 5,792 | -7.3% *(longer on 9/12)* | 1,269 | 0.611 |
+| `B_L63_vec_1.25` / `1.5` | 12/12 | 6,102 / 5,969 | -2.3% / -4.5% | 1,395 / 1,613 | 0.611 / 0.610 |
+| `B_L63_ray_r1` *(rank-1 ray)* | 11/12 | 10,740 | +71.9% *(1 trunc)* | 1,178 | 0.601 |
+| `B_L63_ray_vr_diff` *(`m0=0.08, w=0.22, r=8, boost=0`)* | 12/12 | 5,934 | -5.0% *(won 7/12)* | 1,272 | 0.610 |
 | **Swift 1.5 BF16 `xhigh`** | **12/12** | **4,842** | **-22.5%** *(won 10/12)* | **1,354** | 0.616 |
 | **Swift 1.5 8-bit `xhigh`** *(standalone 8-bit + MTP)* | **12/12** | **4,537** | **-27.4%** *(won 9/12)* | 1,584 | **0.618** |
 
-- **Causal-topology prediction confirmed:** Out-of-sample on dense unseen hard traps, `L63`-only steering collapsed from `-40.5%` to `-5.0%..-7.3%` (with `B_L63_vec_1.0` longer than Stock on 9/12 prompts and `B_L63_ray_vr_diff` recording `cos_p90 = 0.3193`, `gate_fire_frac = 0.414`, cutting verbose `open_eos_clamp` by `-34.2%` but barely moving dense math/code). Full-depth `Swift 1.5` (`L00..L63`) beat Stock on `9/12` (8-bit) to `10/12` (BF16) unseen traps while holding `12/12` accuracy.
+- **Causal-topology prediction & H3 deadzone ramp confirmed:** Out-of-sample on dense unseen hard traps, `L63`-only steering collapsed from `-40.5%` to `-5.0%..-7.3%` (with `B_L63_vec_1.0` longer than Stock on 9/12 prompts). On `B_L63_ray_vr_diff`, H3's `a5402c33` normalized deadzone ramp hit `cos_p90 = 0.3193` (right inside H3's `+0.21..+0.39` 5k-D band), `gate_fire_frac = 0.414`, cut verbose `open_eos_clamp` by `-34.2%`, and cleanly rescued `B_L63_ray_r1`'s 4,096-token loop — validating multi-rank (`r=8`) paired-shift `vr_diff` cross-domain, while confirming full-depth `Swift 1.5` (`L00..L63`) is required for general reasoning policy (beating Stock on `9/12` in 8-bit and `10/12` in BF16 while holding `12/12`).
 - **Standalone 8-bit `Swift 1.5` + clean template resolution:** Converting `ukisai_Swift-1.5-Qwen3.8-27b-mlx` to 8-bit affine MLX (`Swift-1.5-Qwen3.8-27B-MLX-8bit`, `bits=8, group_size=64`) paired with the bit-identical 8-bit MTP drafter (`Swift-1.5-Qwen3.8-27B-MLX-8bit-mtp`) and a minimal `chat_template.heylook.jinja` derived from upstream Swift HF's clean 3-level `chat_template.jinja` (no `/word` scanner, no HF `{%- generation %}` training tags, `medium` default with Qwen's `"prioritize correctness, consistency, and clarity in the final answer"` anchor):
   - **Round 1 (`14` prompts):** `xhigh` `14/14` (`5,020` think, `-33.0%` vs. Stock8; `906` ans; `mtp = 0.606`); **`medium` `14/14` (`4,538` think, `-39.4%`; `851` ans — eliminating Stock `medium`'s `+135%` visible answer bloat of `2,314` tokens; `mtp = 0.604`)**; `low` `14/14` true pass (`4,464` think, `1,785` ans — still spills derivations into visible output).
   - **Round 2a (`12` unseen traps):** `12/12` (`4,537` think, `-27.4%` vs. Stock8; `0` truncations; `mtp = 0.618`).
@@ -171,7 +173,7 @@ Projecting H3's `N = 50` shipped `fl2va` control vectors across `Qwen3-VL-32B`'s
 4. **Teacher-Forced Behavioral Distillation:**
    - Teacher-forcing Base's latent trajectories through a strong aesthetic/de-slop LoRA and inspecting `v_ft - v_base` via `j_lens` / frequency-band / chroma decomposition could distill black-box fine-tune gains into lightweight, model-portable training-free steering vectors.
 5. **Three Immediate Concrete Impacts Back on H3 (Post–Wave 4):**
-   - **Faster, non-truncated Qwen3.8 for H3's `/lab`, Easy Button, & AutoEdit (`heylook_client.py` / `llm_pairs.py`):** Once `<think>`-gated Swift-Delta LoRA lands in `heylook`, H3 clients can use server-side concise thinking instead of setting tight client-side `thinking_budget` guillotines.
+   - **Faster, non-truncated Qwen3.8 for H3's `/lab`, Easy Button, & AutoEdit (`heylook_client.py` / `llm_pairs.py`):** Standalone `Swift-1.5-Qwen3.8-27B-MLX-8bit` + `Swift-1.5-Qwen3.8-27B-MLX-8bit-mtp` (`medium` default via `chat_template.heylook.jinja`) is deployed and verified on disk, letting H3 clients use concise thinking out of the box instead of tight client-side `thinking_budget` guillotines.
    - **Direct empirical validation for H3's deferred `Regime B` ("pure suppressor", `de_llm_slop`):** `L63`'s `ERASES = 20 doubt words / ADDS = pure noise` mirrors `de_llm_slop` exactly — confirming that pure failure-mode suppressors need the `ACE` clean-anchor + one-sided ReLU + upper-clamp-only (`boost = 0`) operator rather than forced `|s| * 67.5` RMS rescaling.
    - **Explains why H3 truncates `Qwen3-VL-32B` at `L49/64`:** Broad semantic representations hold through `L47` (`~75%` depth) before collapsing onto next-token `lm_head` logits across `L51..L63` (`effR_D: 622 -> 52.6`), validating H3's `L49 + TokenRefiner` J-Lens tap without needing to chase `layers.50..63`.
 
@@ -194,7 +196,12 @@ All three regimes were benchmarked end-to-end (Section 2D):
 3. **Architecture decision:** Skip adding `L63` steering hooks or a 256-adapter unmerged Rank-32 LoRA runtime to `heylook` for Qwen 3.8 thinking; the standalone 8-bit checkpoint + clean `chat_template.heylook.jinja` achieves full Regime-C quality with zero engine complexity or decode overhead, while preserving the 3-Regime Control Law and local-centered half-wave ray gate for future multi-slider steering work.
 
 ### Known Traps to Avoid
-- **Anchoring Regime-B erasure at `mu_a` without `+mu_d`** (inverts self-damping) **OR applying raw dataset `h - mu_clean` across mixed-POS full prompts** (falsely triggers on `100%` of nouns/code/digits due to POS offset; use local centering + half-wave ray gate with deadzone $m_0$).
+- **In-sample steering overfit & rank-1 Regime-B loops:** Never trust extraction-set gains (`B_L63_vec_1.0` dropped from `-40.5%` in-sample to longer than Stock on `9/12` unseen Round 2a traps), and always use multi-rank paired-shift `vr_diff` (`r=8`) rather than rank-1 ray gating (`B_L63_ray_r1` looped `+71.9%`, 1 truncation).
+- **Anchoring Regime-B erasure at `mu_a` without `+mu_d`** (inverts self-damping) **OR applying raw dataset `h - mu_clean` across mixed-POS full prompts** (falsely triggers on `100%` of nouns/code/digits due to POS offset; use local centering + half-wave normalized deadzone ramp).
 - **Extracting Regime-B `V_r` via unsupervised `SVD(A_c)` over unsegmented traces** (drags neutral co-occurring words like `focus` or topic/syntax variance into `V_r`; use paired-shift `vr_diff` and isolate opposing spans first).
 - **Stacking multi-slider Regime-A concepts at `L63`** (`L50..L63` collapses `40%–55%` of concept rank with `p90 |cos| = 0.62–0.76`; stack at `~75%` depth `L43..L49` instead).
-- **Static global `</think>` bias, high `presence_penalty` in `<think>`, greedy `temp=0`, prompt word limits, solo 1-layer MTP thinking, GDN decay-gate hacking, or continuous embedding-mixture Soft Thinking on GDN** — all either backfire on quality/loops or break MTP + APC + hybrid state stability.
+- **Template traps on Qwen 3.8 / Swift 1.5:**
+  1. Upstream `medium` (`''`) and `low` bloated visible answers `+110%..+135%`; adding Qwen's `"prioritize correctness, consistency, and clarity in the final answer"` anchor to `medium` killed answer bloat (`851` vs. `2,314` tokens).
+  2. Custom `/word` slash-tool templates rewrite the system prompt whenever a user message contains a `/path` or `/command`, risking spurious `<tool_call>` output and busting APC prefix caching.
+  3. HuggingFace training-only `{%- generation %}` / `{%- endgeneration %}` Jinja tags silently break `thinking_controls.detect()` in standard Jinja2 (`engine.thinking: null`, dropping `reasoning_effort`) unless stripped in `chat_template.heylook.jinja`.
+- **Static global `</think>` bias, `NoWait` logit bias at `1.5x`, tail-sliced late-MLP LoRA (`L63` / `L56..63`), high `presence_penalty` in `<think>`, greedy `temp=0`, prompt word limits, solo 1-layer MTP thinking, GDN decay-gate hacking, or continuous embedding-mixture Soft Thinking on GDN** — all either backfire on quality/loops or break MTP + APC + hybrid state stability.
