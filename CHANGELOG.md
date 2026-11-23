@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.271] - 2026-11-22
+
+Owned Qwen 3.5 / 3.8 runtime and shared per-`T` adaptive 8-bit QMV dispatch (Slice 3):
+- **`src/heylook_llm/providers/common/qwen3_5_runtime.py`** (`bind_qwen3_5_runtime`, wired in `MLXProvider.load_model`):
+  - Packed 8-row `gated_delta_update_with_states` Metal kernel (`PATCH_GDN_PACKED_STATES`) emitting bounded speculative state snapshots (`StateT <= T`, `Dk == 128`, `Dv % 8 == 0`, clean upstream fallback otherwise).
+  - Fast `B=1` speculative verify (`speculative_verify_hidden`, `speculative_logits_from_hidden`, `speculative_argmax_from_hidden`) replacing upstream's `T`-step SDPA loop with single batched `mask="causal"` SDPA (`sdpa_split`), exact `la._normalize_qk` eps parity, `int32` argmax return dtype, and per-`T` adaptive 8-bit QMV vs native `quantized_matmul` dispatch (`native_8bit_qmv_beats_hoisted_for_t` in `gemma4_runtime.py`).
+  - Sync-free `qwen3_vl` / `qwen3_5` vision tower fast path keeping `fast_pos_embed_interpolate` on GPU and hoisting rotary `cos`/`sin` plus `cu_seqlens` splits outside the transformer block loop.
+- **Warm text-only suffix embeddings (`b1_runner.py`)**: skips `get_input_embeddings` and `get_rope_index` on warm `qwen3_5` text hits, embedding only the uncached suffix with cached `rope_deltas`.
+- **Adaptive `min()` 8-bit QMV probing (`gemma4_runtime.py`)**: switches `_native_8bit_qmv_beats_hoisted` to `min()` timings (robust against concurrent GPU activity) and adds `native_8bit_qmv_beats_hoisted_for_t`.
+- **Verification**:
+  - `uv run --no-sync pytest tests/unit/ tests/contract/ -q` (`1852 passed, 2 subtests passed`).
+  - Canonical overlay pytest (`tests/unit/test_qwen3_5_runtime.py`, `tests/unit/test_prefix_cache_and_b1_runner.py`, `tests/contract/test_mlxvlm_surface.py`: `74 passed`).
+  - Live `chain_probe.py --model Qwen3.8-27B-MLX-8bit --max-tokens 48` (exit 0; all 5 hops restored) and `vlm_parity_probe.py --model Qwen3.8-27B-MLX-8bit` (`"ok": true`).
+  - Live `chain_probe.py --model gemma-4-26B-A4B-it-8bit --max-tokens 48`: all 5 hops restored; `extend-0`, `extend-1`, `extend-2`, and `edit` matched; `extend-3` matched the pre-existing `2026-11-19` two-quantum tie baseline (`"Moon."` vs `"moon."`, margin `0.25`).
+
 ## [2.0.270] - 2026-11-22
 
 ### Changed

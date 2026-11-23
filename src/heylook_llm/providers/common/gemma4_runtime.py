@@ -52,7 +52,64 @@ _PATCH_LOGITS = "heylook#gemma4-logits"
 _PATCH_VERIFY_HIDDEN = "heylook#gemma4-verify-hidden"
 
 _NATIVE_8BIT_QMV_FASTER_CACHE: dict[tuple[int, str, int, int], bool] = {}
+_NATIVE_8BIT_QMV_FOR_T_CACHE: dict[tuple[int, str, int, int, int], bool] = {}
 ENV_GEMMA4_8BIT_QMV = "HEYLOOK_GEMMA4_8BIT_QMV"
+ENV_8BIT_QMV = "HEYLOOK_8BIT_QMV"
+
+
+def _parse_8bit_qmv_override(*env_names: str) -> Optional[bool]:
+    for name in env_names:
+        mode = (os.environ.get(name) or "").strip().lower()
+        if not mode or mode == "auto":
+            continue
+        if mode in ("native", "off", "0", "false", "skip"):
+            logging.info(
+                "8-bit QMV: using native quantized_matmul (override %s=%s)",
+                name,
+                mode,
+            )
+            return True
+        if mode in ("hoisted", "on", "1", "true"):
+            logging.info(
+                "8-bit QMV: using hoisted kernel (override %s=%s)",
+                name,
+                mode,
+            )
+            return False
+    return None
+
+
+def _probe_8bit_qmv_min_ms(
+    probe_mod,
+    native_fn,
+    *,
+    verify_t: int,
+    in_dim: int,
+    dtype,
+) -> Optional[tuple[float, float]]:
+    import mlx.core as mx
+
+    x = mx.random.normal((1, verify_t, in_dim)).astype(dtype)
+    mx.eval(x)
+    if gemma4_qmv_multi(probe_mod, x, min_out_rows=1) is None:
+        return None
+
+    for _ in range(3):
+        mx.eval(native_fn(x))
+        mx.eval(gemma4_qmv_multi(probe_mod, x, min_out_rows=1))
+
+    native_times = []
+    hoisted_times = []
+    for _ in range(5):
+        t0 = time.perf_counter()
+        mx.eval(native_fn(x))
+        native_times.append(time.perf_counter() - t0)
+
+        t1 = time.perf_counter()
+        mx.eval(gemma4_qmv_multi(probe_mod, x, min_out_rows=1))
+        hoisted_times.append(time.perf_counter() - t1)
+
+    return min(native_times) * 1000.0, min(hoisted_times) * 1000.0
 
 
 def _native_8bit_qmv_beats_hoisted(embed=None) -> bool:
@@ -64,21 +121,9 @@ def _native_8bit_qmv_beats_hoisted(embed=None) -> bool:
     import mlx.core as mx
     import mlx.nn as nn
 
-    mode = (os.environ.get(ENV_GEMMA4_8BIT_QMV) or "auto").strip().lower()
-    if mode in ("native", "off", "0", "false", "skip"):
-        logging.info(
-            "gemma4 8-bit QMV: using native quantized_matmul (override %s=%s)",
-            ENV_GEMMA4_8BIT_QMV,
-            mode,
-        )
-        return True
-    if mode in ("hoisted", "on", "1", "true"):
-        logging.info(
-            "gemma4 8-bit QMV: using hoisted kernel (override %s=%s)",
-            ENV_GEMMA4_8BIT_QMV,
-            mode,
-        )
-        return False
+    override = _parse_8bit_qmv_override(ENV_GEMMA4_8BIT_QMV, ENV_8BIT_QMV)
+    if override is not None:
+        return override
 
     if not mx.metal.is_available() or mx.default_device() != mx.gpu:
         return False
@@ -118,29 +163,13 @@ def _native_8bit_qmv_beats_hoisted(embed=None) -> bool:
         native_fn = probe_mod
         mx.eval(probe_mod.weight, probe_mod.scales, probe_mod.biases)
 
-    x = mx.random.normal((1, verify_t, in_dim)).astype(dtype)
-    mx.eval(x)
-    if gemma4_qmv_multi(probe_mod, x, min_out_rows=1) is None:
+    timings = _probe_8bit_qmv_min_ms(
+        probe_mod, native_fn, verify_t=verify_t, in_dim=in_dim, dtype=dtype
+    )
+    if timings is None:
         return False
-
-    for _ in range(3):
-        mx.eval(native_fn(x))
-        mx.eval(gemma4_qmv_multi(probe_mod, x, min_out_rows=1))
-
-    native_times = []
-    hoisted_times = []
-    for _ in range(5):
-        t0 = time.perf_counter()
-        mx.eval(native_fn(x))
-        native_times.append(time.perf_counter() - t0)
-
-        t1 = time.perf_counter()
-        mx.eval(gemma4_qmv_multi(probe_mod, x, min_out_rows=1))
-        hoisted_times.append(time.perf_counter() - t1)
-
-    native_med_ms = sorted(native_times)[2] * 1000.0
-    hoisted_med_ms = sorted(hoisted_times)[2] * 1000.0
-    native_wins = native_med_ms < hoisted_med_ms
+    native_min_ms, hoisted_min_ms = timings
+    native_wins = native_min_ms < hoisted_min_ms
     _NATIVE_8BIT_QMV_FASTER_CACHE[key] = native_wins
     logging.info(
         "gemma4 8-bit QMV (%dx%d, T=%d): using %s (native=%.2f ms, hoisted=%.2f ms)",
@@ -148,8 +177,66 @@ def _native_8bit_qmv_beats_hoisted(embed=None) -> bool:
         n_out,
         verify_t,
         "native quantized_matmul" if native_wins else "hoisted kernel",
-        native_med_ms,
-        hoisted_med_ms,
+        native_min_ms,
+        hoisted_min_ms,
+    )
+    return native_wins
+
+
+def native_8bit_qmv_beats_hoisted_for_t(mod, verify_t: int) -> bool:
+    """True when native MLX ``quantized_matmul`` beats hoisted QMV at sequence length ``verify_t``."""
+    override = _parse_8bit_qmv_override(ENV_8BIT_QMV, ENV_GEMMA4_8BIT_QMV)
+    if override is not None:
+        return override
+
+    import mlx.core as mx
+    import mlx.nn as nn
+
+    verify_t = int(verify_t)
+    if verify_t < MIN_VERIFY_T or verify_t > MAX_VERIFY_T:
+        return False
+    if not mx.metal.is_available() or mx.default_device() != mx.gpu:
+        return False
+    if not isinstance(mod, (nn.QuantizedLinear, nn.QuantizedEmbedding)):
+        return False
+    if getattr(mod, "bits", None) != 8 or getattr(mod, "mode", None) != "affine":
+        return False
+
+    weight = getattr(mod, "weight", None)
+    scales = getattr(mod, "scales", None)
+    biases = getattr(mod, "biases", None)
+    if weight is None or scales is None or biases is None or getattr(weight, "ndim", 0) != 2:
+        return False
+
+    n_out = int(weight.shape[0])
+    in_dim = int(weight.shape[1]) * 4
+    dtype = scales.dtype
+    if _quantized_module_spec(mod, dtype, in_dim) is None:
+        return False
+
+    qmm = getattr(mx, "quantized_matmul", None)
+    key = (id(qmm), str(mx.default_device()), in_dim, n_out, verify_t)
+    cached = _NATIVE_8BIT_QMV_FOR_T_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    native_fn = mod.as_linear if callable(getattr(mod, "as_linear", None)) else mod
+    timings = _probe_8bit_qmv_min_ms(
+        mod, native_fn, verify_t=verify_t, in_dim=in_dim, dtype=dtype
+    )
+    if timings is None:
+        return False
+    native_min_ms, hoisted_min_ms = timings
+    native_wins = native_min_ms < hoisted_min_ms
+    _NATIVE_8BIT_QMV_FOR_T_CACHE[key] = native_wins
+    logging.info(
+        "8-bit QMV (%dx%d, T=%d): using %s (native=%.2f ms, hoisted=%.2f ms)",
+        in_dim,
+        n_out,
+        verify_t,
+        "native quantized_matmul" if native_wins else "hoisted kernel",
+        native_min_ms,
+        hoisted_min_ms,
     )
     return native_wins
 

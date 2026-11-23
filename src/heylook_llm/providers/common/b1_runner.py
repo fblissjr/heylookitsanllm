@@ -607,6 +607,23 @@ def generate_b1(
                     suffix_embeds = emb_dict.pop("inputs_embeds")
                     rem_kwargs = dict(emb_dict)
                     gen_kwargs = dict(emb_dict)
+            elif (
+                cached > 0
+                and not has_media
+                and not data
+                and not embed_extras
+                and getattr(lm, "_heylook_qwen3_5_suffix_embed", False)
+                and getattr(getattr(lm, "model", None), "embed_tokens", None)
+                is not None
+            ):
+                suffix_embeds = lm.model.embed_tokens(suffix_ids)
+                rd = (
+                    restored_rd
+                    if restored_rd is not None
+                    else mx.zeros((1, 1), dtype=input_ids.dtype)
+                )
+                rem_kwargs = {"rope_deltas": rd}
+                gen_kwargs = {"rope_deltas": rd}
 
             if suffix_embeds is None:
                 embed = model.get_input_embeddings(

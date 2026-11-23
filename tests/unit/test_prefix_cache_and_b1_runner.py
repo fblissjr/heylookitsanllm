@@ -2485,3 +2485,160 @@ def test_b1_runner_and_speculative_session_share_generate_common_stream(monkeypa
     res = sess.step(8, 1, stop_tokens={31})
     assert res.emitted_tokens == [5, 6, 9]
 
+
+@pytest.mark.unit
+def test_b1_runner_qwen3_5_warm_text_suffix_embed_skips_full_prefix_and_matches_cold(
+    monkeypatch,
+):
+    from mlx.utils import tree_flatten
+    from mlx_vlm import apc as apc_mod
+    from mlx_vlm.models.qwen3_5 import Model as Qwen35Model
+    from mlx_vlm.models.qwen3_5.config import ModelConfig, TextConfig, VisionConfig
+    from heylook_llm.providers.common import qwen3_5_runtime
+
+    monkeypatch.setattr(apc_mod, "hash_image_payload", lambda **_k: 0)
+    monkeypatch.setattr(apc_mod, "semantic_extra_hash", lambda **_k: 37)
+
+    mx.random.seed(23)
+    text_cfg = TextConfig(
+        model_type="qwen3_5_text",
+        hidden_size=64,
+        intermediate_size=64,
+        linear_num_value_heads=2,
+        linear_num_key_heads=1,
+        linear_key_head_dim=32,
+        linear_value_head_dim=32,
+        linear_conv_kernel_dim=2,
+        num_hidden_layers=2,
+        num_attention_heads=2,
+        rms_norm_eps=1e-6,
+        vocab_size=128,
+        num_key_value_heads=1,
+        max_position_embeddings=512,
+        head_dim=32,
+        full_attention_interval=2,
+        tie_word_embeddings=False,
+    )
+    vision_cfg = VisionConfig(
+        model_type="qwen3_5",
+        depth=1,
+        hidden_size=32,
+        intermediate_size=32,
+        out_hidden_size=64,
+        num_heads=2,
+        patch_size=16,
+        spatial_patch_size=16,
+        spatial_merge_size=2,
+        temporal_patch_size=2,
+        num_position_embeddings=4,
+        deepstack_visual_indexes=[],
+    )
+    model_cfg = ModelConfig(
+        text_config=text_cfg,
+        vision_config=vision_cfg,
+        model_type="qwen3_5",
+        vocab_size=128,
+    )
+
+    model_warm = Qwen35Model(model_cfg)
+    model_cold = Qwen35Model(model_cfg)
+    model_cold.load_weights(tree_flatten(model_warm.parameters()), strict=True)
+    mx.eval(model_warm.parameters(), model_cold.parameters())
+
+    assert qwen3_5_runtime.bind_qwen3_5_runtime(model_warm) is True
+    assert getattr(model_warm.language_model, "_heylook_qwen3_5_suffix_embed", False) is True
+
+    get_emb_lens: list[int] = []
+    rope_calls = 0
+    tok_emb_shapes: list[tuple[int, ...]] = []
+
+    orig_get_emb = model_warm.get_input_embeddings
+    orig_get_rope = model_warm.language_model.get_rope_index
+    orig_embed_tokens = model_warm.language_model.model.embed_tokens
+
+    def _tracked_get_emb(input_ids=None, pixel_values=None, **kw):
+        if input_ids is not None:
+            get_emb_lens.append(int(input_ids.shape[1]))
+        return orig_get_emb(input_ids=input_ids, pixel_values=pixel_values, **kw)
+
+    def _tracked_get_rope(*a, **kw):
+        nonlocal rope_calls
+        rope_calls += 1
+        return orig_get_rope(*a, **kw)
+
+    def _tracked_embed_tokens(x):
+        tok_emb_shapes.append(tuple(int(d) for d in x.shape))
+        return orig_embed_tokens(x)
+
+    model_warm.get_input_embeddings = _tracked_get_emb
+    model_warm.language_model.get_rope_index = _tracked_get_rope
+    model_warm.language_model.model.embed_tokens = _tracked_embed_tokens
+
+    apc_warm = _make_fake_apc()
+    # Recurrent model stores N-1 tokens: 13 input tokens -> 12 cached tokens.
+    ids1 = mx.array([[10 + i for i in range(13)]], dtype=mx.int32)
+    list(
+        vlm_engine.generate(
+            model=model_warm,
+            processor=None,
+            apc_manager=apc_warm,
+            input_ids=ids1,
+            raw_inputs={"input_ids": ids1, "attention_mask": mx.ones_like(ids1)},
+            sampler=None,
+            processors=[],
+            stop_tokens=[127],
+            max_tokens=2,
+            greedy=True,
+            detokenizer=_DummyDetok(),
+        )
+    )
+    rope_after_turn1 = rope_calls
+    assert get_emb_lens == [13]
+
+    tok_emb_shapes.clear()
+    ids2 = mx.array(
+        [[10 + i for i in range(12)] + [50, 51, 52, 53, 54, 55]], dtype=mx.int32
+    )
+    chunks_warm = list(
+        vlm_engine.generate(
+            model=model_warm,
+            processor=None,
+            apc_manager=apc_warm,
+            input_ids=ids2,
+            raw_inputs={"input_ids": ids2, "attention_mask": mx.ones_like(ids2)},
+            sampler=None,
+            processors=[],
+            stop_tokens=[127],
+            max_tokens=4,
+            greedy=True,
+            detokenizer=_DummyDetok(),
+        )
+    )
+    assert chunks_warm[0].cache.outcome == "reused"
+    assert chunks_warm[0].cache.cached_tokens == 12
+    assert get_emb_lens == [13]  # Turn 2 skipped get_input_embeddings completely.
+    assert rope_calls == rope_after_turn1  # Turn 2 skipped get_rope_index completely.
+    assert tok_emb_shapes[0] == (1, 6)  # Embedded 6-token suffix only.
+
+    apc_cold = _make_fake_apc()
+    chunks_cold = list(
+        vlm_engine.generate(
+            model=model_cold,
+            processor=None,
+            apc_manager=apc_cold,
+            input_ids=ids2,
+            raw_inputs={"input_ids": ids2, "attention_mask": mx.ones_like(ids2)},
+            sampler=None,
+            processors=[],
+            stop_tokens=[127],
+            max_tokens=4,
+            greedy=True,
+            detokenizer=_DummyDetok(),
+        )
+    )
+    assert chunks_cold[0].cache.outcome == "miss"
+    assert [c.token for c in chunks_warm if c.token is not None] == [
+        c.token for c in chunks_cold if c.token is not None
+    ]
+
+

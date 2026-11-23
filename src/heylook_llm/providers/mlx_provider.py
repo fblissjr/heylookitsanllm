@@ -24,6 +24,7 @@ from ..thinking_controls import detect as detect_thinking
 from .common.samplers import build as build_sampler
 from .common.gemma4_runtime import bind_gemma4_drafter, bind_gemma4_runtime
 from .common.gemma4_vision import bind_position_gather, trim_visual_padding
+from .common.qwen3_5_runtime import bind_qwen3_5_runtime
 from .common.vlm_inputs import (
     carry_message_extras, continue_from_generation_prompt, thinking_for_template)
 from .common.generation_core import continuation_detokenizer, detokenizer_source
@@ -1238,6 +1239,7 @@ class MLXProvider(BaseProvider):
             self.model, self.processor = self._load_vlm_with_fallback(model_path)
             bind_position_gather(self.model)
             bind_gemma4_runtime(self.model)
+            bind_qwen3_5_runtime(self.model)
 
             # Stop-token completeness: raw HF tokenizers on the mlx-vlm path
             # don't absorb generation_config's eos list (gemma-4: <turn|>
