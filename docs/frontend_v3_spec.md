@@ -601,6 +601,12 @@ truncate→stream→persist sequences):**
   the text template only (images in history are not represented). v3 calls
   it from the assistant editor ("Preview prompt", continue mode from the
   live boxes) and the composer's eye button (append mode with the draft).
+- `GET /{id}/generate` (v2.0.282) → `{conversation_id, generating}`: whether a
+  generation is running for `{id}` right now, with no store read. The v3
+  client asks it, with backoff, only while the open conversation is
+  generating with no local stream (a run it lost its subscription to), and
+  fetches the conversation once when the answer turns false. An unknown id
+  answers `generating: false`.
 - `DELETE /{id}/generate` → aborts the active generation (partial persists;
   the Stop button's server-side spelling). 404 when none is active — on
   404 the v3 client aborts its fetch locally instead (covers the

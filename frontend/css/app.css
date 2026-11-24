@@ -331,6 +331,27 @@ code, pre, kbd { font-family: var(--mono); font-size: 0.875em; }
 }
 
 .btn--sm { padding: 0.2rem var(--space-2); font-size: var(--text-sm); min-height: 26px; }
+/* On touch, the small buttons that are the ONLY way to do something keep their
+   size on screen and grow under the finger: an invisible box reaches the touch
+   height above and below, so nothing moves and the thread loses no room.
+   Named, single-row clusters only: two small buttons stacked closer than the
+   overhang would sit inside each other's box. The message editor's buttons
+   wrap onto two rows on a phone, so they get the real height instead; the
+   editor is a mode, not the reading surface, and can afford it.
+   :where() keeps the position at zero specificity, so a button that is
+   positioned for its own reasons keeps that. */
+@media (hover: none) {
+  :where(.message__actions, .chat__convs-head, .notebook__list-head,
+         .drawer__head, .prompt-preview) :where(.btn--sm) { position: relative; }
+  :is(.message__actions, .chat__convs-head, .notebook__list-head,
+      .drawer__head, .prompt-preview) .btn--sm::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    inset-block: min(0px, calc((100% - var(--ctrl-h-touch)) / 2));
+  }
+  .message-edit__buttons .btn--sm { min-height: var(--ctrl-h-touch); }
+}
 
 .input, select, textarea {
   font: inherit;
@@ -988,16 +1009,6 @@ h1, h2, h3 { text-wrap: balance; }
   overflow-wrap: break-word;
   border-top: 1px solid var(--line);
 }
-
-/* Background-tab animation pause (plan_dark_mode.md Phase 5): freeze CSS
-   animations while the document is hidden so backgrounded mobile tabs pay no
-   paint ticks for blinking cursors or spinners. */
-html.tab-hidden *,
-html.tab-hidden *::before,
-html.tab-hidden *::after {
-  animation-play-state: paused !important;
-}
-
 .message__actions {
   display: flex;
   gap: 0.15rem;
@@ -1013,7 +1024,7 @@ html.tab-hidden *::after {
 
 .message-edit { display: flex; flex-direction: column; gap: 0.4rem; width: 100%; }
 .message-edit textarea { width: 100%; min-height: 4rem; resize: vertical; font-size: var(--text-body); }
-.message-edit__buttons { display: flex; gap: 0.4rem; justify-content: flex-end; }
+.message-edit__buttons { display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: flex-end; }
 /* Two-box editor (thinking + response): captions tell them apart; the
    thinking box is visually secondary (mono, like the rendered block). */
 .message-edit__label { text-transform: uppercase; letter-spacing: 0.04em; }
@@ -1060,17 +1071,6 @@ html.tab-hidden *::after {
   border-radius: 3px;
   padding: 0 0.15em;
 }
-
-/* Unsaved fallback row (its save failed): always visible -- never
-   hover-gated, the state must be legible on touch (DESIGN.md §7). */
-.message-unsaved-note {
-  color: var(--warn);
-  background: var(--warn-tint);
-  border-radius: var(--r-ctl);
-  padding: 0.15rem var(--space-2);
-  width: fit-content;
-}
-.message--user .message-unsaved-note { margin-left: auto; }
 
 .chat__status {
   font-family: var(--mono);
@@ -1298,6 +1298,19 @@ html.tab-hidden *::after {
     padding-left: env(safe-area-inset-left, 0px);   /* fixed to the left edge */
   }
   .chat--convs-open .chat__convs { display: flex; }
+  /* The pane leaves a strip of the page showing, and that strip was live: the
+     tap that closed the pane also pressed whatever was under the finger, and
+     Send sits there. The scrim takes the tap instead. It is the page root's own
+     pseudo-element, so the click lands on the root and the existing
+     outside-click listener (utils.js dismissPaneOnOutsideClick) closes the
+     pane; nothing beneath it is reached. */
+  .chat--convs-open::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: calc(var(--z-drawer) - 1);
+    background: var(--scrim);
+  }
   .chat__convs-head {
     padding-top: calc(var(--space-3) + env(safe-area-inset-top, 0px));
   }
@@ -1373,10 +1386,14 @@ html.tab-hidden *::after {
     color: var(--ink);
     border-color: var(--line);
   }
-  .chat__bar:not(.chat__bar--panel-open) .chat__bar-detail {
+  .chat__bar:not(.chat__bar--panel-open):not(.chat__bar--load-offered) .chat__bar-detail {
     display: none;
   }
-  .chat__bar--panel-open .chat__bar-detail {
+  /* Also shown, without a tap, whenever a load is on offer (chat.js
+     refreshLoadBtn): a cold model's Load used to sit behind the readout line
+     while the status line said to press it. */
+  .chat__bar--panel-open .chat__bar-detail,
+  .chat__bar--load-offered .chat__bar-detail {
     display: flex;
     flex-wrap: nowrap;
     overflow-x: auto;
@@ -1953,6 +1970,14 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
     padding-left: env(safe-area-inset-left, 0px);   /* fixed to the left edge */
   }
   .notebook--list-open .notebook__list-pane { display: flex; }
+  /* Same scrim as the chat pane, for the same reason. */
+  .notebook--list-open::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: calc(var(--z-drawer) - 1);
+    background: var(--scrim);
+  }
   .notebook__list-head {
     padding-top: calc(var(--space-3) + env(safe-area-inset-top, 0px));
   }

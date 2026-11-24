@@ -122,20 +122,28 @@ report `internal/reports/2026-11-24_frontend_review.md`. What is open:
   suite can serve them directly instead of intercepting requests. Older
   sections of this file that name `render.mjs`, `suites/chat.mjs` or
   `suites/pages.mjs` describe checks that no longer exist.
-- [ ] **Owner decisions the review raised** (each a short answer; report
-  section 8): what Return does on the phone's software keyboard; whether a
-  model switch mid-reply aborts the stream or lets it finish, and what exits
-  "still generating on the server" (re-clicking the open conversation is ruled
-  out by the mirror rule today); a scrim behind the phone conversation pane;
-  the touch floor for `btn--sm`; how Load is reached on the phone; arming
-  Regenerate when it is not the last row; removing `html.tab-hidden`; whether
-  the unsaved-row guard stays.
-- [ ] **Fixes held back because they need one of those decisions or a design**:
-  the select-load window (rows of the previous conversation stay tappable while
-  the next one loads); the switch-model warning sharing the status line; the
-  Models page rebuilding every row and the open config editor on any action;
-  the notebook's pre-create system prompt living only in page state; a
-  streaming caret that can outlive a stream whose resync never succeeds.
+- [x] **Owner decisions the review raised** -- ANSWERED 2026-11-24, built in
+  v2.0.282: on touch, Return is a newline; a model switch leaves the reply in
+  flight alone and a run the page is not subscribed to is watched until it
+  ends (`sharp_edges.md`, "A model switch leaves the reply alone"); a scrim
+  behind the phone list panes; tap boxes at the touch height on the small
+  buttons that are a phone's only way to an action, at their old size; the
+  load controls show by themselves when the chosen model is not loaded;
+  `html.tab-hidden` removed; the dead unsaved-row code removed. Regenerate
+  stays unarmed (owner: no).
+- [x] **Held back, then fixed in v2.0.282**: the select-load window
+  (`s.loadingId`), the switch-model warning sharing the status line (its own
+  element), the streaming caret outliving its stream.
+- [ ] **Left on purpose** (owner asked for a recommendation, 2026-11-24; do
+  them when their page is next worked on): the Models page rebuilds every row
+  and the open config editor on any action (the largest of the five, nothing
+  breaks, a page rarely used on the phone); the notebook's system prompt
+  typed before any notebook exists lives only in page state (it only bites
+  with zero notebooks, and the fix is another stored key).
+- [ ] **Confirm on the phone** (v2.0.282 was checked in Chrome only): Return
+  gives a newline; the tap boxes feel right on the message actions; the Load
+  strip appearing for a cold model does not crowd the bar at the owner's text
+  size; the scrim. And that removing `html.tab-hidden` changed nothing visible.
 - [ ] **Battery cuts wait for the phone baseline** (`plan_dark_mode.md` Phase 5
   step 2, still not run): the thinking trace as one growing text node, the
   per-paint sanitize and re-parse of the streaming tail, the admin model list

@@ -127,7 +127,4 @@ window.addEventListener('heylook:chat-activity', (e) => {
     }
   }
 });
-document.addEventListener('visibilitychange', () => {
-  document.documentElement.classList.toggle('tab-hidden', document.visibilityState === 'hidden');
-});
 navigate();

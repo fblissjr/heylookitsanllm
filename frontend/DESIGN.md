@@ -67,7 +67,7 @@ Type: system stack (`--font`) + `--mono` for anything numeric, token-literal, or
 telemetry. Scale: `--text-xs 0.75rem / --text-sm 0.8125rem / --text-ui 0.875rem / --text-body 1rem /
 --text-lg 1.1875rem`. Control heights: `--ctrl-h-sm 28px / --ctrl-h 36px / --ctrl-h-touch 44px`.
 Radii: `--r-ctl 6px / --r-card 10px / --r-big 14px`. Motion: `--t-fast 140ms var(--ease)`; every animation has a
-`prefers-reduced-motion` fallback (global kill switch in `app.css`, plus `html.tab-hidden` pausing animations when backgrounded).
+`prefers-reduced-motion` fallback (the global kill switch in `app.css`).
 
 Spacing: `--space-N`, where N is the step's multiple of 0.25rem (`--space-2` is
 0.5rem, `--space-12` is 3rem; the list is in `:root`). Padding, margin and gap
@@ -416,7 +416,17 @@ owner: "equally well on desktop web and iPhone 17 Pro Safari").
 - **Touch targets:** comfortable on phone — phone-nav gear and composer controls
   ≥44px, models-page actions bump to 44px, the attach-thumb remove control is
   ≥24px. `btn--sm` (26px) is acceptable for dense desktop-hover action clusters
-  (≥ the 24px AA floor) but never the sole phone affordance.
+  (≥ the 24px AA floor) but never the sole phone affordance. Where it is the
+  only way to do something on a phone and the surface cannot spare the height
+  (the action row under every message), the button keeps its size and grows
+  under the finger: an invisible `::after` box reaches `--ctrl-h-touch` above
+  and below (`app.css`, beside `.btn--sm`). That is for named, single-row
+  clusters only; buttons that wrap onto two rows take the real height instead
+  (the message editor), because stacked tap boxes overlap.
+- **A phone pane that leaves the page showing has a scrim.** The conversation
+  and notebook list panes cover most of the width; the strip beside them is
+  covered by the page root's `::before`, so a tap there closes the pane and
+  reaches nothing underneath.
 - **A typed field is committed as it is typed, never only on `change`.**
   `change` fires on blur, and WebKit does not move focus to a button that is
   tapped or clicked, so on the phone a value typed just before pressing a

@@ -835,6 +835,18 @@ async def preview_prompt(conv_id: str, request: Request, body: PromptPreviewRequ
     )
 
 
+@generate_router.get(
+    "/{conv_id}/generate",
+    summary="Is A Generation Running",
+    description="Whether a generation is running for this conversation right "
+                "now. Cheap on purpose (no store read): a client that lost its "
+                "subscription to a run asks this until the run ends, then "
+                "fetches the conversation once. An unknown id answers false.",
+)
+async def generation_status(conv_id: str):
+    return {"conversation_id": conv_id, "generating": is_generating(conv_id)}
+
+
 @generate_router.delete(
     "/{conv_id}/generate",
     summary="Stop Active Generation",

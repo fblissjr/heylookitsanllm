@@ -57,6 +57,12 @@ const DRAFT_PROMPT_KEY = STORAGE_KEYS.CHAT_DRAFT_PROMPT;
 // to 120/s on a ProMotion phone; nobody reads at that rate, and every paint
 // costs a markdown render plus a scroll write. ~15/s still reads as live text.
 const PAINT_INTERVAL_MS = 66;
+// How often the page asks whether a run it is not subscribed to has ended:
+// the first value, doubling up to the second. Reasoned, not measured: short
+// enough that a reply which ends just after a reconnect shows up promptly,
+// long enough that a long run costs a handful of very small requests.
+const REMOTE_WATCH_MIN_MS = 1500;
+const REMOTE_WATCH_MAX_MS = 12000;
 
 // How close to the tail still counts as "following along".
 const STICK_SLACK_PX = 100;
@@ -247,6 +253,7 @@ export default createPage({
     // (why: refreshAfterResume). Each debounced writer owns its own hide
     // flush (prompt-section.js, bindDocumentParams).
     ctx.onResume(ctx.guard(() => refreshAfterResume(ctx)));
+    ctx.onTeardown(() => stopRemoteWatch(ctx));
 
     const [models, convList] = await Promise.all([
       api.listModels({ signal: ctx.signal }).catch(() => ({ data: [] })),
@@ -341,7 +348,7 @@ function buildSkeleton(ctx) {
     }
     showSwitchWarning(ctx, to, warnings,
       () => commitModelSwitch(ctx, to),
-      () => { s.modelSelect.value = from; showStatus(ctx, ''); });
+      () => { s.modelSelect.value = from; clearSwitchWarning(ctx); });
   });
 
   // Pays the load deliberately, while reading, instead of discovering it
@@ -372,6 +379,12 @@ function buildSkeleton(ctx) {
   s.messagesEl = createEl('div', { class: 'chat__messages' }, [s.messagesInner]);
 
   s.statusEl = createEl('div', { class: 'chat__status', role: 'status' });
+  // The switch-model warning is a pending decision with buttons, and it used
+  // to live inside the status line, where any ordinary status write deleted it
+  // and its Cancel, leaving the select on an unconfirmed model. It has its own
+  // element now; nothing but its own buttons, a commit or a conversation
+  // change clears it.
+  s.switchWarnEl = createEl('div', { class: 'chat__status chat__switch-host', role: 'status', hidden: true });
 
   // Touch devices send via the button and the long placeholder wraps + clips
   // in the single-row textarea at phone widths -- keep the Enter hint desktop-only.
@@ -381,10 +394,16 @@ function buildSkeleton(ctx) {
   });
   s.textarea.addEventListener('input', () => autoGrow(s.textarea));
   s.textarea.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      send(ctx);
-    }
+    // isComposing: the Enter that accepts an IME candidate is not a send.
+    if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+    // On a touch device Return is a newline and Send is the button (owner,
+    // 2026-11-24): a software keyboard has no Shift+Enter, so sending on
+    // Return left no way to type a second line. Read per keypress, not once at
+    // build: the answer changes when a keyboard or trackpad is attached.
+    // Cmd/Ctrl+Enter still sends everywhere (the page hotkey).
+    if (matchMedia('(hover: none)').matches) return;
+    e.preventDefault();
+    send(ctx);
   });
   // Attachments: images and (gguf models) audio, via picker, paste or drop.
   // The button is capability-gated like the thinking toggle -- hidden until
@@ -556,6 +575,7 @@ function buildSkeleton(ctx) {
     s.enginePanelEl,
     s.messagesEl,
     s.statusEl,
+    s.switchWarnEl,
     s.attachStrip,
     s.promptPreviewEl,
     createEl('div', { class: 'chat__composer' }, [s.attachBtn, s.thinkBtn, s.promptBtn, s.fileInput, s.textarea, s.sendBtn]),
@@ -716,6 +736,10 @@ function refreshLoadBtn(ctx) {
     : changed ? 'Restart this model with the chosen load settings'
       : `Restart this model to apply saved changes (${stale.join(', ')})`;
   s.loadNowBtn.hidden = !((cold || changed || stale.length) && !s.loadNowBtn.dataset.busy);
+  // On a phone the load controls live in the strip under the readout line,
+  // which used to open only when that line was tapped, while the status line
+  // said "press Load". The strip now shows whenever a load is on offer.
+  s.barEl?.classList.toggle('chat__bar--load-offered', !s.loadNowBtn.hidden);
   paintEngineChip(ctx);
 }
 
@@ -812,6 +836,12 @@ async function loadModelNow(ctx) {
   const s = ctx.state;
   const id = s.modelSelect.value;
   if (!id || s.loadNowBtn.dataset.busy) return;
+  // Not while a reply is being generated: loading or restarting a model can
+  // evict or kill the one that is generating. After it finishes, Load works.
+  if (s.stream || s.remoteGenerating) {
+    showStatus(ctx, 'A reply is still being generated — load after it finishes.');
+    return;
+  }
   s.loadNowBtn.dataset.busy = '1';
   s.loadNowBtn.disabled = true;
   s.modelSelect.disabled = true;
@@ -910,53 +940,52 @@ function showSwitchWarning(ctx, to, lines, onConfirm, onCancel) {
   const cancelBtn = createEl('button', { class: 'btn btn--sm' }, ['Cancel']);
   confirmBtn.addEventListener('click', onConfirm);
   cancelBtn.addEventListener('click', onCancel);
-  s.statusEl.replaceChildren(createEl('div', { class: 'chat__switch-warning' }, [
+  s.switchWarnEl.replaceChildren(createEl('div', { class: 'chat__switch-warning' }, [
     createEl('div', {}, [`Switching to ${to}:`]),
     ...lines.map((l) => createEl('div', { class: 'chat__switch-line' }, [l])),
     createEl('div', { class: 'chat__switch-actions' }, [cancelBtn, confirmBtn]),
   ]));
+  s.switchWarnEl.hidden = false;
+}
+
+function clearSwitchWarning(ctx) {
+  const el = ctx.state.switchWarnEl;
+  if (!el || el.hidden) return;
+  el.hidden = true;
+  el.replaceChildren();
 }
 
 function commitModelSwitch(ctx, to) {
   const s = ctx.state;
-  // Stop an in-flight stream BEFORE model_id changes hands, so the old
-  // model stops generating the moment the user switches away. NB this is
-  // an abort, not a settled handoff: the partial still persists (server
-  // disconnect path) into this same conversation after model_id is
-  // rewritten. Each message row carries its own model_id (v1.74.0), so the
-  // partial stays attributed to the model that wrote it.
+  clearSwitchWarning(ctx); // committing answers it, whichever path got here
   // The select already shows `to`, so this judges the destination: what it
   // cannot use leaves the panel and the conversation's params (the PUT the
   // change fires is a metadata write, open while a run is held), named below.
-  // Computed BEFORE the abort, because the abort's own note lands later.
   const removed = droppedNote(reconcileSettings(currentModel(ctx)));
 
-  // Abandoning, not stopping: the run detaches and commits into THIS
-  // conversation under the old model. finishGenerate says so (abandonNote),
-  // which also carries the load-cost clause -- so this path writes no line of
-  // its own that the async abort would overwrite a beat later. But the
-  // removal note is not in abandonNote and is not recoverable later, so it
-  // rides along on the stream. Suppressing both was how a mid-stream switch
-  // silently reintroduced the capability loss v1.79.27 exists to close.
-  const abandoning = Boolean(s.stream);
-  if (s.stream) {
-    s.stream.pendingNote = removed;
-    abortStream(ctx, ABANDON.MODEL);
-  }
+  // A reply in flight is LEFT ALONE (owner, 2026-11-24). Its request named its
+  // model when it launched, so it finishes on that model, on screen, and its
+  // saved rows are adopted the ordinary way; the switch is about the NEXT
+  // message. This used to abort the fetch "so the old model stops generating",
+  // which it never did: an abort ends the subscription and the server's run
+  // carries on (conversation_generate_api._Run). What the abort did do was
+  // drop the partial from view and leave the page on "still generating on the
+  // server", Send refusing, for a run it had been watching a moment earlier.
+  const midReply = Boolean(s.stream) && s.stream.targetConvId === s.activeId;
   s.committedModelId = to;
   closePromptPreview(ctx); // it showed what the previous model would be sent
-  // Say what this costs instead of asking whether to pay it. Silent when the
-  // target is resident or residency is still unknown -- a guess would be
-  // worse than nothing (same rule as the dots).
-  if (!abandoning) {
-    // Both facts, whichever apply: what this costs, and what it took away.
-    const notes = [];
-    if (isCold(ctx, to)) {
-      notes.push(`${to} is not loaded — your first message loads it, or press Load to do it now.`);
-    }
-    if (removed) notes.push(removed);
-    showStatus(ctx, notes.join(' '));
+  // Say what this costs instead of asking whether to pay it. Silent about the
+  // load when the target is resident or residency is still unknown: a guess
+  // would be worse than nothing (same rule as the dots).
+  const cold = isCold(ctx, to);
+  const notes = [];
+  if (midReply) {
+    notes.push(`The reply in progress finishes on the previous model. Your next message ${cold ? 'loads' : 'uses'} ${to}.`);
+  } else if (cold) {
+    notes.push(`${to} is not loaded — your first message loads it, or press Load to do it now.`);
   }
+  if (removed) notes.push(removed);
+  showStatus(ctx, notes.join(' '));
   if (s.activeId) {
     const convId = s.activeId;
     api.updateConversation(convId, { model_id: to })
@@ -1196,15 +1225,6 @@ function buildPromptSection(ctx) {
 }
 
 
-// True while a switch warning owns the status line. showStatus assigns
-// textContent, which deletes the warning AND its Cancel / Switch-anyway
-// buttons -- leaving the select on an unconfirmed model with no way to
-// confirm or cancel, and the next send going to that model. An async abandon
-// note landing a beat later did exactly that.
-function switchWarningOnScreen(ctx) {
-  return Boolean(ctx.state.statusEl?.querySelector('.chat__switch-warning'));
-}
-
 function showStatus(ctx, text, isError = false) {
   setStatus(ctx.state.statusEl, text, isError);
 }
@@ -1215,6 +1235,12 @@ function showStatus(ctx, text, isError = false) {
 // window of a cold load when nothing visibly streams. role="status" on the
 // line makes this audible to AT as well as visible.
 function refuseWhileStreaming(ctx) {
+  // First: while a conversation's rows are on their way, what is on screen is
+  // still the previous conversation (selectConversation).
+  if (ctx.state.loadingId) {
+    showStatus(ctx, 'This conversation is still loading — try again in a moment.');
+    return true;
+  }
   if (!ctx.state.stream && ctx.state.remoteGenerating) {
     showStatus(ctx, 'This conversation is still generating on the server — press Stop, or wait for it to finish.');
     return true;
@@ -1223,16 +1249,6 @@ function refuseWhileStreaming(ctx) {
   // (The v1.64 pendingSave latch is gone with Phase 2: the server persists
   // BEFORE its stream ends, so there is no client-save window to guard.)
   showStatus(ctx, 'A response is still streaming — wait for it to finish, or press Stop.');
-  return true;
-}
-
-// While an unsaved (id-less) row exists, the client's positions are
-// known-divergent from the store: a send would mint a colliding server
-// position, and any position-anchored mutation can truncate the wrong tail
-// SERVER-side. Refuse loudly until Retry or Discard resolves the row.
-function refuseWhileUnsaved(ctx) {
-  if (!ctx.state.messages.some((m) => m.id == null)) return false;
-  showStatus(ctx, 'A message is not saved yet — use its Retry save or Discard button first.', true);
   return true;
 }
 
@@ -1559,12 +1575,18 @@ async function selectConversation(ctx, convId) {
   // was typed in, the same rule clearPendingAttachments enforces just below.
   stashComposerDraft(ctx);
   s.activeId = convId;
+  // Until this conversation's rows arrive the list still shows the previous
+  // one's, and they were tappable: an action went to the new id with the old
+  // rows, and a Send landed and was then wiped from view by the response to
+  // this request. refuseWhileStreaming reads this.
+  s.loadingId = convId;
   lsWrite(LAST_CONV_KEY, convId);
   restoreComposerDraft(ctx);
   s.editingId = null;
   s.msgNodes = new Map(); // node reuse is per-document; never carry rows across
   clearPendingAttachments(ctx); // staged attachments belong to the conv they were picked in
   closePromptPreview(ctx);      // so does a preview of what the one being left would send
+  clearSwitchWarning(ctx);      // and a model switch still waiting for an answer
   showStatus(ctx, '');
   renderConvList(ctx);
   try {
@@ -1625,6 +1647,9 @@ async function selectConversation(ctx, convId) {
       // preset for the one that failed to load
       s.presetBar.syncIndicator();
     }
+  } finally {
+    // Only this select's own mark: a newer select has already replaced it.
+    if (s.loadingId === convId) s.loadingId = null;
   }
 }
 
@@ -1640,8 +1665,11 @@ async function selectConversation(ctx, convId) {
 // and their unsaved drafts. Historically it also dumped a long
 // conversation near the top on send/edit/delete. So nodes are REUSED unless
 // their content actually changed, and the list is reconciled in place.
+// Every row comes from the server and carries its id (the id-less "unsaved"
+// row and its machinery were removed in v2.0.282: nothing had produced one
+// since the server took over persistence).
 function msgKey(msg) {
-  return msg.id ?? `pos:${msg.position}`;
+  return msg.id;
 }
 
 function blockFingerprint(b) {
@@ -1753,11 +1781,8 @@ function renderMessages(ctx) {
     .filter((msg) => continued == null || msg.id !== continued)
     .map((msg) => {
       const key = msgKey(msg);
-      // `id != null` first: an unsaved row carries id null, and a bare
-      // `editingId === msg.id` matches null-to-null -- which rendered the
-      // save-failure fallback row as an open editor whose Save would PUT to
-      // /messages/null.
-      const editing = msg.id != null && msg.id === s.editingId;
+      // editingId is null when no editor is open, and no row's id is.
+      const editing = s.editingId != null && msg.id === s.editingId;
       const modelNote = mixedModels && msg.model_id ? msg.model_id : '';
       const sig = msgSignature(msg, { editing, capsKey, provider, modelNote });
       const cached = prev.get(key);
@@ -1909,13 +1934,6 @@ function buildMessageEl(ctx, msg, modelNote = '') {
   if (statsLine) {
     children.push(createEl('div', { class: 'message-stats muted small' }, [statsLine]));
   }
-  // Unsaved fallback row: say so ON the row, always visible (not
-  // hover-gated -- the state must be legible on touch). While it exists,
-  // send and every position-anchored op refuse loudly (refuseWhileUnsaved).
-  if (msg.id == null) {
-    children.push(createEl('div', { class: 'message-unsaved-note small', role: 'status' },
-      ['Not saved — this text exists only on this screen. Retry save or Discard it.']));
-  }
   children.push(buildActions(ctx, msg));
 
   return createEl('div', { class: `message message--${msg.role}` }, children);
@@ -1931,19 +1949,6 @@ function buildActions(ctx, msg) {
   // Copy copies the flattened text; an image-only message has none to copy.
   if (msg.content) {
     actions.push(btn('Copy', () => navigator.clipboard?.writeText(msg.content).catch(() => {})));
-  }
-  // Unsaved fallback row (its save failed; the store never had it). The only
-  // safe exits are client-side: re-POST it or discard it locally. The normal
-  // actions are position-anchored server ops and stay off it -- Edit's save
-  // would PUT to /messages/null, Delete/Regenerate would truncate against a
-  // position the server never assigned.
-  if (msg.id == null) {
-    actions.push(btn('Retry save', () => retrySave(ctx, msg)));
-    actions.push(armedConfirm(
-      createEl('button', { class: 'btn btn--sm btn--ghost' }, ['Discard']),
-      () => discardUnsaved(ctx, msg),
-    ));
-    return createEl('div', { class: 'message__actions' }, actions);
   }
   // Editing carries the row's media now (v2.0.15). It was withheld here
   // while the editor sent content as a bare string, which would have
@@ -1964,36 +1969,6 @@ function buildActions(ctx, msg) {
     () => deleteMessage(ctx, msg),
   ));
   return createEl('div', { class: 'message__actions' }, actions);
-}
-
-// Re-POST an unsaved row. On success the server row replaces it in place --
-// its key changes from pos:N to the real id, so the node rebuilds saved.
-async function retrySave(ctx, msg) {
-  const s = ctx.state;
-  if (refuseWhileStreaming(ctx)) return;
-  const convId = s.activeId;
-  try {
-    const saved = await api.addMessage(convId, {
-      role: msg.role,
-      content: msg.content_blocks?.length ? msg.content_blocks : (msg.content ?? ''),
-      thinking: msg.thinking || undefined,
-    });
-    if (!ctx.alive || s.activeId !== convId) return;
-    const i = s.messages.indexOf(msg);
-    if (i !== -1) s.messages[i] = saved; else s.messages.push(saved);
-    renderMessages(ctx);
-    showStatus(ctx, 'Message saved.');
-  } catch (err) {
-    if (ctx.alive) showStatus(ctx, `Save failed again: ${err.message}`, true);
-  }
-}
-
-function discardUnsaved(ctx, msg) {
-  const s = ctx.state;
-  const i = s.messages.indexOf(msg);
-  if (i !== -1) s.messages.splice(i, 1);
-  renderMessages(ctx);
-  showStatus(ctx, 'Unsaved message discarded.');
 }
 
 function buildEditEl(ctx, msg) {
@@ -2089,7 +2064,7 @@ function buildEditEl(ctx, msg) {
     // new stream silently no-ops, the old one paints into a detached node).
     // Same guards regenerate() and deleteMessage() carry -- loud, not silent.
     if ((regenerateAfter || continueAfter)
-        && (refuseWhileStreaming(ctx) || refuseWhileUnsaved(ctx))) return;
+        && refuseWhileStreaming(ctx)) return;
     // Everything below is anchored to the conversation the edit belongs to,
     // captured NOW: s.activeId read after an await can be a different
     // conversation (switch mid-PUT), and a position-anchored mutation
@@ -2390,10 +2365,7 @@ function keepRowInView(ctx, msg) {
 // select guard deliberately skips re-fetching the active conversation -- so
 // without this, small divergences accumulate until a position-anchored op
 // truncates the wrong tail. Unchanged rows keep their nodes (signature
-// reuse), so a clean reconcile repaints nothing. Unsaved (id-less) rows
-// survive adoption: the server doesn't have them, and vanishing text is
-// worse than divergence (they also lock destructive ops via
-// refuseWhileUnsaved, so surviving is safe).
+// reuse), so a clean reconcile repaints nothing.
 // Returns 'generating' | 'idle' | 'unknown' -- THREE answers, because falsy
 // used to mean three different things and callers read all of them as "the
 // server is done". A failed GET returned undefined; the stale-context guard
@@ -2420,10 +2392,9 @@ async function resyncMessages(ctx, convId) {
 }
 
 // The one way server rows replace the mirror outside a stream end: saved
-// rows wholesale, id-less rows re-seated after them (see resyncMessages).
+// rows wholesale.
 function mergeServerRows(ctx, serverRows) {
   const s = ctx.state;
-  const unsaved = s.messages.filter((m) => m.id == null);
   // An open editor on a row the server no longer has (deleted elsewhere):
   // keep the local row, and the draft in it, rather than vanish typed work
   // without a word. Save will 404 loudly and resync; Cancel drops it.
@@ -2433,12 +2404,9 @@ function mergeServerRows(ctx, serverRows) {
   if (orphanEditor) {
     showStatus(ctx, 'The message you are editing was deleted elsewhere — your draft is kept until you cancel or save.', true);
   }
-  const rows = orphanEditor
+  s.messages = orphanEditor
     ? [...serverRows, orphanEditor].sort((a, b) => a.position - b.position)
     : [...serverRows];
-  let nextPos = (rows[rows.length - 1]?.position ?? -1) + 1;
-  for (const m of unsaved) m.position = nextPos++;
-  s.messages = [...rows, ...unsaved];
   renderMessages(ctx);
 }
 
@@ -2464,28 +2432,10 @@ function adoptConversationMeta(ctx, conv, { keepPrompt = false } = {}) {
 // answer keeps coming while you are elsewhere; this is the surface that says
 // so and offers the way out. Cleared the moment a LOCAL stream takes over --
 // the local one owns the button from then on.
-// Every line that claims a run is still going, and the one predicate that
-// recognises them. The clear-branch used to test startsWith('Still
-// generating'), which the switch-model wording does not match -- so that note
-// could never be cleared and the page went on claiming a reply was coming for
-// an idle conversation. A shared prefix plus one predicate means a new
-// wording cannot come apart from its own eraser.
-// EXPORTED so the browser check can read them rather than restate them.
-// The superseded-stream check (in the render suite removed in v2.0.281) needed
-// this vocabulary, and
-// while these were module-private it carried a hand-copy that was wrong twice
-// -- once lowercased so it matched nothing, once missing MODEL_SWITCH_PREFIX
-// entirely, which is the line the scenario the check is FOR actually
-// produces. A hand-copied constant is a defect with a delay; this repo
-// already derives rather than copies everywhere else it can.
-// The ARRAY is the export, and isGeneratingNote iterates it. Exporting the
-// two names individually only moved the hand-enumeration: this file still
-// listed them twice and the check still named them one by one, so a THIRD
-// status wording would reach neither.
-export const GENERATING_PREFIX = 'Still generating on the server';
-export const MODEL_SWITCH_PREFIX = 'The reply in flight keeps generating';
-export const GENERATING_PREFIXES = [GENERATING_PREFIX, MODEL_SWITCH_PREFIX];
-const isGeneratingNote = (text) => GENERATING_PREFIXES.some((p) => text.startsWith(p));
+// The line that claims a run is still going, and the predicate that
+// recognises it, so the wording cannot come apart from its own eraser.
+const GENERATING_PREFIX = 'Still generating on the server';
+const isGeneratingNote = (text) => text.startsWith(GENERATING_PREFIX);
 
 // The composer button has exactly two REST states and they are written from
 // two places (a remote flag changing, and a local stream releasing). One
@@ -2507,6 +2457,58 @@ function setSendButton(s, remoteGenerating) {
   paintSendBtn(s.sendBtn, remoteGenerating, remoteGenerating
     ? 'Stop the run finishing on the server for this conversation'
     : '');
+}
+
+// The one place this page waits on the server (owner, 2026-11-24). A run the
+// page is not subscribed to (the phone locked and the fetch was dropped, or
+// the conversation was opened mid-run) used to leave "still generating" on
+// screen with Send refusing, and nothing would ever say the run had ended:
+// the mirror has two invalidation points and neither is "the run finished".
+// So while that state holds, and only then, the page asks the small status
+// route with a growing delay, and fetches the conversation ONCE when the
+// answer turns false. It stops when the tab is hidden (resume re-adopts the
+// store and starts it again if the run is still going), when another
+// conversation opens, when a local stream takes over, and on teardown.
+function watchRemoteRun(ctx) {
+  const s = ctx.state;
+  const convId = s.activeId;
+  if (!convId || s.remoteWatch?.convId === convId) return;
+  stopRemoteWatch(ctx);
+  const watch = { convId, timer: null, delay: REMOTE_WATCH_MIN_MS };
+  s.remoteWatch = watch;
+  const mine = () => ctx.alive && s.remoteWatch === watch;
+  const stillTheQuestion = () => s.activeId === convId && s.remoteGenerating && !s.stream;
+  const wait = () => {
+    watch.timer = setTimeout(tick, watch.delay);
+    watch.delay = Math.min(watch.delay * 2, REMOTE_WATCH_MAX_MS);
+  };
+  const tick = async () => {
+    watch.timer = null;
+    if (!mine()) return;
+    if (!stillTheQuestion() || document.visibilityState === 'hidden') { s.remoteWatch = null; return; }
+    let generating = null; // null: no answer, ask again
+    try {
+      generating = (await api.generationStatus(convId, { signal: ctx.signal })).generating;
+    } catch { /* unreachable for a moment is not an answer */ }
+    if (!mine()) return;
+    if (!stillTheQuestion()) { s.remoteWatch = null; return; }
+    if (generating !== false) { wait(); return; }
+    // The run is over: adopt what it saved. resyncMessages clears the flag
+    // (and with it the status line and the Stop button) when the fetch lands.
+    s.remoteWatch = null;
+    const state = await resyncMessages(ctx, convId);
+    // A fetch that failed leaves the flag up; keep asking instead of leaving
+    // the page on a claim it can no longer check.
+    if (state !== 'idle' && ctx.alive && stillTheQuestion()) watchRemoteRun(ctx);
+  };
+  wait();
+}
+
+function stopRemoteWatch(ctx) {
+  const watch = ctx.state.remoteWatch;
+  if (!watch) return;
+  clearTimeout(watch.timer);
+  ctx.state.remoteWatch = null;
 }
 
 function setRemoteGenerating(ctx, on) {
@@ -2532,19 +2534,20 @@ function setRemoteGenerating(ctx, on) {
   // server just said about this conversation, whoever owns the button.
   if (s.activeId) noteRunState(ctx, s.activeId, on);
   if (s.stream && s.stream.targetConvId === s.activeId) return;
-  if (s.remoteGenerating === on) return;
-  s.remoteGenerating = on;
-  notifyChatActivity(ctx);
-  setSendButton(s, on);
-  if (on) {
-    // NOT "started elsewhere": since abandoning a run is routine and now
-    // disclosed, the commonest way to see this line is a run THIS tab started
-    // and walked away from. Claiming another origin was a guess, and a wrong
-    // one most of the time.
-    showStatus(ctx, `${GENERATING_PREFIX} — Stop ends it and keeps the partial.`);
-  } else if (isGeneratingNote(s.statusEl.textContent)) {
-    showStatus(ctx, '');
+  if (s.remoteGenerating !== on) {
+    s.remoteGenerating = on;
+    notifyChatActivity(ctx);
+    setSendButton(s, on);
+    if (on) {
+      showStatus(ctx, `${GENERATING_PREFIX} — the reply will appear here when it finishes. Stop ends it and keeps the partial.`);
+    } else if (isGeneratingNote(s.statusEl.textContent)) {
+      showStatus(ctx, '');
+    }
   }
+  // After the flag, and on every call rather than only on a change: a resume
+  // re-states `true` for a run that is still going, and the watch that stopped
+  // while the tab was hidden has to start again.
+  if (on) watchRemoteRun(ctx); else stopRemoteWatch(ctx);
 }
 
 // Poll the store a few times with backoff until the run has actually
@@ -2712,9 +2715,7 @@ async function refreshAfterResume(ctx) {
 // server kept (append: the prefix ending at the user turn; regenerate/
 // continue: the tail the mirror hid is exactly what the commit deleted), so
 // local rows at or past that position give way to the saved rows. A continue
-// anchor comes back as its own updated row (same id, merged content). Id-less
-// rows cannot exist here: refuseWhileUnsaved blocks every generation start
-// while one is on screen.
+// anchor comes back as its own updated row (same id, merged content).
 function adoptSavedRows(ctx, rows) {
   const s = ctx.state;
   const savedIds = new Set(rows.map((r) => r.id));
@@ -2727,7 +2728,7 @@ function adoptSavedRows(ctx, rows) {
 
 function regenerate(ctx, msg) {
   const s = ctx.state;
-  if (refuseWhileStreaming(ctx) || refuseWhileUnsaved(ctx)) return;
+  if (refuseWhileStreaming(ctx)) return;
   // No client-side truncation: the server anchors on the message ID and
   // commits its truncation only together with the replacement row. The
   // mirror drops the tail VISUALLY; if the generation fails or produces
@@ -2744,7 +2745,7 @@ function regenerate(ctx, msg) {
 // Later rows keep their positions; gaps are fine, nothing assumes density.
 async function deleteMessage(ctx, msg) {
   const s = ctx.state;
-  if (refuseWhileStreaming(ctx) || refuseWhileUnsaved(ctx)) return;
+  if (refuseWhileStreaming(ctx)) return;
   const convId = s.activeId; // anchor before any await (switch mid-flight)
   try {
     await api.deleteMessage(convId, msg.id);
@@ -3299,11 +3300,8 @@ async function send(ctx) {
   const audio = s.pendingAudio;
   if (!text && !images.length && !audio.length) return;
   // Loud, not silent: Enter during a stream (the button already reads Stop)
-  // or while a row is unsaved must say why nothing was sent. The unsaved
-  // case is load-bearing -- a send would mint a server position colliding
-  // with the unsaved row's guessed one, and the request body would carry
-  // text the store doesn't have.
-  if (refuseWhileStreaming(ctx) || refuseWhileUnsaved(ctx)) return;
+  // must say why nothing was sent.
+  if (refuseWhileStreaming(ctx)) return;
   if (!s.modelSelect.value) {
     showStatus(ctx, 'No models available.', true);
     return;
@@ -3719,7 +3717,6 @@ function stopStream(ctx) {
 const ABANDON = Object.freeze({
   TEARDOWN: 'teardown',              // the weakest claim: 'we do not know' (see below)
   CONVERSATION: 'switch-conversation',
-  MODEL: 'switch-model',
   DELETE: 'delete',                  // genuinely ended server-side
 });
 
@@ -3736,7 +3733,6 @@ const ABANDON = Object.freeze({
 const ABANDON_RANK = Object.freeze({
   [ABANDON.TEARDOWN]: 0,
   [ABANDON.CONVERSATION]: 1,
-  [ABANDON.MODEL]: 1,
   [ABANDON.DELETE]: 2,
 });
 
@@ -3768,22 +3764,8 @@ function abortStream(ctx, reason = ABANDON.TEARDOWN) {
 // walking away costs nothing -- and nobody could discover that, because the
 // only place it was ever mentioned was a status line you saw if you happened
 // to come back mid-run.
-function abandonNote(ctx, stream) {
-  const s = ctx.state;
-  if (stream.abandonReason === ABANDON.MODEL) {
-    // committedModelId, NOT modelSelect.value: the select can be showing an
-    // UNCONFIRMED target (showSwitchWarning leaves it there pending Cancel /
-    // Switch anyway), and this sentence promises what the next message uses.
-    const next = s.committedModelId ?? s.modelSelect.value;
-    const cold = isCold(ctx, next);
-    return `${MODEL_SWITCH_PREFIX} on the previous model and saves to `
-      + `this conversation. Your next message ${cold ? 'loads' : 'uses'} ${next}.`
-      // Carried from commitModelSwitch: a capability the switch takes away is
-      // not derivable here (the `from` model is long gone) and nothing else
-      // will ever say it.
-      + (stream.pendingNote ? ` ${stream.pendingNote}` : '');
-  }
-  return `${GENERATING_PREFIX} — the reply will be saved to this conversation.`;
+function abandonNote() {
+  return `${GENERATING_PREFIX} — the reply will be saved to this conversation and will appear here when it finishes.`;
 }
 
 function releaseStream(ctx, stream) {
@@ -3793,6 +3775,10 @@ function releaseStream(ctx, stream) {
   if (s.stream !== stream) return;
   s.stream = null;
   s.setUnloadGuard(false);
+  // The row stops being a streaming row the moment its stream is over, on
+  // every ending. The class drives the caret, and a row whose resync never
+  // lands is never re-rendered, so the caret blinked on over a dead stream.
+  stream.els?.msgEl?.classList.remove('message--streaming');
   if (!ctx.alive) {
     if (stream.abandonReason === ABANDON.TEARDOWN) {
       window.dispatchEvent(new CustomEvent('heylook:chat-activity', { detail: { busy: true } }));
@@ -3906,13 +3892,13 @@ async function finishGenerate(ctx, stream, { content, thinking, usage, aborted, 
     showStatus(ctx, content ? 'Stopped -- partial response saved.' : 'Stopped.');
   } else if (serverState === 'generating') {
     // The server says a run is still going and it is not ours any more.
-    if (!switchWarningOnScreen(ctx)) showStatus(ctx, abandonNote(ctx, stream));
+    showStatus(ctx, abandonNote());
   } else if (aborted && !saved && serverState !== 'idle') {
     // No answer either way (`unknown`): we let go of a run whose end we never
     // saw. Say the reply may still be coming rather than claim it stopped --
     // the run detaches and commits, so the optimistic reading is the true one
     // far more often than not.
-    if (!switchWarningOnScreen(ctx)) showStatus(ctx, abandonNote(ctx, stream));
+    showStatus(ctx, abandonNote());
   } else if (!content && thinking && !stream.baseContent) {
     // The run produced reasoning and no answer text. Say so, because the
     // bubble itself has nothing in it and the token count alone reads as a

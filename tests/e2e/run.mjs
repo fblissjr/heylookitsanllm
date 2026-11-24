@@ -109,7 +109,17 @@ async function selectConv(page, conv) {
 const installHold = (page) => page.js(() => {
   const real = window.fetch.bind(window);
   window.__hold = { armed: false, release: null };
+  // One GET, named by the end of its URL, for staging "the response has not
+  // arrived yet".
+  window.__holdGet = { suffix: null, release: null };
   window.fetch = (url, init) => {
+    const get = window.__holdGet;
+    if (get.suffix && (init?.method ?? 'GET') === 'GET' && String(url).endsWith(get.suffix)) {
+      get.suffix = null;
+      return new Promise((resolve, reject) => {
+        get.release = () => real(url, init).then(resolve, reject);
+      });
+    }
     if (window.__hold.armed && /\/messages$/.test(String(url)) && init?.method === 'POST') {
       window.__hold.armed = false;
       return new Promise((resolve, reject) => {
@@ -139,6 +149,22 @@ const release = (page, { fail }) => page.js((f) => {
 const disarmHold = (page) => page.js(() => {
   if (window.__hold) { window.__hold.armed = false; window.__hold.release = null; }
 });
+
+const LONG_PROMPT = 'Count from 1 to 80, one number per line. Do not stop early.';
+const isStreaming = (page) => page.js(() => Boolean(document.querySelector('.message--streaming')));
+const sendButtonLabel = (page) => page.js(() => document.querySelector('.chat__composer .btn--primary').getAttribute('aria-label'));
+
+// Move the model select the way a person does: set it and fire `change`. A
+// switch the page wants confirmed (a warning with buttons) is confirmed.
+async function chooseModel(page, id) {
+  await page.js((to) => {
+    const sel = document.querySelector('#app select[title="Model"]');
+    sel.value = to;
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  }, id);
+  const warned = await page.js(() => !document.querySelector('.chat__switch-host').hidden);
+  if (warned) await clickText(page, '.chat__switch-actions button', 'Switch anyway');
+}
 
 // --- the run ------------------------------------------------------------------
 
@@ -178,9 +204,15 @@ async function main() {
       ],
     });
     const convB = await api('POST', '/v1/conversations', { title: 'B check', model_id: MODEL, params: PARAMS });
-    const convD = await api('POST', '/v1/conversations', {
-      title: 'D long', model_id: MODEL, params: { ...PARAMS, max_tokens: 200 },
-    });
+    const long = { ...PARAMS, max_tokens: 200 };
+    const convF = await api('POST', '/v1/conversations', { title: 'F remote', model_id: MODEL, params: { ...PARAMS, max_tokens: 400 } });
+    const convE = await api('POST', '/v1/conversations', { title: 'E switch', model_id: MODEL, params: long });
+    const convD = await api('POST', '/v1/conversations', { title: 'D long', model_id: MODEL, params: long });
+    // Other chat models the server lists. They are selected, never loaded:
+    // no check sends to one.
+    const chatModels = (await api('GET', '/v1/models')).data.filter((m) => !m.engine?.embedding && m.id !== MODEL);
+    const otherModel = chatModels[0]?.id ?? null;
+    const blindModel = chatModels.find((m) => !(m.capabilities ?? []).includes('vision'))?.id ?? null;
     const convA = await api('POST', '/v1/conversations', { title: 'A check', model_id: MODEL, params: PARAMS });
     await api('POST', `/v1/conversations/${convA.id}/messages`, { role: 'user', content: 'first in A' });
 
@@ -546,6 +578,131 @@ async function main() {
       await page.waitFor(() => !document.querySelector('.nav-item--busy'), 'the nav dot to go out', { timeout: 5000 });
     });
 
+    // Enter sends from a keyboard. The POST is held and failed, so nothing is
+    // generated; what is asserted is that the keypress reached send().
+    await suite.check('Enter in the composer sends from a desktop keyboard', async () => {
+      await selectConv(page, convA);
+      await typeComposer(page, 'sent with enter');
+      await page.js(() => {
+        window.__hold.release = null; window.__hold.armed = true;
+        document.querySelector('.chat__composer textarea').focus();
+      });
+      await page.press('Enter');
+      await page.waitFor(() => typeof window.__hold.release === 'function', 'Enter to start a send');
+      await release(page, { fail: true });
+      await page.waitFor(() => /^Send failed/.test(document.querySelector('.chat__status').textContent), 'the held send to fail');
+      assert((await composerValue(page)) === 'sent with enter', 'the failed send did not give the text back');
+      await typeComposer(page, '');
+    });
+
+    // A reply in flight is left alone by a model switch (owner, 2026-11-24).
+    // It used to abort the fetch, which dropped the partial from view and left
+    // the page on "still generating on the server" with Send refusing, while
+    // the server's run carried on regardless.
+    await suite.check('switching model mid-reply leaves the reply running, and the page ends up idle', async () => {
+      if (!otherModel) skip('the server lists one chat model, so there is nothing to switch to');
+      await selectConv(page, convE);
+      await disarmHold(page);
+      await typeComposer(page, LONG_PROMPT);
+      await clickSend(page);
+      await page.waitFor(() => Boolean(document.querySelector('.message--streaming')), 'the reply to start streaming', { timeout: 90000 });
+      await chooseModel(page, otherModel);
+      const after = await page.js(() => ({
+        streaming: Boolean(document.querySelector('.message--streaming')),
+        status: document.querySelector('.chat__status').textContent,
+      }));
+      if (!after.streaming && !/finishes on the previous model/.test(after.status)) {
+        const done = (await api('GET', `/v1/conversations/${convE.id}`)).messages.some((m) => m.role === 'assistant');
+        if (done) skip('the reply finished before the model was switched');
+      }
+      assert(after.streaming, 'the switch ended the stream the page was watching');
+      assert(/finishes on the previous model/.test(after.status), `the status line reads ${JSON.stringify(after.status)}`);
+      await page.waitFor(() => !document.querySelector('.message--streaming'), 'the stream to finish', { timeout: 90000 });
+      await page.waitFor(() => document.querySelectorAll('.message--assistant').length >= 1, 'the reply to stay on screen');
+      const e = await api('GET', `/v1/conversations/${convE.id}`);
+      const reply = e.messages.find((m) => m.role === 'assistant');
+      assert(reply, 'the store holds no reply');
+      assert(reply.model_id === MODEL, `the reply is attributed to ${reply.model_id}, not the model that wrote it`);
+      assert(e.model_id === otherModel, `the conversation is on ${e.model_id}, not the model that was chosen`);
+      assert((await sendButtonLabel(page)) === 'Send', 'the composer is left on Stop');
+      assert(!/^Still generating/.test(await statusText(page)), `the page claims a run is still going: ${JSON.stringify(await statusText(page))}`);
+      await chooseModel(page, MODEL); // leave the select where the other checks expect it
+    });
+
+    // A run the page is not subscribed to: started from outside, subscription
+    // dropped, then the conversation opened mid-run. The page used to say
+    // "still generating" and stay there until something was pressed. It now
+    // asks the status route until the run ends and fetches the result itself.
+    await suite.check('a run the page is not subscribed to shows up when it ends, with nothing pressed', async () => {
+      const ac = new AbortController();
+      const res = await fetch(`${base}/v1/conversations/${convF.id}/generate`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'append', user_content: LONG_PROMPT }), signal: ac.signal,
+      });
+      assert(res.ok, `could not start a run from outside the page: ${res.status}`);
+      ac.abort(); // the run detaches and carries on; nobody is listening to it now
+      await selectConv(page, convF);
+      const shown = await statusText(page);
+      const { generating } = await api('GET', `/v1/conversations/${convF.id}/generate`);
+      if (!generating || !/^Still generating on the server/.test(shown)) {
+        skip('the run finished before the page opened the conversation, so the waiting state was never staged');
+      }
+      assert((await sendButtonLabel(page)) === 'Stop', 'a run is going and the composer does not offer Stop');
+      const mark = page.requests.length;
+      await page.waitFor(() => document.querySelectorAll('.message--assistant').length >= 1
+        && !/^Still generating/.test(document.querySelector('.chat__status').textContent),
+      'the finished reply to appear without anything being pressed', { timeout: 120000 });
+      assert((await sendButtonLabel(page)) === 'Send', 'the run is over and the composer still offers Stop');
+      const asked = page.requests.slice(mark).filter((r) => r.method === 'GET' && r.url.endsWith(`/v1/conversations/${convF.id}/generate`));
+      assert(asked.length >= 1, 'the page never asked the status route');
+    });
+
+    // While a conversation's rows are on their way the list still shows the
+    // previous one's. A Send in that window was posted and then wiped from
+    // view by the response; it is refused now, with the text left in place.
+    await suite.check('nothing is sent while a conversation is still loading', async () => {
+      await selectConv(page, convA);
+      await disarmHold(page);
+      await page.js((suffix) => { window.__holdGet.release = null; window.__holdGet.suffix = suffix; }, `/v1/conversations/${convB.id}`);
+      await clickText(page, '.conv-item__title', convB.title);
+      await page.waitFor(() => typeof window.__holdGet.release === 'function', "the conversation's body request to be held");
+      const mark = page.requests.length;
+      await typeComposer(page, 'too early');
+      await clickSend(page);
+      await page.waitFor(() => /still loading/.test(document.querySelector('.chat__status').textContent), 'the refusal');
+      const posts = page.requests.slice(mark).filter((r) => r.method === 'POST' && /\/messages$/.test(r.url));
+      assert(posts.length === 0, 'a message was posted while the conversation was loading');
+      assert((await composerValue(page)) === 'too early', 'the refused text was not left in the composer');
+      await page.js(() => { const go = window.__holdGet.release; window.__holdGet.release = null; go(); });
+      await page.waitFor(() => document.querySelectorAll('.message').length >= 1, "conversation B's rows");
+      await typeComposer(page, '');
+    });
+
+    // The switch-model warning is a pending decision with its own buttons. It
+    // used to live inside the status line, where any status write deleted it
+    // and its Cancel. A status write is simulated the way the app makes one
+    // (assigning the line's text).
+    await suite.check('a status message does not erase a pending model-switch warning', async () => {
+      if (!blindModel) skip('every chat model the server lists takes images, so no switch here needs confirming');
+      await selectConv(page, convC);
+      await page.js((to) => {
+        const sel = document.querySelector('#app select[title="Model"]');
+        sel.value = to;
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+      }, blindModel);
+      await page.waitFor(() => !document.querySelector('.chat__switch-host').hidden, 'the switch warning');
+      await page.js(() => { document.querySelector('.chat__status:not(.chat__switch-host)').textContent = 'some other status'; });
+      const still = await page.js(() => [...document.querySelectorAll('.chat__switch-host .chat__switch-actions button')].map((b) => b.textContent));
+      assert(still.includes('Cancel') && still.includes('Switch anyway'), `the warning lost its buttons: ${JSON.stringify(still)}`);
+      await clickText(page, '.chat__switch-actions button', 'Cancel');
+      const back = await page.js(() => ({
+        hidden: document.querySelector('.chat__switch-host').hidden,
+        model: document.querySelector('#app select[title="Model"]').value,
+      }));
+      assert(back.hidden, 'Cancel did not dismiss the warning');
+      assert(back.model === MODEL, `Cancel left the select on ${back.model}`);
+    });
+
     await suite.check('a double tap on New creates one conversation', async () => {
       const before = (await api('GET', '/v1/conversations')).conversations.length;
       await page.js(() => {
@@ -641,6 +798,101 @@ async function main() {
       assert(got.composer >= 16, `the composer is ${got.composer}px`);
       assert(got.editor >= 16, `the message editor is ${got.editor}px`);
       assert(got.anchors.every((a) => a === 'none'), `overflow-anchor reads ${got.anchors.join(', ')}`);
+    });
+
+    // ---- still a phone-shaped, touch-only page from here on ------------------
+    const closeEditor = () => page.js(() => {
+      const cancel = [...document.querySelectorAll('.message-edit__buttons button')].find((b) => b.textContent.trim() === 'Cancel');
+      cancel?.click();
+    });
+    const messagePosts = (from) => page.requests.slice(from).filter((r) => r.method === 'POST' && /\/messages$/.test(r.url));
+
+    // A software keyboard has no Shift+Enter, so on touch Return is a newline
+    // and Send is the button (owner, 2026-11-24).
+    await suite.check('touch: Return in the composer is a newline and sends nothing', async () => {
+      await closeEditor();
+      await typeComposer(page, 'line one');
+      await page.js(() => {
+        const box = document.querySelector('.chat__composer textarea');
+        box.focus();
+        box.setSelectionRange(box.value.length, box.value.length);
+      });
+      const mark = page.requests.length;
+      await page.press('Enter');
+      await page.waitFor(() => document.querySelector('.chat__composer textarea').value === 'line one\n', 'Return to add a line');
+      assert(messagePosts(mark).length === 0, 'Return sent the message');
+      await typeComposer(page, '');
+    });
+
+    // The open pane leaves a strip of the page showing, with Send in it. A tap
+    // there used to close the pane AND press what was under the finger.
+    await suite.check('touch: a tap beside the open conversation pane only closes it', async () => {
+      await typeComposer(page, 'not to be sent');
+      await page.js(() => document.querySelector('.chat__convs-toggle').click());
+      await page.waitFor(() => document.querySelector('.chat').classList.contains('chat--convs-open'), 'the conversation pane to open');
+      const hit = await page.js(() => {
+        const send = document.querySelector('.chat__composer .btn--primary').getBoundingClientRect();
+        const x = send.left + send.width / 2;
+        const y = send.top + send.height / 2;
+        const top = document.elementFromPoint(x, y);
+        return { x, y, inStrip: x > innerWidth * 0.8, isRoot: top === document.querySelector('.chat'), what: top?.className || top?.tagName };
+      });
+      if (!hit.inStrip) skip('Send is not inside the strip the pane leaves showing at this width');
+      assert(hit.isRoot, `a tap there would land on "${hit.what}", not on the scrim`);
+      const mark = page.requests.length;
+      await page.js((x, y) => document.elementFromPoint(x, y).click(), hit.x, hit.y);
+      await page.waitFor(() => !document.querySelector('.chat').classList.contains('chat--convs-open'), 'the pane to close');
+      assert(messagePosts(mark).length === 0, 'the tap that closed the pane also sent the message');
+      assert((await composerValue(page)) === 'not to be sent', 'the composer text changed');
+      await typeComposer(page, '');
+    });
+
+    // The small action buttons keep their size on screen and take taps over
+    // the touch height: an invisible box above and below, so the thread loses
+    // no room.
+    await suite.check('touch: a message action takes a tap above and below its visible edge, at its old size', async () => {
+      const hit = await page.js(() => {
+        const btn = [...document.querySelectorAll('.message__actions button')].find((b) => b.textContent.trim() === 'Edit');
+        if (!btn) return null;
+        btn.scrollIntoView({ block: 'center' });
+        const r = btn.getBoundingClientRect();
+        const x = r.left + r.width / 2;
+        const at = (y) => document.elementFromPoint(x, y) === btn;
+        return {
+          height: r.height,
+          above: at(r.top - 6),
+          below: at(r.bottom + 6),
+          box: parseFloat(getComputedStyle(btn, '::after').height),
+          touchHeight: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ctrl-h-touch')),
+        };
+      });
+      assert(hit, 'no Edit action on screen');
+      assert(hit.above && hit.below, `a tap just outside the button misses it (above: ${hit.above}, below: ${hit.below})`);
+      assert(hit.box >= hit.touchHeight, `the tap box is ${hit.box}px, under the touch height ${hit.touchHeight}px`);
+      assert(hit.height < hit.touchHeight, `the button itself grew to ${hit.height}px`);
+    });
+
+    // A cold model's Load used to sit behind the readout line while the status
+    // line said to press it.
+    await suite.check('touch: Load shows without a tap when the chosen model is not loaded', async () => {
+      if (!otherModel) skip('the server lists one chat model, so there is no cold one to choose');
+      await chooseModel(page, otherModel);
+      await page.waitFor(() => !document.querySelector('.chat__load-btn').hidden, 'Load to be offered for a model that is not loaded');
+      const cold = await page.js(() => {
+        const bar = document.querySelector('.chat__bar');
+        const load = document.querySelector('.chat__load-btn');
+        return {
+          panelOpen: bar.classList.contains('chat__bar--panel-open'),
+          strip: getComputedStyle(document.querySelector('.chat__bar-detail')).display,
+          loadHeight: load.getBoundingClientRect().height,
+        };
+      });
+      assert(!cold.panelOpen, 'the panel was already open, so this proves nothing');
+      assert(cold.strip !== 'none' && cold.loadHeight > 0, `Load is offered but not on screen (strip display: ${cold.strip})`);
+      await chooseModel(page, MODEL);
+      await page.waitFor(() => document.querySelector('.chat__load-btn').hidden, 'Load to go away for the loaded model');
+      const warm = await page.js(() => getComputedStyle(document.querySelector('.chat__bar-detail')).display);
+      assert(warm === 'none', `the strip stays open (${warm}) with nothing to load`);
     });
 
     await suite.check('no page error across the whole run', async () => {

@@ -35,6 +35,7 @@ to it, so the headings stay stable as anchors.
   [scroll anchoring](#scroll-anchoring), [consumed keys](#a-key-a-handler-consumes-is-prevented),
   [route arity](#api-routes-no-default-parameters-in-a-path-builder),
   [a send's home](#a-send-belongs-to-the-conversation-it-was-sent-from),
+  [model switch and lost runs](#a-model-switch-leaves-the-reply-alone-and-a-lost-run-is-watched),
   [presets](#presets-and-the-system-prompt),
   [model switching](#model-switching-and-the-config-editor)
 - MLX engine: [media placement](#media-placement), [vision prefill](#vision-prefill),
@@ -1144,7 +1145,8 @@ That branch is reached by any ending leaving no usable saved rows, and an
 abort is not required; a transport death that never delivered `heylook_saved`
 lands there from an otherwise normal run. Conversation identity cannot close
 the window either, because several such endings leave `activeId` untouched: a
-mid-stream model switch, and `deleteConversation`, which aborts before it
+mid-stream model switch (until v2.0.282, when a switch stopped touching the
+stream at all), and `deleteConversation`, which aborts before it
 clears `activeId`. The superseded run then paints its ending over the live
 one. Rows were never at risk (`resyncMessages` re-checks `s.stream` after its
 own await); the status line was, and the line that lands is the recovery
@@ -1171,7 +1173,8 @@ wrong blocks a send that should have worked.
 Chat takes image (and gguf audio) input and renders image content blocks out
 of the DuckDB store. The page is a mirror of the store with exactly two
 invalidation points: document select, and resume (`ctx.onResume` ->
-`refreshAfterResume`, v1.79.2). Nothing polls, and re-clicking the active
+`refreshAfterResume`, v1.79.2). Nothing polls (one exception since v2.0.282:
+a run the page is not subscribed to, below), and re-clicking the active
 conversation deliberately does not refetch. Resume exists because iOS Safari
 brings a backgrounded tab back with the heap it had, and every write the page
 makes is whole-value from that mirror (prompt keystroke PUT, params PUT,
@@ -1369,6 +1372,47 @@ identity (`editedContentBlocks`). A resync replaces every row object, and an
 editor rebuilt after one (a model switch changes its signature) carries
 entries made from the old objects. Matched by identity nothing was found, the
 save went out as text only, and the store's GC deleted the picture.
+
+### A model switch leaves the reply alone, and a lost run is watched
+
+Two halves of one owner decision (2026-11-24: the simplest thing that is
+reliable, that never kills a generation and never starts a second one).
+
+A model switch does not touch a reply in flight. `commitModelSwitch` used to
+abort the stream "so the old model stops generating", and it never did: an
+abort ends the page's subscription, and the server's run carries on and
+commits (`conversation_generate_api._Run`). What the abort did do was drop the
+partial reply from view, resync, find the run still going, and latch the page
+on "still generating on the server" with Send refusing, for a run it had been
+watching a moment earlier. The request names its model when it launches, so
+the reply now finishes on screen on the model that started it and the switch
+applies to the next message. `ABANDON.MODEL`, its status prefix and the note
+carried on the stream went with the abort. Load is refused while a reply is
+being generated, because loading or restarting a model can evict or kill the
+one that is generating.
+
+The other half is the state that latch exposed. A run the page is not
+subscribed to (the phone locked and the fetch was dropped; the conversation
+was opened mid-run) put "still generating" on screen, and nothing would ever
+say it had ended: the mirror's two invalidation points are select and resume,
+and neither is "the run finished". The status line said to press Stop or
+wait, and waiting never ended. `watchRemoteRun` is the one place the page now
+waits on the server: while that state holds, and only then, it asks
+`GET /v1/conversations/{id}/generate` (one small answer, no store read) with a
+growing delay, and fetches the conversation once when the answer turns false.
+It stops when the tab is hidden, when another conversation opens, when a local
+stream takes over and on teardown. The alternative was a re-subscribe
+endpoint; that needs the server to buffer and replay a run nobody is reading,
+which is more machinery on the path that must not fail.
+
+Three smaller fixes rode along. The row a stream owned drops its streaming
+class when the stream is released, on every ending, so the caret cannot blink
+on over a dead stream whose resync never lands. A conversation select in
+flight refuses Send and the row actions (`s.loadingId`): the rows on screen
+are still the previous conversation's, and a Send in that window was posted
+and then wiped from view by the select's own response. And the switch-model
+warning has its own element; inside the status line, any status write deleted
+it and its Cancel.
 
 ### Presets and the system prompt
 

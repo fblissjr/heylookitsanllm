@@ -396,6 +396,22 @@ class TestArbitration:
             _ACTIVE.pop(conv["id"], None)
 
     @pytest.mark.asyncio
+    async def test_generation_status_follows_the_active_run(self, ctx):
+        """The cheap question a page asks while it waits for a run it is not
+        subscribed to. It must agree with the conversation's own `generating`."""
+        client, store, _ = ctx
+        conv, _ = await make_conv(store)
+        url = f"/v1/conversations/{conv['id']}/generate"
+        assert (await client.get(url)).json() == {"conversation_id": conv["id"], "generating": False}
+        _ACTIVE[conv["id"]] = _Run(AbortEvent())
+        try:
+            assert (await client.get(url)).json() == {"conversation_id": conv["id"], "generating": True}
+            assert (await client.get(f"/v1/conversations/{conv['id']}")).json()["generating"] is True
+        finally:
+            _ACTIVE.pop(conv["id"], None)
+        assert (await client.get(url)).json()["generating"] is False
+
+    @pytest.mark.asyncio
     async def test_reasoning_end_signals_the_active_run_only(self, ctx):
         """Answers like the request route ({signalled}), 404 when nothing runs."""
         client, store, _ = ctx

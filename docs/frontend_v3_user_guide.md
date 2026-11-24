@@ -280,7 +280,8 @@ than blocked:
   message you are composing is work you did not know you lost.
 - Load cost is disclosed, never confirmed. If the model is not resident you are
   told your first message will load it, and a **Load** button lets you pay that
-  cost now. Choosing a model *is* choosing to pay for it.
+  cost now. Choosing a model *is* choosing to pay for it. Load is refused
+  while a reply is being generated; it works again when the reply finishes.
 - **Context size** (gguf models only): a select beside the model picker chooses
   the context the next load runs with. **Auto** is the default and is
   llama-server's own answer, sized from the model and fitted to memory; once
@@ -310,6 +311,10 @@ first.
 The request is built **on the server** from the stored conversation, not from
 what the page happens to be holding. Your prompt keystroke, your slider moves and
 your preset apply are all written to the store before the generation reads it.
+
+On a keyboard, Enter sends and Shift+Enter starts a new line. On a phone,
+Return starts a new line and the Send button sends, because a software
+keyboard has no Shift+Enter. `Cmd/Ctrl + Enter` sends from either.
 This is why a settings change takes effect on the next message with no explicit
 "apply" step.
 
@@ -321,7 +326,8 @@ Chats and the model picker on the first line and a compact mono readout line on
 the second showing context, cold state, cache reuse, tok/s, preset and
 system-prompt state at a glance; tapping the readout line opens the panel under
 the bar with the context select, load settings, Load, the chips and the engine
-details. The same controls are present as on desktop; only the arrangement
+details. When the chosen model is not loaded, the load controls show under
+the readout line by themselves, so Load is one tap away. The same controls are present as on desktop; only the arrangement
 changes.
 
 ### The wait before the first token
@@ -342,14 +348,18 @@ the tab all end your *subscription* to the stream. The run keeps going on the
 server and commits the complete answer when it finishes.
 
 The app tells you at the moment you leave — switching conversations says
-*"<title>" keeps generating*, and switching models says the reply in flight
-finishes on the previous model and saves here.
+*"<title>" keeps generating*. Switching models does not interrupt a reply at
+all: it finishes on screen on the model that started it, and your next message
+uses the new one.
 
 Come back and the whole reply is there. If it is still running when you return,
 the status line says so and the Send button reads **Stop**:
 
-> *Still generating — this reply was started elsewhere and is finishing on the
-> server.*
+> *Still generating on the server — the reply will appear here when it
+> finishes. Stop ends it and keeps the partial.*
+
+You do not have to press anything: the page checks on the run and shows the
+reply when it is done.
 
 Closing the tab or reloading is the one case that warns you first, because a
 reload also throws away anything not yet written.
@@ -435,15 +445,6 @@ The editor offers up to three buttons:
 Both destructive buttons refuse while a response is streaming, and say why.
 
 **Delete** removes a single message and leaves the rest of the thread intact.
-
-### The unsaved row
-
-Rarely, a message will appear with **Retry save** and **Discard** buttons and a
-note that it was not saved. This means the message exists on your screen but
-never reached the server. While one is present, sending and every destructive
-action is blocked, because the page's idea of message order no longer matches
-the store and acting on it could truncate the wrong part of the thread on the
-server. Resolve it either way and normal operation resumes.
 
 ---
 
@@ -607,6 +608,14 @@ Safari. The edit is stored nowhere until Save.
 ### Closed
 
 Kept as a record rather than deleted, so this section reads as a ledger.
+
+- *On a phone, Return sent the message, so there was no way to type a second
+  line* — closed in v2.0.282: Return is a newline on touch, and Send sends.
+
+- *Switching models while a reply was streaming made the reply vanish and left
+  the page on "still generating", refusing Send, until Stop was pressed* —
+  closed in v2.0.282: the reply finishes on screen, and a run the page is not
+  watching is checked on until it ends.
 
 - *The drawer mixed the conversation's own settings with preset management, so
   it was hard to tell which prompt was in force and what Apply, Save and Save
