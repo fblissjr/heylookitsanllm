@@ -673,22 +673,30 @@ def specials_stripper(template_info: Any) -> Callable[[str], str] | None:
 
 
 def starts_inside_thinking(template_info: Any, *, thinking_enabled: bool | None,
-                           continuing: bool = False, resumes_thinking: bool = False) -> bool:
+                           continuing: bool = False, resumes_thinking: bool = False,
+                           post_tool_response: bool = False) -> bool:
     """Whether the model's output starts INSIDE an open thinking block.
 
-    A resumed thought always does (every family). Otherwise only a marker
-    template that pre-fills an unclosed ``<think>`` into the generation
-    prompt (``prefills_thinking``) with thinking on, and never for a
-    continuation, which renders no generation prompt. The reasoning parser
-    and the MLX thinking budget both read this, so where the parser starts
-    counting thinking and where the budget starts counting it cannot differ.
+    A resumed thought always does (every family). Gemma-4's canonical chat
+    template leaves normal user turns outside the channel, but pre-fills
+    ``<|channel>thought\\n`` directly after a tool response when thinking is on.
+    Otherwise only a marker template that pre-fills an unclosed ``<think>``
+    into the generation prompt (``prefills_thinking``) with thinking on, and
+    never for a continuation, which renders no generation prompt. The reasoning
+    parser and the MLX thinking budget both read this, so where the parser
+    starts counting thinking and where the budget starts counting it cannot
+    differ.
     """
     from heylook_llm.providers.common.template_info import reply_follows_channel_hop
 
     if resumes_thinking:
         return True
-    if (reply_follows_channel_hop(template_info)
-            or getattr(template_info, "has_gemma_channel_structure", False)):
+    if reply_follows_channel_hop(template_info):
+        return False
+    if getattr(template_info, "has_gemma_channel_structure", False):
+        if post_tool_response and bool(thinking_enabled) and not continuing:
+            tmpl = getattr(template_info, "chat_template", None) or ""
+            return "tool_response" in tmpl and "<|channel>thought" in tmpl
         return False
     return (bool(thinking_enabled)
             and bool(getattr(template_info, "prefills_thinking", False))
@@ -699,6 +707,8 @@ def select_reasoning_parser(
     template_info: Any = None, *, thinking_enabled: bool | None = None,
     continuing: bool = False, strip_specials: bool = True,
     resumes_thinking: bool = False,
+    preserve_tokens: frozenset[str] = frozenset(),
+    post_tool_response: bool = False,
 ) -> ReasoningParser:
     """Pick a parser from ``ModelTemplateInfo``. ``None`` returns a
     pass-through so shutdown paths + unit tests don't need a full load.
@@ -741,11 +751,12 @@ def select_reasoning_parser(
     if template_info is None:
         return PassThroughParser()
 
-    strip_tokens = declared_specials(template_info)
+    strip_tokens = declared_specials(template_info) - preserve_tokens
 
     initial = starts_inside_thinking(
         template_info, thinking_enabled=thinking_enabled,
-        continuing=continuing, resumes_thinking=resumes_thinking)
+        continuing=continuing, resumes_thinking=resumes_thinking,
+        post_tool_response=post_tool_response)
     parser: ReasoningParser
     if getattr(template_info, "has_harmony_structure", False):
         parser = HarmonyChannelParser(initial_thinking=initial)
@@ -791,12 +802,21 @@ def parser_factory_for(provider: Any, chat_request: Any):
         provider.effective_thinking(chat_request) if provider is not None else False)
     continuing = chat_request.is_continuation()
     resumes_thinking = chat_request.resumes_thinking()
+    msgs = getattr(chat_request, "messages", None) or ()
+    post_tool_response = bool(msgs and getattr(msgs[-1], "role", None) == "tool")
+    preserve_tokens: frozenset[str] = frozenset()
+    if getattr(chat_request, "tools", None) and template_info is not None:
+        from heylook_llm.tool_calling import infer_tool_parser_name, tool_preserve_tokens
+
+        parser_name = infer_tool_parser_name(getattr(template_info, "chat_template", None))
+        preserve_tokens = tool_preserve_tokens(parser_name)
 
     def make_parser() -> ReasoningParser:
         return select_reasoning_parser(
             template_info, thinking_enabled=thinking_enabled,
             continuing=continuing, resumes_thinking=resumes_thinking,
-            strip_specials=True)
+            strip_specials=True, preserve_tokens=preserve_tokens,
+            post_tool_response=post_tool_response)
 
     return make_parser
 

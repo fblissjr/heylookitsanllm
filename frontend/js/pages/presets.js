@@ -44,7 +44,7 @@ import {
   slugifyPresetName,
   uniqueMarkdownFilenames,
 } from '../preset-io.js';
-import { runPresetAssist, toolCapableModels } from '../preset-assist.js';
+import { runPresetAssist, streamAnthropicMessage, toolCapableModels } from '../preset-assist.js';
 
 export default createPage({
   async setup(ctx) {
@@ -827,7 +827,7 @@ async function openAssistDialog(ctx) {
 
     try {
       const result = await runPresetAssist({
-        createMessage: (body, opts) => api.createMessage(body, opts),
+        streamMessage: (body, opts) => streamAnthropicMessage(body, opts),
         model,
         instruction,
         presets: freshPresets,
@@ -835,8 +835,17 @@ async function openAssistDialog(ctx) {
         signal: ac.signal,
         onProgress: (ev) => {
           if (!ctx.alive) return;
+          const stagedNote = ev.stagedCount ? ` (${ev.stagedCount} staged)` : '';
           if (ev.phase === 'thinking') {
-            progressEl.textContent = `Turn ${ev.turn}: model thinking${ev.stagedCount ? ` (${ev.stagedCount} staged)` : ''}…`;
+            progressEl.textContent = `Turn ${ev.turn}: waiting for model${stagedNote}…`;
+          } else if (ev.phase === 'stream') {
+            if (ev.deltaKind === 'thinking') {
+              progressEl.textContent = `Turn ${ev.turn}: thinking (${ev.chars} chars)${stagedNote}…`;
+            } else if (ev.deltaKind === 'tool_start' || ev.deltaKind === 'tool_json') {
+              progressEl.textContent = `Turn ${ev.turn}: drafting ${ev.toolName || 'tool'}${ev.chars ? ` (${ev.chars} chars)` : ''}${stagedNote}…`;
+            } else if (ev.deltaKind === 'text') {
+              progressEl.textContent = `Turn ${ev.turn}: writing summary (${ev.chars} chars)${stagedNote}…`;
+            }
           } else if (ev.phase === 'tool') {
             progressEl.textContent = `Turn ${ev.turn}: ${ev.summary} (${ev.stagedCount} staged)…`;
           }
@@ -1103,17 +1112,67 @@ function openImportDialog(ctx, plan, { source = 'import', assistantText = '' } =
       }
     }
   } else {
-    // Bulk import / assist: list New vs Already exist, and let the user
-    // either view combined diffs first OR import and apply directly.
+    // Bulk import / assist: list New vs Already exist with per-preset selection
+    // checkboxes so individual proposals can be kept or skipped before applying.
+    const checkedNames = new Set(
+      plan.items
+        .filter((it) => !it.existing || it.changed)
+        .map((it) => it.incoming.name),
+    );
+    const makeSelectableItem = (it, badgeEl) => {
+      const actionable = !it.existing || it.changed;
+      const cb = createEl('input', {
+        type: 'checkbox',
+        checked: actionable,
+        disabled: !actionable,
+        'aria-label': `Include ${it.incoming.name}`,
+      });
+      cb.addEventListener('change', () => {
+        if (cb.checked) checkedNames.add(it.incoming.name);
+        else checkedNames.delete(it.incoming.name);
+        syncBulkButtons();
+      });
+      const left = createEl('label', { class: 'preset-import__check' }, [
+        cb,
+        createEl('span', {}, [it.incoming.name]),
+      ]);
+      return createEl('li', {}, [left, badgeEl]);
+    };
+
+    const selectedPlan = () => {
+      const items = plan.items.filter((it) => checkedNames.has(it.incoming.name));
+      return {
+        items,
+        newItems: items.filter((i) => !i.existing),
+        existingItems: items.filter((i) => i.existing),
+        changedExistingItems: items.filter((i) => i.existing && i.changed),
+        unchangedExistingItems: items.filter((i) => i.existing && !i.changed),
+      };
+    };
+
+    const runSelectedApply = async (includeExisting, triggerBtn) => {
+      const subPlan = selectedPlan();
+      for (const b of footerBtns) b.disabled = true;
+      const prevLabel = triggerBtn.textContent;
+      triggerBtn.textContent = isAssist ? 'Applying…' : 'Importing…';
+      const result = await applyImportPlan(ctx, subPlan, { includeExisting, label: isAssist ? 'Apply' : 'Import' });
+      if (!ctx.alive) return;
+      close();
+      reconcileAppliedPresets(ctx, result.createdPresets, result.updatedPresets);
+      if (result.errors.length) {
+        status(ctx, `${result.summary} Failed: ${result.errors.join('; ')}`, true);
+      } else {
+        status(ctx, result.summary);
+      }
+      triggerBtn.textContent = prevLabel;
+    };
+
     if (plan.newItems.length) {
       bodyChildren.push(
         createEl('div', { class: 'preset-import__group' }, [
           createEl('div', { class: 'preset-import__group-title' }, [`New (${plan.newItems.length})`]),
           createEl('ul', { class: 'preset-import__list' }, plan.newItems.map((it) =>
-            createEl('li', {}, [
-              createEl('span', {}, [it.incoming.name]),
-              createEl('span', { class: 'preset-card__tag preset-import__badge--new' }, ['new']),
-            ]))),
+            makeSelectableItem(it, createEl('span', { class: 'preset-card__tag preset-import__badge--new' }, ['new'])))),
         ]),
       );
     }
@@ -1122,18 +1181,36 @@ function openImportDialog(ctx, plan, { source = 'import', assistantText = '' } =
         createEl('div', { class: 'preset-import__group' }, [
           createEl('div', { class: 'preset-import__group-title' }, [`Already exist (${plan.existingItems.length})`]),
           createEl('ul', { class: 'preset-import__list' }, plan.existingItems.map((it) =>
-            createEl('li', {}, [
-              createEl('span', {}, [it.incoming.name]),
-              createEl('span', { class: 'preset-card__tag' }, [it.changed ? 'exists · changed' : 'exists · unchanged']),
-            ]))),
+            makeSelectableItem(it, createEl('span', { class: 'preset-card__tag' }, [it.changed ? 'exists · changed' : 'exists · unchanged'])))),
         ]),
       );
     }
 
+    let applyPrimaryBtn = null;
+    let newOnlyBtn = null;
+    const syncBulkButtons = () => {
+      const sub = selectedPlan();
+      const nAll = sub.items.length;
+      if (applyPrimaryBtn) {
+        applyPrimaryBtn.disabled = nAll === 0;
+        applyPrimaryBtn.disarm?.();
+        if (plan.existingItems.length) {
+          applyPrimaryBtn.textContent = isAssist
+            ? `Apply selected (${nAll})`
+            : (nAll === plan.items.length ? 'Import and apply' : `Import selected (${nAll})`);
+        } else {
+          applyPrimaryBtn.textContent = `${isAssist ? 'Create' : 'Import'} ${nAll} preset${nAll === 1 ? '' : 's'}`;
+        }
+      }
+      if (newOnlyBtn) {
+        newOnlyBtn.disabled = sub.newItems.length === 0;
+      }
+    };
+
     if (plan.existingItems.length) {
       bodyChildren.push(
         createEl('p', { class: 'preset-import__note muted small' }, [
-          'Inspect all existing preset diffs in a combined view below, or apply now.',
+          'Uncheck any preset you want to skip, inspect all diffs below, or apply now.',
         ]),
       );
       diffsWrap = createEl('div', { class: 'preset-import__diffs', hidden: !isAssist },
@@ -1150,34 +1227,37 @@ function openImportDialog(ctx, plan, { source = 'import', assistantText = '' } =
         toggleDiffsBtn.textContent = show ? 'Hide combined diffs' : 'View combined diffs';
       });
 
-      const applyAllBtn = armedConfirm(
+      applyPrimaryBtn = armedConfirm(
         createEl('button', { type: 'button', class: 'btn btn--sm btn--primary' }, [
-          isAssist ? 'Apply all changes' : 'Import and apply',
+          isAssist ? `Apply selected (${checkedNames.size})` : 'Import and apply',
         ]),
-        () => runApply(true, applyAllBtn),
+        () => runSelectedApply(true, applyPrimaryBtn),
         'Remove stored prompt(s)?',
-        () => removesAnyPrompt,
-        () => plan.existingItems.map((it) => it.existing.id).join(','),
+        () => selectedPlan().changedExistingItems.some(
+          (it) => Boolean(it.existing?.system_prompt) && !it.incoming.system_prompt,
+        ),
+        () => [...checkedNames].sort().join(','),
       );
 
-      footerBtns.push(toggleDiffsBtn, applyAllBtn);
+      footerBtns.push(toggleDiffsBtn, applyPrimaryBtn);
       if (plan.newItems.length) {
-        const newOnlyBtn = createEl('button', { type: 'button', class: 'btn btn--sm' }, ['Import new only']);
-        newOnlyBtn.addEventListener('click', () => runApply(false, newOnlyBtn));
+        newOnlyBtn = createEl('button', { type: 'button', class: 'btn btn--sm' }, ['Import new only']);
+        newOnlyBtn.addEventListener('click', () => runSelectedApply(false, newOnlyBtn));
         footerBtns.push(newOnlyBtn);
       }
       const cancelBtn = createEl('button', { type: 'button', class: 'btn btn--sm btn--ghost' }, ['Cancel']);
       cancelBtn.addEventListener('click', close);
       footerBtns.push(cancelBtn);
     } else {
-      const applyBtn = createEl('button', { type: 'button', class: 'btn btn--sm btn--primary' }, [
+      applyPrimaryBtn = createEl('button', { type: 'button', class: 'btn btn--sm btn--primary' }, [
         `${isAssist ? 'Create' : 'Import'} ${plan.newItems.length} presets`,
       ]);
-      applyBtn.addEventListener('click', () => runApply(true, applyBtn));
+      applyPrimaryBtn.addEventListener('click', () => runSelectedApply(true, applyPrimaryBtn));
       const cancelBtn = createEl('button', { type: 'button', class: 'btn btn--sm btn--ghost' }, ['Cancel']);
       cancelBtn.addEventListener('click', close);
-      footerBtns.push(applyBtn, cancelBtn);
+      footerBtns.push(applyPrimaryBtn, cancelBtn);
     }
+    syncBulkButtons();
   }
 
   const box = createEl('div', { class: 'preset-import__box' }, [

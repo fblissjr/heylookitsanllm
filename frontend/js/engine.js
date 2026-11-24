@@ -114,12 +114,25 @@ function slotRows(slot) {
   const rows = [];
   for (const [key, node] of Object.entries(slot)) {
     if (isFact(node)) rows.push(factRow(key.replace(/_/g, ' '), factValue(key, node.value), node.provenance, node.source));
-    else if (node && typeof node === 'object') {
+    else if (Array.isArray(node)) {
+      rows.push(factRow(key.replace(/_/g, ' '), factValue(key, node), 'derived', null));
+    } else if (node && typeof node === 'object') {
+      let addedFact = false;
       for (const [sub, leaf] of Object.entries(node)) {
-        if (isFact(leaf)) rows.push(factRow(`${key} ${sub}`.replace(/_/g, ' '), leaf.value, leaf.provenance, leaf.source));
+        if (isFact(leaf)) {
+          rows.push(factRow(`${key} ${sub}`.replace(/_/g, ' '), leaf.value, leaf.provenance, leaf.source));
+          addedFact = true;
+        }
+      }
+      if (!addedFact) {
+        for (const [sub, leaf] of Object.entries(node)) {
+          if (leaf != null) {
+            rows.push(factRow(`${key} ${sub}`.replace(/_/g, ' '), factValue(sub, leaf), 'derived', null));
+          }
+        }
       }
     } else if (node != null) {
-      rows.push(factRow(key.replace(/_/g, ' '), node, 'observed', null));
+      rows.push(factRow(key.replace(/_/g, ' '), factValue(key, node), 'derived', null));
     }
   }
   return rows;

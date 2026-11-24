@@ -425,6 +425,57 @@ TASK_AUDIO_TONE_VS_SPEECH = EvalTask(
 )
 
 
+# ---------------------------------------------------------------------------
+# Tool-calling tasks (/v1/messages Anthropic tools)
+# ---------------------------------------------------------------------------
+
+_WEATHER_TOOLS = [{
+    "name": "get_weather",
+    "description": "Look up the current weather for a city.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "city": {"type": "string", "description": "City name, e.g. Austin"},
+        },
+        "required": ["city"],
+    },
+}]
+
+
+def _judge_single_tool_call(ctx: dict) -> Verdict:
+    calls = ctx.get("tool_uses") or []
+    matching = [c for c in calls if c.get("name") == "get_weather"]
+    if not matching:
+        return Verdict(
+            passed=False,
+            evidence=f"no get_weather tool_use emitted (stop_reason={ctx.get('stop_reason')!r}, calls={calls!r})",
+        )
+    city = str((matching[0].get("input") or {}).get("city") or "").lower()
+    city_ok = "austin" in city
+    stop_ok = ctx.get("stop_reason") == "tool_use"
+    return combine_verdicts(
+        Verdict(passed=city_ok, evidence=f"get_weather city={city!r}"),
+        Verdict(passed=stop_ok, evidence=f"stop_reason={ctx.get('stop_reason')!r}"),
+        marker_leak(ctx["content"]),
+    )
+
+
+TASK_TOOLS_SINGLE_CALL = EvalTask(
+    name="tools_single_call",
+    category="tools",
+    required_capabilities=("tools",),
+    description="Single Anthropic tool definition (get_weather); verifies the model emits a structured tool_use block with city='Austin' and stop_reason='tool_use' without leaking raw call markers.",
+    build_request=lambda: _text_body(
+        "What is the weather in Austin right now? Use the get_weather tool.",
+        max_tokens=ANSWER_BUDGET,
+        enable_thinking=False,
+        tools=_WEATHER_TOOLS,
+    ),
+    judge=_judge_single_tool_call,
+    timeout=300,
+)
+
+
 TASKS: list[EvalTask] = [
     TASK_AUDIO_SPEECH_KEYWORDS,
     TASK_AUDIO_TONE_VS_SPEECH,
@@ -439,4 +490,5 @@ TASKS: list[EvalTask] = [
     TASK_STOP_DISCIPLINE_LONG_FORM,
     TASK_TEXT_FACTUAL_QA_CAPITAL,
     TASK_TEXT_SINGLE_WORD_INSTRUCTION,
+    TASK_TOOLS_SINGLE_CALL,
 ]

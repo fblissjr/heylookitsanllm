@@ -779,10 +779,9 @@ function buildFitMeter({ model, overrides, onGate }) {
 export function createModelConfigEditor({ model, fields: allFields, draft, initialNote, onError, onSaved, onReload, onReset, onFitGate, onDraftChange, onTemplateChanged }) {
   const fields = allFields.filter((f) => !isHidden(f));
   const idPrefix = `mcfg-${model.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
-  // Editor-local baseline (what dirty is measured against). A copy, updated
-  // on each successful save -- reading model.config would go stale after the
-  // first save (the panel deliberately isn't rebuilt then), making a revert
-  // of a just-saved value read as "no change".
+  // Editor-local baseline (what dirty is measured against). A copy of the
+  // model's saved config at build time (models.js rebuilds the panel on save
+  // with the fresh config from the PATCH response).
   const saved = { ...(model.config || {}) };
   let busy = false;
 

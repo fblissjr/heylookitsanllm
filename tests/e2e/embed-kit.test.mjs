@@ -114,7 +114,7 @@ test('maxBytesFor and planBatches fail closed when limits are missing', () => {
 test('storage registry enforces registered keys and sweeps retired databases', async () => {
   assert.ok(RETIRED_DATABASES.includes('embed-kit:media-finder'));
   assert.ok(RETIRED_DATABASES.includes('heylook'));
-  assert.equal(STORAGE_REGISTRY.length, 2);
+  assert.equal(STORAGE_REGISTRY.length, 3);
   assert.throws(() => lsRead('unregistered.key'), /Unregistered browser storage key/);
   assert.throws(() => lsWrite('unregistered.key', 'v'), /Unregistered browser storage key/);
 
@@ -140,6 +140,10 @@ test('storage registry enforces registered keys and sweeps retired databases', a
     assert.equal(lsRead(STORAGE_KEYS.CHAT_LAST_CONVERSATION), 'conv-1');
     lsWrite(STORAGE_KEYS.CHAT_LAST_CONVERSATION, '');
     assert.equal(lsRead(STORAGE_KEYS.CHAT_LAST_CONVERSATION), null);
+    lsWrite(STORAGE_KEYS.NOTEBOOK_DRAFT_PROMPT, 'nb draft');
+    assert.equal(lsRead(STORAGE_KEYS.NOTEBOOK_DRAFT_PROMPT), 'nb draft');
+    lsWrite(STORAGE_KEYS.NOTEBOOK_DRAFT_PROMPT, '');
+    assert.equal(lsRead(STORAGE_KEYS.NOTEBOOK_DRAFT_PROMPT), null);
   } finally {
     delete globalThis.localStorage;
     delete globalThis.indexedDB;

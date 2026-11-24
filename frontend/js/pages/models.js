@@ -56,6 +56,7 @@ export default createPage({
         // The OPEN panel's draft: handed the whole Map, this was always false
         // and Escape closed a panel holding an unsaved template.
         if (s.configOpenId && !hasUnsavedTemplate(s.configDrafts.get(s.configOpenId))) {
+          clearFitGate(ctx, s.configOpenId);
           s.configOpenId = null;
           renderModelList(ctx);
           return true;
@@ -397,6 +398,29 @@ function buildEnginePanel(ctx, model) {
   return panel;
 }
 
+function syncRowLoadBtn(ctx, model) {
+  const s = ctx.state;
+  const row = s.listEl?.querySelector(`.model-row[data-model-id="${CSS.escape(model.id)}"]`);
+  const btn = row?.querySelector('.model-row__actions button');
+  if (!btn) return;
+  const busy = s.loadingIds.has(model.id);
+  const reloading = s.reloadingIds.has(model.id);
+  const fitGate = !model.loaded ? s.fitGates.get(model.id) : null;
+  btn.textContent = busy
+    ? (reloading ? 'Reloading…' : (model.loaded ? 'Unloading…' : 'Loading…'))
+    : (model.loaded ? 'Unload' : 'Load');
+  btn.disabled = busy || Boolean(fitGate);
+  btn.title = fitGate || '';
+}
+
+function clearFitGate(ctx, modelId) {
+  const s = ctx.state;
+  if (!modelId || !s.fitGates.has(modelId)) return;
+  s.fitGates.delete(modelId);
+  const m = s.models.find((row) => row.id === modelId);
+  if (m) syncRowLoadBtn(ctx, m);
+}
+
 async function toggleLoad(ctx, model) {
   const s = ctx.state;
   if (s.loadingIds.has(model.id)) return;
@@ -409,7 +433,9 @@ async function toggleLoad(ctx, model) {
   }
 
   s.loadingIds.add(model.id);
-  renderModelList(ctx);
+  // Update the busy row in place rather than rebuilding every row and any open
+  // config editor (FB-21).
+  syncRowLoadBtn(ctx, model);
 
   try {
     if (wasLoaded) {
@@ -468,6 +494,7 @@ function flushLoadNote(ctx) {
 async function toggleConfig(ctx, model) {
   const s = ctx.state;
   if (s.configOpenId === model.id) {
+    clearFitGate(ctx, model.id);
     s.configOpenId = null;
     renderModelList(ctx);
     return;
@@ -487,6 +514,7 @@ async function toggleConfig(ctx, model) {
     }
     if (!ctx.alive) return;
   }
+  if (s.configOpenId && s.configOpenId !== model.id) clearFitGate(ctx, s.configOpenId);
   s.configOpenId = model.id;
   renderModelList(ctx);
 }
@@ -562,7 +590,7 @@ async function reloadModel(ctx, model) {
   if (s.loadingIds.has(model.id)) return;
   s.loadingIds.add(model.id);
   s.reloadingIds.add(model.id);
-  renderModelList(ctx);
+  syncRowLoadBtn(ctx, model);
 
   try {
     // Server-owned reload (v1.62.0): one call, so a dying browser can no

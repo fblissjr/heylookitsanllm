@@ -20,6 +20,11 @@ import { createPresetBar, paintPresetChip } from '../preset-bar.js';
 import { createPromptSection } from '../prompt-section.js';
 import { createDocumentWriter } from '../document-writer.js';
 import { registerPageHotkeys } from '../hotkeys.js';
+import { lsRead, lsWrite, STORAGE_KEYS } from '../storage.js';
+
+const DRAFT_PROMPT_KEY = STORAGE_KEYS.NOTEBOOK_DRAFT_PROMPT;
+const readDraftPrompt = () => lsRead(DRAFT_PROMPT_KEY) || '';
+const writeDraftPrompt = (v) => lsWrite(DRAFT_PROMPT_KEY, v || null);
 
 // Match chat's streaming repaint rate: one paint per animation frame is up to
 // 120/s on a ProMotion phone and nobody reads at that rate.
@@ -31,6 +36,7 @@ export default createPage({
     s.notebooks = [];
     s.models = [];
     s.activeId = null;
+    s.loadingId = null;
     s.title = '';
     s.content = '';
     s.systemPrompt = '';
@@ -74,10 +80,14 @@ export default createPage({
     s.promptSection = createPromptSection(ctx, {
       owner: () => s.activeId,
       get: () => s.systemPrompt,
-      set: (v) => { s.systemPrompt = v ?? ''; },
+      set: (v) => {
+        s.systemPrompt = v ?? '';
+        // Park pre-create prompt in browser storage, matching chat (FB-22).
+        if (!s.activeId) writeDraftPrompt(s.systemPrompt);
+      },
       persist: (v, id, opts) => putSystemPrompt(ctx, id, v, opts),
       onEdit: () => s.presetBar.updateProvenance(), // prompt edits move the provenance line live
-    label: 'System prompt for this notebook',
+      label: 'System prompt for this notebook',
     });
 
     // Notebook consumes messagesParams() for generate-at-cursor, so it gets full
@@ -153,6 +163,8 @@ export default createPage({
       // The sampler cache is module state shared with chat: without this the
       // first notebook started from whatever chat last had open.
       hydrateDocParams(null);
+      s.systemPrompt = readDraftPrompt();
+      s.promptSection.setValue(s.systemPrompt);
       renderEditor(ctx);
     }
   },
@@ -408,6 +420,7 @@ async function newNotebook(ctx) {
       applied_preset_id: (draft ? s.appliedPresetId : preset?.id) || undefined,
     });
     if (!ctx.alive) return;
+    if (draft) writeDraftPrompt(null);
     s.notebooks.unshift(nb);
     renderList(ctx);
     await selectNotebook(ctx, nb.id);
@@ -434,6 +447,7 @@ async function deleteNotebook(ctx, id) {
     s.scheduleSave.cancel();
     s.dirty = false;
     s.activeId = null;
+    s.loadingId = null;
     s.title = '';
     s.content = '';
     s.systemPrompt = '';
@@ -461,11 +475,19 @@ async function selectNotebook(ctx, id) {
   s.scheduleSave.flush();
   s.promptSection.flush(); // pending prompt write lands against the OLD notebook first
   s.activeId = id;
+  s.loadingId = id;
+  // Lock fields while the incoming notebook loads so typing cannot write the
+  // previous notebook's text onto the new id (FB-71).
+  s.titleInput.disabled = true;
+  s.contentTextarea.disabled = true;
   showStatus(ctx, '');
   renderList(ctx);
   try {
     const nb = await api.getNotebook(id, { signal: ctx.signal });
     if (!ctx.alive || s.activeId !== id) return;
+    s.loadingId = null;
+    s.titleInput.disabled = false;
+    s.contentTextarea.disabled = false;
     s.title = nb.title ?? '';
     s.content = nb.content ?? '';
     s.systemPrompt = nb.system_prompt ?? '';
@@ -481,6 +503,9 @@ async function selectNotebook(ctx, id) {
     drawer.requestRebuild({ force: true });
   } catch (err) {
     if (ctx.alive && s.activeId === id) {
+      s.loadingId = null;
+      s.titleInput.disabled = false;
+      s.contentTextarea.disabled = false;
       showStatus(ctx, `Could not load notebook: ${err.message}`, true);
       // The doc never loaded: drop back to "no active notebook" so the
       // stale editor state can't be edited/saved under the wrong id, and so
@@ -511,7 +536,7 @@ const KEEPALIVE_MAX_BYTES = 60 * 1024;
 async function doSave(ctx, { keepalive = false } = {}) {
   const s = ctx.state;
   const id = s.activeId;
-  if (!id || !s.dirty) return;
+  if (!id || s.loadingId === id || !s.dirty) return;
   s.dirty = false;
   const payload = {
     title: s.title,
@@ -695,7 +720,28 @@ async function refreshAfterResume(ctx) {
     let docChanged = false;
     if (list?.notebooks) {
       const held = s.notebooks.find((n) => n.id === nbId)?.updated_at;
-      const fresh = list.notebooks.find((n) => n.id === nbId)?.updated_at;
+      const freshRow = list.notebooks.find((n) => n.id === nbId);
+      // Active notebook was deleted on another device: clear it so saves
+      // stop failing against a gone row (FB-76).
+      if (nbId && !freshRow && s.activeId === nbId) {
+        if (s.gen) stopGenerate(ctx);
+        s.scheduleSave.cancel();
+        s.dirty = false;
+        s.activeId = null;
+        s.title = '';
+        s.content = '';
+        s.systemPrompt = '';
+        s.appliedPresetId = null;
+        s.notebooks = list.notebooks;
+        hydrateDocParams(null);
+        s.promptSection.setValue('');
+        s.presetBar.syncIndicator();
+        renderEditor(ctx);
+        renderList(ctx);
+        showStatus(ctx, 'This notebook was deleted elsewhere.');
+        return;
+      }
+      const fresh = freshRow?.updated_at;
       const unchanged = Boolean(held && fresh && held === fresh);
       let adopted = unchanged;
       if (nbId && !unchanged) {

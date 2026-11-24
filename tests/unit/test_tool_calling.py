@@ -370,3 +370,96 @@ class TestHeylookCliPresetAssist:
         assert after["Reviewer"]["system_prompt"] == "Review code carefully. Avoid em-dashes."
         assert after["Reviewer"]["params"] == {"temperature": 0.3}
         assert len(seen_payloads) == 4
+
+
+@pytest.mark.unit
+class TestGemma4AndDiffusionGuards:
+    def test_strip_specials_preserves_gemma4_tool_delimiters_when_tools_active(self):
+        from types import SimpleNamespace
+        from heylook_llm.reasoning_parser import parse_reasoning, parser_factory_for
+
+        info = SimpleNamespace(
+            chat_template="...<|tool_call>...<tool_call|>...",
+            has_gemma_channel_structure=True,
+            has_harmony_structure=False,
+            has_recipient_channel_structure=False,
+            has_thinking_markers=False,
+            prefills_thinking=False,
+            special_tokens=frozenset({"<|tool_call>", "<tool_call|>", '<|"|>', "<turn|>"}),
+        )
+
+        class FakeProv:
+            def template_info(self):
+                return info
+
+            def effective_thinking(self, req):
+                return False
+
+        raw = '<|tool_call>call:get_preset{name:<|"|>Coder<|"|>}<tool_call|><turn|>'
+        req_with_tools = ChatRequest(
+            model="gemma4",
+            messages=[ChatMessage(role="user", content="hi")],
+            tools=[{"type": "function", "function": {"name": "get_preset", "parameters": {}}}],
+        )
+        content_with, _ = parse_reasoning(raw, parser_factory_for(FakeProv(), req_with_tools)())
+        assert content_with == '<|tool_call>call:get_preset{name:<|"|>Coder<|"|>}<tool_call|>'
+
+        req_no_tools = ChatRequest(
+            model="gemma4",
+            messages=[ChatMessage(role="user", content="hi")],
+        )
+        content_without, _ = parse_reasoning(raw, parser_factory_for(FakeProv(), req_no_tools)())
+        assert "<|tool_call>" not in content_without
+        assert "<turn|>" not in content_without
+
+    def test_diffusion_checkpoint_does_not_advertise_tools(self, tmp_path):
+        from heylook_llm.capabilities import template_supports_tools
+
+        (tmp_path / "config.json").write_text(
+            json.dumps({"model_type": "diffusion_gemma", "canvas_length": 256}),
+            encoding="utf-8",
+        )
+        (tmp_path / "tokenizer_config.json").write_text(
+            json.dumps({"chat_template": "{% if tools %}<|tool_call>{% endif %}"}),
+            encoding="utf-8",
+        )
+        assert template_supports_tools(str(tmp_path)) is False
+
+    def test_gemma4_post_tool_response_starts_inside_thinking(self):
+        from types import SimpleNamespace
+        from heylook_llm.reasoning_parser import parse_reasoning, parser_factory_for
+
+        info = SimpleNamespace(
+            chat_template="{% elif ns.prev_message_type == 'tool_response' and enable_thinking %}<|channel>thought\n{% endif %}<|tool_call>",
+            has_gemma_channel_structure=True,
+            has_harmony_structure=False,
+            has_recipient_channel_structure=False,
+            has_thinking_markers=False,
+            prefills_thinking=False,
+            special_tokens=frozenset({"<|tool_call>", "<tool_call|>", '<|"|>', "<turn|>"}),
+        )
+
+        class FakeProv:
+            def template_info(self):
+                return info
+
+            def effective_thinking(self, req):
+                return True
+
+        req = ChatRequest(
+            model="gemma4",
+            messages=[
+                ChatMessage(role="user", content="Update Coder"),
+                ChatMessage(
+                    role="assistant",
+                    content="",
+                    tool_calls=[{"id": "c1", "type": "function", "function": {"name": "list_presets", "arguments": "{}"}}],
+                ),
+                ChatMessage(role="tool", tool_call_id="c1", content='{"presets": []}'),
+            ],
+            tools=[{"type": "function", "function": {"name": "list_presets", "parameters": {}}}],
+        )
+        raw = "All presets have been staged.<channel|>Done! I staged updates for all 3 presets.<turn|>"
+        content, thinking = parse_reasoning(raw, parser_factory_for(FakeProv(), req)())
+        assert thinking == "All presets have been staged."
+        assert content == "Done! I staged updates for all 3 presets."

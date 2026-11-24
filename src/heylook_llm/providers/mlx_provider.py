@@ -166,13 +166,15 @@ def _thinking_budget_criteria(request: ChatRequest, effective_request: dict,
     from ..reasoning_parser import starts_inside_thinking
 
     opener, closer = markers
+    post_tool = bool(request.messages and request.messages[-1].role == "tool")
     return ThinkingBudgetCriteria(
         tokenizer, int(budget), thinking_end_token=closer, thinking_start_token=opener,
         enable_thinking=True,
         prompt_preopens_thinking=starts_inside_thinking(
             template_info, thinking_enabled=True,
             continuing=request.is_continuation(),
-            resumes_thinking=request.resumes_thinking()))
+            resumes_thinking=request.resumes_thinking(),
+            post_tool_response=post_tool))
 
 
 def _end_thinking_criteria(request: ChatRequest, effective_request: dict,
@@ -193,13 +195,15 @@ def _end_thinking_criteria(request: ChatRequest, effective_request: dict,
     from ..reasoning_parser import starts_inside_thinking
 
     opener, closer = markers
+    post_tool = bool(request.messages and request.messages[-1].role == "tool")
     return ThinkingBudgetCriteria(
         tokenizer, 0, thinking_end_token=closer, thinking_start_token=opener,
         enable_thinking=True,
         prompt_preopens_thinking=starts_inside_thinking(
             template_info, thinking_enabled=True,
             continuing=request.is_continuation(),
-            resumes_thinking=request.resumes_thinking()))
+            resumes_thinking=request.resumes_thinking(),
+            post_tool_response=post_tool))
 
 
 def _structured_processors(request: ChatRequest, effective_request: dict,

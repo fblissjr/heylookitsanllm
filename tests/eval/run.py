@@ -122,9 +122,14 @@ def read_messages_response(r: dict) -> dict:
     blocks = r.get("content") or []
     thinking = [b.get("thinking") or b.get("text") or "" for b in blocks
                 if b.get("type") == "thinking"]
+    tool_uses = [
+        {"id": b.get("id"), "name": b.get("name"), "input": b.get("input")}
+        for b in blocks if b.get("type") == "tool_use"
+    ]
     return {
         "content": "".join(b.get("text", "") for b in blocks if b.get("type") == "text"),
         "thinking": "".join(thinking) if thinking else None,
+        "tool_uses": tool_uses,
         "completion_tokens": (r.get("usage") or {}).get("output_tokens"),
         "thinking_tokens": (r.get("usage") or {}).get("thinking_tokens"),
         "stop_reason": r.get("stop_reason"),

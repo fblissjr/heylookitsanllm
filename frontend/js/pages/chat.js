@@ -256,7 +256,10 @@ export default createPage({
     ctx.onTeardown(() => stopRemoteWatch(ctx));
 
     const [models, convList] = await Promise.all([
-      api.listModels({ signal: ctx.signal }).catch(() => ({ data: [] })),
+      api.listModels({ signal: ctx.signal }).catch((err) => {
+        if (ctx.alive) showStatus(ctx, `Could not load models: ${err.message}`, true);
+        return { data: [] };
+      }),
       api.listConversations({ signal: ctx.signal }).catch((err) => {
         if (ctx.alive) showStatus(ctx, `Could not load conversations: ${err.message}`, true);
         // `failed` distinguishes "no conversations" from "we don't know":
@@ -296,6 +299,11 @@ export default createPage({
       hydrateDocParams(null);
       refreshThinkBtn(ctx); // ran above against the cache this just replaced
       renderMessages(ctx);
+    } else {
+      // Even when the list fetch failed, clear the shared sampler cache so
+      // notebook params do not linger under chat (FB-40).
+      hydrateDocParams(null);
+      refreshThinkBtn(ctx);
     }
     // First paint of the sysprompt chip: the preset-fed funnel above only
     // runs once the preset list lands (or never, if that fetch fails), and
@@ -1185,6 +1193,9 @@ function setAppliedPreset(ctx, presetId) {
 
 function setSystemPrompt(ctx, value) {
   const s = ctx.state;
+  // Cancel any pending debounced keystroke write from the prompt box before
+  // preset Apply writes and rebuilds the drawer (FB-58).
+  s.promptSection?.cancel?.();
   const changed = value !== s.systemPrompt;
   s.systemPrompt = value;
   if (!s.activeId) {
@@ -1489,6 +1500,7 @@ async function deleteConversation(ctx, convId) {
     s.textarea.value = '';
     autoGrow(s.textarea);
     s.composerDrafts.delete(NO_DOC);
+    clearPendingAttachments(ctx);
     s.activeId = null;
     s.messages = [];
     s.systemPrompt = null;
@@ -1553,9 +1565,11 @@ async function cloneConversation(ctx, convId) {
     if (listed?.conversations) s.conversations = listed.conversations;
     else s.conversations.unshift(cloned);  // list fetch failed: a stale shape beats no row
     renderConvList(ctx);
+    const leaving = Boolean(s.stream?.launched);
     await selectConversation(ctx, cloned.id);
     s.rootEl.classList.remove('chat--convs-open');
-    showStatus(ctx, 'Conversation cloned.');
+    const prevNote = leaving ? s.statusEl.textContent : '';
+    showStatus(ctx, prevNote ? `Conversation cloned. ${prevNote}` : 'Conversation cloned.');
   } catch (err) {
     if (ctx.alive) showStatus(ctx, `Clone failed: ${err.message}`, true);
   } finally {
@@ -1589,7 +1603,16 @@ async function selectConversation(ctx, convId) {
   s.loadingId = convId;
   lsWrite(LAST_CONV_KEY, convId);
   restoreComposerDraft(ctx);
+  // Clear the previous conversation's remote-run state before the fetch so
+  // Stop cannot target the incoming conversation while it loads (FB-42).
+  stopRemoteWatch(ctx);
+  if (s.remoteGenerating) {
+    s.remoteGenerating = false;
+    setSendButton(s, false);
+    notifyChatActivity(ctx);
+  }
   s.editingId = null;
+  s.orphanEditorId = null;
   s.msgNodes = new Map(); // node reuse is per-document; never carry rows across
   clearPendingAttachments(ctx); // staged attachments belong to the conv they were picked in
   closePromptPreview(ctx);      // so does a preview of what the one being left would send
@@ -1991,6 +2014,9 @@ function buildActions(ctx, msg) {
   actions.push(btn('Edit', () => {
     // loud, not silent: renderMessages would orphan the stream placeholder
     if (refuseWhileStreaming(ctx)) return;
+    if (ctx.state.editingId != null && ctx.state.editingId !== msg.id) {
+      ctx.state.msgNodes?.get(ctx.state.editingId)?.node?.__revokeStaged?.();
+    }
     ctx.state.editingId = msg.id;
     renderMessages(ctx);
   }));
@@ -2081,23 +2107,43 @@ function buildEditEl(ctx, msg) {
     editAttachBtn.addEventListener('click', () => editFileInput.click());
   }
 
-  const cancel = () => {
+  const revokeStagedMedia = () => {
     // Staged-but-unsaved blobs die with the editor; a kept entry owns no
     // object URL (it renders from the store's url source), so only the new
     // ones are revoked.
     for (const list of [editMedia.image, editMedia.audio]) {
-      for (const e of list) if (e.previewUrl) URL.revokeObjectURL(e.previewUrl);
+      for (const e of list) {
+        if (e.previewUrl) {
+          URL.revokeObjectURL(e.previewUrl);
+          e.previewUrl = null;
+        }
+      }
+    }
+  };
+
+  let saving = false;
+
+  const cancel = () => {
+    if (saving) return;
+    revokeStagedMedia();
+    if (s.orphanEditorId === msg.id) {
+      s.messages = s.messages.filter((m) => m.id !== msg.id);
+      s.orphanEditorId = null;
     }
     s.editingId = null; renderMessages(ctx); keepRowInView(ctx, msg);
   };
 
   const save = async (regenerateAfter, continueAfter = false) => {
+    if (saving) return;
     // The truncate-then-stream branches are destructive; with a stream
     // already running they mangle the thread (the truncation commits, the
     // new stream silently no-ops, the old one paints into a detached node).
     // Same guards regenerate() and deleteMessage() carry -- loud, not silent.
     if ((regenerateAfter || continueAfter)
         && refuseWhileStreaming(ctx)) return;
+    saving = true;
+    const prevDisabled = buttons.map((b) => b.disabled);
+    for (const b of buttons) b.disabled = true;
     // Everything below is anchored to the conversation the edit belongs to,
     // captured NOW: s.activeId read after an await can be a different
     // conversation (switch mid-PUT), and a position-anchored mutation
@@ -2105,21 +2151,21 @@ function buildEditEl(ctx, msg) {
     const convId = s.activeId;
     const next = textarea.value;
     const changes = {};
-    // Content travels as BLOCKS whenever the row holds media, so the kept
-    // blocks go back verbatim; a text-only row keeps sending a plain string,
-    // which is the shape the store, the wire and every existing test expect.
-    // Removing the last attachment therefore sends a string on purpose: the
-    // blob loses its last reference and the GC reclaims it, which IS what
-    // "remove the image" means.
-    if (next !== msg.content || mediaDirty) {
-      changes.content = hasEditMedia()
-        ? await editedContentBlocks(msg.content_blocks, next, editMedia.image, editMedia.audio)
-        : next;
-    }
-    // empty = clear: the PUT sends null so the row's thinking column clears
-    // rather than storing an empty string that still renders a block
-    if (thinkArea && thinkArea.value !== msg.thinking) changes.thinking = thinkArea.value || null;
     try {
+      // Content travels as BLOCKS whenever the row holds media, so the kept
+      // blocks go back verbatim; a text-only row keeps sending a plain string,
+      // which is the shape the store, the wire and every existing test expect.
+      // Removing the last attachment therefore sends a string on purpose: the
+      // blob loses its last reference and the GC reclaims it, which IS what
+      // "remove the image" means.
+      if (next !== msg.content || mediaDirty) {
+        changes.content = hasEditMedia()
+          ? await editedContentBlocks(msg.content_blocks, next, editMedia.image, editMedia.audio)
+          : next;
+      }
+      // empty = clear: the PUT sends null so the row's thinking column clears
+      // rather than storing an empty string that still renders a block
+      if (thinkArea && thinkArea.value !== msg.thinking) changes.thinking = thinkArea.value || null;
       if (Object.keys(changes).length) {
         const updated = await api.updateMessage(convId, msg.id, changes);
         if (!ctx.alive) return;
@@ -2137,9 +2183,15 @@ function buildEditEl(ctx, msg) {
           target.thinking = updated.thinking;
         }
       }
+      revokeStagedMedia();
       if (s.activeId !== convId) return; // switched away mid-save: edit saved, nothing destructive
+      if (s.statusEl.textContent.startsWith('Save failed:')) showStatus(ctx, '');
       s.editingId = null;
-      if (regenerateAfter) {
+      s.orphanEditorId = null;
+      if ((regenerateAfter || continueAfter) && (s.stream || s.remoteGenerating)) {
+        renderMessages(ctx);
+        showStatus(ctx, 'Saved — a response is already streaming, so regeneration was not started.');
+      } else if (regenerateAfter) {
         // Everything after the edited message goes (visually -- the server
         // owns the real truncation). Anchor on the row after it when one
         // exists; with the edited row last, a plain append generates fresh.
@@ -2163,6 +2215,9 @@ function buildEditEl(ctx, msg) {
       if (ctx.alive) showStatus(ctx, `Save failed: ${err.message}`, true);
       // the PUT/truncate saga may have half-applied -- adopt server truth
       if (ctx.alive) resyncMessages(ctx, convId);
+    } finally {
+      saving = false;
+      buttons.forEach((b, i) => { b.disabled = prevDisabled[i]; });
     }
   };
 
@@ -2190,22 +2245,22 @@ function buildEditEl(ctx, msg) {
     }, ['Preview prompt']);
     previewBtn.addEventListener('click', async () => {
       const close = () => { previewHost.hidden = true; previewHost.replaceChildren(); };
-      // Same content the primary action would send, media included -- a
-      // preview built from the text alone would quietly show a prompt with
-      // no image in it and read as if the model were being sent one.
-      const edits = {
-        message_id: msg.id,
-        content: hasEditMedia()
-          ? await editedContentBlocks(msg.content_blocks, textarea.value,
-            editMedia.image, editMedia.audio)
-          : textarea.value,
-      };
-      if (thinkArea) edits.thinking = thinkArea.value || null;
-      const nextMsg = s.messages.find((m) => m.position > msg.position);
-      const shape = msg.role === 'assistant'
-        ? { mode: 'continue', message_id: msg.id }
-        : nextMsg ? { mode: 'regenerate', message_id: nextMsg.id } : { mode: 'append' };
       try {
+        // Same content the primary action would send, media included -- a
+        // preview built from the text alone would quietly show a prompt with
+        // no image in it and read as if the model were being sent one.
+        const edits = {
+          message_id: msg.id,
+          content: hasEditMedia()
+            ? await editedContentBlocks(msg.content_blocks, textarea.value,
+              editMedia.image, editMedia.audio)
+            : textarea.value,
+        };
+        if (thinkArea) edits.thinking = thinkArea.value || null;
+        const nextMsg = s.messages.find((m) => m.position > msg.position);
+        const shape = msg.role === 'assistant'
+          ? { mode: 'continue', message_id: msg.id }
+          : nextMsg ? { mode: 'regenerate', message_id: nextMsg.id } : { mode: 'append' };
         const body = await api.previewPrompt(s.activeId, {
           ...shape, edits,
           overrides: { model: s.modelSelect.value, ...samplerParams(currentModel(ctx)) },
@@ -2273,6 +2328,7 @@ function buildEditEl(ctx, msg) {
   ]);
   // Handover points for carryEditorDraft when this editor is rebuilt.
   el.__editMedia = editMedia;
+  el.__revokeStaged = revokeStagedMedia;
   el.__adoptMedia = (prev) => {
     if (!prev) return;
     editMedia.image = prev.image;
@@ -2437,6 +2493,7 @@ function mergeServerRows(ctx, serverRows) {
   const orphanEditor = s.editingId != null && !serverRows.some((r) => r.id === s.editingId)
     ? s.messages.find((m) => m.id === s.editingId) ?? null
     : null;
+  s.orphanEditorId = orphanEditor ? orphanEditor.id : null;
   if (orphanEditor) {
     showStatus(ctx, 'The message you are editing was deleted elsewhere — your draft is kept until you cancel or save.', true);
   }
@@ -2625,8 +2682,14 @@ function stopRemote(ctx) {
       return;  // leave the flag ON: as far as we know it is still running
     }
     // 404 = the server has nothing active: it already finished. Not an error,
-    // but not a stop either -- adopt the truth from the store either way.
+    // but not a stop either -- adopt the truth from the store without letting
+    // resyncUntilSettled announce "Stopped." (FB-49).
     setRemoteGenerating(ctx, false);
+    if (status === 404) {
+      showStatus(ctx, '');
+      resyncMessages(ctx, convId);
+      return;
+    }
     // The abort is asynchronous server-side: the provider has to observe the
     // flag, unwind, and win the DB writer queue. One immediate resync almost
     // always precedes the commit, so the partial would stay invisible until a
@@ -2694,11 +2757,27 @@ async function refreshAfterResume(ctx) {
     if (!ctx.alive) return;
     let docChanged = false;
     if (list?.conversations) {
+      const activeRow = list.conversations.find((c) => c.id === convId);
+      if (convId && !activeRow && s.activeId === convId && !s.stream) {
+        // The open conversation was deleted on another device/tab (FB-46).
+        s.activeId = null;
+        s.messages = [];
+        s.systemPrompt = null;
+        s.appliedPresetId = null;
+        s.editingId = null;
+        s.orphanEditorId = null;
+        setRemoteGenerating(ctx, false);
+        hydrateDocParams(null);
+        refreshThinkBtn(ctx);
+        renderMessages(ctx);
+        docChanged = true;
+        showStatus(ctx, 'This conversation was deleted elsewhere.');
+      }
       const held = s.conversations.find((c) => c.id === convId)?.updated_at;
-      const fresh = list.conversations.find((c) => c.id === convId)?.updated_at;
+      const fresh = activeRow?.updated_at;
       const unchanged = Boolean(held && fresh && held === fresh);
       let adopted = unchanged;
-      if (convId && !unchanged) {
+      if (convId && activeRow && !unchanged) {
         const conv = await api.getConversation(convId, { signal: ctx.signal }).catch(() => null);
         if (!ctx.alive) return;
         if (conv && s.activeId === convId) {
@@ -2719,13 +2798,9 @@ async function refreshAfterResume(ctx) {
       // WebKit removes the input without a blur at all. Leave the list alone
       // until the rename settles -- the next resume catches up.
       // The list carries `generating` for every row; adopt the ACTIVE one
-      // even when the body was not refetched. Reaching it only through
-      // adoptConversationMeta (which runs only when updated_at moved) left a
-      // real stick: a run that generated nothing never moves updated_at, so
-      // the composer read "Stop" and refused every send until the user
-      // navigated away and back.
-      const activeRow = list.conversations.find((c) => c.id === convId);
-      if (activeRow && 'generating' in activeRow) {
+      // even when the body was not refetched, guarded on conversation identity
+      // in case the user switched while the awaits ran (FB-41).
+      if (activeRow && 'generating' in activeRow && s.activeId === convId) {
         setRemoteGenerating(ctx, Boolean(activeRow.generating));
       }
       const renaming = Boolean(s.convListEl.querySelector('.conv-item__rename'));
@@ -2786,6 +2861,7 @@ async function deleteMessage(ctx, msg) {
   try {
     await api.deleteMessage(convId, msg.id);
     if (!ctx.alive || s.activeId !== convId) return;
+    if (s.statusEl.textContent.startsWith('Delete failed:')) showStatus(ctx, '');
     s.messages = s.messages.filter((m) => m.id !== msg.id);
     renderMessages(ctx);
   } catch (err) {
@@ -2996,8 +3072,9 @@ async function addPendingFiles(ctx, files, kind, target = composerTarget(ctx)) {
   // makes just above, for the same reason (a blob accepted here and rejected
   // at send is a blob the user has to hunt down and clear).
   if (target.role !== 'user' && currentProvider(ctx) === 'mlx') {
+    const article = /^[aeiou]/i.test(target.role) ? 'an' : 'a';
     showStatus(ctx, `This model puts ${kind.label}s on user messages only -- `
-      + `a gguf model can attach one to a ${target.role} message.`, true);
+      + `a gguf model can attach one to ${article} ${target.role} message.`, true);
     return;
   }
   const pendingAtStart = target.list(kind);
@@ -3073,7 +3150,7 @@ async function priceStagedImages(ctx) {
       sizes: sized.flatMap((i) => [[i.width, i.height], [i.sourceWidth, i.sourceHeight]]),
     }, { signal: ctx.signal });
   } catch (e) {
-    if (!ctx.alive) return;
+    if (!ctx.alive || s.pendingImages !== imgs || s.modelSelect.value !== id) return;
     for (const img of sized) img.plan = { note: `cost unavailable: ${e.message}` };
     paintStagedPlans(ctx);
     return;
@@ -3101,7 +3178,7 @@ async function fitStagedImage(ctx, img) {
   const fit = img.plan?.fit;
   if (!fit || !img.original) return;
   const out = await resizeImageTo(img.original, fit.w, fit.h);
-  if (!ctx.alive) return;
+  if (!ctx.alive || !ctx.state.pendingImages.includes(img)) return;
   if (!out) {
     showStatus(ctx, 'Could not resize that image here -- it is still attached as it was.', true);
     return;
@@ -3489,14 +3566,22 @@ async function send(ctx) {
       showStatus(ctx, `Send failed in the conversation you left: ${err.message}.${kept}${lost}`, true);
       return;
     }
-    // The message did NOT reach the store -- put the composer back exactly
-    // as it was. Without this, the new mid-generation 409 (another device
-    // streaming into this conversation) destroyed the typed text and
-    // staged attachments client-side (review finding 2026-08-13).
-    s.textarea.value = text;
-    autoGrow(s.textarea);
-    s.pendingImages = images;
-    s.pendingAudio = audio;
+    // The message did NOT reach the store -- restore its text and attachments
+    // without clobbering anything typed or staged while the failed send was
+    // in flight, and revoke any overflow object URLs (FB-61).
+    if (text) {
+      s.textarea.value = s.textarea.value ? `${text}\n${s.textarea.value}` : text;
+      autoGrow(s.textarea);
+    }
+    const mergeMedia = (failed, current, max) => {
+      const combined = [...failed, ...current];
+      for (const extra of combined.slice(max)) {
+        if (extra?.previewUrl) URL.revokeObjectURL(extra.previewUrl);
+      }
+      return combined.slice(0, max);
+    };
+    s.pendingImages = mergeMedia(images, s.pendingImages, MAX_ATTACH_IMAGES);
+    s.pendingAudio = mergeMedia(audio, s.pendingAudio, MAX_ATTACH_AUDIO);
     renderAttachStrip(ctx);
     showStatus(ctx, `Send failed: ${err.message}`, true);
   }
@@ -3585,6 +3670,7 @@ function startStream(ctx, opts = {}) {
   renderMessages(ctx);
   scrollMessages(ctx, true);
   s.remoteGenerating = false;  // the local stream owns the button now
+  noteRunState(ctx, targetConvId, true);
   notifyChatActivity(ctx);
   paintSendBtn(s.sendBtn, true, 'Stop this run and keep what has been generated so far');
   s.setUnloadGuard(true);
@@ -3836,6 +3922,7 @@ function releaseStream(ctx, stream) {
   stream.controller.abort();
   if (s.stream !== stream) return;
   s.stream = null;
+  if (!stream.launched) noteRunState(ctx, stream.targetConvId, false);
   s.setUnloadGuard(false);
   // The row stops being a streaming row the moment its stream is over, on
   // every ending. The class drives the caret, and a row whose resync never
@@ -3990,7 +4077,7 @@ async function finishGenerate(ctx, stream, { content, thinking, usage, aborted, 
   // answer is the whole one. resyncMessages reports which it is.
   // A new stream supersedes the remaining retries -- its own saga end
   // re-adopts everything anyway.
-  if (!saved && !aborted && (content || thinking) && !stream.inBandError) {
+  if (!saved && !aborted && serverState !== 'generating' && (content || thinking) && !stream.inBandError) {
     showStatus(ctx, 'The stream ended without a save confirmation — recovering…', true);
     const retry = (delay, attemptsLeft) => setTimeout(async () => {
       if (!ctx.alive || s.activeId !== stream.targetConvId || s.stream) return;

@@ -249,10 +249,12 @@ export default createPage({
         const info = selected()?.engine.embedding;
         const plan = buildPlan(set, (path) => {
           const f = files.get(path);
-          const k = f && kindOf(f);
-          if (!k) return false;
+          if (!f) return false;
+          const k = kindOf(f);
+          if (!k) throw new Error(`Unsupported file type: "${path}".`);
           const cap = maxBytesFor(info, k);
-          return f.size <= cap;
+          if (f.size > cap) throw new Error(`"${path}" exceeds the media size limit.`);
+          return true;
         });
         s.labPlan = plan; s.labSetName = set.name || "test set";
         const media = plan.pool.filter((p) => p.file).length + plan.queries.filter((q) => q.file).length;

@@ -1,8 +1,8 @@
 // Load settings for the NEXT load of a model (plan W1): one control per field
 // the server tags `load_setting` in /v1/admin/model-options, generated from
 // that list and never listed here, so a field added server-side appears with
-// no frontend change. Shown beside the model select, and only for a provider
-// that has load settings (gguf today; MLX has none).
+// Shown beside the model select, and only for a provider that has load
+// settings (gguf and MLX fields tagged `load_setting` in /v1/admin/model-options).
 //
 // `ctx_size` keeps its own control (context-select.js: a power-of-two ladder
 // plus Custom…). Every other field gets a native <select> whose first option

@@ -490,6 +490,9 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
    the detail says what moved. Wraps: a modified line names its knobs. */
 .preset-provenance { font-size: var(--text-ui); line-height: 1.4; overflow-wrap: anywhere; }
 .preset-provenance__detail { font-weight: 400; }
+.preset-status { font-size: var(--text-sm); color: var(--ink-muted); line-height: 1.35; }
+.preset-status:empty { display: none; }
+.preset-status.status--error { color: var(--danger); }
 /* Wraps: an ARMED button relabels itself, and at phone width a nowrap row
    overflows the drawer. The name box keeps a floor and the button drops to
    the next line instead. */
@@ -2392,6 +2395,13 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
   border-radius: var(--r-ctl);
   background: var(--bg);
   font-size: var(--text-ui);
+}
+.preset-import__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  cursor: pointer;
 }
 .preset-import__badge--new { background: var(--brand-tint); color: var(--ink); border-color: var(--line-strong); }
 .preset-import__diffs { display: flex; flex-direction: column; gap: var(--space-3); }

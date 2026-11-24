@@ -103,7 +103,19 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
                                        model = () => null, noun = 'document' }) {
   let presets = [];
   let provEl = null;  // latest built section's provenance line; detached writes are harmless
+  let drawerStatusEl = null; // in-drawer status line so phone users read feedback (FB-02)
+  let drawerStatus = { text: '', isError: false };
   let syncUpdate = null; // latest built section's "Overwrite X" option: offered or not, with the line
+
+  function reportStatus(text, isError = false) {
+    drawerStatus = { text: text || '', isError: Boolean(isError) };
+    if (drawerStatusEl) {
+      drawerStatusEl.textContent = drawerStatus.text;
+      drawerStatusEl.classList.toggle('preset-status--error', drawerStatus.isError);
+      drawerStatusEl.hidden = !drawerStatus.text;
+    }
+    onStatus(text, isError);
+  }
   // The stamp -- which preset a document EXPLICITLY had applied/saved onto
   // it -- lives on the DOCUMENT (getStamp/setStamp -> applied_preset_id), so
   // provenance survives a reload and is the same on every device, like every
@@ -160,7 +172,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     try {
       await load();
     } catch (err) {
-      if (ctx.alive) onStatus(`Could not load presets: ${err.message}`, true);
+      if (ctx.alive) reportStatus(`Could not load presets: ${err.message}`, true);
     }
     return fingerprint() !== before;
   }
@@ -318,7 +330,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     // A draft (no document yet) is stamped too: the page carries it into
     // the document the first send creates.
     setStamp?.(preset.id);
-    onStatus((incoming
+    reportStatus((incoming
       ? `Preset "${preset.name}" applied.`
       : `Preset "${preset.name}" applied. It carries no system prompt, so this one is unchanged.`)
       + (removed ? ` ${removed}` : ''));
@@ -352,7 +364,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
         // section, and the name you just typed is gone -- with the keyboard
         // closed, on a phone -- at the exact moment you are told to pick
         // another.
-        onStatus(nameTakenNote(name), true);
+        reportStatus(nameTakenNote(name), true);
         return false;
       }
       const saved = await api.createPreset({
@@ -363,13 +375,13 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
       // saving snapshots the current doc state -- the doc IS this preset now
       // (a draft included, as in apply)
       setStamp?.(saved.id);
+      reportStatus(`Preset "${saved.name}" saved.`);
       drawer.requestRebuild({ force: true });
       syncIndicator();
-      onStatus(`Preset "${saved.name}" saved.`);
       return true;
     } catch (err) {
       if (!ctx.alive) return false;
-      onStatus(err.status === 409 ? nameTakenNote(name) : `Preset save failed: ${err.message}`, true);
+      reportStatus(err.status === 409 ? nameTakenNote(name) : `Preset save failed: ${err.message}`, true);
       return false;
     }
   }
@@ -395,13 +407,13 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
       if (!ctx.alive) return;
       const target = presets.find((p) => p.id === built.id);
       if (!target) {
-        onStatus(`Preset "${built.name}" no longer exists: it was deleted elsewhere.`, true);
+        reportStatus(`Preset "${built.name}" no longer exists: it was deleted elsewhere.`, true);
         drawer.requestRebuild({ force: true });
         syncIndicator();
         return;
       }
       if (target.updated_at !== built.updated_at) {
-        onStatus(`"${target.name}" changed elsewhere since this drawer read it. Nothing was written: `
+        reportStatus(`"${target.name}" changed elsewhere since this drawer read it. Nothing was written: `
           + 'look at it under Apply preset, then save again if you still mean to.', true);
         drawer.requestRebuild({ force: true });
         syncIndicator();
@@ -415,17 +427,17 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
       });
       if (!ctx.alive) return;
       presets[presets.indexOf(target)] = saved;
-      drawer.requestRebuild({ force: true });
-      syncIndicator();
       // An empty prompt is written as none (the override-box rule): the
       // preset stays in the list and carries settings only. Say so, because
       // that is the write that reads as "my preset disappeared" later.
-      onStatus(prompt
+      reportStatus(prompt
         ? `Preset "${saved.name}" updated from this one.`
         : `Preset "${saved.name}" updated from this one. It now carries no system prompt (settings only).`);
+      drawer.requestRebuild({ force: true });
+      syncIndicator();
     } catch (err) {
       if (!ctx.alive) return;
-      onStatus(`Preset update failed: ${err.message}`, true);
+      reportStatus(`Preset update failed: ${err.message}`, true);
     }
   }
 
@@ -588,6 +600,12 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
       show(saveEl);
     });
 
+    drawerStatusEl = createEl('div', {
+      class: `preset-status small${drawerStatus.isError ? ' preset-status--error' : ''}`,
+      role: 'status',
+      hidden: !drawerStatus.text,
+    }, [drawerStatus.text]);
+
     return createEl('div', { class: 'preset-section' }, [
       provEl,
       createEl('div', { class: 'preset-row' }, [
@@ -596,6 +614,7 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
         // mounts the page, the same way a nav item does.
         createEl('a', { class: 'preset-manage', href: '#/presets' }, ['Manage presets']),
       ]),
+      drawerStatusEl,
       saveEl,
       pickerEl,
     ]);

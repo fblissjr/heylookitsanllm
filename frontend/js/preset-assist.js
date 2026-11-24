@@ -4,6 +4,10 @@
 // Pure ESM, zero DOM dependencies: runs the tool loop against a snapshot of
 // saved presets, stages proposed edits in memory without writing anything, and
 // returns normalized preset records for the diff-review dialog to apply.
+// Supports both non-streaming (`createMessage`) and SSE streaming (`streamMessage`)
+// so the UI shows live thinking/tool-drafting progress.
+
+import { httpError, requestId } from './api.js';
 
 export const PRESET_ASSIST_SYSTEM =
   'You help the user edit saved heylook presets cleanly and accurately. '
@@ -63,6 +67,130 @@ export function toolCapableModels(models) {
       supportsTools: Array.isArray(m.capabilities) && m.capabilities.includes('tools'),
     }))
     .sort((a, b) => Number(b.supportsTools) - Number(a.supportsTools));
+}
+
+// Assemble one Anthropic Messages response from a sequence of parsed SSE
+// `(eventName, data)` frames, invoking `onDelta` for live progress UI.
+export function createSseMessageAssembler(onDelta) {
+  const blocks = new Map();
+  let stopReason = null;
+  let thinkingChars = 0;
+  let textChars = 0;
+
+  return {
+    feed(eventName, data) {
+      if (!data || typeof data !== 'object') return;
+      if (eventName === 'error' || data.type === 'error') {
+        const msg = data.error?.message || data.message || 'Stream error';
+        throw new Error(msg);
+      }
+      if (data.type === 'content_block_start') {
+        const idx = data.index ?? blocks.size;
+        const cb = data.content_block ?? {};
+        if (cb.type === 'tool_use') {
+          blocks.set(idx, {
+            type: 'tool_use',
+            id: cb.id || `toolu_${idx}`,
+            name: cb.name || '',
+            input: (cb.input && typeof cb.input === 'object') ? { ...cb.input } : {},
+            _json: '',
+          });
+          onDelta?.({ kind: 'tool_start', toolName: cb.name || '' });
+        } else if (cb.type === 'thinking') {
+          blocks.set(idx, { type: 'thinking', thinking: cb.thinking || '' });
+        } else {
+          blocks.set(idx, { type: 'text', text: cb.text || '' });
+        }
+        return;
+      }
+      if (data.type === 'content_block_delta') {
+        const idx = data.index ?? 0;
+        const block = blocks.get(idx);
+        const delta = data.delta ?? {};
+        if (!block) return;
+        if (delta.type === 'text_delta' && delta.text) {
+          block.text += delta.text;
+          textChars += delta.text.length;
+          onDelta?.({ kind: 'text', chars: textChars });
+        } else if (delta.type === 'thinking_delta' && delta.thinking) {
+          block.thinking += delta.thinking;
+          thinkingChars += delta.thinking.length;
+          onDelta?.({ kind: 'thinking', chars: thinkingChars });
+        } else if (delta.type === 'input_json_delta' && delta.partial_json) {
+          block._json += delta.partial_json;
+          onDelta?.({ kind: 'tool_json', toolName: block.name, chars: block._json.length });
+        }
+        return;
+      }
+      if (data.type === 'message_delta' && data.delta?.stop_reason) {
+        stopReason = data.delta.stop_reason;
+      }
+    },
+    finish() {
+      const content = [...blocks.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([, block]) => {
+          if (block.type === 'tool_use') {
+            let input = block.input;
+            if (block._json) {
+              try {
+                const parsed = JSON.parse(block._json);
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) input = parsed;
+              } catch { /* keep partial/default input */ }
+            }
+            return { type: 'tool_use', id: block.id, name: block.name, input };
+          }
+          return block;
+        });
+      return { content, stop_reason: stopReason };
+    },
+  };
+}
+
+// Stream one POST /v1/messages turn via SSE and return the assembled response.
+export async function streamAnthropicMessage(body, { signal, onDelta } = {}) {
+  const res = await fetch('/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Request-ID': requestId(),
+    },
+    body: JSON.stringify({ ...body, stream: true }),
+    signal,
+  });
+  if (!res.ok) throw await httpError(res);
+
+  const assembler = createSseMessageAssembler(onDelta);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let eventName = null;
+
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split(/\r?\n/);
+      buf = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line) {
+          eventName = null;
+          continue;
+        }
+        if (line.startsWith('event:')) {
+          eventName = line.slice(6).trim();
+        } else if (line.startsWith('data:')) {
+          const raw = line.slice(5).trim();
+          if (!raw || raw === '[DONE]') continue;
+          assembler.feed(eventName, JSON.parse(raw));
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return assembler.finish();
 }
 
 function cleanParams(raw) {
@@ -179,6 +307,7 @@ function executePresetTool(name, input, byName, staged) {
 
 export async function runPresetAssist({
   createMessage,
+  streamMessage,
   model,
   instruction,
   presets,
@@ -212,14 +341,28 @@ export async function runPresetAssist({
     turns = turn;
     onProgress?.({ turn, phase: 'thinking', stagedCount: staged.size });
 
-    const response = await createMessage({
+    const payload = {
       model,
       system: PRESET_ASSIST_SYSTEM,
       messages,
       tools: PRESET_ASSIST_TOOLS,
       max_tokens: maxTokens,
-      stream: false,
-    }, { signal });
+      stream: Boolean(streamMessage),
+    };
+
+    const response = streamMessage
+      ? await streamMessage(payload, {
+        signal,
+        onDelta: (d) => onProgress?.({
+          turn,
+          phase: 'stream',
+          deltaKind: d.kind,
+          toolName: d.toolName,
+          chars: d.chars,
+          stagedCount: staged.size,
+        }),
+      })
+      : await createMessage(payload, { signal });
 
     const blocks = Array.isArray(response?.content) ? response.content : [];
     const textParts = blocks

@@ -331,15 +331,16 @@ async function loadProfile(ctx, range) {
 
 function renderProfile(ctx, data) {
   const breakdown = data?.timing_breakdown ?? [];
+  const hasTiming = breakdown.some((r) => (r.count ?? 0) > 0);
   const trends = data?.trends ?? [];
   const cache = data?.cache ?? [];
-  if (!breakdown.length && !trends.length && !cache.length) {
+  if (!hasTiming && !trends.length && !cache.length) {
     renderProfileEmpty(ctx);
     return;
   }
 
   const children = [];
-  if (breakdown.length) {
+  if (hasTiming) {
     children.push(createEl('h3', {}, ['Timing breakdown']));
     children.push(buildTimingTable(breakdown));
   }

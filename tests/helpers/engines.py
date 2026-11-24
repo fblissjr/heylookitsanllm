@@ -194,10 +194,9 @@ def format_coverage(cov: Coverage, *, spanned: list[str] | None = None,
 # model choice per arm
 # ---------------------------------------------------------------------------
 #
-# Moved here from tests/smoke/run.py in v1.79.78 so the JS e2e harness can use
-# the SAME answer rather than re-deriving "which model is this arm" in another
-# language. Two implementations of that question is the hand-copied-list defect
-# this repo keeps paying for; there is one now, and the JS side shells out.
+# Moved here from tests/smoke/run.py in v1.79.78 so all live harnesses share
+# ONE answer to "which model is this arm". Two implementations of that question
+# is the hand-copied-list defect this repo keeps paying for.
 
 
 def _post(server: str, path: str, body: dict, timeout: int = 60):
@@ -305,14 +304,14 @@ def resolve_arms(server: str, wanted=None, overrides=None, *, caps_required=None
 
 
 def _main(argv=None) -> int:
-    """CLI so a non-Python harness can consume the taxonomy.
+    """CLI so non-Python scripts can consume the taxonomy.
 
-    `python -m helpers.engines --server URL --json` is what tests/e2e shells
-    out to; it exists so the JS side never re-implements "which arm is this
-    model", which the server answers via engine.runtime and capabilities.
+    `python -m helpers.engines --server URL --json` prints the resolved arms so
+    external callers never re-implement "which arm is this model", which the
+    server answers via engine.runtime and capabilities.
     """
     import argparse
-    ap = argparse.ArgumentParser(description="Resolve e2e/smoke arms to models.")
+    ap = argparse.ArgumentParser(description="Resolve smoke/eval arms to models.")
     ap.add_argument("--server", required=True)
     ap.add_argument("--arm", action="append", choices=ARMS,
                     help="repeatable; default is every arm")

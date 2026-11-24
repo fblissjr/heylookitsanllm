@@ -251,7 +251,8 @@ def add_model_config(request: Request, body: dict):
         config = service.add_config(body)
         warning = _safe_reload_config(request)
         loaded_ids = _get_loaded_model_ids(request)
-        response = _model_config_to_response(config, loaded_ids, router)
+        response = _model_config_to_response(
+            config, loaded_ids, router, written_ids=_written_down_ids(request))
         result = response.model_dump()
         if warning:
             result["warning"] = warning
@@ -340,7 +341,7 @@ def evaluate_model_fit(model_id: str, request: Request, body: FitRequest):
         "`load_setting` fields from /v1/admin/model-options (gguf: `ctx_size`, "
         "`flash_attn`). `null` means the default: the stored value is "
         "dropped and the model's derived default applies (the training "
-        "context; flash attention off). A key that is not a load setting of the "
+        "context; flash attention on). A key that is not a load setting of the "
         "model's provider is a 400 that names the ones it has. When every "
         "value is unchanged and the model is already resident with nothing "
         "stale, this is a plain load (no restart) -- pressing Load with the "
@@ -627,7 +628,8 @@ def update_model_config(model_id: str, request: Request, updates: ModelUpdateReq
         config, reload_fields = service.update_config(model_id, update_dict)
         warning = _safe_reload_config(request)
         loaded_ids = _get_loaded_model_ids(request)
-        response = _model_config_to_response(config, loaded_ids, router)
+        response = _model_config_to_response(
+            config, loaded_ids, router, written_ids=_written_down_ids(request))
         result = {
             "model": response.model_dump(),
             "reload_required_fields": reload_fields,

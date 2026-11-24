@@ -31,8 +31,8 @@
 // opens, iOS Safari keeps the LAYOUT viewport at full height and shrinks only
 // the VISUAL viewport, then scrolls the page so the focused field shows.
 // Chrome shrinks the layout viewport itself (the `interactive-widget` default).
-// Everything in question here follows the layout viewport -- the fixed
-// `#bottom-nav`, the `100dvh` app shell, the composer at its foot -- so a Chrome
+// Everything in question here follows the layout viewport -- the top
+// `#phone-nav`, the `100dvh` app shell, the composer at its foot -- so a Chrome
 // emulation answers a different question and can pass while the phone
 // misbehaves. The removed render suite's mid-stream viewport shrink checked REFLOW under a
 // short viewport; this checks what WebKit actually does with the keyboard.
@@ -59,7 +59,7 @@
 //   - the message field is fully inside the VISUAL viewport
 //   - Send is fully inside the visual viewport
 //   - the page does not scroll horizontally
-//   - informational, never failing: whether #bottom-nav and the top bar are
+//   - informational, never failing: whether #phone-nav and the top bar are
 //     still within the visual viewport, and how far the page was scrolled.
 //     These are the numbers that decide whether hiding the nav on focus is
 //     worth building (internal/log/log_2026-09-05.md).

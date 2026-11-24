@@ -27,7 +27,7 @@ choose one of two tools:
   first item and shows all pairwise cosine similarities. On models that advertise
   `video_windows`, a single-video item can also choose **Windows: fixed rate (32s)**
   (`"fps"`, default) or **Windows: content (32s)** (`"content"`) to embed
-  overlapping 32-second windows (`16s` stride), rank matching video segments
+  consecutive 32-second windows, rank matching video segments
   alongside whole-item vectors, show the sampled frame timestamps, and open a
   **Preview** dialog seeked to the window's start with jump buttons for each
   sampled frame. **Send to Embedding Lab** imports your Compare query and

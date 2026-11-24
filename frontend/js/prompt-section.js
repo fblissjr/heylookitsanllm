@@ -138,6 +138,10 @@ export function createPromptSection(ctx, adapter) {
   // Returns the pending persist's promise (undefined when nothing is
   // pending), so a caller that reads the document back from the server right
   // after -- chat's Send -- can wait for it.
+  function cancel() {
+    schedulePersist.cancel();
+  }
+
   function flush(opts) {
     return schedulePersist.flush(currentValue(), opts);
   }
@@ -170,5 +174,5 @@ export function createPromptSection(ctx, adapter) {
     offTeardown();
   }
 
-  return { element, setValue, flush, release };
+  return { element, setValue, flush, cancel, release };
 }

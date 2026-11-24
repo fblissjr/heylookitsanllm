@@ -13,6 +13,7 @@ export const LS_PREFIX = 'heylook.';
 export const STORAGE_KEYS = Object.freeze({
   CHAT_DRAFT_PROMPT: 'chat.draft-prompt',
   CHAT_LAST_CONVERSATION: 'chat.last-conversation',
+  NOTEBOOK_DRAFT_PROMPT: 'notebook.draft-prompt',
 });
 
 // Single registry of every browser-stored key.
@@ -30,6 +31,13 @@ export const STORAGE_REGISTRY = Object.freeze([
     fullKey: `${LS_PREFIX}${STORAGE_KEYS.CHAT_LAST_CONVERSATION}`,
     feature: 'chat',
     holds: 'ID of the conversation last viewed in this browser',
+  }),
+  Object.freeze({
+    kind: 'localStorage',
+    key: STORAGE_KEYS.NOTEBOOK_DRAFT_PROMPT,
+    fullKey: `${LS_PREFIX}${STORAGE_KEYS.NOTEBOOK_DRAFT_PROMPT}`,
+    feature: 'notebook',
+    holds: 'System-prompt draft typed before any notebook exists',
   }),
 ]);
 

@@ -52,6 +52,44 @@ def infer_tool_parser_name(chat_template: Optional[str]) -> Optional[str]:
     return None
 
 
+# Declared special tokens that belong to each tool-call wire format and must
+# survive StripSpecials when a request passes ``tools`` so the downstream
+# ToolCallStreamFilter / mlx_vlm.tools parser can see and consume them.
+_TOOL_PRESERVE_TOKENS: dict[str, frozenset[str]] = {
+    "gemma4": frozenset({"<|tool_call>", "<tool_call|>", '<|"|>'}),
+    "cohere2_moe": frozenset({"<|START_ACTION|>", "<|END_ACTION|>"}),
+    "deepseek_v4": frozenset({"<｜DSML｜tool_calls>", "</｜DSML｜tool_calls>"}),
+    "harmony": frozenset({"<|call|>", "<|message|>", "<|channel|>"}),
+    "pythonic": frozenset({
+        "<|tool_call_start|>", "<|tool_call_end|>",
+        "<|tool_list_start|>", "<|tool_list_end|>",
+    }),
+    "kimi_k2": frozenset({
+        "<|tool_calls_section_begin|>", "<|tool_calls_section_end|>",
+        "<|tool_call_begin|>", "<|tool_call_argument_begin|>", "<|tool_call_end|>",
+    }),
+    "mistral": frozenset({"[TOOL_CALLS]"}),
+    "inkling": frozenset({"<|content_invoke_tool_json|>"}),
+    "json_tools": frozenset({"<tool_call>", "</tool_call>"}),
+    "qwen3_coder": frozenset({"<tool_call>", "</tool_call>"}),
+    "minimax_m2": frozenset({"<minimax:tool_call>", "</minimax:tool_call>"}),
+    "minimax_m3": frozenset({"]<]minimax[>[<tool_call>", "</tool_call>"}),
+    "longcat": frozenset({"<longcat_tool_call>", "</longcat_tool_call>"}),
+    "glm47": frozenset({
+        "<tool_call>", "</tool_call>",
+        "<arg_key>", "</arg_key>", "<arg_value>", "</arg_value>",
+    }),
+    "atem": frozenset({"<atem:function_calls>", "</atem:function_calls>"}),
+}
+
+
+def tool_preserve_tokens(parser_name: Optional[str]) -> frozenset[str]:
+    """Special tokens that StripSpecials must preserve for ``parser_name``."""
+    if not parser_name:
+        return frozenset()
+    return _TOOL_PRESERVE_TOKENS.get(parser_name, frozenset())
+
+
 def anthropic_tools_to_openai(tools: Optional[Sequence[Any]]) -> Optional[list[dict[str, Any]]]:
     """Convert Anthropic ``ToolDefinition`` list to OpenAI function-tool dicts."""
     if not tools:

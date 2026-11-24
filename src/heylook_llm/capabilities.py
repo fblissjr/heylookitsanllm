@@ -20,6 +20,7 @@ router rather than read off the declaration -- see :func:`_mlx_serves_vision`.
 
 from dataclasses import dataclass
 from functools import lru_cache
+import json
 from pathlib import Path
 
 from heylook_llm.providers.common.loader_routing import serves_vision_for_config
@@ -142,8 +143,36 @@ def _template_supports_tools(model_path: str, _stamp: tuple) -> bool:
         return False
 
 
+@lru_cache(maxsize=64)
+def _is_diffusion_checkpoint(model_path: str) -> bool:
+    """True when a checkpoint's config.json declares a masked-diffusion LM.
+
+    Mirrors mlx-vlm's ``_has_engine_diffusion_config`` / diffusion detection so
+    ``/v1/models`` does not advertise capabilities (like ``tools``) that
+    ``MLXProvider`` refuses for diffusion checkpoints.
+    """
+    try:
+        cfg_path = Path(model_path) / "config.json"
+        if not cfg_path.is_file():
+            return False
+        data = json.loads(cfg_path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return False
+        if data.get("canvas_length") is not None:
+            return True
+        if data.get("mask_token_id") is not None and data.get("default_generation_mode") != "ar":
+            return True
+        if "diffusion" in str(data.get("model_type") or "").lower():
+            return True
+        return False
+    except Exception:
+        return False
+
+
 def template_supports_tools(model_path: str) -> bool:
     """Whether the model's chat template supports tool calling (derived)."""
+    if _is_diffusion_checkpoint(model_path):
+        return False
     return _template_supports_tools(model_path, _template_stamp(model_path))
 
 

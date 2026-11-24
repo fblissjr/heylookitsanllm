@@ -18,6 +18,7 @@ import {
   uniqueMarkdownFilenames,
 } from '../../frontend/js/preset-io.js';
 import {
+  createSseMessageAssembler,
   runPresetAssist,
   toolCapableModels,
 } from '../../frontend/js/preset-assist.js';
@@ -193,4 +194,23 @@ test('runPresetAssist runs tool loop, preserves existing params, and stages diff
     },
   ]);
   assert.ok(progress.some((p) => p.phase === 'tool' && p.toolName === 'propose_preset_update'));
+});
+
+test('createSseMessageAssembler reconstructs thinking, text, and tool_use blocks from deltas', () => {
+  const seen = [];
+  const asm = createSseMessageAssembler((d) => seen.push(d.kind));
+  asm.feed('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } });
+  asm.feed('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'planning' } });
+  asm.feed('content_block_start', { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'tu_9', name: 'get_preset', input: {} } });
+  asm.feed('content_block_delta', { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"name":' } });
+  asm.feed('content_block_delta', { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '"Alpha"}' } });
+  asm.feed('message_delta', { type: 'message_delta', delta: { stop_reason: 'tool_use' } });
+
+  const out = asm.finish();
+  assert.equal(out.stop_reason, 'tool_use');
+  assert.deepEqual(out.content, [
+    { type: 'thinking', thinking: 'planning' },
+    { type: 'tool_use', id: 'tu_9', name: 'get_preset', input: { name: 'Alpha' } },
+  ]);
+  assert.deepEqual(seen, ['thinking', 'tool_start', 'tool_json', 'tool_json']);
 });
