@@ -241,6 +241,12 @@ One card per preset, showing its settings and its own prompt.
   prompt diff before confirming overwrite. Bulk imports list which presets are
   new and which already exist, with a choice to open the combined diff view
   first or import and apply immediately (or import new presets only).
+- **Assist with AI** opens a dialog where you pick a tool-capable model,
+  optionally select specific presets, and describe a change in natural language
+  (for example, weaving a new paragraph into several system prompts while
+  matching each prompt's tone and formatting). The model inspects presets via
+  `/v1/messages` tools and stages proposed updates into the same before/after
+  diff review dialog — nothing is saved until you confirm.
 - **Delete** asks once, then removes the preset. Conversations and notebooks
   that came from it keep their prompt and settings, because they are copies;
   their provenance line reads *No preset* from then on.
@@ -551,14 +557,9 @@ turn.
   Notebook, and `Escape` stops an active stream or closes an open bar panel,
   prompt preview, model config panel, or preset editor.
 
-Sampler settings are shared across pages. Display preferences (such as showing
-special tokens) are kept separately from sampler settings on purpose, so a
-display toggle can never be mistaken for something the model receives.
-
-**Show special tokens does nothing on a gguf model**, and the row says so:
-llama-server splits the thinking and stops at the end-of-turn token inside its
-own process, so no marker ever reaches this app to show. To see the markers,
-use the prompt preview — it is the template's own render.
+Sampler settings live per document (conversation or notebook). To inspect the
+exact prompt and special tokens the model receives, use the prompt preview in
+Chat.
 
 ---
 

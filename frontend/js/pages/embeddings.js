@@ -61,7 +61,9 @@ export default createPage({
         const response = await fetch(`/v1/requests/${encodeURIComponent(id)}`, { method: "DELETE" });
         if (!response.ok) throw await httpError(response);
         if (ctx.alive && s.runId === id) status.textContent = "Cancellation requested. Waiting for the current operation to finish…";
-      } catch (error) { if (ctx.alive) status.textContent = error.message; }
+      } catch (error) {
+        if (ctx.alive && s.runId === id) status.textContent = error.message;
+      }
     });
     stop.hidden = true;
     const add = button("Add item", () => { addItem(); invalidate(); });
@@ -79,6 +81,20 @@ export default createPage({
       previewVideo,
       previewFrames,
     ]);
+    // Fallback for browsers without native <dialog closedby="any"> support (FB-25).
+    if (typeof HTMLDialogElement !== "undefined" && !("closedBy" in HTMLDialogElement.prototype)) {
+      previewDialog.addEventListener("click", (event) => {
+        if (event.target !== previewDialog) return;
+        const rect = previewDialog.getBoundingClientRect();
+        const inside = (
+          rect.top <= event.clientY
+          && event.clientY <= rect.top + rect.height
+          && rect.left <= event.clientX
+          && event.clientX <= rect.left + rect.width
+        );
+        if (!inside) previewDialog.close();
+      });
+    }
     function cleanupPreview() {
       previewVideo.pause?.();
       previewVideo.removeAttribute("src");
@@ -158,7 +174,7 @@ export default createPage({
     const labQueryPrompt = el("select", { "aria-label": "Lab query prompt" });
     const labDocPrompt = el("select", { "aria-label": "Lab document prompt" });
     const labFolderInput = el("input", { type: "file", webkitdirectory: true, multiple: true, hidden: true, "aria-label": "Choose benchmark folder" });
-    const labSetInfo = el("p", { class: "muted small" }, ["Load the built-in 8-case multimodal sample set or choose a folder with set.json."]);
+    const labSetInfo = el("p", { class: "muted small" }, ["Load the built-in multimodal sample set or choose a folder with set.json."]);
     const labConfigList = el("ol", { class: "embeddings__lab-configs" });
     const labProgress = el("progress", { class: "embeddings__progress", value: 0, max: 1, hidden: true });
     const labResultsBox = el("div", { class: "embeddings__lab-results" });
@@ -195,14 +211,13 @@ export default createPage({
       renderLabConfigs();
     }
 
-    const labSampleBtn = button("Load sample set (8 cases)", async () => {
+    const labSampleBtn = button("Load sample set", async () => {
       try {
         labBlocks.clear();
         resetLabResults();
         const { setName, files, plan } = await buildSampleDataset();
         s.labSetName = setName; s.labFiles = files; s.labPlan = plan;
-        const media = plan.pool.filter((p) => p.file).length + plan.queries.filter((q) => q.file).length;
-        labSetInfo.textContent = `${setName}: ${plan.cases.length} cases, ${plan.pool.length} documents, ${media} generated shape PNGs.`;
+        labSetInfo.textContent = `${setName}: ${plan.cases.length} cases, ${plan.pool.length} documents, ${files.size} generated shape PNGs.`;
         if (!s.labConfigs.length && model.value) addLabAblation();
         else renderLabConfigs();
       } catch (err) {
@@ -471,6 +486,10 @@ export default createPage({
     }
 
     function addItem(text = "", defaultPrompt = "") {
+      if (!selected()?.engine?.embedding?.limits) {
+        status.textContent = "Embedding models are still loading.";
+        return;
+      }
       const maxItems = () => requireLimits().items;
       const maxBlocks = () => requireLimits().blocks_per_item;
       if (s.items.length >= maxItems()) return;
@@ -575,13 +594,16 @@ export default createPage({
         }
         if (!ctx.alive) return;
         const body = { model: model.value, dimensions: Number(dimensions.value), input };
+        const ac = ctx.linkedController();
+        s.abort = ac;
         s.runId = requestId(); stop.hidden = false;
         status.textContent = "Embedding… The model loads automatically if needed.";
         // The shared request, not a second copy of it: Compare's own fetch had
-        // drifted from the Lab's and lost the busy retry (429/503).
+        // drifted from the Lab's and lost the busy retry (429/503). Pass the
+        // per-run abort signal so Stop cancels client retries too (FB-92).
         const result = await embedWithRetry({
           model: body.model, dimensions: body.dimensions, items: body.input,
-          reqId: s.runId, signal: ctx.signal,
+          reqId: s.runId, signal: ac.signal,
         });
         if (!ctx.alive) return;
         const vectors = result.data.map((row) => row.embedding);
@@ -631,8 +653,15 @@ export default createPage({
           button("Download vectors", () => download({ labels, ...result })),
           el("details", {}, [el("summary", {}, ["Inspect vectors"]), el("pre", {}, [JSON.stringify(result.data, null, 2)])]));
         status.textContent = `Complete${result.elapsed_ms != null ? ` in ${(result.elapsed_ms / 1000).toFixed(2)}s` : ""}. ${result.input_tokens == null ? "Token usage unavailable." : `${result.input_tokens} input tokens.`}`;
-      } catch (error) { if (ctx.alive) status.textContent = error.message; }
-      finally { s.runId = null; if (ctx.alive) { controls.disabled = false; stop.hidden = true; } }
+      } catch (error) {
+        if (ctx.alive) status.textContent = error.name === "AbortError" ? "Stopped." : error.message;
+      }
+      finally {
+        s.abort?.abort();
+        s.abort = null;
+        s.runId = null;
+        if (ctx.alive) { controls.disabled = false; stop.hidden = true; }
+      }
     }
 
     model.addEventListener("change", () => refreshModel());

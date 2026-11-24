@@ -336,7 +336,7 @@ function thinkingSummary(thinking) {
   return `Thinking controls${from}: ${thinkingParts(thinking).join('; ')}.`;
 }
 
-function buildChatTemplatePanel({ model, draft, onDraftChange }) {
+function buildChatTemplatePanel({ model, draft, onDraftChange, onChanged }) {
   const statusEl = createEl('div', { class: 'cfg-tmpl__status', role: 'status' });
   const originEl = createEl('div', { class: 'cfg-tmpl__origin muted small' });
   const areaId = `cfg-tmpl-${model.id}`.replace(/[^a-zA-Z0-9_-]/g, '-');
@@ -524,7 +524,9 @@ function buildChatTemplatePanel({ model, draft, onDraftChange }) {
     say(working);
     try {
       delete draft[TMPL_DRAFT];
-      render(await fn());
+      const view = await fn();
+      render(view);
+      onChanged?.(view);
     } catch (e) {
       // The server's refusal message names what would have broken -- it is
       // the entire value of validating before the write, so show it verbatim
@@ -727,7 +729,13 @@ function buildFitMeter({ model, overrides, onGate }) {
     }
   }
 
-  return { el, refresh, refreshObserved, scheduleRefresh: debounce(refresh, 300) };
+  const scheduleRefresh = debounce(refresh, 300);
+  const dispose = () => {
+    scheduleRefresh.cancel();
+    ctl?.abort();
+    ctl = null;
+  };
+  return { el, refresh, refreshObserved, scheduleRefresh, dispose };
 }
 
 // createModelConfigEditor({ model, fields, draft, initialNote, onError,
@@ -768,7 +776,7 @@ function buildFitMeter({ model, overrides, onGate }) {
 //           reclaimable RAM on either provider) and the page should disable
 //           its Load affordance with that reason; null lifts the gate
 //           (including on fit-unavailable -- never block on missing info).
-export function createModelConfigEditor({ model, fields: allFields, draft, initialNote, onError, onSaved, onReload, onReset, onFitGate, onDraftChange }) {
+export function createModelConfigEditor({ model, fields: allFields, draft, initialNote, onError, onSaved, onReload, onReset, onFitGate, onDraftChange, onTemplateChanged }) {
   const fields = allFields.filter((f) => !isHidden(f));
   const idPrefix = `mcfg-${model.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
   // Editor-local baseline (what dirty is measured against). A copy, updated
@@ -836,7 +844,7 @@ export function createModelConfigEditor({ model, fields: allFields, draft, initi
     return overrides;
   };
   const fitMeter = buildFitMeter({ model, overrides: fitOverrides, onGate: onFitGate });
-  const chatTemplate = buildChatTemplatePanel({ model, draft, onDraftChange });
+  const chatTemplate = buildChatTemplatePanel({ model, draft, onDraftChange, onChanged: onTemplateChanged });
 
   const onEdit = (name, rawValue) => {
     draft[name] = rawValue;
@@ -849,7 +857,9 @@ export function createModelConfigEditor({ model, fields: allFields, draft, initi
     if (busy || !dirty.length) return;
 
     const config = {};
+    const sentRaw = new Map();
     for (const field of dirty) {
+      sentRaw.set(field.name, draft[field.name]);
       const { value, error } = parseControlValue(field, draft[field.name]);
       if (error) { onError(`Not saved -- ${error}`); return; }
       // null both clears a set key and is skipped for a never-set one; the
@@ -864,7 +874,10 @@ export function createModelConfigEditor({ model, fields: allFields, draft, initi
     try {
       const result = await api.adminUpdateModel(model.id, { config });
       const reloadNeeded = result.reload_required_fields || [];
-      for (const field of dirty) delete draft[field.name];
+      // Only drop draft keys that were not edited again while the save was in flight (FB-82).
+      for (const field of dirty) {
+        if (draft[field.name] === sentRaw.get(field.name)) delete draft[field.name];
+      }
       const parts = ['Saved.'];
       if (reloadNeeded.length) {
         parts.push(model.loaded
@@ -906,6 +919,8 @@ export function createModelConfigEditor({ model, fields: allFields, draft, initi
   const advanced = fields.filter((f) => f.ui === 'advanced' && f.effect !== 'load_time_only');
   const live = fields.filter((f) => LIVE_EFFECTS.has(f.effect) && f.ui !== 'advanced');
   const reload = fields.filter((f) => f.effect === 'requires_reload' && f.ui !== 'advanced');
+  const categorized = new Set([...fixed, ...advanced, ...live, ...reload]);
+  const other = fields.filter((f) => !categorized.has(f));
 
   const rows = (list) => list.map((f) => fieldRow(f, currentRaw(f), idPrefix, onEdit,
     model.engine?.settings?.[f.name] ?? null));
@@ -934,6 +949,9 @@ export function createModelConfigEditor({ model, fields: allFields, draft, initi
   if (fixed.length) {
     children.push(sectionEl('Fixed for this process', null, rows(fixed)));
   }
+  if (other.length) {
+    children.push(sectionEl('Other', null, rows(other)));
+  }
   if (children.length === 1) { // only the fit meter -- no editable sections
     children.push(createEl('div', { class: 'muted small' },
       [`No editable options for provider "${model.provider}".`]));
@@ -956,5 +974,6 @@ export function createModelConfigEditor({ model, fields: allFields, draft, initi
   return {
     el: createEl('div', { class: 'model-config' }, children),
     announce: () => { if (mountNote && !noteEl.textContent) setNote(mountNote); },
+    dispose: () => fitMeter.dispose(),
   };
 }

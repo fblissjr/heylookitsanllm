@@ -1573,7 +1573,7 @@ async function selectConversation(ctx, convId) {
   // `|| 'That conversation'`, not `?? null`: an untitled conversation (empty
   // string, or one missing from the list) is falsy, and the disclosure the
   // user guide promises would silently not appear at all.
-  const leaving = s.stream
+  const leaving = s.stream?.launched
     ? (s.conversations.find((c) => c.id === s.stream.targetConvId)?.title || 'That conversation')
     : null;
   if (s.stream) abortStream(ctx, ABANDON.CONVERSATION);
@@ -1798,10 +1798,17 @@ function renderMessages(ctx) {
         node = editing ? buildEditEl(ctx, msg) : buildMessageEl(ctx, msg, modelNote);
         // Rebuilding an OPEN editor (its model chrome changed) must not eat
         // what is in the box -- buildEditEl seeds from msg.content, which is
-        // the SAVED text. Carry the live value + caret over instead.
-        if (editing && cached) carryEditorDraft(cached.node, node);
+        // the SAVED text. Carry the live value + caret over instead, and tell
+        // the user if the saved text changed elsewhere (FB-09).
+        if (editing && cached) {
+          const changedElsewhere = cached.savedContent !== undefined && cached.savedContent !== msg.content;
+          carryEditorDraft(cached.node, node);
+          if (changedElsewhere) {
+            showStatus(ctx, 'This message changed elsewhere — your local draft was kept.');
+          }
+        }
       }
-      next.set(key, { node, sig });
+      next.set(key, { node, sig, savedContent: msg.content });
       return node;
     });
   if (stream?.els?.msgEl) nodes.push(stream.els.msgEl);
@@ -1957,7 +1964,24 @@ function buildActions(ctx, msg) {
   const actions = [];
   // Copy copies the flattened text; an image-only message has none to copy.
   if (msg.content) {
-    actions.push(btn('Copy', () => navigator.clipboard?.writeText(msg.content).catch(() => {})));
+    const copyBtn = createEl('button', { class: 'btn btn--sm btn--ghost' }, ['Copy']);
+    let copyTimer = null;
+    copyBtn.addEventListener('click', async () => {
+      if (!navigator.clipboard?.writeText) {
+        showStatus(ctx, 'Clipboard is unavailable on this page (requires HTTPS or localhost).', true);
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(msg.content);
+        if (!ctx.alive) return;
+        copyBtn.textContent = 'Copied';
+        clearTimeout(copyTimer);
+        copyTimer = setTimeout(() => { if (ctx.alive) copyBtn.textContent = 'Copy'; }, 1500);
+      } catch (err) {
+        if (ctx.alive) showStatus(ctx, `Copy failed: ${err.message}`, true);
+      }
+    });
+    actions.push(copyBtn);
   }
   // Editing carries the row's media now (v2.0.15). It was withheld here
   // while the editor sent content as a bare string, which would have
@@ -2004,7 +2028,7 @@ function buildEditEl(ctx, msg) {
   // --- media on the row -------------------------------------------------
   // Media the row ALREADY holds is kept as the STORED block, so a save round-
   // trips it verbatim. That is not tidiness. db.update_message re-runs
-  // _externalize_media and then _gc_media, and a url source's media_id is
+  // _externalize_media and then _gc_orphans, and a url source's media_id is
   // honoured only while some message still references that blob -- so a save
   // that rebuilt these blocks from anything other than the stored value would
   // drop the reference and the GC would, correctly, delete the bytes. Editing
@@ -2206,6 +2230,7 @@ function buildEditEl(ctx, msg) {
   // lands before the 400), but DISABLED WITH A REASON rather than absent: a
   // button that silently comes and goes with the model reads as arbitrary, and
   // the reason is invisible at exactly the moment you look for it.
+  let blockedNote = null;
   if (msg.id) {
     // Provider off the admin row, for the one continuation asymmetry:
     // user-role continuation is MLX-only (llama-server prefills assistant
@@ -2226,6 +2251,7 @@ function buildEditEl(ctx, msg) {
     }, ['Save & Continue']);
     if (!blocked) saveContinue.addEventListener('click', () => save(false, true));
     buttons.push(saveContinue);
+    if (blocked) blockedNote = createEl('div', { class: 'muted small' }, [blocked]);
   }
 
   const editChildren = [];
@@ -2240,6 +2266,7 @@ function buildEditEl(ctx, msg) {
   editChildren.push(editStrip);
   if (editFileInput) editChildren.push(editFileInput);
   editChildren.push(createEl('div', { class: 'message-edit__buttons' }, buttons));
+  if (blockedNote) editChildren.push(blockedNote);
   if (previewHost) editChildren.push(previewHost);
   const el = createEl('div', { class: `message message--${msg.role}` }, [
     createEl('div', { class: 'message-edit' }, editChildren),
@@ -3403,8 +3430,15 @@ async function send(ctx) {
     } else {
       const conv = s.conversations.find((c) => c.id === s.activeId);
       if (conv && conv.title === 'New conversation' && !s.messages.length) {
+        const prevTitle = conv.title;
         conv.title = title;
-        api.updateConversation(s.activeId, { title: conv.title }).catch(() => {});
+        api.updateConversation(s.activeId, { title: conv.title }).catch((err) => {
+          conv.title = prevTitle;
+          if (ctx.alive) {
+            renderConvList(ctx);
+            showStatus(ctx, `Could not save title: ${err.message}`, true);
+          }
+        });
         renderConvList(ctx);
       }
     }
@@ -3493,15 +3527,28 @@ function startStream(ctx, opts = {}) {
   // blocks are already classified and committed before the first delta -- the
   // anchor's content is never re-parsed again for the life of the stream.
   if (baseContent) md.render(baseContent);
+  const targetConvId = s.activeId;
   const canEndThinking = currentCaps(ctx).includes('thinking_budget');
   const thinkingEl = buildThinkingEl(
     continueMsg?.thinking ?? '',
     true,
-    canEndThinking ? (endBtn) => {
+    canEndThinking ? async (endBtn) => {
       if (endBtn.disabled) return;
       endBtn.disabled = true;
       endBtn.textContent = 'Ending…';
-      endReasoningGenerate(s.activeId);
+      // Post to the stream's own conversation (FB-38) and restore the button
+      // if the request is refused or fails (FB-03).
+      const status = await endReasoningGenerate(targetConvId);
+      if (!ctx.alive) return;
+      if (!status || status >= 400) {
+        endBtn.disabled = false;
+        endBtn.textContent = 'End thinking';
+        if (s.activeId === targetConvId) {
+          showStatus(ctx, status
+            ? `Could not end thinking (HTTP ${status}).`
+            : 'Could not end thinking: request failed.', true);
+        }
+      }
     } : null,
   );
   thinkingEl.hidden = !continueMsg?.thinking;
@@ -3513,7 +3560,8 @@ function startStream(ctx, opts = {}) {
 
   const stream = {
     controller,
-    targetConvId: s.activeId,
+    targetConvId,
+    launched: false,
     continueMsg,
     baseContent,
     baseThinking: continueMsg?.thinking ?? '',
@@ -3630,7 +3678,12 @@ function startStream(ctx, opts = {}) {
   Promise.allSettled([
     Promise.resolve(s.paramsBinder?.flush?.()),
     Promise.resolve(s.promptSection?.flush?.()),
-  ]).then(() => { if (ctx.alive && s.stream === stream) launch(); });
+  ]).then(() => {
+    if (ctx.alive && s.stream === stream) {
+      stream.launched = true;
+      launch();
+    }
+  });
 }
 
 // Throttled painter (one per mount, created in setup): renders only the
@@ -3789,9 +3842,9 @@ function releaseStream(ctx, stream) {
   // lands is never re-rendered, so the caret blinked on over a dead stream.
   stream.els?.msgEl?.classList.remove('message--streaming');
   if (!ctx.alive) {
-    if (stream.abandonReason === ABANDON.TEARDOWN) {
-      window.dispatchEvent(new CustomEvent('heylook:chat-activity', { detail: { busy: true } }));
-    }
+    // Clear the nav dot on unmount so leaving Chat mid-reply cannot leave the
+    // dot stuck on forever after the run finishes; Chat restates it on mount (FB-07).
+    window.dispatchEvent(new CustomEvent('heylook:chat-activity', { detail: { busy: false } }));
     return;
   }
   notifyChatActivity(ctx);

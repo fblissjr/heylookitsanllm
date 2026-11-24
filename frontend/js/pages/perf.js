@@ -29,12 +29,12 @@ export default createPage({
     s.activeStream = 'events';
 
     buildSkeleton(ctx);
-    // No sampler/page settings here -- register so the drawer still offers the
-    // global Display prefs and hides the sampler panel.
+    // No sampler/page settings here -- register so the drawer hides the sampler panel.
     ctx.onTeardown(drawer.registerSettings({ samplers: 'hidden' }));
 
     s.refreshBtn.addEventListener('click', () => {
       loadMetrics(ctx, true);
+      loadProfile(ctx, s.activeRange);
       loadObservability(ctx);
     });
     for (const btn of s.rangeButtons) {
@@ -459,17 +459,19 @@ function fmtPct(v) {
 
 async function loadObservability(ctx) {
   const s = ctx.state;
-  try {
-    const [cfg, logs] = await Promise.all([
-      api.adminGetConfig({ signal: ctx.signal }).catch(() => null),
-      api.adminGetLogs(s.activeStream, 50, { signal: ctx.signal }).catch(() => null),
-    ]);
-    if (!ctx.alive) return;
-    if (cfg?.effective) applyObsConfig(ctx, cfg);
-    renderObsLogs(ctx, logs);
-  } catch {
-    if (ctx.alive) renderObsLogs(ctx, null);
+  const errors = [];
+  const [cfg, logs] = await Promise.all([
+    api.adminGetConfig({ signal: ctx.signal }).catch((err) => { errors.push(`config: ${err.message}`); return null; }),
+    api.adminGetLogs(s.activeStream, 50, { signal: ctx.signal }).catch((err) => { errors.push(`logs: ${err.message}`); return null; }),
+  ]);
+  if (!ctx.alive) return;
+  if (cfg?.effective) applyObsConfig(ctx, cfg);
+  if (errors.length) {
+    s.obsStatusEl.textContent = `Could not load observability (${errors.join('; ')})`;
+  } else if (s.obsStatusEl.textContent.startsWith('Could not load observability')) {
+    s.obsStatusEl.textContent = '';
   }
+  renderObsLogs(ctx, logs);
 }
 
 function applyObsConfig(ctx, cfg) {
@@ -504,7 +506,8 @@ async function updateObsSetting(ctx, patch) {
   const s = ctx.state;
   s.obsStatusEl.textContent = 'Saving…';
   try {
-    const cfg = await api.adminSetConfig(patch, { signal: ctx.signal });
+    // Writes stay unaborted so navigating away mid-save does not cancel them (FB-28).
+    const cfg = await api.adminSetConfig(patch);
     if (!ctx.alive) return;
     applyObsConfig(ctx, cfg);
     s.obsStatusEl.textContent = 'Saved';

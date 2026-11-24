@@ -17,6 +17,10 @@ import {
   serializePresetsJson,
   uniqueMarkdownFilenames,
 } from '../../frontend/js/preset-io.js';
+import {
+  runPresetAssist,
+  toolCapableModels,
+} from '../../frontend/js/preset-assist.js';
 
 test('single and bulk JSON round-trip', () => {
   const pirate = {
@@ -122,4 +126,71 @@ test('buildZip produces a valid ZIP header and stores every markdown file', () =
   assert.equal(view.getUint32(0, true), 0x04034b50);
   assert.equal(view.getUint32(bytes.length - 22, true), 0x06054b50);
   assert.equal(view.getUint16(bytes.length - 12, true), 2);
+});
+
+test('toolCapableModels filters embeddings and puts tool-capable models first', () => {
+  const models = toolCapableModels([
+    { id: 'embed-1', engine: { embedding: { dimensions: [768] } }, capabilities: ['embeddings'] },
+    { id: 'plain-llm', capabilities: ['chat'] },
+    { id: 'tool-llm', capabilities: ['chat', 'tools'] },
+  ]);
+  assert.deepEqual(models.map((m) => [m.id, m.supportsTools]), [
+    ['tool-llm', true],
+    ['plain-llm', false],
+  ]);
+});
+
+test('runPresetAssist runs tool loop, preserves existing params, and stages diffs', async () => {
+  const presets = [
+    { id: '1', name: 'Alpha', system_prompt: 'Be concise.', params: { temperature: 0.3, top_k: 20 } },
+    { id: '2', name: 'Beta', system_prompt: 'BE BOLD.', params: { temperature: 0.9 } },
+  ];
+  const calls = [];
+  const replies = [
+    {
+      content: [
+        { type: 'tool_use', id: 'tu_1', name: 'get_preset', input: { name: 'Alpha' } },
+      ],
+    },
+    {
+      content: [
+        {
+          type: 'tool_use',
+          id: 'tu_2',
+          name: 'propose_preset_update',
+          input: { name: 'Alpha', system_prompt: 'Be concise. Always verify sources.' },
+        },
+      ],
+    },
+    {
+      content: [
+        { type: 'text', text: 'Updated Alpha naturally.' },
+      ],
+    },
+  ];
+  const progress = [];
+  const res = await runPresetAssist({
+    createMessage: async (body) => {
+      calls.push(structuredClone(body));
+      return replies.shift();
+    },
+    model: 'tool-llm',
+    instruction: 'Add source verification.',
+    presets,
+    targetNames: ['Alpha'],
+    onProgress: (p) => progress.push(p),
+  });
+
+  assert.equal(calls.length, 3);
+  assert.equal(calls[0].tools.length, 3);
+  assert.match(calls[0].messages[0].content, /Target presets \(only modify these\): Alpha/);
+  assert.equal(res.assistantText, 'Updated Alpha naturally.');
+  assert.deepEqual(res.proposals, [
+    {
+      name: 'Alpha',
+      system_prompt: 'Be concise. Always verify sources.',
+      params: { temperature: 0.3, top_k: 20 },
+    },
+  ]);
+  assert.ok(progress.some((p) => p.phase === 'tool' && p.toolName === 'propose_preset_update'));
 });

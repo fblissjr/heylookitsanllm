@@ -192,7 +192,7 @@ code, pre, kbd { font-family: var(--mono); font-size: 0.875em; }
    component -- every state tint in this file depends on it. */
 .nav-item:where(:hover) { background: var(--surface-2); color: var(--ink); text-decoration: none; }
 .nav-item--active { background: var(--brand-tint); color: var(--ink); font-weight: 550; }
-.nav-item--busy { display: inline-flex; align-items: center; gap: var(--space-2); }
+.nav-item--busy { display: flex; align-items: center; gap: var(--space-2); }
 .nav-item--busy::after {
   content: "";
   width: 6px;
@@ -965,6 +965,22 @@ h1, h2, h3 { text-wrap: balance; }
   overflow-x: auto;
 }
 .message-content p, .message-content li { line-height: 1.6; }
+.message-content img { max-width: 100%; height: auto; border-radius: var(--r-ctl); }
+.message-content table {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+  border-collapse: collapse;
+  margin: var(--space-2) 0;
+  font-size: var(--text-ui);
+}
+.message-content th,
+.message-content td {
+  border: 1px solid var(--line);
+  padding: var(--space-1) var(--space-2);
+  text-align: left;
+}
+.message-content th { background: var(--surface-2); font-weight: 600; }
 
 .message--streaming .message-content::after {
   content: "";
@@ -1028,7 +1044,7 @@ h1, h2, h3 { text-wrap: balance; }
 /* Two-box editor (thinking + response): captions tell them apart; the
    thinking box is visually secondary (mono, like the rendered block). */
 .message-edit__label { text-transform: uppercase; letter-spacing: 0.04em; }
-.message-edit__thinking { font-family: var(--mono); min-height: 3rem; }  /* size comes from .message-edit textarea above; a smaller size here never applied (outranked) */
+.message-edit textarea.message-edit__thinking { font-family: var(--mono); min-height: 3rem; }
 
 /* Prompt preview (v1.79.62): the exact string the model is fed, special
    tokens marked. Lives in the editor (Save & Continue's view) and above the
@@ -1057,7 +1073,7 @@ h1, h2, h3 { text-wrap: balance; }
 .prompt-preview__text {
   margin: 0;
   padding: 0.6rem;
-  max-height: 40vh;
+  max-height: 40dvh;
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -1273,18 +1289,22 @@ h1, h2, h3 { text-wrap: balance; }
   .chat__composer textarea,
   .notebook__content,
   .sysprompt-input,
+  .preset-edit__prompt,
+  .preset-assist__instruction,
   .message-edit textarea,
-  .message-edit__thinking {
+  .message-edit textarea.message-edit__thinking {
     field-sizing: content;
   }
-  /* prompt-section.js: autoGrow(input, 480) */
-  .sysprompt-input { max-height: 480px; }
+  /* prompt-section.js / presets.js: autoGrow(input, 480) */
+  .sysprompt-input,
+  .preset-edit__prompt { max-height: 480px; }
+  .preset-assist__instruction { max-height: 320px; }
   /* chat.js growCap(): max(400, innerHeight * 0.6). dvh, not vh -- innerHeight
      follows the mobile toolbar and vh does not, and the buttons staying on
      screen is the entire point of the cap. */
   .message-edit textarea { max-height: max(400px, 60dvh); }
   /* chat.js thinkCap(): max(160, innerHeight * 0.3) */
-  .message-edit__thinking { max-height: max(160px, 30dvh); }
+  .message-edit textarea.message-edit__thinking { max-height: max(160px, 30dvh); }
 }
 
 @media (max-width: 767px) {
@@ -1380,11 +1400,17 @@ h1, h2, h3 { text-wrap: balance; }
     cursor: pointer;
     overflow-wrap: anywhere;
   }
-  .chat__readout:where(:hover),
   .chat__readout[aria-expanded="true"] {
     background: var(--surface-2);
     color: var(--ink);
     border-color: var(--line);
+  }
+  @media (hover: hover) {
+    .chat__readout:where(:hover) {
+      background: var(--surface-2);
+      color: var(--ink);
+      border-color: var(--line);
+    }
   }
   .chat__bar:not(.chat__bar--panel-open):not(.chat__bar--load-offered) .chat__bar-detail {
     display: none;
@@ -1603,7 +1629,7 @@ h1, h2, h3 { text-wrap: balance; }
   border-bottom: 1px solid var(--line);
   background: var(--surface);
   padding: var(--space-1) var(--space-4) var(--space-2);
-  max-height: 40vh;
+  max-height: 40dvh;
   overflow-y: auto;
 }
 @media (max-width: 767px) {
@@ -1801,7 +1827,7 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
 .models__danger-result { margin-top: var(--space-2); min-height: 1.2rem; }
 
 @media (max-width: 767px) {
-  .models { padding: calc(var(--space-4) + env(safe-area-inset-top, 0px)) var(--space-4) var(--space-10); }
+  .models { padding: var(--space-4) var(--space-4) var(--space-10); }
   .model-row { padding: 0.85rem 0; }
   .model-row__actions .btn,
   .models__section-head .btn,
@@ -2170,11 +2196,11 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
 }
 
 @media (max-width: 767px) {
-  .perf { padding: calc(var(--space-4) + env(safe-area-inset-top, 0px)) var(--space-4) var(--space-10); }
+  .perf { padding: var(--space-4) var(--space-4) var(--space-10); }
 }
 
 @media (max-width: 480px) {
-  .perf { padding: calc(var(--space-4) + env(safe-area-inset-top, 0px)) 0.85rem var(--space-8); }
+  .perf { padding: var(--space-4) 0.85rem var(--space-8); }
   .perf__header { flex-wrap: wrap; }
   .perf-model__meta { gap: 0.6rem; }
   .perf-table { font-size: 0.7rem; }
@@ -2196,7 +2222,7 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
   display: flex; flex-wrap: wrap; gap: var(--space-1); padding: var(--space-1); margin: var(--space-3) 0;
   border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); width: fit-content; max-width: 100%;
 }
-.embeddings__tab[aria-pressed="true"] { background: var(--brand); color: var(--on-accent); border-color: var(--brand); }
+.embeddings__tab[aria-pressed="true"] { background: var(--brand-tint); color: var(--ink); border-color: var(--line-strong); }
 .embeddings__pane { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
 .embeddings__pane[hidden], .embeddings__results[hidden] { display: none; }
 .embeddings__items, .embeddings__blocks { display: grid; gap: var(--space-3); margin: var(--space-3) 0; }
@@ -2226,7 +2252,7 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
 .embeddings__miss { color: var(--danger); }
 .embeddings__beaten { display: block; color: var(--ink-muted); font-size: var(--text-xs); }
 @media (max-width: 767px) {
-  .embeddings { padding-top: calc(var(--space-4) + env(safe-area-inset-top, 0px)); }
+  .embeddings { padding-top: var(--space-4); }
 }
 @media (hover: none) {
   .embeddings .btn, .embeddings .input, .embeddings select { min-height: var(--ctrl-h-touch); }
@@ -2274,7 +2300,8 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
 }
 .preset-export__menu .btn { justify-content: flex-start; text-align: left; width: 100%; }
 
-.preset-import-dialog {
+.preset-import-dialog,
+.preset-assist-dialog {
   padding: 0;
   border: 1px solid var(--line-strong);
   border-radius: var(--r-card);
@@ -2284,7 +2311,45 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
   width: min(42rem, calc(100vw - 2 * var(--space-4)));
   max-height: calc(100dvh - 2 * var(--space-6));
 }
-.preset-import-dialog::backdrop { background: var(--scrim); }
+.preset-import-dialog::backdrop,
+.preset-assist-dialog::backdrop { background: var(--scrim); }
+.preset-assist__field { display: flex; flex-direction: column; gap: var(--space-1); }
+.preset-assist__field > label { font-size: var(--text-sm); font-weight: 550; }
+.preset-assist__target-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.preset-assist__target-btns { display: flex; gap: var(--space-1); }
+.preset-assist__targets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  max-height: 8rem;
+  overflow-y: auto;
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-ctl);
+  background: var(--bg);
+}
+.preset-assist__target {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r-ctl);
+  background: var(--surface);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.preset-assist__target:has(input:checked) {
+  background: var(--brand-tint);
+  border-color: var(--line-strong);
+}
+.preset-assist__instruction { width: 100%; resize: vertical; min-height: 6rem; line-height: 1.5; }
+.preset-assist__progress { min-height: 1.2rem; }
 .preset-import__box {
   display: flex;
   flex-direction: column;
@@ -2435,7 +2500,7 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
 .preset-edit__buttons { display: flex; gap: 0.4rem; margin-top: 0.4rem; }
 
 @media (max-width: 767px) {
-  .presets { padding: calc(var(--space-4) + env(safe-area-inset-top, 0px)) var(--space-4) var(--space-10); }
+  .presets { padding: var(--space-4) var(--space-4) var(--space-10); }
   .presets__toolbar .btn,
   .preset-card__actions .btn,
   .preset-export > summary,

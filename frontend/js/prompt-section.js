@@ -37,8 +37,10 @@ import { createEl, autoGrow, debounce, armedConfirm } from './utils.js';
 const normalize = (raw) => raw.trim() || null;
 
 export function createPromptSection(ctx, adapter) {
+  const labelText = adapter.label ?? 'System prompt for this document';
   const input = createEl('textarea', {
     class: 'sysprompt-input', rows: 6,
+    'aria-label': labelText,
     placeholder: 'Optional system prompt for this document…',
     value: adapter.get() ?? '',
   });

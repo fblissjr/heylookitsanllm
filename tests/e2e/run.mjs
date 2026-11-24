@@ -245,6 +245,123 @@ async function main() {
       assert(seen.every((u) => u.includes('stream=metrics')), `requested ${seen.join(', ')}`);
     });
 
+    // Presets page: AI preset assistant dialog opens with model picker & instruction box,
+    // and Escape does not silently discard a dirty preset editor (FB-34).
+    await suite.check('presets: Assist with AI dialog opens and Escape protects dirty edits', async () => {
+      const created = await api('POST', '/v1/presets', {
+        name: 'E2E Assist Target',
+        system_prompt: 'Original prompt text.',
+        params: { temperature: 0.4 },
+      });
+      try {
+        await route(page, 'presets');
+        await page.waitFor(() => [...document.querySelectorAll('.preset-card__name')]
+          .some((el) => el.textContent === 'E2E Assist Target'), 'the test preset card');
+        await clickText(page, '.presets__toolbar button', 'Assist with AI');
+        await page.waitFor(() => Boolean(document.querySelector('.preset-assist-dialog[open]')), 'the Assist with AI dialog');
+        const assistState = await page.js(() => ({
+          hasModel: Boolean(document.getElementById('preset-assist-model')),
+          hasInstruction: Boolean(document.getElementById('preset-assist-instruction')),
+          targets: [...document.querySelectorAll('.preset-assist__target')].map((el) => el.textContent.trim()),
+        }));
+        assert(assistState.hasModel && assistState.hasInstruction, 'Assist dialog missing model or instruction input');
+        assert(assistState.targets.includes('E2E Assist Target'), `target preset missing: ${JSON.stringify(assistState.targets)}`);
+        await clickText(page, '.preset-assist-dialog .preset-import__foot button', 'Cancel');
+        await page.waitFor(() => !document.querySelector('.preset-assist-dialog[open]'), 'the Assist dialog to close');
+
+        // Open editor, dirty it, and verify Escape keeps it open (FB-34).
+        await page.js(() => {
+          const card = [...document.querySelectorAll('.preset-card')]
+            .find((c) => c.dataset.name === 'E2E Assist Target');
+          const edit = [...card.querySelectorAll('.preset-card__actions button')]
+            .find((b) => b.textContent.trim() === 'Edit');
+          edit.click();
+        });
+        await page.waitFor(() => Boolean(document.querySelector('.preset-edit__prompt')), 'the preset editor');
+        await page.js(() => {
+          const box = document.querySelector('.preset-edit__prompt');
+          box.value = 'Unsaved edited prompt.';
+          box.dispatchEvent(new Event('input', { bubbles: true }));
+          document.body.focus();
+        });
+        await page.press('Escape');
+        await sleep(50);
+        const stillOpen = await page.js(() => Boolean(document.querySelector('.preset-edit__prompt')));
+        assert(stillOpen, 'Escape discarded a dirty preset editor');
+        await clickText(page, '.preset-edit__buttons button', 'Cancel');
+        await page.waitFor(() => !document.querySelector('.preset-edit__prompt'), 'Cancel to close the editor');
+      } finally {
+        await api('DELETE', `/v1/presets/${created.id}`).catch(() => {});
+      }
+    });
+
+    // Live MLX /v1/messages Anthropic tools smoke check on the resident model.
+    await suite.check('api: /v1/messages accepts Anthropic tools on a tool-capable MLX model', async () => {
+      const models = (await api('GET', '/v1/models')).data ?? [];
+      const row = models.find((m) => m.id === MODEL);
+      if (!row?.capabilities?.includes('tools')) {
+        skip(`${MODEL} does not advertise the tools capability`);
+      }
+      const res = await api('POST', '/v1/messages', {
+        model: MODEL,
+        max_tokens: 64,
+        thinking: { type: 'disabled' },
+        stream: false,
+        tools: [{
+          name: 'get_weather',
+          description: 'Return the current weather for a city.',
+          input_schema: {
+            type: 'object',
+            properties: { city: { type: 'string' } },
+            required: ['city'],
+          },
+        }],
+        messages: [{ role: 'user', content: 'Call get_weather for Austin.' }],
+      });
+      assert(Array.isArray(res.content) && res.content.length > 0, `unexpected response: ${JSON.stringify(res)}`);
+      assert(
+        res.stop_reason === 'tool_use' || res.stop_reason === 'end_turn' || res.stop_reason === 'max_tokens',
+        `unexpected stop_reason: ${res.stop_reason}`,
+      );
+    });
+
+    // Notebook: typing in the title updates the sidebar row in place without
+    // resetting an armed Delete button (FB-23).
+    await suite.check('notebook: typing a title preserves an armed Delete button', async () => {
+      const nb = await api('POST', '/v1/notebooks', { title: 'Arm Test', content: 'body' });
+      try {
+        await route(page, 'notebook');
+        await page.waitFor(() => document.querySelector('.notebook__title')?.value === 'Arm Test', 'the notebook title');
+        await page.js((id) => {
+          const del = document.querySelector(`.notebook-item[data-id="${CSS.escape(id)}"] .notebook-item__delete`);
+          del.click();
+        }, nb.id);
+        await page.waitFor((id) => document.querySelector(`.notebook-item[data-id="${CSS.escape(id)}"] .notebook-item__delete`)
+          ?.classList.contains('btn--armed'), 'Delete to arm', { timeout: 2000, args: [nb.id] });
+        await page.js(() => {
+          const title = document.querySelector('.notebook__title');
+          title.value = 'Arm Test Renamed';
+          title.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        const after = await page.js((id) => {
+          const row = document.querySelector(`.notebook-item[data-id="${CSS.escape(id)}"]`);
+          return {
+            title: row?.querySelector('.notebook-item__title')?.textContent,
+            armed: row?.querySelector('.notebook-item__delete')?.classList.contains('btn--armed'),
+          };
+        }, nb.id);
+        assert(after.title === 'Arm Test Renamed', `sidebar title did not update: ${after.title}`);
+        assert(after.armed, 'typing in the title disarmed Delete');
+        // Click the armed Delete button to remove cleanly through the UI.
+        await page.js((id) => {
+          document.querySelector(`.notebook-item[data-id="${CSS.escape(id)}"] .notebook-item__delete`)?.click();
+        }, nb.id);
+        await page.waitFor((id) => !document.querySelector(`.notebook-item[data-id="${CSS.escape(id)}"]`), 'notebook row to disappear', { args: [nb.id] });
+      } finally {
+        await api('DELETE', `/v1/notebooks/${nb.id}`).catch(() => {});
+      }
+    });
+
     // Every speed claim of the streaming renderer rests on ONE claim: the cut
     // MarkdownStream chooses is a place no markdown construct can span. That is
     // a property, not a list of examples, so it is checked as one: generated

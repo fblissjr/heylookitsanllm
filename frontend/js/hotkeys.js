@@ -23,7 +23,7 @@ function isModalOpen() {
 
 const SHORTCUT_ROWS = [
   { keys: ['⌘ / Ctrl', 'Enter'], desc: 'Send message (Chat) or Generate continuation (Notebook)' },
-  { keys: ['Enter'], desc: 'Send message in Chat composer (Shift + Enter for newline)' },
+  { keys: ['Enter'], desc: 'Send message in Chat composer on a keyboard (Shift + Enter for newline; Return adds a newline on touch)' },
   { keys: ['Esc'], desc: 'Stop active generation or close open drawer / panel / dialog' },
   { keys: ['?'], desc: 'Toggle this keyboard shortcuts sheet' },
 ];

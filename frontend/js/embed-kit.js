@@ -112,7 +112,7 @@ function toThumb(source, width, height) {
 export async function thumbnail(file, kind) {
   try {
     if (kind === 'image') {
-      const bitmap = await createImageBitmap(file);
+      const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
       const url = toThumb(bitmap, bitmap.width, bitmap.height);
       bitmap.close();
       return url;
@@ -230,7 +230,7 @@ export function buildPlan(set, known) {
   return { queries, pool, cases };
 }
 
-// ---- Built-in sample dataset (matches embedding-lab/sample/set.json) -------
+// ---- Built-in 8-case multimodal sample dataset -----------------------------
 
 const SAMPLE_SET = {
   name: 'Sample: text retrieval with hard negatives, plus four generated shapes',

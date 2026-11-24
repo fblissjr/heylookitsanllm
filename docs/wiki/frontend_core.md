@@ -68,7 +68,7 @@ flowchart TD
 ```
 
 ### 2.1. Store Mirroring & Dual Invalidation
-The frontend UI acts as an **in-memory mirror of the DuckDB database**:
+The frontend UI acts as an **in-memory mirror of the SQLite database**:
 - The UI fetches document state on selection.
 - **Strict Invalidation Points**: state is refetched only on (1) document selection change, and (2) resume from background. Re-clicking the already-active document does not refetch -- with one caveat in chat, where the guard also requires messages to be loaded, so an active conversation holding none will still fetch.
 
@@ -93,7 +93,7 @@ All browser-local persistence in `frontend/js/` goes through [`storage.js`](../.
 A preset is a named bundle of a system prompt (optional) and sampler parameters, in one global store (`/v1/presets`). Two surfaces touch it, and the split between them is the design:
 
 - The **settings drawer** holds what the open *document* (a conversation or a notebook) runs on. Its preset section ([`preset-bar.js`](../../frontend/js/preset-bar.js), shared by chat and notebook) says where that came from and offers the two moves between a document and the store.
-- The **Presets page** ([`pages/presets.js`](../../frontend/js/pages/presets.js), `#/presets`) is where a preset itself is edited, renamed, duplicated, imported, exported and deleted. Portable JSON/Markdown serialization, unified prompt/param diffing, and multi-file Markdown ZIP fallback live in [`preset-io.js`](../../frontend/js/preset-io.js) (format-matched with `src/heylook_llm/preset_io.py` and `uv run heylook presets`).
+- The **Presets page** ([`pages/presets.js`](../../frontend/js/pages/presets.js), `#/presets`) is where a preset itself is edited, renamed, duplicated, imported, exported, AI-assisted, and deleted. Portable JSON/Markdown serialization, unified prompt/param diffing, and multi-file Markdown ZIP fallback live in [`preset-io.js`](../../frontend/js/preset-io.js) (format-matched with `src/heylook_llm/preset_io.py` and `uv run heylook presets`), and the client-side `/v1/messages` tool-calling assistant loop lives in [`preset-assist.js`](../../frontend/js/preset-assist.js) (feeding staged proposals directly into the shared before/after diff review dialog).
 
 Three rules hold across both: what the model reads is one bag, the document's own prompt and samplers; a preset is a copy, never a link; an empty preset prompt makes no claim.
 

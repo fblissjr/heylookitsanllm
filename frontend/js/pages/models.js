@@ -22,11 +22,14 @@ export default createPage({
   async setup(ctx) {
     const s = ctx.state;
     s.models = [];
-    s.loadingIds = new Set();   // model ids mid load/unload
+    s.modelsLoaded = false;
+    s.loadingIds = new Set();   // model ids mid load/unload/reload
+    s.reloadingIds = new Set(); // subset of loadingIds performing a reload
     s.pendingLoadNote = null;   // warm-timing note, flushed after the list refetch
     s.optionsSchema = null;     // /v1/admin/model-options payload (fetched on first Configure)
     s.optionsPromise = null;    // in-flight fetch of the above
     s.configOpenId = null;      // model id with the config editor expanded (single panel)
+    s.disposePanel = null;      // cleans up fit-meter debounce/abort on rebuild or teardown (FB-29)
     s.configDrafts = new Map(); // model id -> {field: rawValue} unsaved edits; survives re-renders
     s.engineOpenIds = new Set(); // model ids whose engine panel is open; survives re-renders
     // Unsaved work on this page is a chat-template body typed into a panel:
@@ -45,9 +48,9 @@ export default createPage({
     s.savingFolders = false;
 
     buildSkeleton(ctx);
-    // No sampler/page settings here -- register so the drawer still offers the
-    // global Display prefs and hides the sampler panel.
+    // No sampler/page settings here -- register so the drawer hides the sampler panel.
     ctx.onTeardown(drawer.registerSettings({ samplers: 'hidden' }));
+    ctx.onTeardown(() => { s.disposePanel?.(); s.disposePanel = null; });
     registerPageHotkeys(ctx, {
       onEscape: () => {
         // The OPEN panel's draft: handed the whole Map, this was always false
@@ -68,7 +71,8 @@ export default createPage({
       .then((schema) => {
         if (!ctx.alive) return;
         s.optionsSchema = schema;
-        renderModelList(ctx);
+        // Don't paint "No models yet" while the initial model fetch is still in flight (FB-77).
+        if (s.modelsLoaded) renderModelList(ctx);
       })
       .catch(() => { s.optionsPromise = null; });
     // Non-fatal, like the option schema: the watch-folder editor is a
@@ -224,9 +228,11 @@ async function fetchModels(ctx, { keepStatus = false } = {}) {
     const data = await api.adminListModels({ signal: ctx.signal });
     if (!ctx.alive) return;
     s.models = data.models ?? [];
+    s.modelsLoaded = true;
     if (!keepStatus) clearError(ctx);
   } catch (err) {
     if (!ctx.alive) return;
+    s.modelsLoaded = true;
     showError(ctx, `Could not load models: ${err.message}`);
   }
   renderModelList(ctx);
@@ -234,6 +240,8 @@ async function fetchModels(ctx, { keepStatus = false } = {}) {
 
 function renderModelList(ctx) {
   const s = ctx.state;
+  s.disposePanel?.();
+  s.disposePanel = null;
   if (!s.models.length) {
     s.listEl.replaceChildren(
       createEl('div', { class: 'empty-state' }, [
@@ -262,6 +270,7 @@ function renderModelList(ctx) {
       const panel = buildConfigPanel(ctx, m);
       children.push(panel.el);
       panelAnnounce = panel.announce;
+      s.disposePanel = panel.dispose;
     }
   }
   // An open panel whose model vanished (removed entry) just doesn't render;
@@ -328,8 +337,9 @@ function buildModelRow(ctx, model) {
   }
   main.push(buildEnginePanel(ctx, model));
 
+  const reloading = s.reloadingIds.has(model.id);
   const btn = createEl('button', { class: 'btn btn--sm' }, [
-    busy ? (model.loaded ? 'Unloading…' : 'Loading…') : (model.loaded ? 'Unload' : 'Load'),
+    busy ? (reloading ? 'Reloading…' : (model.loaded ? 'Unloading…' : 'Loading…')) : (model.loaded ? 'Unload' : 'Load'),
   ]);
   const fitGate = !model.loaded ? s.fitGates.get(model.id) : null;
   btn.disabled = busy || Boolean(fitGate);
@@ -521,6 +531,7 @@ function buildConfigPanel(ctx, model) {
       renderModelList(ctx);
     },
     onDraftChange: () => syncUnsavedGuard(ctx),
+    onTemplateChanged: () => { if (ctx.alive) fetchModels(ctx, { keepStatus: true }); },
     onReload: () => reloadModel(ctx, model),
     onReset: () => renderModelList(ctx),
     // The fit meter's Load gate (design §5: MLX FAIL disables Load with the
@@ -550,6 +561,7 @@ async function reloadModel(ctx, model) {
   const s = ctx.state;
   if (s.loadingIds.has(model.id)) return;
   s.loadingIds.add(model.id);
+  s.reloadingIds.add(model.id);
   renderModelList(ctx);
 
   try {
@@ -569,6 +581,7 @@ async function reloadModel(ctx, model) {
   }
 
   s.loadingIds.delete(model.id);
+  s.reloadingIds.delete(model.id);
   if (ctx.alive) await fetchModels(ctx, { keepStatus: true });
   if (ctx.alive) flushLoadNote(ctx);
 }

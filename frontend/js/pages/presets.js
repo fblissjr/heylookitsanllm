@@ -44,6 +44,7 @@ import {
   slugifyPresetName,
   uniqueMarkdownFilenames,
 } from '../preset-io.js';
+import { runPresetAssist, toolCapableModels } from '../preset-assist.js';
 
 export default createPage({
   async setup(ctx) {
@@ -51,6 +52,8 @@ export default createPage({
     s.presets = [];
     s.cards = new Map();      // preset id -> its card element
     s.openEditors = new Set(); // ids with an editor or rename box open
+    s.dirtyEditors = new Map(); // preset id -> () => boolean
+    s.assistAbort = null;
     s.setUnloadGuard = createUnloadGuard(ctx);
 
     s.importInput = createEl('input', {
@@ -65,6 +68,13 @@ export default createPage({
       s.importInput.value = '';
       if (files.length) handleImportFiles(ctx, files);
     });
+
+    s.assistBtn = createEl('button', {
+      type: 'button',
+      class: 'btn btn--sm btn--primary',
+      title: 'Use a tool-capable model to draft edits across one or more presets and review diffs before applying',
+    }, ['Assist with AI']);
+    s.assistBtn.addEventListener('click', () => openAssistDialog(ctx));
 
     s.importBtn = createEl('button', {
       type: 'button',
@@ -90,13 +100,19 @@ export default createPage({
     s.exportAllMdBtn.addEventListener('click', () => exportAllMarkdown(ctx));
 
     s.toolbarEl = createEl('div', { class: 'presets__toolbar' }, [
+      s.assistBtn,
       s.importBtn,
       s.exportAllJsonBtn,
       s.exportAllMdBtn,
       s.importInput,
     ]);
 
-    s.importDialog = buildImportDialog(ctx);
+    s.importDialog = buildModalDialog('preset-import-dialog', 'preset-import-title');
+    s.assistDialog = buildModalDialog('preset-assist-dialog', 'preset-assist-title');
+    s.assistDialog.addEventListener('close', () => {
+      s.assistAbort?.abort();
+      s.assistAbort = null;
+    });
     s.statusEl = createEl('div', { class: 'presets__status', role: 'status' });
     s.listEl = createEl('div', { class: 'presets__list' }, [
       createEl('div', { class: 'empty-state' }, ['Loading presets…']),
@@ -112,6 +128,7 @@ export default createPage({
       s.statusEl,
       s.listEl,
       s.importDialog,
+      s.assistDialog,
     ]));
 
     // Close any open per-card Export menu when clicking elsewhere on the page.
@@ -123,11 +140,16 @@ export default createPage({
     document.addEventListener('click', closeExportMenus);
     ctx.onTeardown(() => document.removeEventListener('click', closeExportMenus));
 
-    const closeDialogOnHash = () => {
+    const closeDialogsOnHash = () => {
       if (s.importDialog?.open) s.importDialog.close();
+      if (s.assistDialog?.open) s.assistDialog.close();
     };
-    window.addEventListener('hashchange', closeDialogOnHash);
-    ctx.onTeardown(() => window.removeEventListener('hashchange', closeDialogOnHash));
+    window.addEventListener('hashchange', closeDialogsOnHash);
+    ctx.onTeardown(() => {
+      s.assistAbort?.abort();
+      s.assistAbort = null;
+      window.removeEventListener('hashchange', closeDialogsOnHash);
+    });
 
     // Another tab or device may have written while this one was away. Cards
     // with an open editor are left alone: their typed text is the user's, and
@@ -141,10 +163,23 @@ export default createPage({
           return true;
         }
         if (!s.openEditors.size) return false;
-        const cancelBtn = [...ctx.el.querySelectorAll('.preset-edit__buttons .btn, .preset-card__rename-row .btn')]
-          .find((b) => b.textContent === 'Cancel');
-        if (cancelBtn) {
-          cancelBtn.click();
+        // Never discard an editor with unsaved changes on bare Escape (FB-34).
+        let blockedDirty = false;
+        for (const id of s.openEditors) {
+          if (s.dirtyEditors.get(id)?.()) {
+            blockedDirty = true;
+            continue;
+          }
+          const card = s.cards.get(id);
+          const cancelBtn = [...(card?.querySelectorAll('.preset-edit__buttons .btn, .preset-card__rename-row .btn') ?? [])]
+            .find((b) => b.textContent === 'Cancel');
+          if (cancelBtn) {
+            cancelBtn.click();
+            return true;
+          }
+        }
+        if (blockedDirty) {
+          status(ctx, 'Unsaved edits — click Cancel to discard or Save to keep them.');
           return true;
         }
         return false;
@@ -179,6 +214,7 @@ async function load(ctx) {
   if (!ctx.alive) return;
   s.cards.clear();
   s.openEditors.clear();
+  s.dirtyEditors.clear();
   s.setUnloadGuard(false);
   updateToolbar(ctx);
   if (!s.presets.length) {
@@ -227,9 +263,16 @@ function replaceCard(ctx, preset) {
   return next;
 }
 
-function setEditing(ctx, id, on) {
+function setEditing(ctx, id, on, isDirty = null) {
   const s = ctx.state;
-  if (on) s.openEditors.add(id); else s.openEditors.delete(id);
+  if (on) {
+    s.openEditors.add(id);
+    if (isDirty) s.dirtyEditors.set(id, isDirty);
+    else s.dirtyEditors.delete(id);
+  } else {
+    s.openEditors.delete(id);
+    s.dirtyEditors.delete(id);
+  }
   // Typed edits here have no home until Save, so a reload would lose them.
   s.setUnloadGuard(s.openEditors.size > 0);
 }
@@ -405,8 +448,15 @@ function buildEditor(ctx, preset) {
     () => JSON.stringify([preset.id, promptValue()]),
   );
   prompt.addEventListener('input', () => saveBtn.disarm());
+  const isDirty = () => promptValue() !== stored || touched.size > 0;
+  setEditing(ctx, preset.id, true, isDirty);
   const cancelBtn = createEl('button', { type: 'button', class: 'btn btn--sm btn--ghost' }, ['Cancel']);
-  cancelBtn.addEventListener('click', () => replaceCard(ctx, preset));
+  // Read the latest preset row from state so a "changed elsewhere" refusal
+  // followed by Cancel + Edit again opens on the refreshed row (FB-84).
+  cancelBtn.addEventListener('click', () => {
+    const latest = ctx.state.presets.find((p) => p.id === preset.id) ?? preset;
+    replaceCard(ctx, latest);
+  });
 
   return createEl('div', { class: 'preset-edit' }, [
     createEl('label', { for: promptId }, ['System prompt']),
@@ -435,6 +485,10 @@ async function save(ctx, preset, { openedAt, system_prompt, params }) {
       return;
     }
     if (fresh.updated_at !== openedAt) {
+      // Refresh our cached row so "Cancel and Edit again" opens on the new
+      // updated_at instead of failing with the stale timestamp forever (FB-84).
+      const idx = ctx.state.presets.findIndex((p) => p.id === preset.id);
+      if (idx >= 0) ctx.state.presets[idx] = fresh;
       status(ctx, `"${preset.name}" changed elsewhere since you opened it. Nothing was saved: `
         + 'copy anything you need out of the editor, then Cancel and Edit again.', true);
       return;
@@ -613,14 +667,14 @@ async function exportAllMarkdown(ctx) {
 }
 
 // ---------------------------------------------------------------------------
-// import review modal (single conflict diff + bulk summary & combined diffs)
+// shared modal dialog + AI preset assistant + import review modal
 // ---------------------------------------------------------------------------
 
-function buildImportDialog(ctx) {
+function buildModalDialog(className, labelledBy) {
   const dialog = createEl('dialog', {
-    class: 'preset-import-dialog',
+    class: className,
     closedby: 'any',
-    'aria-labelledby': 'preset-import-title',
+    'aria-labelledby': labelledBy,
   });
   // Fallback for browsers without native <dialog closedby="any"> support (e.g. Safari).
   if (typeof HTMLDialogElement !== 'undefined' && !('closedBy' in HTMLDialogElement.prototype)) {
@@ -637,6 +691,221 @@ function buildImportDialog(ctx) {
     });
   }
   return dialog;
+}
+
+async function openAssistDialog(ctx) {
+  const s = ctx.state;
+  const dialog = s.assistDialog;
+  const close = () => {
+    s.assistAbort?.abort();
+    s.assistAbort = null;
+    if (dialog.open) dialog.close();
+  };
+
+  let models = [];
+  let freshPresets = s.presets;
+  try {
+    const [mRes, pRes] = await Promise.all([
+      api.listModels({ signal: ctx.signal }),
+      fetchPresets(ctx),
+    ]);
+    if (!ctx.alive) return;
+    models = toolCapableModels(mRes?.data ?? []);
+    freshPresets = pRes;
+  } catch (err) {
+    if (ctx.alive) status(ctx, `Could not open preset assistant: ${err.message}`, true);
+    return;
+  }
+
+  const closeBtn = createEl('button', {
+    type: 'button', class: 'btn btn--ghost btn--sm', 'aria-label': 'Close preset assistant',
+  }, ['Close']);
+  closeBtn.addEventListener('click', close);
+
+  const head = createEl('header', { class: 'preset-import__head' }, [
+    createEl('h2', { id: 'preset-assist-title' }, ['Assist with AI']),
+    closeBtn,
+  ]);
+
+  const modelSelectId = 'preset-assist-model';
+  const modelSelect = createEl('select', { id: modelSelectId, class: 'input' },
+    models.length
+      ? models.map((m) => createEl('option', { value: m.id }, [
+        m.supportsTools ? m.id : `${m.id} (no tool support detected)`,
+      ]))
+      : [createEl('option', { value: '' }, ['No generative models available'])],
+  );
+  const modelHint = createEl('div', { class: 'muted small' });
+  const syncModelHint = () => {
+    const chosen = models.find((m) => m.id === modelSelect.value);
+    if (!chosen) {
+      modelHint.textContent = 'Load or configure a tool-capable model first.';
+    } else if (!chosen.supportsTools) {
+      modelHint.textContent = 'This model\'s chat template did not advertise tool calling; /v1/messages may refuse it.';
+    } else {
+      modelHint.textContent = 'Uses /v1/messages tool calling. Nothing is saved until you review and confirm the diff.';
+    }
+  };
+  modelSelect.addEventListener('change', syncModelHint);
+  syncModelHint();
+
+  const selectedNames = new Set();
+  const checkboxes = freshPresets.map((p) => {
+    const cb = createEl('input', { type: 'checkbox', value: p.name });
+    cb.addEventListener('change', () => {
+      if (cb.checked) selectedNames.add(p.name);
+      else selectedNames.delete(p.name);
+      syncTargetCount();
+    });
+    return { cb, label: createEl('label', { class: 'preset-assist__target' }, [cb, createEl('span', {}, [p.name])]) };
+  });
+
+  const targetCountEl = createEl('span', { class: 'muted small' });
+  const syncTargetCount = () => {
+    if (!freshPresets.length) {
+      targetCountEl.textContent = 'No saved presets yet (the assistant can still propose new ones).';
+    } else if (!selectedNames.size) {
+      targetCountEl.textContent = `All ${freshPresets.length} presets visible to the model (check specific ones to narrow scope).`;
+    } else {
+      targetCountEl.textContent = `${selectedNames.size} of ${freshPresets.length} selected.`;
+    }
+  };
+  syncTargetCount();
+
+  const selectAllBtn = createEl('button', { type: 'button', class: 'btn btn--sm btn--ghost' }, ['Select all']);
+  selectAllBtn.addEventListener('click', () => {
+    for (const { cb } of checkboxes) { cb.checked = true; selectedNames.add(cb.value); }
+    syncTargetCount();
+  });
+  const clearSelBtn = createEl('button', { type: 'button', class: 'btn btn--sm btn--ghost' }, ['Clear']);
+  clearSelBtn.addEventListener('click', () => {
+    for (const { cb } of checkboxes) cb.checked = false;
+    selectedNames.clear();
+    syncTargetCount();
+  });
+
+  const instructionId = 'preset-assist-instruction';
+  const instructionEl = createEl('textarea', {
+    id: instructionId,
+    class: 'input preset-assist__instruction',
+    rows: 5,
+    placeholder: 'Describe the wording or settings change — e.g. "Weave this paragraph into each selected preset\'s system prompt naturally, matching its formatting and casing:\n\n..."',
+  });
+  instructionEl.addEventListener('input', () => autoGrow(instructionEl, 320));
+
+  const progressEl = createEl('div', { class: 'preset-assist__progress small muted', role: 'status', 'aria-live': 'polite' });
+
+  const runBtn = createEl('button', {
+    type: 'button',
+    class: 'btn btn--sm btn--primary',
+    disabled: !models.length,
+  }, ['Draft edits']);
+  const cancelBtn = createEl('button', { type: 'button', class: 'btn btn--sm btn--ghost' }, ['Cancel']);
+  cancelBtn.addEventListener('click', close);
+
+  runBtn.addEventListener('click', async () => {
+    const instruction = instructionEl.value.trim();
+    if (!instruction) {
+      progressEl.textContent = 'Enter an instruction first.';
+      instructionEl.focus();
+      return;
+    }
+    const model = modelSelect.value;
+    if (!model) {
+      progressEl.textContent = 'Choose a model first.';
+      return;
+    }
+
+    s.assistAbort?.abort();
+    const ac = ctx.linkedController();
+    s.assistAbort = ac;
+    runBtn.disabled = true;
+    modelSelect.disabled = true;
+    instructionEl.disabled = true;
+    runBtn.textContent = 'Working…';
+    progressEl.textContent = 'Contacting model…';
+
+    try {
+      const result = await runPresetAssist({
+        createMessage: (body, opts) => api.createMessage(body, opts),
+        model,
+        instruction,
+        presets: freshPresets,
+        targetNames: [...selectedNames],
+        signal: ac.signal,
+        onProgress: (ev) => {
+          if (!ctx.alive) return;
+          if (ev.phase === 'thinking') {
+            progressEl.textContent = `Turn ${ev.turn}: model thinking${ev.stagedCount ? ` (${ev.stagedCount} staged)` : ''}…`;
+          } else if (ev.phase === 'tool') {
+            progressEl.textContent = `Turn ${ev.turn}: ${ev.summary} (${ev.stagedCount} staged)…`;
+          }
+        },
+      });
+      if (!ctx.alive) return;
+      s.assistAbort = null;
+      if (!result.proposals.length) {
+        progressEl.textContent = result.assistantText
+          ? `Model made no preset edits: ${result.assistantText}`
+          : 'Model finished without proposing any preset changes.';
+        runBtn.disabled = false;
+        modelSelect.disabled = false;
+        instructionEl.disabled = false;
+        runBtn.textContent = 'Draft edits';
+        return;
+      }
+      if (dialog.open) dialog.close();
+      const latestPresets = await fetchPresets(ctx).catch(() => freshPresets);
+      if (!ctx.alive) return;
+      const plan = planImport(result.proposals, latestPresets);
+      openImportDialog(ctx, plan, { source: 'assist', assistantText: result.assistantText });
+    } catch (err) {
+      if (!ctx.alive) return;
+      s.assistAbort = null;
+      progressEl.textContent = err?.name === 'AbortError'
+        ? 'Cancelled.'
+        : `Assistant failed: ${err.message}`;
+      runBtn.disabled = false;
+      modelSelect.disabled = false;
+      instructionEl.disabled = false;
+      runBtn.textContent = 'Draft edits';
+    }
+  });
+
+  const bodyChildren = [
+    createEl('div', { class: 'preset-assist__field' }, [
+      createEl('label', { for: modelSelectId }, ['Model']),
+      modelSelect,
+      modelHint,
+    ]),
+  ];
+  if (checkboxes.length) {
+    bodyChildren.push(createEl('div', { class: 'preset-assist__field' }, [
+      createEl('div', { class: 'preset-assist__target-head' }, [
+        createEl('span', { class: 'preset-diff__label small' }, ['Target presets (optional)']),
+        createEl('div', { class: 'preset-assist__target-btns' }, [selectAllBtn, clearSelBtn]),
+      ]),
+      createEl('div', { class: 'preset-assist__targets' }, checkboxes.map((c) => c.label)),
+      targetCountEl,
+    ]));
+  }
+  bodyChildren.push(
+    createEl('div', { class: 'preset-assist__field' }, [
+      createEl('label', { for: instructionId }, ['Instruction']),
+      instructionEl,
+    ]),
+    progressEl,
+  );
+
+  const box = createEl('div', { class: 'preset-import__box' }, [
+    head,
+    createEl('div', { class: 'preset-import__body' }, bodyChildren),
+    createEl('footer', { class: 'preset-import__foot' }, [runBtn, cancelBtn]),
+  ]);
+  dialog.replaceChildren(box);
+  if (typeof dialog.showModal === 'function') dialog.showModal();
+  else dialog.setAttribute('open', '');
+  queueMicrotask(() => instructionEl.focus());
 }
 
 function formatParamVal(val) {
@@ -734,14 +1003,17 @@ async function handleImportFiles(ctx, files) {
   openImportDialog(ctx, plan);
 }
 
-function openImportDialog(ctx, plan) {
+function openImportDialog(ctx, plan, { source = 'import', assistantText = '' } = {}) {
   const dialog = ctx.state.importDialog;
   const close = () => { if (dialog.open) dialog.close(); };
+  const isAssist = source === 'assist';
 
   const single = plan.items.length === 1;
-  const titleText = single
-    ? (plan.items[0].existing ? 'Preset already exists' : 'Import preset')
-    : `Import ${plan.items.length} presets`;
+  const titleText = isAssist
+    ? (single ? 'Review proposed preset edit' : `Review ${plan.items.length} proposed preset edits`)
+    : (single
+      ? (plan.items[0].existing ? 'Preset already exists' : 'Import preset')
+      : `Import ${plan.items.length} presets`);
 
   const closeBtn = createEl('button', {
     type: 'button', class: 'btn btn--ghost btn--sm', 'aria-label': 'Close import dialog',
@@ -754,18 +1026,24 @@ function openImportDialog(ctx, plan) {
   ]);
 
   const bodyChildren = [];
+  if (isAssist && assistantText) {
+    bodyChildren.push(createEl('p', { class: 'preset-import__note muted small' }, [assistantText]));
+  }
   const footerBtns = [];
   let diffsWrap = null;
+
+  const removesAnyPrompt = plan.existingItems.some(
+    (it) => it.changed && Boolean(it.existing?.system_prompt) && !it.incoming.system_prompt,
+  );
 
   const runApply = async (includeExisting, triggerBtn) => {
     for (const b of footerBtns) b.disabled = true;
     const prevLabel = triggerBtn.textContent;
-    triggerBtn.textContent = 'Importing…';
-    const result = await applyImportPlan(ctx, plan, { includeExisting });
+    triggerBtn.textContent = isAssist ? 'Applying…' : 'Importing…';
+    const result = await applyImportPlan(ctx, plan, { includeExisting, label: isAssist ? 'Apply' : 'Import' });
     if (!ctx.alive) return;
     close();
-    await load(ctx);
-    if (!ctx.alive) return;
+    reconcileAppliedPresets(ctx, result.createdPresets, result.updatedPresets);
     if (result.errors.length) {
       status(ctx, `${result.summary} Failed: ${result.errors.join('; ')}`, true);
     } else {
@@ -788,7 +1066,9 @@ function openImportDialog(ctx, plan) {
             'Carries no system prompt (settings only).',
           ]),
       );
-      const importBtn = createEl('button', { type: 'button', class: 'btn btn--sm btn--primary' }, ['Import preset']);
+      const importBtn = createEl('button', { type: 'button', class: 'btn btn--sm btn--primary' }, [
+        isAssist ? 'Create preset' : 'Import preset',
+      ]);
       importBtn.addEventListener('click', () => runApply(true, importBtn));
       const cancelBtn = createEl('button', { type: 'button', class: 'btn btn--sm btn--ghost' }, ['Cancel']);
       cancelBtn.addEventListener('click', close);
@@ -803,8 +1083,16 @@ function openImportDialog(ctx, plan) {
         buildDiffBlock(item),
       );
       if (item.changed) {
-        const overwriteBtn = createEl('button', { type: 'button', class: 'btn btn--sm btn--primary' }, ['Overwrite preset']);
-        overwriteBtn.addEventListener('click', () => runApply(true, overwriteBtn));
+        const overwriteBtn = armedConfirm(
+          createEl('button', { type: 'button', class: 'btn btn--sm btn--primary' }, [
+            isAssist ? 'Apply change' : 'Overwrite preset',
+          ]),
+          () => runApply(true, overwriteBtn),
+          'Remove prompt?',
+          // Arm before overwriting a stored prompt with null (FB-86).
+          () => removesAnyPrompt,
+          () => item.existing.id,
+        );
         const cancelBtn = createEl('button', { type: 'button', class: 'btn btn--sm btn--ghost' }, ['Cancel']);
         cancelBtn.addEventListener('click', close);
         footerBtns.push(overwriteBtn, cancelBtn);
@@ -815,7 +1103,7 @@ function openImportDialog(ctx, plan) {
       }
     }
   } else {
-    // Bulk import (Requirement 6): list New vs Already exist, and let the user
+    // Bulk import / assist: list New vs Already exist, and let the user
     // either view combined diffs first OR import and apply directly.
     if (plan.newItems.length) {
       bodyChildren.push(
@@ -845,16 +1133,16 @@ function openImportDialog(ctx, plan) {
     if (plan.existingItems.length) {
       bodyChildren.push(
         createEl('p', { class: 'preset-import__note muted small' }, [
-          'Inspect all existing preset diffs in a combined view below, or import and apply now.',
+          'Inspect all existing preset diffs in a combined view below, or apply now.',
         ]),
       );
-      diffsWrap = createEl('div', { class: 'preset-import__diffs', hidden: true },
+      diffsWrap = createEl('div', { class: 'preset-import__diffs', hidden: !isAssist },
         plan.existingItems.map((it) => buildDiffBlock(it)));
       bodyChildren.push(diffsWrap);
 
       const toggleDiffsBtn = createEl('button', {
-        type: 'button', class: 'btn btn--sm', 'aria-expanded': 'false',
-      }, ['View combined diffs']);
+        type: 'button', class: 'btn btn--sm', 'aria-expanded': String(isAssist),
+      }, [isAssist ? 'Hide combined diffs' : 'View combined diffs']);
       toggleDiffsBtn.addEventListener('click', () => {
         const show = diffsWrap.hidden;
         diffsWrap.hidden = !show;
@@ -862,8 +1150,15 @@ function openImportDialog(ctx, plan) {
         toggleDiffsBtn.textContent = show ? 'Hide combined diffs' : 'View combined diffs';
       });
 
-      const applyAllBtn = createEl('button', { type: 'button', class: 'btn btn--sm btn--primary' }, ['Import and apply']);
-      applyAllBtn.addEventListener('click', () => runApply(true, applyAllBtn));
+      const applyAllBtn = armedConfirm(
+        createEl('button', { type: 'button', class: 'btn btn--sm btn--primary' }, [
+          isAssist ? 'Apply all changes' : 'Import and apply',
+        ]),
+        () => runApply(true, applyAllBtn),
+        'Remove stored prompt(s)?',
+        () => removesAnyPrompt,
+        () => plan.existingItems.map((it) => it.existing.id).join(','),
+      );
 
       footerBtns.push(toggleDiffsBtn, applyAllBtn);
       if (plan.newItems.length) {
@@ -876,7 +1171,7 @@ function openImportDialog(ctx, plan) {
       footerBtns.push(cancelBtn);
     } else {
       const applyBtn = createEl('button', { type: 'button', class: 'btn btn--sm btn--primary' }, [
-        `Import ${plan.newItems.length} presets`,
+        `${isAssist ? 'Create' : 'Import'} ${plan.newItems.length} presets`,
       ]);
       applyBtn.addEventListener('click', () => runApply(true, applyBtn));
       const cancelBtn = createEl('button', { type: 'button', class: 'btn btn--sm btn--ghost' }, ['Cancel']);
@@ -895,32 +1190,79 @@ function openImportDialog(ctx, plan) {
   else dialog.setAttribute('open', '');
 }
 
-async function applyImportPlan(ctx, plan, { includeExisting }) {
+// Update only the cards affected by an import/assist so open editors on
+// unrelated cards keep their typed drafts (FB-85).
+function reconcileAppliedPresets(ctx, createdPresets, updatedPresets) {
+  const s = ctx.state;
+  if (!createdPresets.length && !updatedPresets.length) return;
+  if (s.listEl.querySelector('.empty-state')) s.listEl.replaceChildren();
+  for (const saved of updatedPresets) {
+    if (s.cards.has(saved.id)) replaceCard(ctx, saved);
+    else {
+      s.presets.push(saved);
+      s.listEl.append(buildCard(ctx, saved));
+    }
+  }
+  for (const created of createdPresets) {
+    s.presets.push(created);
+    s.listEl.append(buildCard(ctx, created));
+  }
+  updateToolbar(ctx);
+}
+
+async function applyImportPlan(ctx, plan, { includeExisting, label = 'Import' }) {
   let created = 0;
   let updated = 0;
   let unchanged = 0;
   let skipped = 0;
   const errors = [];
+  const createdPresets = [];
+  const updatedPresets = [];
+
+  // Re-read before overwriting existing rows so a preset edited elsewhere
+  // while the dialog was open is never clobbered silently (FB-86).
+  let freshById = null;
+  if (includeExisting && plan.changedExistingItems.length) {
+    try {
+      const fresh = await fetchPresets(ctx);
+      freshById = new Map(fresh.map((p) => [p.id, p]));
+    } catch {
+      freshById = null;
+    }
+  }
 
   for (const item of plan.items) {
     if (!ctx.alive) break;
     try {
       if (!item.existing) {
-        await api.createPreset({
+        const createdRow = await api.createPreset({
           name: item.incoming.name,
           system_prompt: item.incoming.system_prompt,
           params: item.incoming.params,
         });
+        createdPresets.push(createdRow);
         created += 1;
       } else if (!includeExisting) {
         skipped += 1;
       } else if (!item.changed) {
         unchanged += 1;
       } else {
-        await api.updatePreset(item.existing.id, {
+        if (freshById) {
+          const current = freshById.get(item.existing.id);
+          if (!current) {
+            errors.push(`${item.incoming.name}: deleted elsewhere while reviewing`);
+            continue;
+          }
+          if (current.updated_at !== item.existing.updated_at) {
+            errors.push(`${item.incoming.name}: changed elsewhere while reviewing`);
+            continue;
+          }
+        }
+        const savedRow = await api.updatePreset(item.existing.id, {
           system_prompt: item.incoming.system_prompt,
           params: item.incoming.params,
         });
+        updatedPresets.push(savedRow);
         updated += 1;
       }
     } catch (err) {
@@ -933,6 +1275,6 @@ async function applyImportPlan(ctx, plan, { includeExisting }) {
   if (updated) parts.push(`${updated} updated`);
   if (unchanged) parts.push(`${unchanged} unchanged`);
   if (skipped) parts.push(`${skipped} skipped`);
-  const summary = parts.length ? `Import complete: ${parts.join(', ')}.` : 'Nothing imported.';
-  return { summary, errors };
+  const summary = parts.length ? `${label} complete: ${parts.join(', ')}.` : 'Nothing changed.';
+  return { summary, errors, createdPresets, updatedPresets };
 }

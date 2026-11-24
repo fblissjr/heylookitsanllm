@@ -68,6 +68,10 @@ export function createPage(spec) {
         // completion) or listeners accumulate on ctx.signal over a session.
         linkedController() {
           const controller = new AbortController();
+          if (ctx.signal.aborted) {
+            controller.abort();
+            return controller;
+          }
           ctx.signal.addEventListener('abort', () => controller.abort(),
             { once: true, signal: controller.signal });
           return controller;

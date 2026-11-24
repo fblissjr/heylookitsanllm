@@ -188,7 +188,21 @@ function buildSkeleton(ctx) {
     s.title = s.titleInput.value;
     s.dirty = true;
     const nb = s.notebooks.find((n) => n.id === s.activeId);
-    if (nb) { nb.title = s.title; renderList(ctx); }
+    if (nb) {
+      nb.title = s.title;
+      // Update just this row's title text in place so typing never resets an
+      // armed Delete button in the sidebar (FB-23).
+      const label = nb.title || 'Untitled';
+      const titleEl = s.listEl.querySelector(
+        `.notebook-item[data-id="${CSS.escape(nb.id)}"] .notebook-item__title`,
+      );
+      if (titleEl) {
+        titleEl.textContent = label;
+        titleEl.title = label;
+      } else {
+        renderList(ctx);
+      }
+    }
     s.scheduleSave();
   });
 
@@ -367,6 +381,7 @@ function renderList(ctx) {
     );
     const item = createEl('div', {
       class: `notebook-item${nb.id === s.activeId ? ' notebook-item--active' : ''}`,
+      dataset: { id: nb.id },
     }, [title, del]);
     item.addEventListener('click', () => {
       selectNotebook(ctx, nb.id);
@@ -473,6 +488,9 @@ async function selectNotebook(ctx, id) {
       // (activeId === id) would otherwise no-op forever.
       s.activeId = null;
       s.appliedPresetId = null;
+      s.systemPrompt = '';
+      hydrateDocParams(null);
+      s.promptSection.setValue('');
       renderEditor(ctx);
       renderList(ctx);
       // resync so the chip doesn't keep claiming the previous notebook's
@@ -486,23 +504,29 @@ async function selectNotebook(ctx, id) {
 // auto-save (debounced; always reads FROM ctx.state, never the DOM)
 // ---------------------------------------------------------------------------
 
+// Browsers reject keepalive fetches over ~64 KiB; fall back to a normal
+// request when the notebook body exceeds 60 KiB so edits still save (FB-24).
+const KEEPALIVE_MAX_BYTES = 60 * 1024;
+
 async function doSave(ctx, { keepalive = false } = {}) {
   const s = ctx.state;
   const id = s.activeId;
   if (!id || !s.dirty) return;
   s.dirty = false;
+  const payload = {
+    title: s.title,
+    content: s.content,
+    model_id: s.modelId || null,
+  };
+  const useKeepalive = keepalive && new Blob([JSON.stringify(payload)]).size <= KEEPALIVE_MAX_BYTES;
   try {
     // system_prompt has its own field-scoped writer (putSystemPrompt, via the
     // shared prompt-section factory) -- omitted here, not just null-guarded,
     // so a slow whole-document save can never clobber a newer prompt PUT.
-    await api.updateNotebook(id, {
-      title: s.title,
-      content: s.content,
-      model_id: s.modelId || null,
-    }, { keepalive });
+    await api.updateNotebook(id, payload, { keepalive: useKeepalive });
   } catch (err) {
-    if (ctx.alive && s.activeId === id) {
-      s.dirty = true; // retry on the next edit/flush
+    if (ctx.alive) {
+      if (s.activeId === id) s.dirty = true; // retry on the next edit/flush
       showStatus(ctx, `Save failed: ${err.message}`, true);
     }
   }
@@ -609,7 +633,7 @@ async function finishGenerate(ctx, gen, { content, aborted }) {
     s.contentTextarea.value = full;
     autoGrow(s.contentTextarea, Infinity);
     doSave(ctx); // save now -- no need to arm the debounce just to flush it
-    if (aborted) showStatus(ctx, content ? 'Stopped -- partial text kept.' : 'Stopped.');
+    showStatus(ctx, aborted ? (content ? 'Stopped -- partial text kept.' : 'Stopped.') : '');
   } else if (content) {
     // partial still persists to the notebook it belonged to, even if the
     // user switched away or the page is tearing down mid-generation.
@@ -625,6 +649,10 @@ function handleGenerateError(ctx, gen, err) {
   const s = ctx.state;
   releaseGen(ctx, gen);
   if (ctx.alive && s.activeId === gen.targetId) {
+    if (gen.content) {
+      s.content = gen.head + gen.content + gen.tail;
+      s.dirty = true;
+    }
     showStatus(ctx, `Generation failed: ${err.message}`, true);
   }
 }
