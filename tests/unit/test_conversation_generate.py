@@ -649,19 +649,26 @@ class TestMessageAndMediaEndpoints:
         assert res.headers["x-content-type-options"] == "nosniff"
 
     @pytest.mark.asyncio
-    async def test_off_family_media_type_degrades_to_octet_stream(self, ctx):
-        # A block claiming text/html would otherwise be SERVED as same-origin
-        # HTML -- stored XSS. The write boundary constrains the type to the
-        # block's own family; off-family claims store as octet-stream.
+    @pytest.mark.parametrize("claimed_type", [
+        "text/html",
+        "image/svg+xml",
+        "IMAGE/SVG+XML; charset=utf-8",
+    ])
+    async def test_off_family_media_type_degrades_to_octet_stream(self, ctx, claimed_type):
+        # A block claiming text/html or image/svg+xml would otherwise be SERVED
+        # as same-origin active content -- stored XSS (FB-37). The write and
+        # serve boundaries constrain the type to non-scriptable media and send
+        # a sandbox CSP; unsafe claims degrade to octet-stream.
         client, store, _ = ctx
         conv = await db.create_conversation(store, title="t", model_id="fake-model")
         evil = {"type": "image",
-                "source": {"type": "base64", "media_type": "text/html",
+                "source": {"type": "base64", "media_type": claimed_type,
                            "data": "PHNjcmlwdD5ib29tPC9zY3JpcHQ+"}}
         row = await db.append_message(store, conv["id"], role="user", content=[evil])
         res = await client.get(row["content_blocks"][0]["source"]["url"])
         assert res.status_code == 200
         assert res.headers["content-type"].startswith("application/octet-stream")
+        assert "sandbox" in res.headers["content-security-policy"]
 
     @pytest.mark.asyncio
     async def test_media_endpoint_404s_across_conversations(self, ctx):

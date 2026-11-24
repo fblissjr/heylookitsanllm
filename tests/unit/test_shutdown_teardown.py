@@ -47,7 +47,7 @@ def served(tmp_path, monkeypatch):
     from heylook_llm.api import app
     from heylook_llm.router import ModelRouter
 
-    monkeypatch.setenv("HEYLOOK_DB_PATH", str(tmp_path / "store.duckdb"))
+    monkeypatch.setenv("HEYLOOK_DB_PATH", str(tmp_path / "store.db"))
     monkeypatch.setattr("heylook_llm.router.MLXProvider", MockProvider)
     config = tmp_path / "heylook.toml"
     config.write_text(_TOML)

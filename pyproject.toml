@@ -49,7 +49,6 @@ dependencies = [
     "uvicorn[standard]>=0.52.3",
     "pydantic>=2.13.4",
     # Data + serialization
-    "duckdb>=1.5.5",           # App-DB store: conversations, notebooks, presets, settings
     "orjson>=3.12.0",          # Fast JSON serialization -- upstream ijl/orjson, never a fork
     "tomli-w>=1.2.0",          # Authoritative for models.toml WRITES (values/layout/order)
     "tomlkit>=0.15.1",         # STRICTLY read-only: comment extraction for toml_comments

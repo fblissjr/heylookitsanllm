@@ -79,15 +79,9 @@ layout ideas and the checks still to port. Those are in `docs/project/TODO.md`
 ## Found while mapping the flows
 
 Writing the flow maps in `docs/wiki/frontend/` turned up these. Each was read
-from the code by the page's writer and none was run. Only FB-37 and FB-38 were
+from the code by the page's writer and none was run. Only FB-38 was
 re-checked by a second reader; treat the rest as leads. The page named in the
 last column maps the flow each one sits in.
-
-Security:
-
-| ID | Claim | Where | Page |
-|---|---|---|---|
-| FB-37 | An SVG attached as an image is stored and served back as `image/svg+xml` from the app's own origin. Shown in an `img` it is inert; opened directly as a document, a script inside it would run with the app's origin. Re-checked in code (the type test accepts anything starting with `image/`); not tried in a browser. | `src/heylook_llm/db.py`, `_externalize_media`; the media route in `src/heylook_llm/conversation_api.py` | chat-attachments.md |
 
 Chat:
 

@@ -43,6 +43,7 @@ from heylook_llm.perf_collector import (
     usage_counts,
 )
 from heylook_llm.schema.content_blocks import ImageBlock
+from heylook_llm.tool_calling import openai_tool_call_to_anthropic
 from heylook_llm.reasoning_parser import (
     merge_presplit_thinking,
     parse_reasoning,
@@ -75,7 +76,7 @@ class StreamingEventTranslator:
     """
 
     def __init__(self, message_id: str, model: str, thinking_parser=None,
-                 stop_sequences=None):
+                 stop_sequences=None, tool_filter=None):
         self.message_id = message_id
         self.model = model
         self.block_index = -1
@@ -83,6 +84,9 @@ class StreamingEventTranslator:
         # Format-aware parser injected per model (select_reasoning_parser);
         # the <think>-marker parser stays the default for direct constructions.
         self.thinking_parser = thinking_parser if thinking_parser is not None else HybridThinkingParser()
+        # Post-thinking tool-call extractor (MLX inline tool markers -> tool_use
+        # blocks; None on GGUF where llama-server parses them natively).
+        self._tool_filter = tool_filter
 
         # Counters
         self.thinking_tokens = 0
@@ -146,6 +150,19 @@ class StreamingEventTranslator:
             return []
         events = []
         block_type = "thinking" if delta_type == "thinking" else "text"
+        if block_type == "text" and self._tool_filter is not None:
+            safe_text, extracted = self._tool_filter.feed(delta_text)
+            if safe_text:
+                events.extend(self._emit_text_or_thinking("text", safe_text))
+            if extracted:
+                events.extend(self._emit_tool_blocks(extracted))
+            return events
+        return self._emit_text_or_thinking(block_type, delta_text)
+
+    def _emit_text_or_thinking(self, block_type: str, delta_text: str) -> list[str]:
+        if not delta_text or self.stopped:
+            return []
+        events = []
         if self._stop is not None:
             if block_type == "text":
                 delta_text = self._stop.feed(delta_text)
@@ -192,19 +209,15 @@ class StreamingEventTranslator:
         for delta_type, text in self.thinking_parser.flush():
             if self.stopped:
                 break
-            if text and delta_type != "thinking" and self._stop is not None:
-                text = self._stop.feed(text)
-                if self._stop.matched is not None:
-                    self.stopped = True
-                    self.stop_sequence = self._stop.matched
-                    self.stop_reason = to_stop_reason("stop_sequence")
             if text:
-                block_type = "thinking" if delta_type == "thinking" else "text"
-                if block_type != self.current_block_type:
-                    if self.current_block_type is not None:
-                        events.append(self._block_stop())
-                    events.append(self._block_start(block_type))
-                events.append(self._block_delta(block_type, text))
+                events.extend(self._emit_delta(delta_type, text))
+
+        if self._tool_filter is not None and not self.stopped:
+            rem_text, extracted = self._tool_filter.flush()
+            if rem_text:
+                events.extend(self._emit_text_or_thinking("text", rem_text))
+            if extracted:
+                events.extend(self._emit_tool_blocks(extracted))
 
         # The reply ended without a match: the held-back tail is reply text.
         if self._stop is not None and not self.stopped:
@@ -219,7 +232,48 @@ class StreamingEventTranslator:
         # Close last block
         if self.current_block_type is not None:
             events.append(self._block_stop())
+            self.current_block_type = None
 
+        return events
+
+    def _emit_tool_blocks(self, tool_calls: list[dict]) -> list[str]:
+        if not tool_calls:
+            return []
+        events = []
+        if self.current_block_type is not None:
+            events.append(self._block_stop())
+            self.current_block_type = None
+        for tc in tool_calls:
+            anth = openai_tool_call_to_anthropic(tc)
+            self.block_index += 1
+            events.append(self._sse("content_block_start", {
+                "type": "content_block_start",
+                "index": self.block_index,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": anth["id"],
+                    "name": anth["name"],
+                    "input": {},
+                },
+            }))
+            events.append(self._sse("content_block_delta", {
+                "type": "content_block_delta",
+                "index": self.block_index,
+                "delta": {
+                    "type": "input_json_delta",
+                    "partial_json": json.dumps(anth["input"]),
+                },
+            }))
+            events.append(self._block_stop())
+        self.stop_reason = to_stop_reason("tool_calls")
+        return events
+
+    def emit_tool_calls(self, tool_calls: list[dict]) -> list[str]:
+        """Emit Anthropic tool_use SSE blocks for completed tool calls."""
+        if not tool_calls:
+            return []
+        events = self.flush()
+        events.extend(self._emit_tool_blocks(tool_calls))
         return events
 
     def message_delta_event(self) -> str:
@@ -450,6 +504,12 @@ async def _create_message(request: Request, msg_request: MessageCreateRequest,
     # field is missing the whole sampler layer), so they are handed a parser
     # FACTORY rather than the facts to build one from.
     make_parser = parser_factory_for(provider, chat_request)
+    get_extractor = getattr(provider, "tool_extractor", None)
+    tool_filter = (
+        get_extractor(chat_request.tools)
+        if callable(get_extractor) and chat_request.tools and chat_request.tool_choice != "none"
+        else None
+    )
 
     if msg_request.stream:
         # Tracking lives INSIDE the async generator, not here: the response
@@ -457,7 +517,12 @@ async def _create_message(request: Request, msg_request: MessageCreateRequest,
         # would unregister before a single token was produced.
         return StreamingResponse(
             tracked_stream(
-                _stream_messages(generator, msg_request, request_id, http_request=request, provider=provider, perf_ctx=perf_ctx, abort_event=abort_event, make_parser=make_parser),
+                _stream_messages(
+                    generator, msg_request, request_id,
+                    http_request=request, provider=provider, perf_ctx=perf_ctx,
+                    abort_event=abort_event, make_parser=make_parser,
+                    tool_filter=tool_filter,
+                ),
                 request_id, abort_event),
             media_type="text/event-stream",
             headers={"X-Request-ID": request_id},
@@ -471,7 +536,7 @@ async def _create_message(request: Request, msg_request: MessageCreateRequest,
             result = await _non_stream_messages(
                 generator, msg_request, request_id, request_start_time, perf_ctx=perf_ctx,
                 provider=provider, make_parser=make_parser,
-                abort_event=abort_event,
+                abort_event=abort_event, tool_filter=tool_filter,
             )
         # Echo the id the server actually tracked. This is the one path DELETE
         # /v1/requests/{id} exists for, and it was the one giving the client no
@@ -502,11 +567,13 @@ async def _non_stream_messages(
     # provider facts means nothing to split on -- not a second way to select.
     make_parser=PassThroughParser,
     abort_event=None,
+    tool_filter=None,
 ) -> MessageResponse:
     """Consume the provider generator and build a MessageResponse."""
     full_text = ""
     token_count = 0
     pre_thinking_parts: list = []  # chunk.thinking -- engine pre-split reasoning
+    collected_tool_calls: list[dict] = []  # chunk.tool_calls -- engine-extracted calls
     telemetry = ChunkTelemetry()  # per-chunk counters/rates tagged by the engine (mlx-lm or llama-server)
 
     # Thinking/content spans, the way the streaming translator keeps them:
@@ -551,6 +618,9 @@ async def _non_stream_messages(
                 if chunk_thinking:
                     pre_thinking_parts.append(chunk_thinking)
                     _saw("thinking", at)
+                chunk_tools = getattr(chunk, 'tool_calls', None)
+                if chunk_tools:
+                    collected_tool_calls.extend(chunk_tools)
                 full_text += chunk.text
                 token_count += 1
                 telemetry.absorb(chunk)
@@ -584,6 +654,13 @@ async def _non_stream_messages(
     content_text, thinking = parse_reasoning(full_text, make_parser())
 
     thinking = merge_presplit_thinking(pre_thinking_parts, thinking)
+    if tool_filter is not None and content_text:
+        safe_a, calls_a = tool_filter.feed(content_text)
+        safe_b, calls_b = tool_filter.flush()
+        extracted = calls_a + calls_b
+        if extracted:
+            collected_tool_calls.extend(extracted)
+            content_text = (safe_a + safe_b).strip()
     matched_stop = None
     if msg_request.stop_sequences:
         content_text, matched_stop = truncate_at_stop(content_text, msg_request.stop_sequences)
@@ -612,9 +689,13 @@ async def _non_stream_messages(
     elif (abort_event is not None and abort_event.is_set()
             and finish_reason == "stop"):
         finish_reason = "length"
+    elif collected_tool_calls and finish_reason == "stop":
+        finish_reason = "tool_calls"
     message: dict = {"role": "assistant", "content": content_text}
     if thinking is not None:
         message["thinking"] = thinking
+    if collected_tool_calls:
+        message["tool_calls"] = collected_tool_calls
 
     choice: dict = {"message": message, "index": 0, "finish_reason": finish_reason}
     input_tokens, cache_read = usage_counts(telemetry.prompt_tokens, telemetry.cache)
@@ -708,6 +789,7 @@ class StreamOutcome:
     (Messages closes the grammar, the conversation route also persists)."""
     full_text: str = ""
     pre_thinking: list = field(default_factory=list)
+    tool_calls: list = field(default_factory=list)
     # "invalid" (a request guard fired at the first advance) or "failed"
     # (the engine failed mid-stream); None when the run ended normally.
     error: str | None = None
@@ -758,12 +840,18 @@ async def translate_stream(generator, translator, telemetry, outcome, *,
                 outcome.pre_thinking.append(chunk_thinking)
                 for event_str in translator.process_presplit_thinking(chunk_thinking):
                     yield event_str
-            if not chunk.text:
+            if chunk.text:
+                outcome.full_text += chunk.text
+                for event_str in translator.process_chunk(
+                        chunk.text, token_id=getattr(chunk, "token", None)):
+                    yield event_str
+            chunk_tools = getattr(chunk, "tool_calls", None)
+            if chunk_tools:
+                outcome.tool_calls.extend(chunk_tools)
+                for event_str in translator.emit_tool_calls(chunk_tools):
+                    yield event_str
+            if not chunk.text and not chunk_tools:
                 continue
-            outcome.full_text += chunk.text
-            for event_str in translator.process_chunk(
-                    chunk.text, token_id=getattr(chunk, "token", None)):
-                yield event_str
             # A stop sequence matched: end the generation between tokens.
             # The loop keeps draining (the translator drops what follows), so
             # the provider's own finally still runs in order.
@@ -813,6 +901,7 @@ async def _stream_messages(
     # where the ChatRequest exists). The default is the neutral one -- no
     # provider facts means nothing to split on -- not a second way to select.
     make_parser=PassThroughParser,
+    tool_filter=None,
 ) -> AsyncGenerator[str, None]:
     """Async SSE generator using StreamingEventTranslator."""
     message_id = f"msg_{uuid.uuid4().hex[:16]}"
@@ -821,6 +910,7 @@ async def _stream_messages(
         message_id, model,
         thinking_parser=make_parser(),
         stop_sequences=msg_request.stop_sequences,
+        tool_filter=tool_filter,
     )
 
     # message_start

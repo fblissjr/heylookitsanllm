@@ -345,8 +345,8 @@ class TestHeylookCliPresets:
         assert store.by_name()["Alpha"]["system_prompt"] == "Keep old"
         assert store.by_name()["Beta"]["system_prompt"] == "New B"
 
-    def test_direct_duckdb_flag_roundtrip(self, tmp_path: Path):
-        db_file = tmp_path / "presets_test.duckdb"
+    def test_direct_sqlite_flag_roundtrip(self, tmp_path: Path):
+        db_file = tmp_path / "presets_test.db"
         md_file = tmp_path / "helper.md"
         md_file.write_text(
             "---\nname: Helper\nparams:\n  temperature: 0.4\n---\n\nBe helpful.\n",

@@ -13,6 +13,7 @@
 #     -> to_chat_request() -> ChatRequest -> provider -> chunks
 #     -> from_openai_response_dict() -> MessageResponse -> client
 
+import json
 import uuid
 from typing import Dict, List, Optional
 
@@ -22,6 +23,8 @@ from heylook_llm.schema.content_blocks import (
     ImageBlock,
     TextBlock,
     ThinkingBlock,
+    ToolResultBlock,
+    ToolUseBlock,
 )
 from heylook_llm.schema.messages import MessageCreateRequest
 from heylook_llm.schema.responses import (
@@ -29,6 +32,11 @@ from heylook_llm.schema.responses import (
     PerformanceInfo,
     StopReason,
     Usage,
+)
+from heylook_llm.tool_calling import (
+    anthropic_tool_choice_to_openai,
+    anthropic_tools_to_openai,
+    openai_tool_call_to_anthropic,
 )
 
 
@@ -57,16 +65,41 @@ def to_chat_request(request: MessageCreateRequest) -> ChatRequest:
         if isinstance(msg.content, str):
             chat_messages.append(ChatMessage(role=msg.role, content=msg.content))
         else:
-            # Convert content blocks to OpenAI content_parts. Thinking blocks
-            # (v1.79.63) leave the content list for ChatMessage.thinking --
-            # the providers hand that to the template as reasoning, which is
-            # what a replayed Anthropic thinking block means.
+            # Convert content blocks to OpenAI content_parts, tool_calls, and
+            # tool-role result messages. Thinking blocks leave the content list
+            # for ChatMessage.thinking so providers hand them to the template
+            # as reasoning.
             content_parts = []
             thinking_parts: List[str] = []
+            tool_calls: List[Dict] = []
+            tool_results: List[ChatMessage] = []
             for block in msg.content:
                 if isinstance(block, ThinkingBlock):
                     if block.thinking:
                         thinking_parts.append(block.thinking)
+                elif isinstance(block, ToolUseBlock):
+                    tool_calls.append({
+                        "id": block.id,
+                        "type": "function",
+                        "function": {
+                            "name": block.name,
+                            "arguments": json.dumps(block.input, ensure_ascii=False),
+                        },
+                    })
+                elif isinstance(block, ToolResultBlock):
+                    if isinstance(block.content, str):
+                        res_content = block.content
+                    else:
+                        res_parts = []
+                        for part in block.content:
+                            if isinstance(part, TextBlock):
+                                res_parts.append(part.text)
+                        res_content = "\n".join(res_parts)
+                    tool_results.append(ChatMessage(
+                        role="tool",
+                        tool_call_id=block.tool_use_id,
+                        content=res_content,
+                    ))
                 elif isinstance(block, TextBlock):
                     content_parts.append({"type": "text", "text": block.text})
                 elif isinstance(block, ImageBlock):
@@ -96,10 +129,22 @@ def to_chat_request(request: MessageCreateRequest) -> ChatRequest:
                         "type": "input_audio",
                         "input_audio": input_audio,
                     })
-            chat_messages.append(ChatMessage(
-                role=msg.role, content=content_parts,
-                thinking=("".join(thinking_parts) or None) if msg.role == "assistant" else None,
-            ))
+
+            if tool_results:
+                chat_messages.extend(tool_results)
+                if content_parts:
+                    chat_messages.append(ChatMessage(role=msg.role, content=content_parts))
+            else:
+                # Plain assistant text + tool_calls: keep content as "" if empty
+                # when tool_calls are present so Jinja templates don't iterate an
+                # empty list.
+                msg_content = content_parts if content_parts else ("" if tool_calls else content_parts)
+                chat_messages.append(ChatMessage(
+                    role=msg.role,
+                    content=msg_content,
+                    thinking=("".join(thinking_parts) or None) if msg.role == "assistant" else None,
+                    tool_calls=(tool_calls or None) if msg.role == "assistant" else None,
+                ))
 
     return ChatRequest(
         model=request.model,
@@ -118,6 +163,8 @@ def to_chat_request(request: MessageCreateRequest) -> ChatRequest:
         thinking_budget_tokens=getattr(request.thinking, "budget_tokens", None),
         reasoning_effort=request.reasoning_effort,
         response_schema=request.response_schema(),
+        tools=anthropic_tools_to_openai(request.tools),
+        tool_choice=anthropic_tool_choice_to_openai(request.tool_choice),
     )
 
 
@@ -132,10 +179,12 @@ STOP_REASON_FROM_FINISH_REASON: Dict[str, StopReason] = {
     "stop": "end_turn",
     "length": "max_tokens",
     "stop_sequence": "stop_sequence",
+    "tool_calls": "tool_use",
     # Already-Anthropic values pass through, so a provider that learns the
     # richer vocabulary needs no change here.
     "end_turn": "end_turn",
     "max_tokens": "max_tokens",
+    "tool_use": "tool_use",
 }
 
 
@@ -177,6 +226,16 @@ def from_openai_response_dict(
         if text:
             content_blocks.append(TextBlock(text=text))
 
+        # Tool calls -> Anthropic ToolUseBlock(s)
+        raw_tool_calls = message.get("tool_calls") or []
+        for tc in raw_tool_calls:
+            anth = openai_tool_call_to_anthropic(tc)
+            content_blocks.append(ToolUseBlock(
+                id=anth["id"],
+                name=anth["name"],
+                input=anth["input"],
+            ))
+
     # Usage
     usage_dict = response_dict.get("usage", {})
     # `input_tokens` / `cache_read_input_tokens` are already in Anthropic's
@@ -207,9 +266,10 @@ def from_openai_response_dict(
         performance = PerformanceInfo.model_validate(perf_dict)
 
     # Determine stop reason
-    finish_reason = to_stop_reason(
-        choices[0].get("finish_reason") if choices else None
-    )
+    raw_finish = choices[0].get("finish_reason") if choices else None
+    if any(isinstance(b, ToolUseBlock) for b in content_blocks) and raw_finish in (None, "stop", "end_turn"):
+        raw_finish = "tool_calls"
+    finish_reason = to_stop_reason(raw_finish)
 
     return MessageResponse(
         id=f"msg_{uuid.uuid4().hex[:16]}",

@@ -115,7 +115,7 @@ class TestPresetIsolation:
         # The fresh-start recreate on a _SCHEMA_VERSION mismatch drops the
         # data tables; presets are versionless config and must NOT be in the
         # drop list.
-        path = tmp_path / "recreate.duckdb"
+        path = tmp_path / "recreate.db"
         conn = await db.get_connection(path=path)
         await db.create_preset(conn, name="keeper")
         await db.create_conversation(conn, title="doomed")
@@ -128,3 +128,20 @@ class TestPresetIsolation:
             assert [p["name"] for p in await db.list_presets(conn)] == ["keeper"]
         finally:
             await conn.close()
+
+    @pytest.mark.asyncio
+    async def test_wal_allows_concurrent_reader_while_store_open(self, tmp_path):
+        # The main operational win of SQLite WAL over DuckDB: a second process
+        # or CLI connection can read concurrently while the server holds the DB.
+        path = tmp_path / "wal.db"
+        primary = await db.get_connection(path=path)
+        try:
+            await db.create_preset(primary, name="live", system_prompt="Hello")
+            reader = await db.get_connection(path=path)
+            try:
+                got = await db.list_presets(reader)
+                assert [p["name"] for p in got] == ["live"]
+            finally:
+                await reader.close()
+        finally:
+            await primary.close()

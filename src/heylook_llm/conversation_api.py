@@ -284,6 +284,11 @@ async def get_media(conv_id: str, media_id: str, request: Request):
     if blob is None:
         raise HTTPException(status_code=404, detail="Media not found")
     media_type, data = blob
+    # Defense in depth for any previously stored SVG/XML/HTML blob: never serve
+    # scriptable types inline on the app's origin, and sandbox direct loads.
+    lowered = (media_type or "").split(";", 1)[0].strip().lower()
+    if "svg" in lowered or "xml" in lowered or "html" in lowered:
+        media_type = "application/octet-stream"
     # private (conversation media must not park in shared caches), nosniff
     # (the type is caller-derived; never let the browser second-guess it into
     # something scriptable), immutable (content-addressed -- safe forever).
@@ -293,5 +298,6 @@ async def get_media(conv_id: str, media_id: str, request: Request):
         headers={
             "Cache-Control": "private, max-age=31536000, immutable",
             "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
         },
     )

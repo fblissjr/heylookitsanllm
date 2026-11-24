@@ -100,6 +100,7 @@ class GenerationChunk:
     text: str = ""
     token: Optional[int] = None
     thinking: Optional[str] = None
+    tool_calls: Optional[list[dict]] = None
     finish_reason: Optional[str] = None
     prompt_tokens: int = 0
     generation_tokens: int = 0
@@ -345,6 +346,12 @@ class BaseProvider(ABC):
         return bool(resolve_effective_sampling(
             request, self.config, thinking_capable=self.thinking_capable,
         ).get("enable_thinking"))
+
+    def tool_extractor(self, tools: Optional[list[dict]]):
+        """Return a post-thinking ``ToolCallStreamFilter`` when the engine emits
+        tool calls inline in text (MLX), or ``None`` when the engine parses them
+        natively into ``GenerationChunk.tool_calls`` (GGUF/llama-server)."""
+        return None
 
     @abstractmethod
     def load_model(self):

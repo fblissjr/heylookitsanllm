@@ -1833,6 +1833,9 @@ class LlamaServerProvider(BaseProvider):
         thinking = out.pop("thinking", None)
         if thinking and out.get("role") == "assistant":
             out["reasoning_content"] = thinking
+        if out.get("tool_calls"):
+            from ..tool_calling import normalize_tool_calls_for_openai_wire
+            out["tool_calls"] = normalize_tool_calls_for_openai_wire(out["tool_calls"])
         return out
 
     def _vendor_defaults(self) -> Dict:
@@ -1915,6 +1918,15 @@ class LlamaServerProvider(BaseProvider):
             template_kwargs[depth_variable(self.thinking_controls)] = str(reasoning_effort)
         if template_kwargs:
             payload["chat_template_kwargs"] = template_kwargs
+        if request.tools:
+            caps = getattr(self, "chat_template_caps", None)
+            if isinstance(caps, dict) and caps.get("supports_tools") is False:
+                raise InvalidGenerationRequest(
+                    f"Model '{self.model_id}' chat template does not support tool calling."
+                )
+            payload["tools"] = request.tools
+            if request.tool_choice is not None:
+                payload["tool_choice"] = request.tool_choice
         if request.response_schema is not None:
             # OpenAI's `response_format`, NOT llama-server's top-level
             # `json_schema`. Both feed the chat template's reasoning-aware
@@ -2295,6 +2307,27 @@ class LlamaServerProvider(BaseProvider):
         """
         closed_thought = echo_thinking_chars > 0 and echo_chars > 0
         control_bound = False
+        pending_tools: dict[int, dict] = {}
+        tools_emitted = False
+
+        def _flush_pending_tools() -> Optional[list[dict]]:
+            nonlocal tools_emitted
+            if not pending_tools or tools_emitted:
+                return None
+            tools_emitted = True
+            return [
+                {
+                    "id": entry["id"] or f"call_{idx}",
+                    "type": "function",
+                    "function": {
+                        "name": entry["name"],
+                        "arguments": "".join(entry["arguments"]),
+                    },
+                }
+                for idx, entry in sorted(pending_tools.items())
+                if entry["name"]
+            ] or None
+
         for raw_line in fp:
             if abort_event is not None and abort_event.is_set():
                 logging.info(f"[GGUF] generation aborted for '{self.model_id}'")
@@ -2306,6 +2339,9 @@ class LlamaServerProvider(BaseProvider):
                 continue
             data = line[len(b"data: "):]
             if data == b"[DONE]":
+                flushed = _flush_pending_tools()
+                if flushed:
+                    yield GenerationChunk(tool_calls=flushed, finish_reason="tool_calls")
                 return
             try:
                 frame = json.loads(data)
@@ -2330,9 +2366,34 @@ class LlamaServerProvider(BaseProvider):
                 )
                 control_bound = True
             self._report_prefill_progress(frame.get("prompt_progress"), abort_event)
+
+            # Accumulate OpenAI streaming delta.tool_calls across frames.
+            choices = frame.get("choices") or [] if isinstance(frame, dict) else []
+            if choices:
+                delta = choices[0].get("delta") or {}
+                for tc in delta.get("tool_calls") or []:
+                    if not isinstance(tc, dict):
+                        continue
+                    idx = int(tc.get("index", 0))
+                    slot = pending_tools.setdefault(idx, {"id": "", "name": "", "arguments": []})
+                    if tc.get("id"):
+                        slot["id"] = str(tc["id"])
+                    fn = tc.get("function") or {}
+                    if isinstance(fn, dict):
+                        if fn.get("name"):
+                            slot["name"] += str(fn["name"])
+                        if fn.get("arguments") is not None:
+                            slot["arguments"].append(str(fn["arguments"]))
+
             chunk = self._frame_to_chunk(frame)
             if chunk is None:
                 continue
+            if chunk.finish_reason:
+                flushed = _flush_pending_tools()
+                if flushed:
+                    chunk.tool_calls = flushed
+                    if chunk.finish_reason == "stop":
+                        chunk.finish_reason = "tool_calls"
             if echo_chars > 0 and chunk.text:
                 cut = min(echo_chars, len(chunk.text))
                 echo_chars -= cut
@@ -2348,10 +2409,13 @@ class LlamaServerProvider(BaseProvider):
                 chunk.thinking = chunk.thinking.lstrip() or None
                 if chunk.thinking:
                     closed_thought = False
-            if not chunk.text and not chunk.thinking and not chunk.finish_reason \
+            if not chunk.text and not chunk.thinking and not chunk.tool_calls and not chunk.finish_reason \
                     and not chunk.prompt_tokens and not chunk.generation_tokens:
                 continue  # the delta was pure echo -- nothing to emit
             yield chunk
+        flushed = _flush_pending_tools()
+        if flushed:
+            yield GenerationChunk(tool_calls=flushed, finish_reason="tool_calls")
 
     def _describe_engine_error(self, err) -> str:
         """llama-server's error, plus what it most likely means HERE.

@@ -67,8 +67,9 @@ MESSAGES_ONLY = {
 }
 
 # Shared fields whose SHAPE legitimately differs -- the wire's own message and
-# option types. Everything else shared must agree exactly.
-STRUCTURAL_FIELDS = {"messages"}
+# tool types (Anthropic shapes on MessageCreateRequest, OpenAI dicts on
+# internal ChatRequest). Everything else shared must agree exactly.
+STRUCTURAL_FIELDS = {"messages", "tools", "tool_choice"}
 
 
 @pytest.mark.unit

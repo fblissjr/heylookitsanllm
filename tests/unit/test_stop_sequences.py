@@ -103,10 +103,3 @@ def test_non_streaming_cuts_the_reply_and_names_the_sequence():
     assert "".join(b.text for b in resp.content if b.type == "text") == "one two "
     assert (resp.stop_reason, resp.stop_sequence) == ("stop_sequence", "STOP")
     assert abort.is_set()
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("field", ["tools", "tool_choice"])
-def test_unbuilt_fields_are_refused_not_dropped(field):
-    with pytest.raises(ValueError, match="not supported"):
-        _request(**{field: {}})

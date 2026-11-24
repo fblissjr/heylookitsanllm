@@ -130,6 +130,36 @@ def template_supports_thinking_budget(model_path: str) -> bool:
         return False
 
 
+@lru_cache(maxsize=64)
+def _template_supports_tools(model_path: str, _stamp: tuple) -> bool:
+    try:
+        from heylook_llm.providers.common.template_info import cached_template_info
+        from heylook_llm.tool_calling import infer_tool_parser_name
+
+        body = cached_template_info(Path(model_path)).chat_template
+        return infer_tool_parser_name(body) is not None
+    except Exception:
+        return False
+
+
+def template_supports_tools(model_path: str) -> bool:
+    """Whether the model's chat template supports tool calling (derived)."""
+    return _template_supports_tools(model_path, _template_stamp(model_path))
+
+
+def gguf_tools_capable(model_config) -> bool:
+    """Whether a GGUF model's in-force chat template supports tool calling."""
+    try:
+        from heylook_llm import chat_template_files
+        from heylook_llm.tool_calling import infer_tool_parser_name
+
+        cfg = config_dict(model_config.config)
+        body = chat_template_files.view(model_config.id, "gguf", cfg).template
+        return infer_tool_parser_name(body) is not None
+    except Exception:
+        return False
+
+
 def _mlx_serves_vision(model_config, serves_vision: bool | None = None) -> bool:
     """Whether the MLX provider will actually ACCEPT an image for this model.
 
@@ -226,6 +256,11 @@ def infer_model_capabilities(model_config, serves_vision: bool | None = None) ->
         if _has_depth(model_config):
             capabilities.append("reasoning_effort")
 
+        if getattr(config, "model_path", None) and template_supports_tools(
+            str(config.model_path)
+        ):
+            capabilities.append("tools")
+
     # GGUF via llama-server subprocess. Thinking and depth come from the
     # IN-FORCE template (plan W2), which is not always the embedded one
     # `supports_thinking` was read from at discovery: an override or a
@@ -254,6 +289,8 @@ def infer_model_capabilities(model_config, serves_vision: bool | None = None) ->
             # template's thinking end tags (its own analysis; not visible
             # from here, so a template it cannot read runs uncapped).
             capabilities.append("thinking_budget")
+        if gguf_tools_capable(model_config):
+            capabilities.append("tools")
 
     return capabilities
 

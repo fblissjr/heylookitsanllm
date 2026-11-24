@@ -32,7 +32,7 @@ from starlette.testclient import TestClient
 # Contract tests must never touch real conversations regardless -- the lock is
 # what made the omission visible, not what makes it wrong.
 _DB_DIR = tempfile.mkdtemp(prefix="heylook-contract-db-")
-os.environ["HEYLOOK_DB_PATH"] = str(Path(_DB_DIR) / "contract.duckdb")
+os.environ["HEYLOOK_DB_PATH"] = str(Path(_DB_DIR) / "contract.db")
 
 from helpers.mlx_mock import FakeChunk, create_mlx_module_mocks, real_mlx_available
 from heylook_llm.config import AppConfig

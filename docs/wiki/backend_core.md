@@ -1,6 +1,6 @@
 # Core Backend Architecture
 
-The backend of `heylookitsanllm` is built with **FastAPI** and **Starlette**, packaged under [`src/heylook_llm/`](../../src/heylook_llm). It is designed around modular routers, a unified inference grammar, DuckDB persistence, and an override-only configuration engine.
+The backend of `heylookitsanllm` is built with **FastAPI** and **Starlette**, packaged under [`src/heylook_llm/`](../../src/heylook_llm). It is designed around modular routers, a unified inference grammar, SQLite (WAL) persistence, and an override-only configuration engine.
 
 ---
 
@@ -89,15 +89,16 @@ sequenceDiagram
 
 ---
 
-## 3. Persistence: The DuckDB Store
+## 3. Persistence: The SQLite (WAL) Store
 
-Database interactions are managed by [`db.py`](../../src/heylook_llm/db.py). The database file is `data/conversations.duckdb`, resolved **relative to the working directory** and overridable with `$HEYLOOK_DB_PATH`.
+Database interactions are managed by [`db.py`](../../src/heylook_llm/db.py) using Python's stdlib `sqlite3`. The database file is `data/conversations.db`, resolved **relative to the working directory** and overridable with `$HEYLOOK_DB_PATH`.
 
-### 3.1. One Connection, One Thread
-`Store` holds a **single** DuckDB connection and runs **every** operation -- reads included, not just writes -- on a `ThreadPoolExecutor(max_workers=1)`:
+### 3.1. One Connection, One Thread, WAL Mode
+`Store` holds a **single** SQLite connection (`isolation_level=None`, `PRAGMA journal_mode=WAL`, `PRAGMA foreign_keys=ON`, `PRAGMA busy_timeout=10000`) and runs **every** operation -- reads included, not just writes -- on a `ThreadPoolExecutor(max_workers=1)`:
 - `max_workers=1` gives strict serialization, which is stronger than a lock: queued operations do not pile up blocking pooled threads.
 - It also keeps DB work off asyncio's shared default executor, where long-running model loads and generation consumption would otherwise contend with trivial reads.
-- Every *store operation* runs inside an **explicit transaction with rollback on exception**. DuckDB autocommits per statement, so without this a crash between the statements of one logical operation leaves partial state -- and an error mid-transaction would wedge the long-lived connection until `ROLLBACK`.
+- Every *store operation* runs inside an **explicit transaction (`BEGIN` / `COMMIT` / `ROLLBACK`)**.
+- WAL mode allows concurrent read-only processes (such as `uv run heylook`) to inspect the database while the server is running.
 - **Schema work is the exception**: table creation and the version-bump drop/recreate run directly on the connection during construction, off the executor and outside that transaction wrapper. That is before any concurrency exists, but it is also the most destructive write in the file, so it is worth knowing it is unscoped.
 
 ### 3.2. Allowlist-Gated Dynamic SQL

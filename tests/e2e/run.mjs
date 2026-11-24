@@ -179,7 +179,7 @@ async function main() {
   try {
     console.log(`\nstarting an isolated server on :${PORT} with ${MODEL} (log: ${logPath})`);
     server = await startServer({
-      port: PORT, dbPath: path.join(tmp, 'db.duckdb'), modelId: MODEL, repoRoot: ROOT, logPath,
+      port: PORT, dbPath: path.join(tmp, 'db.sqlite'), modelId: MODEL, repoRoot: ROOT, logPath,
     });
     const base = server.base;
     const api = async (method, urlPath, body) => {

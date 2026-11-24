@@ -367,8 +367,12 @@ Phase 3b; chat uses its conversation-scoped sibling below; the OpenAI-compatible
   removal rather than a silent drop, one sending `chat_template_kwargs` (llama-server's
   spelling) gets a 422 naming `thinking` and `reasoning_effort` (v2.0.86), and one sending `show_special_tokens`
   gets the same treatment for the v2.0.38 removal (below), as does `vision_tokens` (removed v2.0.64,
-  refused since v2.0.178; image cost is capped by the pixels sent). `tools` and `tool_choice` are a 422
-  too (v2.0.151): not built yet. `response_format` (v2.0.155) is OpenAI's shape, which
+  refused since v2.0.178; image cost is capped by the pixels sent). `tools` and `tool_choice`
+  (Anthropic shape: `{name, description?, input_schema}` and `{type:"auto"|"any"|"none"|"tool", name?}`)
+  are supported across MLX (`mlx_vlm.tools`) and GGUF (`llama-server --jinja`) on models carrying
+  the derived `tools` capability (v2.0.283); tool calls emit Anthropic `tool_use` content blocks
+  (streaming via `input_json_delta`) with `stop_reason: "tool_use"`, and follow-up user turns accept
+  `tool_result` blocks alongside replayed assistant `tool_use` blocks. `response_format` (v2.0.155) is OpenAI's shape, which
   llama-server also takes: `{type:"json_schema", json_schema:{schema}}` makes the reply a
   JSON document matching the schema, `{type:"json_object"}` any JSON object, `{type:"text"}`
   free text. Thinking is not constrained: llama-server's chat parser admits the reasoning

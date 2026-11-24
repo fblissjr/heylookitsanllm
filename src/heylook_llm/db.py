@@ -1,20 +1,22 @@
 # src/heylook_llm/db.py
-"""DuckDB store for conversations, notebooks, and presets (Q5 migration).
+"""SQLite (WAL) store for conversations, notebooks, and presets.
 
-Messages persist as CONTENT BLOCK lists (Messages-style JSON) so image
-conversations round-trip; reads expose both ``content`` (flattened text of
-the text blocks -- the back-compatible wire shape) and ``content_blocks``
-(the full list). String input normalizes to a single text block.
+Messages persist as CONTENT BLOCK lists (Messages-style JSON) so image, audio,
+and tool-calling conversations round-trip; reads expose both ``content``
+(flattened text of the text blocks -- the back-compatible wire shape) and
+``content_blocks`` (the full list). String input normalizes to a single text
+block.
 
-Concurrency by construction: DuckDB's Python API is synchronous, so every
-operation runs in a worker thread (``asyncio.to_thread``) holding a store-wide
-lock, on the store's single connection. Each logical operation is atomic --
-there is no shared implicit-transaction state to bleed across interleaved
-handlers (the aiosqlite defect class this migration retires).
+Concurrency by construction: stdlib ``sqlite3`` runs on a dedicated
+single-worker thread (``ThreadPoolExecutor(max_workers=1)``) with
+``isolation_level=None`` and explicit ``BEGIN`` / ``COMMIT`` / ``ROLLBACK`` per
+logical operation. Each op is atomic and serialized without shared implicit
+transaction state bleeding across async handlers. File-backed stores enable
+``WAL`` mode and ``busy_timeout`` so CLI/inspection processes can read
+concurrently while the server runs.
 
-DB path defaults to ``data/conversations.duckdb`` relative to the working
+DB path defaults to ``data/conversations.db`` relative to the working
 directory, overridable with the ``HEYLOOK_DB_PATH`` environment variable.
-No migration from the retired SQLite store: this is a fresh start by design.
 """
 
 import asyncio
@@ -22,22 +24,17 @@ import base64
 import hashlib
 import logging
 import os
-import time
+import sqlite3
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import duckdb
 import orjson
 
 logger = logging.getLogger(__name__)
 
-# v2 = DuckDB + content blocks; v3 = FK removed (DuckDB's FK check rejects
-# deleting a parent even when its children are deleted in the same
-# transaction -- a documented DuckDB limitation. Referential integrity is
-# enforced in code: single writer, explicit cascade in delete_conversation).
 # v7: media by reference (media_blobs table; base64 media in content_blocks is
 # relocated to it at the write boundary, rows carry url sources) + per-message
 # model_id (which model produced an assistant row -- metadata only, no content).
@@ -90,7 +87,7 @@ CREATE TABLE IF NOT EXISTS conversations (
 
 CREATE TABLE IF NOT EXISTS messages (
     id              TEXT PRIMARY KEY,
-    conversation_id TEXT NOT NULL,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     role            TEXT NOT NULL,
     content_blocks  TEXT NOT NULL DEFAULT '[]',
     thinking        TEXT,
@@ -105,7 +102,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_conv_pos
     ON messages(conversation_id, position);
 
 CREATE TABLE IF NOT EXISTS media_blobs (
-    conversation_id TEXT NOT NULL,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     id              TEXT NOT NULL,
     media_type      TEXT NOT NULL,
     data            BLOB NOT NULL,
@@ -139,8 +136,8 @@ CREATE TABLE IF NOT EXISTS presets (
 -- (perf_collector.message_stats drops the one sentence field). Additive, so
 -- numbers survive a reload with no schema bump; dropped with messages.
 CREATE TABLE IF NOT EXISTS message_stats (
-    message_id      TEXT PRIMARY KEY,
-    conversation_id TEXT NOT NULL,
+    message_id      TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     stats           TEXT NOT NULL,
     created_at      TEXT NOT NULL
 );
@@ -237,13 +234,20 @@ def _externalize_media(conn, conv_id: str, blocks: list[dict], now: str) -> list
                 raise ValueError(f"{b['type']} block carries invalid base64 data")
             media_id = hashlib.sha256(raw).hexdigest()
             # The stored media_type is later SERVED verbatim as a same-origin
-            # Content-Type -- constrain it to the block type's own family, or
-            # a block claiming text/html becomes stored XSS at the serve
-            # endpoint (review finding). Off-family claims degrade to
-            # octet-stream (served with nosniff), never to trust.
-            media_type = src.get("media_type") or ""
-            if not media_type.startswith(f"{b['type']}/"):
+            # Content-Type -- constrain it to the block type's own family and
+            # exclude scriptable XML/SVG types (e.g. image/svg+xml), or a block
+            # opened directly as a document becomes stored XSS at the serve
+            # endpoint (FB-37). Off-family or scriptable claims degrade to
+            # octet-stream (served with nosniff + sandbox CSP), never to trust.
+            raw_type = (src.get("media_type") or "").split(";", 1)[0].strip().lower()
+            if (
+                not raw_type.startswith(f"{b['type']}/")
+                or "svg" in raw_type
+                or "xml" in raw_type
+            ):
                 media_type = "application/octet-stream"
+            else:
+                media_type = raw_type
             conn.execute(
                 "INSERT OR IGNORE INTO media_blobs (conversation_id, id, media_type, data, created_at) "
                 "VALUES (?, ?, ?, ?, ?)",
@@ -352,37 +356,37 @@ def _default_db_path() -> Path:
     env = os.environ.get("HEYLOOK_DB_PATH")
     if env:
         return Path(env)
-    return Path("data") / "conversations.duckdb"
+    return Path("data") / "conversations.db"
 
 
 class Store:
-    """Single-connection DuckDB store on its own dedicated worker thread.
+    """Single-connection SQLite (WAL) store on its own dedicated worker thread.
 
     A max_workers=1 executor gives strict serialization (stronger than a
     lock: queued ops don't pile up blocking pooled threads) and keeps DB ops
     off asyncio's shared default executor, where long-running model loads and
     generation consumption would otherwise contend with trivial reads.
 
-    Every operation runs inside an explicit transaction with rollback on
-    exception -- DuckDB autocommits per statement, so without this a crash
-    between the statements of one logical op leaves partial state, and an
-    error mid-transaction would wedge the long-lived connection until
-    ROLLBACK.
+    Every operation runs inside an explicit transaction (``isolation_level=None``
+    + ``BEGIN`` / ``COMMIT`` / ``ROLLBACK``) so multi-statement logical ops stay
+    atomic and an error mid-transaction never wedges the shared connection.
     """
 
-    _CONNECT_RETRY_S = 10.0  # old aiosqlite had timeout=10; retry the file lock
+    _BUSY_TIMEOUT_MS = 10_000
 
     def __init__(self, resolved: str):
-        deadline = time.monotonic() + self._CONNECT_RETRY_S
-        while True:
-            try:
-                self._conn = duckdb.connect(resolved)
-                break
-            except duckdb.IOException:
-                if time.monotonic() >= deadline:
-                    raise
-                time.sleep(0.25)
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="duckdb-store")
+        self._conn = sqlite3.connect(
+            resolved,
+            timeout=self._BUSY_TIMEOUT_MS / 1000.0,
+            isolation_level=None,
+            check_same_thread=False,
+        )
+        self._conn.execute(f"PRAGMA busy_timeout = {self._BUSY_TIMEOUT_MS}")
+        self._conn.execute("PRAGMA foreign_keys = ON")
+        if resolved != ":memory:":
+            self._conn.execute("PRAGMA journal_mode = WAL")
+            self._conn.execute("PRAGMA synchronous = NORMAL")
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sqlite-store")
         self._create_schema()
         row = self._conn.execute(
             "SELECT value FROM schema_meta WHERE key = 'version'"
@@ -393,17 +397,14 @@ class Store:
                 (str(_SCHEMA_VERSION),),
             )
         elif row[0] != str(_SCHEMA_VERSION):
-            # Pre-release DuckDB schema (same-day churn only; the store is a
-            # fresh start by design). Recreate rather than migrate. `presets`
-            # is deliberately NOT in the drop list: it's versionless config
-            # (additive CREATE TABLE, no FK to versioned tables) promised to
-            # survive destructive operations -- a presets schema change needs
-            # its own explicit migration, not this hammer.
+            # Recreate versioned tables rather than writing migrations.
+            # `presets` is deliberately NOT in the drop list: it's versionless
+            # config promised to survive destructive operations.
             logger.warning(
-                "DuckDB schema v%s != v%d -- recreating (fresh-start store)",
+                "SQLite schema v%s != v%d -- recreating (fresh-start store)",
                 row[0], _SCHEMA_VERSION,
             )
-            for table in ("messages", "message_stats", "media_blobs", "conversations", "notebooks", "schema_meta"):
+            for table in ("message_stats", "media_blobs", "messages", "conversations", "notebooks", "schema_meta"):
                 self._conn.execute(f"DROP TABLE IF EXISTS {table}")
             self._create_schema()
             self._conn.execute(
@@ -419,13 +420,15 @@ class Store:
     async def run(self, fn, *args):
         """Run a sync store operation, transactionally, on the store thread."""
         def op():
-            self._conn.execute("BEGIN TRANSACTION")
+            self._conn.execute("BEGIN")
             try:
                 result = fn(self._conn, *args)
             except BaseException:
-                self._conn.execute("ROLLBACK")
+                if self._conn.in_transaction:
+                    self._conn.execute("ROLLBACK")
                 raise
-            self._conn.execute("COMMIT")
+            if self._conn.in_transaction:
+                self._conn.execute("COMMIT")
             return result
         return await asyncio.get_running_loop().run_in_executor(self._executor, op)
 
@@ -447,7 +450,7 @@ async def get_connection(path: Path | str | None = None) -> Store:
         resolved = str(resolved_path)
 
     store = await asyncio.to_thread(Store, resolved)
-    logger.info("Database ready at %s (schema v%d, DuckDB)", resolved, _SCHEMA_VERSION)
+    logger.info("Database ready at %s (schema v%d, SQLite WAL)", resolved, _SCHEMA_VERSION)
     return store
 
 

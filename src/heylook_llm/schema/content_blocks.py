@@ -238,13 +238,28 @@ class ThinkingBlock(BaseModel):
         return self
 
 
-# Union of all block types that can appear in a user message. ThinkingBlock
-# is in it (v1.79.63): an Anthropic-shaped client replays the assistant's
-# thinking blocks in history -- Anthropic's own tool loop requires it -- and
-# this server 422'd the whole request on the first one. They convert to
-# ChatMessage.thinking, which the providers render the way each template
-# takes it (reasoning_content / <think> reconstruction).
-InputContentBlock = Union[TextBlock, ImageBlock, AudioBlock, ThinkingBlock]
+class ToolUseBlock(BaseModel):
+    """Anthropic-style tool call block (appears in assistant output and replayed history)."""
+    type: Literal["tool_use"] = "tool_use"
+    id: str
+    name: str
+    input: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolResultBlock(BaseModel):
+    """Anthropic-style tool execution result block (appears in user follow-up turns)."""
+    type: Literal["tool_result"] = "tool_result"
+    tool_use_id: str
+    content: Union[str, list[Union[TextBlock, ImageBlock]]] = ""
+    is_error: Optional[bool] = Field(default=None)
+
+
+# Union of all block types that can appear in a message. ThinkingBlock and
+# ToolUseBlock are included so Anthropic clients can replay assistant turns
+# verbatim in multi-turn and tool-calling loops.
+InputContentBlock = Union[
+    TextBlock, ImageBlock, AudioBlock, ThinkingBlock, ToolUseBlock, ToolResultBlock
+]
 
 
 # ---------------------------------------------------------------------------
@@ -252,4 +267,4 @@ InputContentBlock = Union[TextBlock, ImageBlock, AudioBlock, ThinkingBlock]
 # ---------------------------------------------------------------------------
 
 # Union of all block types that can appear in an assistant response
-OutputContentBlock = Union[TextBlock, ThinkingBlock]
+OutputContentBlock = Union[TextBlock, ThinkingBlock, ToolUseBlock]

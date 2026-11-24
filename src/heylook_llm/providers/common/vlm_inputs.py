@@ -175,6 +175,8 @@ def prepare_vlm_inputs_parallel(
     depth=None,
     template_info=None,
     continue_final_message: bool = False,
+    tools=None,
+    tool_choice=None,
 ) -> Tuple[List[Image.Image], str, bool, List[str]]:
     """Prepare VLM inputs with parallel image loading.
 
@@ -206,6 +208,8 @@ def prepare_vlm_inputs_parallel(
     has_images = False
 
     # First pass: collect image URLs and build text structure
+    from ...tool_calling import normalize_tool_calls_for_jinja, prepare_tool_choice_policy
+
     for msg in messages:
         content = msg.content
         if isinstance(content, list):
@@ -225,12 +229,19 @@ def prepare_vlm_inputs_parallel(
             # Prior thinking, the way this template takes it (see helper)
             if hasattr(msg, 'thinking') and msg.thinking:
                 msg_dict = thinking_for_template({**msg_dict, 'thinking': msg.thinking}, template_info)
-            text_messages.append(msg_dict)
         elif isinstance(content, str):
             msg_dict = {"role": msg.role, "content": content}
             if hasattr(msg, 'thinking') and msg.thinking:
                 msg_dict = thinking_for_template({**msg_dict, 'thinking': msg.thinking}, template_info)
-            text_messages.append(msg_dict)
+        else:
+            continue
+        if getattr(msg, 'tool_calls', None):
+            msg_dict['tool_calls'] = normalize_tool_calls_for_jinja(msg.tool_calls)
+        if getattr(msg, 'tool_call_id', None):
+            msg_dict['tool_call_id'] = msg.tool_call_id
+        if getattr(msg, 'name', None):
+            msg_dict['name'] = msg.name
+        text_messages.append(msg_dict)
 
     # Load all images in parallel
     if image_urls:
@@ -261,12 +272,16 @@ def prepare_vlm_inputs_parallel(
             safe["content"] = str(safe.get("content"))
         safe_messages.append(safe)
 
+    safe_messages, active_tools = prepare_tool_choice_policy(safe_messages, tools, tool_choice)
+
     # vlm_apply_chat_template performs the enable_thinking None-guard itself
+    template_extra = {"tools": active_tools} if active_tools else {}
     formatted_prompt = vlm_apply_chat_template_fn(
         processor, config, safe_messages, num_images=len(images),
         enable_thinking=enable_thinking,
         depth=depth,
         continue_final_message=continue_final_message,
+        **template_extra,
     )
     if continue_final_message:
         # The final message is an assistant turn (no media), so the image
@@ -276,6 +291,6 @@ def prepare_vlm_inputs_parallel(
             lambda msgs: vlm_apply_chat_template_fn(
                 processor, config, msgs, num_images=len(images),
                 enable_thinking=enable_thinking, depth=depth,
-                continue_final_message=False))
+                continue_final_message=False, **template_extra))
 
     return images, formatted_prompt, has_images, image_urls

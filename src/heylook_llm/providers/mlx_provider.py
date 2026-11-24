@@ -291,7 +291,7 @@ def _append_thinking_resume(prompt: str, thinking: str, template_info) -> str:
 
 
 def _apply_chat_template(tokenizer, messages, *, enable_thinking, depth,
-                         continuing: bool, model_id=None):
+                         continuing: bool, model_id=None, tools=None):
     """Render ``messages`` through the tokenizer's chat template -- the ONE
     place that builds the kwargs and maps the failures, for the text path and
     the vision/VLM path alike.
@@ -318,6 +318,8 @@ def _apply_chat_template(tokenizer, messages, *, enable_thinking, depth,
     base_kwargs: dict = {"tokenize": False, "add_generation_prompt": not continuing}
     if continuing:
         base_kwargs["continue_final_message"] = True
+    if tools:
+        base_kwargs["tools"] = tools
 
     # Deliberately NOT in base_kwargs: the TypeError retry below re-passes
     # base_kwargs verbatim and drops only what is spelled out here, so a
@@ -345,6 +347,10 @@ def _apply_chat_template(tokenizer, messages, *, enable_thinking, depth,
                         "This model's template stack cannot continue the "
                         "final message (continue_final_message unsupported)."
                     ) from te
+                if tools:
+                    raise InvalidGenerationRequest(
+                        "This model's template stack cannot render tool definitions."
+                    ) from te
                 raise
     except ValueError as e:
         # transformers raises a raw ValueError when the tokenizer has no chat
@@ -367,7 +373,7 @@ def _apply_chat_template(tokenizer, messages, *, enable_thinking, depth,
 
 def vlm_apply_chat_template(processor, config, messages, num_images=None, enable_thinking=None,
                             depth=None,
-                            continue_final_message=False, model_id=None):
+                            continue_final_message=False, model_id=None, tools=None):
     """
     Apply chat template using mlx-vlm's prompt_utils.
 
@@ -408,7 +414,8 @@ def vlm_apply_chat_template(processor, config, messages, num_images=None, enable
     def render(msgs):
         return _apply_chat_template(
             tokenizer, msgs, enable_thinking=enable_thinking,
-            depth=depth, continuing=continue_final_message, model_id=model_id)
+            depth=depth, continuing=continue_final_message, model_id=model_id,
+            tools=tools)
 
     # Step 2: the model's OWN template over mlx-vlm's structured content, so
     # the template draws its own image markup. Flattening first (below) was
@@ -500,14 +507,20 @@ class UnifiedTextStrategy:
         the answer -- which is what happened before, with the route then
         gluing the new trace onto the old one.
         """
+        from ..tool_calling import prepare_tool_choice_policy
+
         tokenizer = getattr(processor, "tokenizer", processor)
         resume = _thinking_resume(request)
         source = request.messages[:-1] if resume is not None else request.messages
         messages_for_template = self._prepare_messages(source)
+        messages_for_template, active_tools = prepare_tool_choice_policy(
+            messages_for_template, request.tools, request.tool_choice
+        )
         prompt = self._render_template(
             messages_for_template, tokenizer, processor, model, effective_request,
             continuing=request.is_continuation() and resume is None,
             resume_thinking=resume,
+            tools=active_tools,
         )
         return prompt
 
@@ -571,12 +584,16 @@ class UnifiedTextStrategy:
 
     def _prepare_messages(self, messages) -> list[dict]:
         """Prepare messages for template application. Shared for both paths."""
+        from ..tool_calling import normalize_tool_calls_for_jinja
+
         messages_for_template = []
         for msg in messages:
             msg_dict = msg.model_dump(exclude_none=True)
             if isinstance(msg_dict.get('content'), list):
                 text_parts = [part['text'] for part in msg_dict['content'] if part.get('type') == 'text']
                 msg_dict['content'] = ' '.join(text_parts)
+            if msg_dict.get('tool_calls'):
+                msg_dict['tool_calls'] = normalize_tool_calls_for_jinja(msg_dict['tool_calls'])
             # Prior thinking, the way THIS template takes it: reasoning_content
             # where the template reads it (gemma-4, Qwen3+), reconstructed
             # <think> tags for a marker template that does not, nothing for a
@@ -587,7 +604,8 @@ class UnifiedTextStrategy:
         return messages_for_template
 
     def _render_template(self, messages, tokenizer, processor, model, effective_request,
-                         continuing: bool = False, resume_thinking: str | None = None):
+                         continuing: bool = False, resume_thinking: str | None = None,
+                         tools=None):
         """Dispatch template application based on is_vlm.
 
         Text-only: tokenizer.apply_chat_template with enable_thinking support.
@@ -617,11 +635,12 @@ class UnifiedTextStrategy:
                     enable_thinking=enable_thinking,
                     depth=depth,
                     continue_final_message=cont, model_id=self.model_id,
+                    tools=tools,
                 )
             return _apply_chat_template(
                 tokenizer, msgs, enable_thinking=enable_thinking,
                 depth=depth, continuing=cont,
-                model_id=self.model_id)
+                model_id=self.model_id, tools=tools)
 
         prompt = render(messages, continuing)
         if continuing:
@@ -780,6 +799,8 @@ class VLMVisionStrategy:
             enable_thinking=True if resume is not None else _resolve_enable_thinking(effective_request),
             depth=depth,
             continue_final_message=request.is_continuation() and resume is None,
+            tools=request.tools,
+            tool_choice=request.tool_choice,
         )
         if resume is not None:
             formatted_prompt = _append_thinking_resume(formatted_prompt, resume, self.template_info)
@@ -872,7 +893,8 @@ class VLMVisionStrategy:
 
     def _prepare_vlm_inputs_parallel(self, messages: List, processor, config,
                                      enable_thinking=None, depth=None,
-                                     continue_final_message: bool = False) -> Tuple[List[Image.Image], str, bool, List[str]]:
+                                     continue_final_message: bool = False,
+                                     tools=None, tool_choice=None) -> Tuple[List[Image.Image], str, bool, List[str]]:
         """Prepare VLM inputs with parallel image loading. Delegates to standalone function."""
         from .common.vlm_inputs import prepare_vlm_inputs_parallel
         return prepare_vlm_inputs_parallel(
@@ -880,6 +902,7 @@ class VLMVisionStrategy:
             vlm_apply_chat_template, enable_thinking=enable_thinking,
             depth=depth, template_info=self.template_info,
             continue_final_message=continue_final_message,
+            tools=tools, tool_choice=tool_choice,
         )
 
 
@@ -1325,6 +1348,8 @@ class MLXProvider(BaseProvider):
                       if getattr(self.processor, "chat_template", None)
                       else tok)
             self.loaded_chat_template = getattr(holder, "chat_template", None) or None
+            from ..tool_calling import infer_tool_parser_name
+            self._tool_parser_name = infer_tool_parser_name(self.loaded_chat_template)
             # Warn only when NOTHING can render: no install happened and
             # neither holder carries a template.
             has_template = (
@@ -1675,6 +1700,34 @@ class MLXProvider(BaseProvider):
         """Snapshot of the FIFO generation queue (active/waiting/capacity)."""
         return self._gen_gate.snapshot()
 
+    def tool_extractor(self, tools: Optional[list[dict]]):
+        """Return an incremental ``ToolCallStreamFilter`` backed by ``mlx_vlm.tools``."""
+        if not tools:
+            return None
+        from ..tool_calling import ToolCallStreamFilter, infer_tool_parser_name
+
+        parser_name = getattr(self, "_tool_parser_name", None) or infer_tool_parser_name(
+            self.loaded_chat_template
+        )
+        if not parser_name:
+            return None
+        from mlx_vlm.tools.extractor import process_tool_calls
+        from mlx_vlm.tools.registry import load_tool_module
+
+        tool_module = load_tool_module(parser_name)
+        if tool_module is None:
+            return None
+
+        def _extract(span: str):
+            res = process_tool_calls(span, tool_module, tools)
+            return res.calls, res.remaining_text
+
+        return ToolCallStreamFilter(
+            tool_module.tool_call_start,
+            tool_module.tool_call_end,
+            _extract,
+        )
+
     def create_chat_completion(self, request: ChatRequest, abort_event: "AbortEvent | None" = None) -> Generator:
             """
             Create chat completion using appropriate generation strategy.
@@ -1760,6 +1813,20 @@ class MLXProvider(BaseProvider):
                             "diffusion models -- a denoising engine has no "
                             "open turn to continue."
                         )
+
+                    if request.tools:
+                        if self.is_diffusion:
+                            raise InvalidGenerationRequest(
+                                "Tool calling is not supported on diffusion models."
+                            )
+                        from ..tool_calling import infer_tool_parser_name
+                        parser_name = getattr(self, "_tool_parser_name", None) or infer_tool_parser_name(
+                            self.loaded_chat_template
+                        )
+                        if not parser_name:
+                            raise InvalidGenerationRequest(
+                                f"Model '{self.model_id}' chat template does not support tool calling."
+                            )
 
                     # Diffusion first: the AR text/vision split does not apply
                     # to a denoising engine, which takes images inline.

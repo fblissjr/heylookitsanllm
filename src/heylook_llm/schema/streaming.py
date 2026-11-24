@@ -53,7 +53,12 @@ class ThinkingDelta(BaseModel):
     text: str = ""
 
 
-ContentDelta = Union[TextDelta, ThinkingDelta]
+class InputJsonDelta(BaseModel):
+    type: Literal["input_json_delta"] = "input_json_delta"
+    partial_json: str = ""
+
+
+ContentDelta = Union[TextDelta, ThinkingDelta, InputJsonDelta]
 
 
 # ---------------------------------------------------------------------------
@@ -65,11 +70,15 @@ class ContentBlockInfo(BaseModel):
 
     The block opens with its content field present and empty, as Anthropic's
     does, so a client accumulating into `content_block` has something to
-    accumulate into. A thinking block carries both spellings.
+    accumulate into. A thinking block carries both spellings; a tool_use block
+    carries id, name, and empty input.
     """
-    type: str  # "text", "thinking"
+    type: str  # "text", "thinking", "tool_use"
     text: str = ""
     thinking: str = ""
+    id: Optional[str] = None
+    name: Optional[str] = None
+    input: Optional[Dict] = None
 
 
 class MessageStartEvent(BaseModel):

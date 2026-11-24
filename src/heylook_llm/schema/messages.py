@@ -71,6 +71,29 @@ class ResponseFormat(BaseModel):
         return self.schema_ or {}
 
 
+class ToolDefinition(BaseModel):
+    """Anthropic-style function tool declaration."""
+    name: str = Field(..., min_length=1, max_length=128)
+    description: Optional[str] = Field(default=None)
+    input_schema: Dict[str, Any] = Field(
+        default_factory=lambda: {"type": "object", "properties": {}},
+        description="JSON Schema describing the tool's input object.",
+    )
+
+
+class ToolChoice(BaseModel):
+    """Anthropic-style tool_choice policy."""
+    type: Literal["auto", "any", "none", "tool"]
+    name: Optional[str] = Field(default=None, description="Tool name when type='tool'")
+    disable_parallel_tool_use: Optional[bool] = Field(default=None)
+
+    @model_validator(mode="after")
+    def _require_name_for_tool(self):
+        if self.type == "tool" and not self.name:
+            raise ValueError('tool_choice type "tool" requires `name`')
+        return self
+
+
 class MessageCreateRequest(BaseModel):
     """Request body for POST /v1/messages.
 
@@ -160,6 +183,16 @@ class MessageCreateRequest(BaseModel):
     # other, and gating both would break v3's status lines, which read
     # message_stop.performance on every generation. (The OpenAI chat route,
     # which honoured such a flag, was removed in v1.79.66.)
+
+    # Tool calling (Anthropic Messages shape, engine-neutral across MLX + GGUF)
+    tools: Optional[List[ToolDefinition]] = Field(
+        default=None,
+        description="Function tools the model may invoke. Requires a model with the `tools` capability.",
+    )
+    tool_choice: Optional[ToolChoice] = Field(
+        default=None,
+        description="How the model should choose among declared tools: auto, any, none, or a named tool.",
+    )
 
     # Metadata passthrough
     metadata: Optional[Dict[str, str]] = Field(
@@ -252,15 +285,6 @@ class MessageCreateRequest(BaseModel):
                 "`thinking` (bool) and/or `reasoning_effort` as top-level fields "
                 "instead (pydantic would otherwise DROP it silently and answer "
                 "with the default)")
-        # Not built yet (owner call 2026-09-25: tools when a client needs
-        # them). Both engines could serve them, which is why they are refused
-        # loudly rather than dropped.
-        unbuilt = [k for k in ("tools", "tool_choice") if k in data]
-        if unbuilt:
-            raise ValueError(
-                f"{', '.join(unbuilt)} is not supported on this server yet: tool "
-                "use is not built. Send the request without it (pydantic would "
-                "otherwise DROP it silently and answer as if no tools existed)")
         if "preset" in data or "sampler" in data:
             raise ValueError(
                 "named sampler bundles were removed in v2.0.30 -- send the "

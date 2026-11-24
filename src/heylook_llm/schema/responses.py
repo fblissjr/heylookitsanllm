@@ -21,7 +21,7 @@ from heylook_llm.schema.content_blocks import OutputContentBlock
 # route, not a response. A non-streaming failure RAISES HTTPException, so no
 # MessageResponse is built at all. An unreachable enum member is worse than
 # no member: an integrator writes and tests a branch the server cannot enter.
-StopReason = Literal["end_turn", "max_tokens", "stop_sequence"]
+StopReason = Literal["end_turn", "max_tokens", "stop_sequence", "tool_use"]
 
 
 class Usage(BaseModel):

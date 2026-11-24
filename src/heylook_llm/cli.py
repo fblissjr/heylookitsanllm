@@ -3,7 +3,7 @@
 
 Lightweight CLI (zero MLX/torch imports) for managing heylook resources such as
 presets. Talks to a running heylookllm server over HTTP by default and falls
-back to direct local DuckDB access when the local server is not running (or
+back to direct local SQLite access when the local server is not running (or
 when `--db` is passed explicitly).
 """
 
@@ -46,7 +46,7 @@ class PresetStore(Protocol):
 
 
 class StoreError(RuntimeError):
-    """Raised on HTTP or DuckDB failures when reading/writing presets."""
+    """Raised on HTTP or SQLite failures when reading/writing presets."""
 
 
 def _resolve_api_key(explicit: str | None) -> str | None:
@@ -122,8 +122,15 @@ class _HttpPresetStore:
             {"system_prompt": rec.system_prompt, "params": rec.params},
         )
 
+    def create_message(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", "/v1/messages", payload)
 
-class _DuckDBPresetStore:
+    def list_models(self) -> list[dict[str, Any]]:
+        data = self._request("GET", "/v1/models")
+        return list((data or {}).get("data", []))
+
+
+class _SQLitePresetStore:
     def __init__(self, db_path: str | Path | None = None):
         self.db_path = db_path
 
@@ -140,7 +147,7 @@ class _DuckDBPresetStore:
         try:
             return asyncio.run(_inner())
         except Exception as exc:
-            raise StoreError(f"DuckDB error: {exc}") from None
+            raise StoreError(f"SQLite error: {exc}") from None
 
     def list_presets(self) -> list[dict[str, Any]]:
         return self._run(lambda db, conn: db.list_presets(conn))
@@ -167,9 +174,9 @@ def _open_store(
     db_path: str | None,
     err: TextIO,
 ) -> tuple[PresetStore, list[dict[str, Any]]]:
-    """Connect to either the HTTP server or local DuckDB and load current presets."""
+    """Connect to either the HTTP server or local SQLite and load current presets."""
     if db_path:
-        store: PresetStore = _DuckDBPresetStore(db_path)
+        store: PresetStore = _SQLitePresetStore(db_path)
         return store, store.list_presets()
 
     env_server = os.environ.get("HEYLOOK_SERVER", "").strip()
@@ -181,9 +188,9 @@ def _open_store(
     except ConnectionError as exc:
         if server or env_server:
             raise StoreError(str(exc)) from None
-        # Default local server is not running: fall back cleanly to local DuckDB.
-        print(f"Note: server not reachable at {url}; using local DuckDB store.", file=err)
-        local_store = _DuckDBPresetStore(None)
+        # Default local server is not running: fall back cleanly to local SQLite.
+        print(f"Note: server not reachable at {url}; using local SQLite store.", file=err)
+        local_store = _SQLitePresetStore(None)
         return local_store, local_store.list_presets()
 
 
@@ -372,25 +379,71 @@ def _prompt_choice(
         return "c"
 
 
-def _cmd_presets_import(
-    args: argparse.Namespace,
+_PRESET_ASSIST_SYSTEM = (
+    "You help the user edit saved heylook presets cleanly and accurately. "
+    "Use list_presets and get_preset to inspect existing presets before making changes. "
+    "When updating a preset's system prompt, weave new wording in naturally and match "
+    "the existing prompt's tone, formatting, markdown structure, and casing. "
+    "Call propose_preset_update for each preset you want to modify; nothing is saved "
+    "until the user reviews the before/after diff and confirms. Keep untouched sections intact."
+)
+
+_PRESET_ASSIST_TOOLS: list[dict[str, Any]] = [
+    {
+        "name": "list_presets",
+        "description": "List all saved preset names and brief metadata.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_preset",
+        "description": "Read the full system_prompt and sampler params of a saved preset by exact name.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Exact preset name"},
+            },
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "propose_preset_update",
+        "description": (
+            "Stage a proposed update for an existing preset (or a new preset). "
+            "Changes are shown to the user as a before/after diff before saving. "
+            "Omit params to preserve the preset's existing sampler params."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Preset name"},
+                "system_prompt": {
+                    "type": ["string", "null"],
+                    "description": "Full updated system prompt text (or null for settings-only)",
+                },
+                "params": {
+                    "type": "object",
+                    "description": "Optional full replacement sampler params object; omit to keep existing params",
+                },
+            },
+            "required": ["name", "system_prompt"],
+        },
+    },
+]
+
+
+def _run_preset_review_and_apply(
+    plan: ImportPlan,
     store: PresetStore,
-    existing_presets: list[dict[str, Any]],
     *,
+    yes: bool,
+    new_only: bool,
+    diff_only: bool,
     out: TextIO,
     err: TextIO,
     input_fn: Callable[[str], str] | None = None,
 ) -> int:
-    try:
-        incoming = load_presets_from_paths([Path(p) for p in args.paths], validate_params=True)
-    except PresetFormatError as exc:
-        print(f"Error: {exc}", file=err)
-        return 1
-
-    plan = plan_import(incoming, existing_presets)
-
     # Preview-only diff mode
-    if args.diff:
+    if diff_only:
         if len(plan.items) == 1:
             it = plan.items[0]
             if it.existing is None:
@@ -406,12 +459,12 @@ def _cmd_presets_import(
         return 0
 
     # Non-interactive apply
-    if args.yes:
+    if yes:
         if len(plan.items) > 1:
             _print_bulk_summary(plan, out)
-        return _apply_plan(store, plan, include_existing=not args.new_only, out=out)
+        return _apply_plan(store, plan, include_existing=not new_only, out=out)
 
-    # Single-preset import flow (Requirement 5)
+    # Single-preset flow
     if len(plan.items) == 1:
         item = plan.items[0]
         if item.existing is None:
@@ -429,7 +482,7 @@ def _cmd_presets_import(
         if not item.changed:
             print("No changes to apply.", file=out)
             return 0
-        if args.new_only:
+        if new_only:
             print(f"Skipped existing preset {item.incoming.name!r} (--new-only).", file=out)
             return 0
         ans = _prompt_choice(
@@ -444,10 +497,10 @@ def _cmd_presets_import(
         print("Cancelled.", file=out)
         return 0
 
-    # Bulk import flow (Requirements 5 & 6)
+    # Bulk flow
     _print_bulk_summary(plan, out)
 
-    if args.new_only:
+    if new_only:
         if not plan.new_items:
             print("No new presets to import.", file=out)
             return 0
@@ -476,7 +529,6 @@ def _cmd_presets_import(
         print("Cancelled.", file=out)
         return 0
 
-    # Existing presets present in bulk import: offer combined diff view OR direct import & apply.
     while True:
         ans = _prompt_choice(
             "Choose action: [d] view combined diffs, [a] import and apply, [n] import new only, [c] cancel: ",
@@ -512,6 +564,191 @@ def _cmd_presets_import(
         print("Please enter d, a, n, or c.", file=out)
 
 
+def _cmd_presets_import(
+    args: argparse.Namespace,
+    store: PresetStore,
+    existing_presets: list[dict[str, Any]],
+    *,
+    out: TextIO,
+    err: TextIO,
+    input_fn: Callable[[str], str] | None = None,
+) -> int:
+    try:
+        incoming = load_presets_from_paths([Path(p) for p in args.paths], validate_params=True)
+    except PresetFormatError as exc:
+        print(f"Error: {exc}", file=err)
+        return 1
+
+    plan = plan_import(incoming, existing_presets)
+    return _run_preset_review_and_apply(
+        plan,
+        store,
+        yes=args.yes,
+        new_only=args.new_only,
+        diff_only=args.diff,
+        out=out,
+        err=err,
+        input_fn=input_fn,
+    )
+
+
+def _cmd_presets_assist(
+    args: argparse.Namespace,
+    store: PresetStore,
+    existing_presets: list[dict[str, Any]],
+    *,
+    message_fn: Callable[[dict[str, Any]], dict[str, Any]] | None,
+    out: TextIO,
+    err: TextIO,
+    input_fn: Callable[[str], str] | None = None,
+) -> int:
+    from heylook_llm.preset_io import normalize_preset
+
+    instruction = args.instruction or ""
+    if args.prompt_file:
+        instruction = Path(args.prompt_file).read_text(encoding="utf-8").strip()
+    if not instruction.strip():
+        print("Error: provide an instruction string or --prompt-file.", file=err)
+        return 2
+
+    if message_fn is None:
+        if not isinstance(store, _HttpPresetStore):
+            print(
+                "Error: `heylook presets assist` requires a running heylookllm server "
+                "(pass --server URL if not on http://127.0.0.1:8000).",
+                file=err,
+            )
+            return 1
+        message_fn = store.create_message
+
+    model_id = args.model
+    if not model_id:
+        if isinstance(store, _HttpPresetStore):
+            models = store.list_models()
+            tool_models = [m["id"] for m in models if "tools" in (m.get("capabilities") or [])]
+            if len(tool_models) == 1:
+                model_id = tool_models[0]
+            else:
+                hint = ", ".join(tool_models[:8]) if tool_models else "none detected"
+                print(f"Error: specify --model <id>. Tool-capable models: {hint}", file=err)
+                return 2
+        else:
+            print("Error: specify --model <id>.", file=err)
+            return 2
+
+    by_name = {p["name"]: p for p in existing_presets}
+    staged: dict[str, PresetRecord] = {}
+
+    user_prompt = instruction.strip()
+    if args.presets:
+        target_list = ", ".join(args.presets)
+        user_prompt = f"Target presets: {target_list}\n\n{user_prompt}"
+
+    messages: list[dict[str, Any]] = [{"role": "user", "content": user_prompt}]
+
+    def _exec_tool(name: str, tool_input: dict[str, Any]) -> tuple[str, bool]:
+        if name == "list_presets":
+            summary = [
+                {
+                    "name": p["name"],
+                    "has_system_prompt": bool(p.get("system_prompt")),
+                    "params_keys": sorted((p.get("params") or {}).keys()),
+                }
+                for p in existing_presets
+            ]
+            return json.dumps({"presets": summary}, ensure_ascii=False), False
+        if name == "get_preset":
+            target = str(tool_input.get("name") or "")
+            p = by_name.get(target)
+            if p is None:
+                return json.dumps({"error": f"Preset not found: {target}"}), True
+            return json.dumps({
+                "name": p["name"],
+                "system_prompt": p.get("system_prompt"),
+                "params": p.get("params") or {},
+            }, ensure_ascii=False), False
+        if name == "propose_preset_update":
+            target = str(tool_input.get("name") or "").strip()
+            cur = by_name.get(target)
+            raw_params = tool_input.get("params")
+            if raw_params is None:
+                raw_params = dict((cur or {}).get("params") or {})
+            try:
+                rec = normalize_preset(
+                    {
+                        "name": target,
+                        "system_prompt": tool_input.get("system_prompt"),
+                        "params": raw_params,
+                    },
+                    validate_params=True,
+                )
+            except PresetFormatError as exc:
+                return json.dumps({"error": str(exc)}), True
+            staged[rec.name] = rec
+            return json.dumps({"status": "staged", "name": rec.name}), False
+        return json.dumps({"error": f"Unknown tool: {name}"}), True
+
+    final_texts: list[str] = []
+    for _turn in range(max(1, int(args.max_turns))):
+        payload: dict[str, Any] = {
+            "model": model_id,
+            "system": _PRESET_ASSIST_SYSTEM,
+            "messages": messages,
+            "tools": _PRESET_ASSIST_TOOLS,
+            "stream": False,
+        }
+        try:
+            resp = message_fn(payload)
+        except StoreError as exc:
+            print(f"Error: {exc}", file=err)
+            return 1
+
+        blocks = resp.get("content") or []
+        messages.append({"role": "assistant", "content": blocks})
+
+        tool_uses = [b for b in blocks if isinstance(b, dict) and b.get("type") == "tool_use"]
+        texts = [b.get("text", "") for b in blocks if isinstance(b, dict) and b.get("type") == "text" and b.get("text")]
+
+        if not tool_uses:
+            final_texts.extend(texts)
+            break
+
+        tool_results: list[dict[str, Any]] = []
+        for tu in tool_uses:
+            t_name = str(tu.get("name") or "")
+            t_input = tu.get("input") if isinstance(tu.get("input"), dict) else {}
+            arg_preview = f"({t_input.get('name')!r})" if "name" in t_input else "()"
+            print(f"-> {t_name}{arg_preview}", file=out)
+            res_text, is_err = _exec_tool(t_name, t_input)
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": str(tu.get("id") or ""),
+                "content": res_text,
+                **({"is_error": True} if is_err else {}),
+            })
+        messages.append({"role": "user", "content": tool_results})
+
+    if final_texts:
+        print("\n".join(final_texts).strip(), file=out)
+        print("", file=out)
+
+    if not staged:
+        print("No preset updates were proposed.", file=out)
+        return 0
+
+    plan = plan_import(list(staged.values()), existing_presets)
+    return _run_preset_review_and_apply(
+        plan,
+        store,
+        yes=args.yes,
+        new_only=False,
+        diff_only=args.diff,
+        out=out,
+        err=err,
+        input_fn=input_fn,
+    )
+
+
 def _connection_parent_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(add_help=False)
     p.add_argument(
@@ -527,7 +764,7 @@ def _connection_parent_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--db",
         default=argparse.SUPPRESS,
-        help="Read/write a local DuckDB file directly instead of calling the HTTP API",
+        help="Read/write a local SQLite file directly instead of calling the HTTP API",
     )
     return p
 
@@ -576,6 +813,19 @@ def build_parser() -> argparse.ArgumentParser:
     imp.add_argument("--new-only", action="store_true", help="Import only new presets; skip existing names")
     imp.add_argument("--diff", action="store_true", help="Show summary and before/after diffs without writing")
 
+    assist = presets_sub.add_parser(
+        "assist",
+        help="Use a local heylook model with tool calling to revise preset prompts and review diffs before saving",
+        parents=[conn],
+    )
+    assist.add_argument("instruction", nargs="?", default=None, help="Editing instruction for the model")
+    assist.add_argument("--prompt-file", default=None, help="Read the editing instruction from a file")
+    assist.add_argument("--model", default=None, help="Model ID with `tools` capability")
+    assist.add_argument("--presets", nargs="*", default=None, help="Optional target preset name(s) to highlight")
+    assist.add_argument("--max-turns", type=int, default=12, help="Max tool-calling turns (default: 12)")
+    assist.add_argument("-y", "--yes", action="store_true", help="Apply proposed diffs without interactive prompt")
+    assist.add_argument("--diff", action="store_true", help="Show proposed diffs and exit without writing")
+
     return parser
 
 
@@ -583,6 +833,7 @@ def main(
     argv: Sequence[str] | None = None,
     *,
     store: PresetStore | None = None,
+    message_fn: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     out: TextIO | None = None,
     err: TextIO | None = None,
     input_fn: Callable[[str], str] | None = None,
@@ -620,6 +871,16 @@ def main(
             args,
             active_store,
             current_presets,
+            out=out_stream,
+            err=err_stream,
+            input_fn=input_fn,
+        )
+    if args.action == "assist":
+        return _cmd_presets_assist(
+            args,
+            active_store,
+            current_presets,
+            message_fn=message_fn,
             out=out_stream,
             err=err_stream,
             input_fn=input_fn,

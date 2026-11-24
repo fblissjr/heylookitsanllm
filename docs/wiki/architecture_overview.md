@@ -97,11 +97,11 @@ Generation is driven with `loop.run_in_executor`, and asyncio's **default** exec
 
 ---
 
-## 4. Storage & Persistence: The DuckDB Model
+## 4. Storage & Persistence: The SQLite (WAL) Model
 
-Application state (conversations, messages, notebook cells, presets, operational settings) is persisted in a local DuckDB database at `data/conversations.duckdb`, resolved relative to the working directory and overridable with `$HEYLOOK_DB_PATH`:
+Application state (conversations, messages, notebook cells, presets) is persisted in a local stdlib SQLite database (`WAL` mode, `foreign_keys=ON`) at `data/conversations.db`, resolved relative to the working directory and overridable with `$HEYLOOK_DB_PATH`:
 
-- **One Connection, One Thread**: a single DuckDB connection, with **every** operation -- reads included -- running on a `ThreadPoolExecutor(max_workers=1)`. That gives strict serialization (stronger than a lock: queued operations do not pile up blocking pooled threads) and keeps DB work off asyncio's shared default executor, where model loads and generation consumption would contend with trivial reads. Each operation runs in an explicit transaction with rollback on exception.
+- **One Connection, One Thread**: a single SQLite connection (`isolation_level=None`), with **every** operation -- reads included -- running on a `ThreadPoolExecutor(max_workers=1)`. That gives strict serialization (stronger than a lock: queued operations do not pile up blocking pooled threads) and keeps DB work off asyncio's shared default executor, while WAL mode permits concurrent external readers. Each operation runs in an explicit `BEGIN`/`COMMIT`/`ROLLBACK` transaction.
 - **Dynamic Field Allowlists**: To prevent SQL injection without heavyweight ORMs, database update routines use strict frozensets ([`UPDATABLE_CONVERSATION_FIELDS`](../../src/heylook_llm/db.py), etc.).
 - **No Migration Policy**: schema changes bump `_SCHEMA_VERSION`, which **drops and recreates only the versioned tables** -- the drop list is explicit in [`db.py`](../../src/heylook_llm/db.py). `presets` and `settings` are deliberately outside it: they are versionless config promised to survive destructive operations. Migrations are explicitly avoided.
 - **Authoritative Server Generation**: In chat generation (`POST /v1/conversations/{id}/generate`), the backend owns database persistence. It writes the user prompt, tracks streaming chunks, commits the assistant reply, and emits an authoritative `heylook_saved` event carrying the exact saved message IDs and timestamps.
@@ -117,7 +117,8 @@ heylookitsanllm/
 │   ├── router.py                # ModelRouter: load/evict/pin, config merge at load
 │   ├── schema/                  # Messages wire models + converters
 │   ├── config.py                # Pydantic schemas, effect metadata, heylook.toml parser
-│   ├── db.py                    # DuckDB persistence layer (conversations, presets)
+│   ├── db.py                    # SQLite (WAL) persistence layer (conversations, presets)
+│   ├── tool_calling.py          # Engine-neutral Anthropic tool definitions, policy & stream filter
 │   ├── model_registry.py        # Resolved-path model discovery & registry merge
 │   ├── model_importer.py        # Model file inspection & sidecar pairing
 │   ├── request_registry.py      # Active request tracking & cancellation

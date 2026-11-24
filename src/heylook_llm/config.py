@@ -115,6 +115,15 @@ class ChatRequest(BaseModel):
     # the constraint until the thinking closer (mlx_provider).
     response_schema: Optional[Dict[str, Any]] = None
 
+    # OpenAI-format function tools and tool_choice policy (converted from
+    # Anthropic Messages `tools` / `tool_choice` in schema/converters.py).
+    tools: Optional[List[Dict[str, Any]]] = Field(
+        default=None, description="OpenAI-format function tool definitions"
+    )
+    tool_choice: Optional[Union[str, Dict[str, Any]]] = Field(
+        default=None, description="OpenAI-format tool_choice policy"
+    )
+
     # Streaming options (OpenAI-compatible)
 
     # Continuation ("prefill"): finish the FINAL message instead of opening a
