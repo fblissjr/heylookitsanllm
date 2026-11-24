@@ -2523,7 +2523,8 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
    own class and size (.cfg-tmpl__body) has to be named, because a bare
    `textarea` loses to any class. max(), not a bare 16px: 16px is the floor
    that stops the zoom, and above it a field follows the root like the text
-   around it (the block above). tests/e2e/render.mjs holds both properties. */
+   around it (the block above). tests/e2e/run.mjs holds the floor for the chat
+   fields; the follows-the-root half has had no check since v2.0.281. */
 @media (pointer: coarse) {
   .input:not(.notebook__title), select, textarea, .sysprompt-input,
   .chat__bar > select, .chat__load-select, .chat__ctx-select, .chat__ctx-custom,

@@ -88,7 +88,7 @@ tell you a vendored library has moved.
 
 Bumping is not automatic and should not be. `marked` in particular is a markdown
 parser feeding an incremental renderer, and its majors have carried real
-behavioural changes; after any update run `bun run e2e:render`, which diffs an
+behavioural changes; after any update run `node tests/e2e/run.mjs`, which diffs an
 incrementally-grown document against a whole-document render and carries the
 scheme-guard and raw-HTML checks.
 

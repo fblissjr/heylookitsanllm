@@ -34,7 +34,7 @@
 // Everything in question here follows the layout viewport -- the fixed
 // `#bottom-nav`, the `100dvh` app shell, the composer at its foot -- so a Chrome
 // emulation answers a different question and can pass while the phone
-// misbehaves. `render.mjs`'s mid-stream viewport shrink checks REFLOW under a
+// misbehaves. The removed render suite's mid-stream viewport shrink checked REFLOW under a
 // short viewport; this checks what WebKit actually does with the keyboard.
 //
 // What it drives: the iOS Simulator (Xcode) running a real Mobile Safari, via

@@ -4,8 +4,9 @@ last updated: 2026-09-25
 
 The half of the v3 story the browser suite cannot see.
 
-`tests/e2e/render.mjs` drives the real frontend page against a **stubbed** `/v1`.
-It proves the client behaves and says nothing about whether the server does.
+A browser check proves the client behaves; it says little about whether the
+server does, and the server-free render suite that once made this split sharp
+(`tests/e2e/render.mjs`, against a **stubbed** `/v1`) was removed in v2.0.281.
 Everything the client's preset and lifecycle work rests on — a preset store
 that refuses a duplicate name, params that round-trip onto a conversation, a
 run that detaches and finishes after the reader walks away — is invisible to

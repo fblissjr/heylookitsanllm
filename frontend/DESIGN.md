@@ -396,9 +396,8 @@ owner: "equally well on desktop web and iPhone 17 Pro Safari").
   depend on this shape. `settings-drawer.js` adds the open class and focuses
   Close in the same task, which lands only because `focus()` flushes style
   first, so an overlay that defers its open class must also defer the focus.
-  And a test that waits for an overlay to go waits on its `display`
-  (`closeDrawer` in `tests/e2e/lib/dom.mjs`). A new fixed overlay follows the
-  same pattern.
+  And a test that waits for an overlay to go waits on its `display`. A new
+  fixed overlay follows the same pattern.
 - **Honest states are announced, not just shown.** Status lines carry
   `role="status"` (polite: streaming, "server busy — retrying", token counts,
   the preset section's provenance line `.preset-provenance`); error surfaces (`.error-note`,
@@ -432,9 +431,10 @@ owner: "equally well on desktop web and iPhone 17 Pro Safari").
   the iOS Text Size setting from there: type, spacing tokens, the bar. Only
   WebKit knows the keyword, so other engines keep their default root and
   Chrome shows no change. New phone chrome has to hold at the default and at
-  the largest standard size; `tests/e2e/render.mjs` sets those root sizes by
-  hand, with a cold model selected, and checks every control in the chat bar:
-  the first line and the load group fit, the chips scroll fully into view.
+  the largest standard size: with a cold model selected, the first line and
+  the load group fit and the chips scroll fully into view. The check that set
+  those root sizes by hand went with the render suite (v2.0.281) and has not
+  been ported.
 - **A text field is never under 16px on touch.** iOS zooms the page when a
   focused control's text is smaller, and desktop Chrome never shows it. One
   `@media (pointer: coarse)` block raises every `input`, `select` and
@@ -445,8 +445,9 @@ owner: "equally well on desktop web and iPhone 17 Pro Safari").
   larger is excluded from it (`.notebook__title`), and a field with its own
   class and size has to be named in it (`.cfg-tmpl__body`), because a bare
   element selector loses to any class. Not `maximum-scale=1`, which blocks
-  pinch-zoom. `e2e:render` holds the property for the chat page and the
-  drawer; the notebook and models fields are outside that check.
+  pinch-zoom. `tests/e2e/run.mjs` holds the floor for the composer and the
+  message editor at a shrunken root; the drawer, notebook and models fields
+  are outside that check.
 - **`aria-pressed` is the toggle-button style hook, not a class.** Icon-only
   toggle buttons (`.btn--icon`, e.g. the chat composer's thinking toggle) set
   `aria-pressed="true"/"false"` and style state off that attribute
@@ -483,7 +484,7 @@ owner: "equally well on desktop web and iPhone 17 Pro Safari").
 
 Verify phone behavior at an iPhone-class viewport with **touch media emulated**
 (`hover:none`/`pointer:coarse`) — desktop Chrome reports `hover:hover`, so it
-never exercises the touch-reveal rules above. claude-in-chrome refuses
-localhost; drive it with puppeteer + system Chrome (as `tests/e2e/` does) and
-force the media features over raw CDP (`Emulation.setEmulatedMedia`), since
-puppeteer-core whitelists `emulateMediaFeatures` and rejects `hover`/`pointer`.
+never exercises the touch-reveal rules above. Drive system Chrome over the
+DevTools protocol as `tests/e2e/` does: `page.emulate({ touch: true })` in
+`tests/e2e/lib/cdp.mjs` sets the viewport and forces the media features
+(`Emulation.setEmulatedMedia`).

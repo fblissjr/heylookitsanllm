@@ -83,6 +83,7 @@ async function navigate() {
   if (token !== navToken) return; // superseded by a faster navigation
   currentPage = null;
   main.replaceChildren();
+  delete main.dataset.mounted;
 
   document.title = `${route.title} · heylook`;
   for (const link of navLinks) {
@@ -97,6 +98,11 @@ async function navigate() {
     if (token !== navToken) return;
     currentPage = mod.default;
     await currentPage.mount(main);
+    // The page's setup has RESOLVED, which its skeleton being in the DOM does
+    // not say: setup builds the skeleton before its first await. A browser
+    // check waits on this, so a setup that fails late is seen as a failure
+    // instead of being cut off by the next navigation.
+    if (token === navToken) main.dataset.mounted = routeName;
   } catch (err) {
     // A page that fails to load or mount must not brick the router: show the
     // failure in place and leave nav/hashchange fully working.

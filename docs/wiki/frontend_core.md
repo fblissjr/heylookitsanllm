@@ -155,7 +155,7 @@ Given a safe boundary:
 1. **One-Time Parse**: content preceding the boundary is parsed once, converted to permanent DOM nodes, and appended. Those nodes are never touched again, so the committed part of the message is never re-laid-out either.
 2. **Tail Re-render**: only the uncommitted tail is re-rendered on each paint. Cost is bounded by the largest single block (one paragraph, one table, one fenced code block), not by the response.
 
-The boundary rule is a **property, not a set of examples**: `tests/e2e/render.mjs` grows generated documents one chunk at a time and diffs against a whole-document render -- the same technique, and the same reason, as the backend's `TestParserInvariants`.
+The boundary rule is a **property, not a set of examples**: `tests/e2e/run.mjs` grows generated documents one chunk at a time and diffs against a whole-document render -- the same technique, and the same reason, as the backend's `TestParserInvariants`.
 
 ```mermaid
 sequenceDiagram

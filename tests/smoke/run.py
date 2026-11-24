@@ -2,9 +2,9 @@
 # Live smoke test: the v3 contract and the generation lifecycle, against a
 # REAL server, once per ENGINE.
 #
-# Why this exists. `tests/e2e/render.mjs` drives the real frontend page against a
-# STUBBED /v1, so it can prove the client behaves -- and nothing about whether
-# the server does. Everything the client's preset and lifecycle work rests on
+# Why this exists. A browser check proves the client behaves -- and little about
+# whether the server does (the render suite this was written beside drove the
+# page against a STUBBED /v1; it was removed in v2.0.281). Everything the client's preset and lifecycle work rests on
 # (a preset store that refuses a duplicate name, params that round-trip onto a
 # conversation, a run that DETACHES and finishes after the reader walks away)
 # is invisible to it. This is the other half.

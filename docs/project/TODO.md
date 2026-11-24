@@ -106,18 +106,22 @@ report `internal/reports/2026-11-24_frontend_review.md`. What is open:
   happens, the report's section 1 has the Web Inspector capture snippet and
   how to read it, and the next candidates (iOS selection autoscroll; an edit
   box taller than the area above the keyboard).
-- [ ] **The browser e2e harness cannot launch** (P1). `launchBrowser()` in
-  `tests/e2e/lib/browser.mjs` throws since v2.0.240 removed `puppeteer-core`,
-  so every `e2e*` entry in `tests/e2e/package.json` except `test:unit` and
-  `e2e:ios` dies before its first check. `AGENTS.md`, `.claude/rules/tests.md`,
-  `tests/README.md` and `tests/e2e/README.md` still describe the suites as
-  runnable, and frontend changes since then landed without them. Owner call:
-  put the dependency back, or rebuild `launchBrowser` on the DevTools protocol
-  with node's built-in WebSocket (the driver calls the suites make are listed
-  by `grep -ohE '\.(evaluate|\$eval|waitFor\w+|click|type|select|setRequestInterception)\(' tests/e2e -r | sort | uniq -c`).
-  The suites have not run against three weeks of frontend changes, so expect
-  triage either way. v2.0.279 was checked with a one-off DevTools-protocol
-  script instead (session log 2026-11-24).
+- [x] **The browser e2e harness could not launch** -- DONE v2.0.281. `puppeteer-core`
+  was removed in v2.0.240 and `launchBrowser()` threw, so no browser check ran
+  for three weeks. Owner call 2026-11-24: remove the puppeteer-shaped suites
+  and write checks natively on a zero-dependency DevTools-protocol driver
+  (`tests/e2e/lib/cdp.mjs`, `tests/e2e/run.mjs`; `sharp_edges.md`, "Browser
+  E2E").
+- [ ] **Port what the removed suites held, as changes reach each area** (P2).
+  `tests/e2e/README.md` ("What was removed, and where it is") has the list and
+  the commit to read them from. First, in this order: the message list being
+  reconciled rather than rebuilt (it is what keeps an open editor's draft and
+  the scroll position), tail-follow across a mid-stream viewport change, and
+  the paint-cost instrument the battery phase needs. The stub store and SSE
+  drip in the old `render.mjs` are plain node and plain objects; a server-free
+  suite can serve them directly instead of intercepting requests. Older
+  sections of this file that name `render.mjs`, `suites/chat.mjs` or
+  `suites/pages.mjs` describe checks that no longer exist.
 - [ ] **Owner decisions the review raised** (each a short answer; report
   section 8): what Return does on the phone's software keyboard; whether a
   model switch mid-reply aborts the stream or lets it finish, and what exits

@@ -44,7 +44,7 @@ Each file below holds the mechanisms that bite in its area. Claude Code loads it
 
 - Set up: `uv sync` (dev tooling included). Serve: `heylookllm --log-level INFO` (API and UI on :8000). Isolated server for live checks: the `dev-server` skill (`scripts/dev_server.sh`).
 - Backend suite: `uv run pytest tests/unit/ tests/contract/ -v`.
-- Browser E2E (opt-in, unsandboxed): `cd tests/e2e && bun install && bun run e2e[:chat|:pages]`; `bun run e2e:render` needs no model and no server.
+- Browser checks (opt-in, unsandboxed, no dependencies): `cd tests/e2e && node run.mjs`. It starts its own isolated server and drives system Chrome over the DevTools protocol.
 - Eval bank, against a running server: `uv run python tests/eval/run.py --server <url> --models <ids>`.
 - Live smoke, against a running server: `tests/smoke/` (see [tests/README.md](./tests/README.md)).
 - llama-server: `scripts/build_llama.py` builds it; nothing else does.
@@ -68,7 +68,7 @@ Each file below holds the mechanisms that bite in its area. Claude Code loads it
   - any cache, KV or position change: `scripts/chain_probe.py` per model class;
   - any speed or memory claim: `scripts/perf_ab.py` (arms by git rev or config; a contaminated run gets no verdict);
   - the MLX vision path: `scripts/vlm_parity_probe.py`;
-  - frontend: the E2E suites that cover the page, and `e2e:render` for the chat message list;
+  - frontend: `tests/e2e/run.mjs`, plus a new check there when the change has a behaviour to hold (the suite is small; `tests/e2e/README.md` lists what the removed suites covered and is not yet ported);
   - streaming or latency, live: a fast model, `Qwen3.5-0.8B-MLX-8bit` by default (a slow dense model looks like a delivery bug).
 - Release standard (not a CI gate): a release touching provider, loader, template or lifecycle code runs `tests/smoke/` green on all three arms (mlx-text, mlx-vision, gguf) and names any uncovered arm in the changelog. It also runs `scripts/vendor_frontend.py --check` and names the answer, and names any unmet Phase 3 precondition (thinking depth on both MLX arms needs the depth-capable models `tests/smoke/README.md` names pinned).
 

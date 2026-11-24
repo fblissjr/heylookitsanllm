@@ -22,7 +22,7 @@
 // separately yields the same HTML as parsing the whole -- i.e. no markdown
 // construct can span it. The rules in `isHardBlockStart` and the fence
 // tracking below are the conditions under which that holds; they are REASONED
-// here and PROVEN in tests/e2e/render.mjs, which grows generated documents one
+// here and PROVEN in tests/e2e/run.mjs, which grows generated documents one
 // chunk at a time through this class and diffs the result against a
 // whole-document render. If you touch the boundary rules, make that check fail
 // first -- the seam bugs this replaces are invisible to any check that only

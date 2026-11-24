@@ -1270,7 +1270,7 @@ merge with a block above), renders each segment once into a committed prefix
 whose nodes are never touched again, and re-renders only the tail. A
 link-reference/footnote definition disables splitting for that message
 because it reaches forward arbitrarily far. The boundary rule is a property,
-not a set of examples: `tests/e2e/render.mjs` grows generated documents one
+not a set of examples: `tests/e2e/run.mjs` grows generated documents one
 chunk at a time and diffs against a whole-document render, the same technique
 and the same reason as the backend's `TestParserInvariants`.
 
@@ -1292,7 +1292,8 @@ scrolled away" and strands the view for the rest of the generation. A cached
 flag fed by scroll events was tried and is wrong: pinning coalesces scroll
 events to a handful across a whole generation, so the flag goes stale exactly
 when the viewport changes under it, which on a phone is every keyboard open
-(`tests/e2e/render.mjs` resizes mid-stream and was shown red against it).
+(the render suite resized mid-stream and was shown red against it; that
+check went with the suite in v2.0.281 and has not been ported).
 
 ### Scroll anchoring
 
@@ -2396,6 +2397,24 @@ replaced eval's own `fetch_models`.
 
 ### Browser E2E
 
+The harness has no dependencies since v2.0.281. `tests/e2e/lib/cdp.mjs` starts
+system Chrome and speaks the DevTools protocol with node's own `fetch` and
+`WebSocket`, and a check is written against two primitives: run this function
+in the page, and send this protocol call. The reason is an outage, not taste.
+The suites were written against puppeteer's page object; v2.0.240 removed
+`puppeteer-core` from `tests/e2e/` and left `launchBrowser()` throwing, and for
+three weeks no browser check could start while `AGENTS.md`, the rules file and
+two READMEs still named those suites as the frontend's checks. Two vendored
+`marked`/DOMPurify updates landed in that window without the property check
+that exists for them, and a frontend review (2026-11-24) found bugs the suites
+could not have been run against. Keeping the suites would have meant a
+puppeteer-shaped shim over the protocol (about thirty methods, request
+interception, element handles), which is the same dependency rebuilt by hand,
+so the owner chose to remove them and write checks natively. What was ported
+and what was not is in `tests/e2e/README.md`; the paragraphs below this one
+describe the removed suites and are kept as the record of why their checks
+existed.
+
 The E2E harness refuses to start when anything already listens on `E2E_PORT`
 (v2.0.2), and that guard is load-bearing rather than tidy. The spawned child
 loses the bind and exits, but that takes seconds, while readiness polls
@@ -2415,8 +2434,9 @@ scripts.
 The streaming-cadence guard is the only automated check for the Phase 1
 delivery fix; server telemetry cannot see it.
 
-`bun run e2e:render` guards that the chat message list is reconciled, not
-rebuilt. The sharpest reason used to be `content-visibility: auto` on
+The render suite (`bun run e2e:render`, removed in v2.0.281) guarded that the
+chat message list is reconciled, not rebuilt; nothing guards it now. The
+sharpest reason used to be `content-visibility: auto` on
 `.message` (a row's laid-out height lived on the node, so a rebuild collapsed
 `scrollHeight` mid-tick and every pixel-based scroll aimed at a list about to
 grow underneath). That is gone as of v1.79.18, and the CSS says so at its own

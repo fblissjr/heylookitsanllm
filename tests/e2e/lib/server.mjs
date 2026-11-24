@@ -9,6 +9,7 @@
 import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
 import { connect } from 'node:net';
+import path from 'node:path';
 import { sleep } from './harness.mjs';
 
 /** Refuse to start when something already listens on `port`.
@@ -95,9 +96,15 @@ export async function startServer({ port, dbPath, modelId, repoRoot, logPath }) 
     // Read-only model config: model folders and models.toml are the owner's.
     // Isolate the access gate so an operator's ~/.heylook/api_key never makes
     // unauthenticated e2e page boots fail with 401.
+    // Isolate the logs directory too. It defaults to `logs/` under the working
+    // directory, which here is the repo root: the same directory the daily
+    // server writes its event, metric and memory logs to (and rotates) when it
+    // is started from the repo. Until v2.0.281 every run of this harness wrote
+    // its test traffic there.
     env: {
       ...process.env,
       HEYLOOK_DB_PATH: dbPath,
+      HEYLOOK_LOGS_DIR: path.join(path.dirname(dbPath), 'logs'),
       HEYLOOK_READONLY_MODEL_CONFIG: '1',
       HEYLOOK_API_KEY: '',
       HEYLOOK_API_KEY_FILE: '',
@@ -114,6 +121,18 @@ export async function startServer({ port, dbPath, modelId, repoRoot, logPath }) 
   const base = `http://127.0.0.1:${port}`;
   const deadline = Date.now() + 300000; // model load can be slow (large weights)
 
+  const stop = async () => {
+    if (exited) return;
+    proc.kill('SIGTERM');
+    for (let i = 0; i < 40 && !exited; i++) await sleep(250);
+    if (!exited) proc.kill('SIGKILL');
+    log.end();
+  };
+
+  // A startup that fails must not leave the process behind: the caller never
+  // gets a handle to stop, and a server left on the port with a model loaded
+  // makes the next run refuse to start.
+  try {
   // Phase 1: server socket answers /v1/models with our model present.
   await (async () => {
     while (Date.now() < deadline) {
@@ -132,6 +151,10 @@ export async function startServer({ port, dbPath, modelId, repoRoot, logPath }) 
     timeoutMs: deadline - Date.now(),
     note: () => (exited ? ` (server exited, code=${exited.code}); see ${logPath}` : `; see ${logPath}`),
   });
+  } catch (err) {
+    await stop();
+    throw err;
+  }
 
   return {
     proc,
@@ -139,12 +162,6 @@ export async function startServer({ port, dbPath, modelId, repoRoot, logPath }) 
     async clearData() {
       await fetchJson(`${base}/v1/data/clear`, { method: 'POST' }, 10000);
     },
-    async stop() {
-      if (exited) return;
-      proc.kill('SIGTERM');
-      for (let i = 0; i < 40 && !exited; i++) await sleep(250);
-      if (!exited) proc.kill('SIGKILL');
-      log.end();
-    },
+    stop,
   };
 }

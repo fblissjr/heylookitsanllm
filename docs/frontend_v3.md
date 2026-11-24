@@ -303,6 +303,6 @@ on here.
 
 ## Verifying v3 in a browser
 
-puppeteer-core + system Chrome via `tests/e2e/` (claude-in-chrome refuses
-localhost by policy). `cd tests/e2e && bun install`, then `bun run e2e[:chat|:pages]`.
-MUST run UNSANDBOXED (Chrome profile dir + Metal). See `tests/e2e/README.md`.
+System Chrome over the DevTools protocol via `tests/e2e/` (no dependencies):
+`cd tests/e2e && node run.mjs`. MUST run UNSANDBOXED (Chrome + Metal + a local
+port). See `tests/e2e/README.md`.

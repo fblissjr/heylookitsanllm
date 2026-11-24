@@ -37,7 +37,7 @@ Map and backend coupling: [docs/frontend_v3.md](../../docs/frontend_v3.md). User
 ## Rendering
 
 - Markdown URL schemes are allowlisted in `markdown.js`'s `link`/`image` renderer overrides after decoding HTML entities once; DOMPurify is the second layer. A check for this must assert on the protocol the browser resolves, never on the rendered HTML string. A renderer returning `''` drops content silently; return `false` to fall back. Vendored libs are pinned by `js/vendor/vendor.json` + `scripts/vendor_frontend.py`.
-- A streaming message renders incrementally (`markdown-stream.js`): segments cut at boundaries no markdown construct spans are rendered once and never touched again; only the tail re-renders; a link-reference or footnote definition disables splitting. `tests/e2e/render.mjs` checks this as a property. Painters whose cost scales with the document use `ctx.throttleTime`, never `ctx.throttle`. Measure scroll-follow at the top of the painter, before it mutates; never use a cached flag fed by scroll events. Do not re-add `content-visibility`.
+- A streaming message renders incrementally (`markdown-stream.js`): segments cut at boundaries no markdown construct spans are rendered once and never touched again; only the tail re-renders; a link-reference or footnote definition disables splitting. `tests/e2e/run.mjs` checks this as a property. Painters whose cost scales with the document use `ctx.throttleTime`, never `ctx.throttle`. Measure scroll-follow at the top of the painter, before it mutates; never use a cached flag fed by scroll events. Do not re-add `content-visibility`.
 
 ## Presets and the system prompt
 

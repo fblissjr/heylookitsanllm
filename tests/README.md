@@ -63,7 +63,7 @@ API contract tests using FastAPI TestClient with mocked router/service. No real 
 ## Related
 
 - `tests/smoke/` -- live smoke per engine arm; never spawns a server. See `tests/smoke/README.md`.
-- `tests/e2e/` -- v3 browser E2E (puppeteer-core + system Chrome; opt-in, unsandboxed)
+- `tests/e2e/` -- v3 browser checks (system Chrome over the DevTools protocol, no dependencies; opt-in, unsandboxed)
 - `tests/eval/` -- LLM behavior-eval harness (chat-template/thinking-parser/stop-token/
   vision-budget regressions; needs a running server, opt-in, not wired into `/test-suite`).
   See `tests/eval/README.md`.

@@ -2471,7 +2471,8 @@ function adoptConversationMeta(ctx, conv, { keepPrompt = false } = {}) {
 // an idle conversation. A shared prefix plus one predicate means a new
 // wording cannot come apart from its own eraser.
 // EXPORTED so the browser check can read them rather than restate them.
-// tests/e2e/render.mjs's superseded-stream check needs this vocabulary, and
+// The superseded-stream check (in the render suite removed in v2.0.281) needed
+// this vocabulary, and
 // while these were module-private it carried a hand-copy that was wrong twice
 // -- once lowercased so it matched nothing, once missing MODEL_SWITCH_PREFIX
 // entirely, which is the line the scenario the check is FOR actually
@@ -3245,7 +3246,10 @@ async function buildContentBlocks(text, images, audio) {
 // The editor merges every text block into ONE box, so the edited text takes
 // the position of the FIRST text block and any others are dropped. Kept media
 // holds its stored position; newly attached media appends after it.
-async function editedContentBlocks(original, text, images, audio) {
+// EXPORTED so the browser check can run it on row objects that were replaced
+// under an open editor, which is the case the fingerprint match exists for and
+// one the page cannot be driven into without a second model.
+export async function editedContentBlocks(original, text, images, audio) {
   const entries = [
     ...images.map((e) => [e, 'image']),
     ...audio.map((e) => [e, 'audio']),

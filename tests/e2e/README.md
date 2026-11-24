@@ -1,320 +1,167 @@
-# v3 frontend E2E harness
+# Frontend browser checks
 
-Last updated: 2026-07-23
+Last updated: 2026-11-24
 
-Browser end-to-end tests for the frontend (served at `/`). Drives a **real** running server
-with a real model through **system Chrome** (puppeteer-core). `claude-in-chrome`
-refuses `localhost`, so puppeteer is the only path to exercise the frontend against the
-backend.
-
-## Safety
-
-The suites CREATE and CLEAR conversations and notebooks. By default `run.mjs`
-spawns its OWN `heylookllm` with an **isolated** `HEYLOOK_DB_PATH` (a temp file),
-so real data is never touched. The temp DB and server log are deleted on exit.
-
-Driving an already-running server is possible but shares that server's DB and is
-therefore refused unless you opt in — see `E2E_BASE_URL` below.
-
-## Prerequisites
-
-- `bun install` (from this directory) — installs `puppeteer-core`.
-- Google Chrome at the default macOS path, or `E2E_CHROME=/path/to/chrome`.
-- A working `uv run heylookllm` (Metal-gated: run on the Mac, not in a sandbox).
-- The model in `E2E_MODEL` must be served: under a `[scan].folders` watch folder (`GET /v1/models` lists the ids).
-
-## Run
+Checks that drive the real frontend in a real browser. There is nothing to
+install: the driver is `lib/cdp.mjs`, which starts the system's Chrome headless
+and speaks the Chrome DevTools Protocol with node's own `child_process`,
+`fetch` and `WebSocket`.
 
 ```bash
 cd tests/e2e
-bun install          # first time only
-bun run e2e          # both server-driven suites (chat + pages)
-bun run e2e:chat     # chat suite only
-bun run e2e:pages    # pages suite only
-bun run e2e:render   # render suite -- no server, no model, ~70s
-bun run e2e:ios      # iOS Simulator keyboard check -- real WebKit; keyboard needs a device, see below
+node run.mjs          # or: bun run e2e      the browser checks
+node --test           # the pure JS unit tests (*.test.mjs), no browser
+node ios-sim.mjs      # or: bun run e2e:ios  real Mobile Safari in the iOS Simulator
 ```
 
 Exit code is non-zero if any check fails.
 
-**Every entry point above must run UNSANDBOXED, `e2e:render` included.** Its
-"no server, no model" independence does not extend to the sandbox: it still
-binds a local port to serve the frontend, and a sandboxed run dies at startup with
-`Error: listen EPERM: operation not permitted 0.0.0.0` — before any check
-runs, so it reads as a harness crash rather than a permissions problem.
+## Safety
 
-`e2e:render` is a **separate entry point on purpose.** It drives the real
-chat page against a *stubbed* `/v1`, so it needs no server, no model, no Metal
-and no DB — none of the prerequisites above apply to it, and folding it into
-`bun run e2e` would make that suite's real requirements look optional. It is
-the only automated check that the message list is RECONCILED rather than
-rebuilt. Until v1.79.18 the sharpest reason was `content-visibility: auto` on
-`.message`: a row's laid-out height lived on the node, so rebuilding collapsed
-`scrollHeight` for the rest of the tick and every pixel-based scroll computed
-against it aimed at a list about to grow underneath (v1.62.5: Send dumped a
-long thread near the top). That feature is gone -- it moved `scrollTop` behind
-the app's back on every engine -- but the check stands: a rebuild still drops
-open editors and their unsaved drafts. Server telemetry cannot see this, and
-the model-driven suites never scroll a long thread.
+`run.mjs` creates conversations and sends messages. It never touches real data:
+it starts its OWN `heylookllm` through `lib/server.mjs`, with a temporary
+database, the access gate isolated from the operator's key, and a loopback
+bind on `E2E_PORT` (not the daily server's port). It refuses to start if
+anything already listens there, and it stops the server and Chrome when it
+finishes. The temp directory is removed on a green run and kept, with its
+path printed, on a failure.
 
-Point it at another copy of the frontend with `E2E_V3_ROOT=/path/to/copy` —
-useful when you want to run the suite against a pre-fix tree, or to satisfy
-yourself that a check you doubt can actually fail. It is a tool, not a step:
-write the check and move on unless its ability to fail is genuinely in
-question.
+## Prerequisites
 
-Run any suite under a theme with `E2E_COLOR_SCHEME=dark` or `light`. The
-stylesheet follows the system's colour scheme and headless Chrome follows the
-OS, so a run without the variable is whatever the Mac is set to; to cover both
-themes, run each explicitly.
+- Google Chrome at the default macOS path, or `E2E_CHROME=/path/to/chrome`.
+- A working `uv run heylookllm`.
+- The model in `E2E_MODEL` must be served (`GET /v1/models` lists the ids).
+- An UNSANDBOXED shell. The run needs Metal, a local port and Chrome; inside
+  the sandbox it dies before the first check.
 
-Known false positive: after an mlx version bump, the FIRST run pays Metal
-shader JIT compilation and the streaming-cadence guard can read low (seen:
-25.3/s vs the 30/s floor on the 0.32.0 upgrade day; warm re-run passed at
-full speed). If ONLY the cadence guard fails right after an mlx/model
-change, re-run before diagnosing a delivery regression.
+## Writing a check
 
-## iOS Simulator keyboard check (`e2e:ios`) -- RUNS; the keyboard needs a device
+The driver has two primitives, and a check is written against them:
 
-`ios-sim.mjs` is the only entry that can see what iOS does with the software
-keyboard. It first ran on 2026-09-06 and the plumbing works: it boots the
-simulator, drives real Mobile Safari and measures. What it established is a
-negative -- the Simulator will not raise the software keyboard under
-`safaridriver`, by three separate routes (the file's header records them).
-Focus lands; the keyboard does not exist there. The four keyboard checks are
-therefore gated on the ENVIRONMENT rather than on the outcome, so they skip
-loudly instead of passing vacuously, and `IOS_REAL_DEVICE=1` runs them for
-real against an attached phone. What the simulator still gives you is real
-WebKit at phone size, which the Chrome 390px checks only emulate.
+- `page.js(fn, ...args)` runs a function in the page and returns its JSON
+  value, awaiting a promise. The function is serialized, so it cannot close
+  over node-side variables: pass what it needs as arguments.
+- `page.cdp(method, params)` is one protocol call, for anything the driver
+  does not wrap.
+
+On top of those: `page.waitFor(fn, what)`, `page.goto`, `page.reload`,
+`page.press(key)` (a real, trusted key event), `page.emulate({ width, height,
+touch })`, and two logs kept for the life of the page, `page.errors` (uncaught
+exceptions and `console.error`) and `page.requests` (`{ method, url, done }`).
+
+There is deliberately no selector API, no element handles and no request
+interception. The old suites were written against puppeteer's page object, and
+when that dependency was removed (v2.0.240) nothing could launch for three
+weeks. A check here reads and drives the DOM with page-side JavaScript, which
+needs no wrapper to keep working.
+
+The rules the checks follow:
+
+- Ask the server what landed. A check ends by reading the API, not by trusting
+  what is painted.
+- Wait for a condition, never for time. `page.waitFor` for the page;
+  `route` in `run.mjs` waits for the router's `data-mounted` mark on `#main`,
+  because a page's skeleton is in the DOM before its setup has resolved;
+  `selectConv` waits for the conversation's body request to finish, because
+  the row highlights a request before the rows arrive. The one exception is
+  proving that nothing more happened, which has no condition.
+- State your preconditions. A check that needs a touch device, a shrunken
+  root font or a reply still streaming asserts that it has one, and calls
+  `skip()` when a race it staged did not happen, so it cannot pass against
+  nothing.
+- A check sets up its own state (its conversation, its open panel). One that
+  leans on what the previous check left behind fails or passes for the wrong
+  reason when that one does.
+- Stage a race, do not hope for one. `sendAndHold` in `run.mjs` holds a
+  request inside the page until the check releases or fails it.
+- One property over a table of cases beats one check per case.
+- A check that reaches a legal early exit before its assertion calls `skip()`
+  (`lib/harness.mjs`) and is tallied as skipped, never as a pass.
+
+## What Chrome cannot tell you
+
+Chrome is not WebKit. These checks hold DOM, state, request and CSS-rule
+behaviour. They say nothing about Safari's scroll anchoring, the iOS software
+keyboard, focus zoom or `field-sizing`. A check can assert that a CSS rule is
+in force (the touch check reads computed `overflow-anchor` and font sizes);
+it cannot assert what Safari does with it. That needs `ios-sim.mjs`, and for
+anything involving the keyboard, a phone.
+
+## iOS Simulator check (`ios-sim.mjs`): runs, the keyboard needs a device
+
+`ios-sim.mjs` drives real Mobile Safari in the iOS Simulator through Apple's
+own `/usr/bin/safaridriver`, with raw `fetch()` to the driver and no
+dependency. It first ran on 2026-09-06. What it established is a negative: the
+Simulator will not raise the software keyboard under `safaridriver`, by three
+separate routes (the file's header records them). Focus lands; the keyboard
+does not exist there. The keyboard checks are gated on the ENVIRONMENT rather
+than on the outcome, so they skip loudly instead of passing vacuously, and
+`IOS_REAL_DEVICE=1` runs them against an attached phone. What the Simulator
+still gives is real WebKit at phone size.
 
 Why Chrome cannot stand in: with the keyboard open, iOS Safari keeps the
 LAYOUT viewport at full height and shrinks only the VISUAL viewport, then
 scrolls the page to the focused field. Chrome shrinks the layout viewport
-itself. The fixed `#bottom-nav`, the `100dvh` shell and the composer at its
-foot all follow the layout viewport, so an emulated Chrome answers a
-different question. `render.mjs`'s mid-stream viewport shrink checks reflow
-under a short viewport, which is a different claim.
-
-How it works: boots an iPhone simulator (`xcrun simctl`), starts Apple's
-`/usr/bin/safaridriver`, opens a W3C WebDriver session on the simulator's real
-Mobile Safari (`platformName: iOS`, `safari:useSimulator`), loads the chat
-page of an ALREADY-RUNNING server, measures layout + visual viewport and the
-composer/Send/nav/bar rects, taps the field, types, measures again, and
-screenshots before and after. No npm dependency: raw `fetch()` to the driver.
+itself. The `100dvh` shell and the composer at its foot follow the layout
+viewport, so an emulated Chrome answers a different question.
 
 One-time setup it cannot do for you: `safaridriver --enable` on the Mac, and
-in the simulator Settings > Safari > Advanced > Remote Automation = ON. The
-session error tells you this if either is missing. Point it at a server with
-`IOS_SIM_BASE` (default the daily port, 8000); it never sends a message, only
-types into the composer.
+in the Simulator, Settings > Safari > Advanced > Remote Automation = ON. The
+session error says so if either is missing. Point it at a running server with
+`IOS_SIM_BASE`; it only reads the page and types into the composer, and never
+sends.
 
-The checks: keyboard really opened (visual viewport shrank -- if a WebDriver
-click does not count as a gesture on iOS, that is the reported finding, not
-a skip), field inside the visual viewport, Send inside it, no horizontal
-scroll, and a never-failing report of where the nav and top bar ended up plus
-how far the page scrolled. Those last numbers decide whether hiding the nav on
-composer focus is worth building.
+## What was removed, and where it is
 
-## `e2e:cost`: what a streamed reply costs the page
+v2.0.281 removed the puppeteer-shaped suites: `render.mjs`, the old `run.mjs`,
+`suites/chat.mjs`, `suites/pages.mjs`, `embeddings.mjs`, `paint_cost.mjs`,
+`lib/browser.mjs`, `lib/dom.mjs` and `lib/server-state.mjs`. They are in git
+history at commit `310c7ac4` (`git show 310c7ac4:tests/e2e/render.mjs`).
 
-`bun run e2e:cost -- --arm base=../../frontend --arm new=<another frontend dir>`
-is an instrument, not a suite. It asserts nothing about the app; it measures
-and writes a record with its conditions, the way `scripts/perf_ab.py` does for
-the server. It streams one fixed reply into the real chat page (phone
-emulation, CPU throttled, the render suite's stub store and drip server) and
-reads Chrome's own counters either side of the stream: task, script, layout
-and style time, and the number of layouts and style recalcs.
+Ported into `run.mjs`: the streaming-markdown property check, the raw-HTML and
+URL-scheme checks on `renderMarkdown`, and the checks written for v2.0.279.
 
-- An arm is a frontend tree. Each arm run gets a fresh Chrome, the first
-  stream in it is warmup and is dropped, and rounds alternate the arm order.
-- Give the same directory twice to get a control pair. Two arms whose ranges
-  overlap are reported as noise; a control pair that is not noise marks the
-  whole run contaminated and the command exits 3.
-- The record goes to `internal/claude/perf/` (unversioned) unless `--out`
-  says otherwise. No figure from it belongs in a tracked doc.
-- It ranks suspects in Chrome. It does not measure the phone: WebKit on the
-  device decides whether a ranked suspect matters there.
+Not ported, and worth porting first when a change touches their area:
 
-Flags: `--reps`, `--rounds`, `--throttle`, `--out`. It honours `E2E_CHROME`
-and `E2E_COLOR_SCHEME` (dark when unset). Like the suites it needs an
-unsandboxed shell (a local port and Chrome).
+- The server-free chat checks in `render.mjs`, which ran the real page against
+  a stub store and an SSE drip (`serveV3`, `makeStubStore`, `streamDrip`). The
+  stub store is a plain object and the drip is a plain node server; only their
+  wiring used puppeteer. Most of that file's checks were about the message
+  list being reconciled rather than rebuilt, scroll-follow across a mid-stream
+  viewport change, and what an open editor survives.
+- `paint_cost.mjs`, the instrument that read Chrome's layout and script
+  counters across one streamed reply (`docs/project/plan_dark_mode.md`,
+  Phase 5). It depended on the same stub store and drip.
+- The model-driven suites: streaming cadence, edit, regenerate and delete
+  truncation, stop keeping the partial, presets, the Models and Perf pages,
+  the notebook, and the multi-engine arms.
 
 ## Config (env vars)
 
-| var                   | default                              | meaning |
-|-----------------------|--------------------------------------|---------|
-| `E2E_MODEL`           | `Qwen3.5-0.8B-MLX-8bit`                  | model to preload + drive (must be served; ids from `GET /v1/models`). Needs vision and thinking for the capability checks, and must decode fast: a slow dense model makes streaming look broken and false-fails the cadence guard. Default since 2026-09-25 (owner): the MLX gemma weights were removed. |
-| `E2E_PORT`            | `1264`                               | server port for the spawned instance -- deliberately NOT 8000, the daily server's port (the harness spawns its OWN server and must never collide with it) |
-| `E2E_MAX_TOKENS`      | `24`                                 | per-generation cap, seeded via `localStorage` so runs stay fast/deterministic |
-| `E2E_CHROME`          | `/Applications/Google Chrome.app/…`  | Chrome binary path |
-| `E2E_HEADFUL`         | (unset)                              | set to any value to watch the browser (debugging) |
-| `E2E_BASE_URL`        | (unset)                              | drive an ALREADY-RUNNING server instead of spawning one. **Shares its DB.** Requires `E2E_ALLOW_SHARED_DB=1`. |
-| `IOS_SIM_BASE`        | `http://127.0.0.1:8000`              | `e2e:ios` only: the running server to load the frontend from (read + type only, never sends) |
-| `IOS_SIM_DEVICE`      | `iPhone 15 Pro`                      | `e2e:ios` only: simulator device name; newest iOS runtime with that name wins. `IOS_SIM_UDID` bypasses the lookup |
-| `IOS_SIM_PORT`        | `4445`                               | `e2e:ios` only: safaridriver port |
-| `IOS_SIM_SHOTS`       | `<os tmpdir>/heylook-ios-sim`        | `e2e:ios` only: where before/after keyboard screenshots go (paths are printed) |
-| `IOS_SIM_KEEP`        | (unset)                              | `e2e:ios` only: leave the simulator booted afterwards |
+| var | default | meaning |
+|---|---|---|
+| `E2E_MODEL` | `Qwen3.5-0.8B-MLX-8bit` | model to load and drive (must be served). It needs vision for the image check, and must decode fast. |
+| `E2E_PORT` | `1264` | port for the server this run starts. Deliberately not the daily server's port. |
+| `E2E_CHROME` | `/Applications/Google Chrome.app/…` | Chrome binary path |
+| `E2E_HEADFUL` | (unset) | set to any value to watch the browser |
+| `IOS_SIM_BASE` | `http://127.0.0.1:8000` | `ios-sim.mjs` only: the running server to load the frontend from |
+| `IOS_SIM_DEVICE` | `iPhone 15 Pro` | `ios-sim.mjs` only: simulator device name; `IOS_SIM_UDID` bypasses the lookup |
+| `IOS_SIM_PORT` | `4445` | `ios-sim.mjs` only: safaridriver port |
+| `IOS_SIM_SHOTS` | `<os tmpdir>/heylook-ios-sim` | `ios-sim.mjs` only: where screenshots go |
+| `IOS_SIM_KEEP` | (unset) | `ios-sim.mjs` only: leave the simulator booted afterwards |
 
 ## Layout
 
-- `run.mjs` — orchestrator: spawn server (isolated DB) → launch Chrome → run
-  suites → tear down → exit non-zero on failure.
-- `lib/server.mjs` — spawn/readiness/stop for `heylookllm`. Readiness = model
-  listed, then the canonical server-side `POST /v1/models/{id}/load?warm=true`
-  (loads weights + 1-token warm generation; same contract as scripts/dev_server.sh).
-- `lib/browser.mjs` — Chrome launch + per-suite page context (localStorage
-  settings seed, hash-router navigation, page-error capture).
-- `lib/harness.mjs` — `Suite`/`check`/`assert`/`waitFor`, `proveQuiet`, summary
-  printer. `proveQuiet(watch, {atLeast, quiet, expect})` is the ONE sanctioned
-  bounded sleep: claims of absence ("no second fetch follows", "the perf page
-  does not poll") have no condition to wait on, and holding that exception in
-  one place keeps it from being re-argued per site.
-- `lib/server-state.mjs` — `serverGet(page, path)`: the server's own view of a
-  document, fetched from inside the page so it shares the app's origin and
-  session. The suites' state readers (message counts, notebook rows) compose on
-  it instead of each re-implementing evaluate + fetch + json.
-- `lib/dom.mjs` — shared DOM helpers (`clickByText`/`handleByText`, `armedClick`
-  two-tap confirm, overflow check, `settingsInputValue`/`setSettingsInput`,
-  `openDrawer`/`closeDrawer` — see the drawer note below — and the preset
-  helpers: `provenanceText` (the drawer's provenance line), `applyPreset`
-  (through the Apply picker; its `armed` option states whether the entry must
-  arm), `saveAsNewPreset` and `updateOptionLabel`/`clickUpdateOption` (the Save
-  sheet), `storedPresets`/`deleteStoredPreset` (the store itself, for
-  assertions and cleanup), `presetCardButton` (the Presets page)).
-- `suites/chat.mjs` — 40 checks: streaming, a client-side streaming-cadence
-  regression guard (see below), edit/regenerate/delete truncation,
-  stop=partial-saved, post-abort health, settings + seed, the chat-bar gear
-  opening the same drawer, applied-preset chip provenance across a reload (proves
-  `applied_preset_id`, not inference, is doing the work),
-  system-prompt persistence (no-blur commit +
-  Escape-close survival), preset save/apply round-trip (the picker copies
-  nothing until an entry's Apply, provenance states), the iterate loop
-  (apply, tune the prompt, Overwrite X from the Save sheet, re-apply shows the
-  edit), the applied-preset chip (shows/(modified)/clears when its preset is
-  deleted on the Presets page), conversation CRUD, 390px mobile, and a capability/
-  thinking/image section: gating (the thinking toggle tracks the selected
-  model's capabilities, negative model discovered from /v1/models and never
-  loaded), the thinking
-  toggle's wire contract (enable_thinking absent when off -- never false --
-  true when on), the thinking block UI on a real thinking generation,
-  attach-cap (9 files -> 8 thumbs + aria-live message), the paste path,
-  an image message round-trip (content_blocks persist, render, survive
-  reload), and the cap-filter wire check (a value set on a capable model
-  must not ride a request to a model lacking the cap -- request
-  intercepted + aborted so the negative model never loads).
-### Arms (v1.79.78)
-
-One arm by default -- whatever `E2E_MODEL` is, no extra load. `E2E_ARMS=all`
-(or a comma list) resolves a model per arm and loads each in turn:
-
-```bash
-E2E_ARMS=all bun run e2e          # mlx-text, mlx-vision, gguf
-E2E_ARMS=gguf bun run e2e:chat
-# one arm with its model pinned: a model with thinking depth levels, which
-# the default model lacks; also set E2E_MODEL to it so startup loads it once
-E2E_MODEL=unsloth_Qwen3.8-27B-UD-Q8_K_XL E2E_ARMS=gguf=unsloth_Qwen3.8-27B-UD-Q8_K_XL bun run e2e
-```
-
-A named arm is what makes the client-cadence check skip on a slow model; a
-plain `E2E_MODEL` run of a slow dense model fails that check by design.
-
-Arms are not providers -- `"mlx"` runs text and vision models down different
-paths (on one engine, mlx-vlm), so a text arm and a vision arm are different
-code. The mapping is the SERVER's (`engine.runtime` and the vision
-capability), read through `tests/helpers/engines.py`,
-the same module `tests/smoke` and `tests/eval` use; the JS side shells out to
-`python -m helpers.engines --json` rather than re-deriving it. An arm with no
-model prints as UNCOVERED, never as a pass.
-
-One arm is the default because `max_loaded_models = 1`: every extra arm pays a
-full weight load plus Metal warm and evicts the previous one. Arm count is the
-cost driver, not tokens (`E2E_MAX_TOKENS` is 24).
-
-Checks that need a capability skip on an arm that lacks it and are tallied as
-SKIPPED. The cadence check is arm-scoped (`E2E_CADENCE_ARM`, default
-`mlx-vision`): what it guards is client-side and engine-independent, but it can
-only be measured on a fast model, so running it everywhere would manufacture a
-red per slow arm.
-
-- `suites/pages.mjs` — 36 checks: notebook autosave + generate-at-cursor tail
-  preservation, notebook preset section (save/provenance/armed apply + the
-  applied-preset chip), the Presets page's edit/rename/duplicate/delete against
-  the real store, perf no-polling proof + ranges, models list/load/unload
-  + HF scan, danger-zone clear.
-
-## Settings drawer (interaction gotcha)
-
-Sampler params, presets, and the per-document system-prompt editor's
-heatmap/chat toggles all live in the **app-shell settings drawer**
-(`js/settings-drawer.js`), not inline on the page. The suites reach them via
-`openDrawer(page, gear?)` / `closeDrawer(page)` (`lib/dom.mjs`) — `gear`
-defaults to the sidebar opener (`.drawer-gear`) but takes any opener selector,
-e.g. chat's in-context `.chat__settings-btn`, so the same helper can exercise
-multiple entry points into one shared drawer. The drawer is a MODAL:
-while open it makes `#app` `inert` and its backdrop covers the page, so those
-helpers are deliberately defensive — they reset any leaked-open drawer, fire the
-gear's handler via `evaluate` (a real click can be intercepted by the fading
-backdrop), and wait for both the slide-in and the backdrop's *delayed* hide to
-settle. Drive settings/presets/sysprompt controls ONLY through these
-helpers; a raw `page.click` on drawer content or on page content immediately
-after a close will flake on the transition windows.
-
-## Notes / gotchas
-
-- Generation length is capped by seeding the sampler PANEL through the drawer
-  after boot (`ctx.open()`; `ctx.seedPanel()` is the primitive). It wrote
-  `localStorage['heylook-v3-settings']` until v2.0.38 stopped persisting the
-  panel. The first replacement PUT the document instead and was wrong — see the
-  gotcha below; the panel is what the old seed primed and what everything
-  downstream inherits from.
-- The stop-mid-stream checks reopen with `max_tokens: 400` so there is time to
-  click Stop before the generation finishes.
-- The danger-zone clear check runs LAST in the pages suite; it wipes the
-  (isolated) DB.
-- The **streaming-cadence guard** (`streaming delivery is not poll-quantized`)
-  measures client-observed inter-chunk gaps via an in-page fetch — the Phase 1
-  delivery fix is invisible to server-side telemetry, so only a client timing
-  the stream can catch a regression back to the ~100ms poll ceiling. It asserts
-  median gap < 50ms and > 30 tok/s, which describe a FAST model. The default MoE
-  passes with margin (~11ms, ~88/s). Since v1.79.64 the guard also reads the
-  probe's `usage`: when chunks carry ~1 token each, delivery is per-token by
-  construction and the model's own pace is accepted (a 27B Q8 gguf at ~19 tok/s
-  reads 52ms gaps and is not quantized); what it still catches is multi-token
-  chunks at ~100ms spacing. It is also sensitive to **machine
-  load**: a Mac Studio thermally/memory-throttled by many back-to-back 26B E2E
-  spawns decodes far slower (200–300ms gaps observed), which false-flags this one
-  check even though delivery isn't regressed. If it's the *only* failure, re-run
-  on an idle machine before treating it as real.
-- **Suite-wide hardening principle (2026-07-23 audit):** never wait to
-  *observe* a transient UI state (Stop/Generate labels, streaming
-  placeholders) — a short completion on the fast MoE can start AND finish
-  inside one 100ms poll interval, so such waits time out deterministically
-  once the machine is warm. Wait on **persisted outcomes** instead
-  (server-side message ids/counts via in-page fetch, final DOM). Likewise,
-  an immediate empty-EOS reply is a **legal model output** that persists
-  nothing (`finishStream` drops empty completions): checks whose claim is
-  pipeline health must not assert reply presence unconditionally (the
-  post-abort and generate-at-cursor checks branch on it; stop-mid-generation
-  handles the generation finishing before Stop is clickable). Both suites
-  were audited to this standard on 2026-07-23 — hold new checks to it.
-  **Caveat added v1.39.13:** one cause of those empty replies was NOT legal
-  model output but a parser bug — gemma-4 occasionally emits a spurious
-  `<|channel>` mid-answer, and the channel parser swallowed the entire rest
-  of the turn as an unterminated channel name (raw tokens
-  `['<|channel>', ' to', ' the', ' movies', '!', '<turn|>']` → empty content
-  on a normal `stop`). Unrouted text now goes to content. Tolerating empty
-  replies stays right (a model really can EOS immediately), but treat a
-  *rising* rate as a bug signal, not as model noise.
-- **The PANEL is upstream of everything; seed it, not a document.** A new
-  conversation is created with `params: snapshotSettings()` (the panel), a
-  generation sends `overrides` from the panel which the server layers ON TOP of
-  the stored params, and `bindDocumentParams` PUTs the whole panel snapshot. So
-  a document seeded behind the panel's back is beaten on the wire and then
-  erased by the next panel edit — and at the first `open()` of a cleared run
-  there is no document to seed at all. `ctx.open()` sets the panel through the
-  real drawer for this reason; `ctx.seedPanel()` is the primitive and throws if
-  a control is missing rather than seeding nothing. Selecting a conversation
-  still REPLACES the panel from that conversation's stored `params`
-  (`hydrateDocParams`, seen live 2026-07-23), so to control one generation:
-  make a fresh conversation, then set values through the drawer, and end the
-  check by waiting for the params PUT to land server-side.
+- `run.mjs`: the browser checks. Starts the isolated server, starts Chrome,
+  runs the checks in order, tears both down.
+- `lib/cdp.mjs`: the driver. Chrome launch on a free port, the `Page` object
+  and its two primitives.
+- `lib/server.mjs`: start, readiness and stop for an isolated `heylookllm`.
+  Readiness is the model listed, then the server-owned
+  `POST /v1/models/{id}/load?warm=true`, the same contract as
+  `scripts/dev_server.sh`.
+- `lib/harness.mjs`: `Suite`, `assert`, `waitFor`, `skip` and the summary
+  printer.
+- `ios-sim.mjs`: the Simulator check above.
+- `embed-kit.test.mjs`, `preset-io.test.mjs`: pure JS unit tests under
+  `node --test`.
