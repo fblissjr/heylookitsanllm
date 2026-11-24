@@ -50,7 +50,9 @@ export default createPage({
     ctx.onTeardown(drawer.registerSettings({ samplers: 'hidden' }));
     registerPageHotkeys(ctx, {
       onEscape: () => {
-        if (s.configOpenId && !hasUnsavedTemplate(s.configDrafts)) {
+        // The OPEN panel's draft: handed the whole Map, this was always false
+        // and Escape closed a panel holding an unsaved template.
+        if (s.configOpenId && !hasUnsavedTemplate(s.configDrafts.get(s.configOpenId))) {
           s.configOpenId = null;
           renderModelList(ctx);
           return true;

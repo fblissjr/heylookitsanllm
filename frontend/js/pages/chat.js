@@ -337,6 +337,10 @@ function buildSkeleton(ctx) {
   s.modelSelect.addEventListener('change', () => {
     const from = s.committedModelId;
     const to = s.modelSelect.value;
+    // Back on the committed model: a warning still up was about some other
+    // target, and its "Switch anyway" would commit a model the select no
+    // longer shows.
+    if (to === from) clearSwitchWarning(ctx);
     if (!to || to === from) return;
     // Pre-switch check, not post-switch discovery: cost and compatibility
     // are only actionable BEFORE the switch commits. A clean switch (target
@@ -985,7 +989,10 @@ function commitModelSwitch(ctx, to) {
     notes.push(`${to} is not loaded — your first message loads it, or press Load to do it now.`);
   }
   if (removed) notes.push(removed);
-  showStatus(ctx, notes.join(' '));
+  // With nothing to say this clears a line left by an earlier switch. It must
+  // not clear the line that says a run is still going on the server: that
+  // line is the explanation for the Stop button beside it.
+  if (notes.length || !isGeneratingNote(s.statusEl.textContent)) showStatus(ctx, notes.join(' '));
   if (s.activeId) {
     const convId = s.activeId;
     api.updateConversation(convId, { model_id: to })
@@ -1884,7 +1891,9 @@ function buildMessageEl(ctx, msg, modelNote = '') {
         .filter((b) => b.type === 'audio')
         .map((b) => createEl('audio', {
           class: 'message-audio',
-          controls: '',
+          // `true`, not '': createEl assigns the PROPERTY when the element has
+          // one, and '' is falsy there, so the clip drew with no controls.
+          controls: true,
           src: blockSourceUrl(b),
           'aria-label': 'attached audio',
         }))));

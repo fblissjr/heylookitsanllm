@@ -92,7 +92,8 @@ export function createPage(spec) {
           return () => ac.abort();
         },
       };
-      current = { ctx, controller, cleanups };
+      const mine = { ctx, controller, cleanups };
+      current = mine;
       try {
         await spec.setup(ctx);
       } catch (err) {
@@ -100,7 +101,10 @@ export function createPage(spec) {
         // document listeners, hide and resume hooks, a drawer contribution.
         // The router drops a page that failed to mount without unmounting it,
         // so tear down here or those stay live with ctx.alive still true.
-        await page.unmount();
+        // Only THIS mount, though: a quick trip away and back can have
+        // unmounted it already and mounted the page again, and `current` is
+        // then the newer mount, which is not this setup's to tear down.
+        if (current === mine) await page.unmount();
         throw err;
       }
     },

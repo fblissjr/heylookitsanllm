@@ -161,7 +161,8 @@ export function createContextSelect({ currentModelId, adminRow, onChange }) {
   custom.addEventListener('change', commitCustom);
   custom.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); commitCustom(); }
-    else if (e.key === 'Escape') { select.value = beforeCustom; closeCustom(); }
+    // Consumed, or the page hotkey reads it too and stops a running reply.
+    else if (e.key === 'Escape') { e.preventDefault(); select.value = beforeCustom; closeCustom(); }
   });
 
   function refresh() {

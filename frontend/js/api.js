@@ -54,8 +54,18 @@ export async function httpError(res) {
     // so the structured reason has to survive on the error rather than be
     // flattened into the message. Kept as `err.detail` for callers that can
     // render a field-scoped reason; `message` stays a string for the rest.
-    structured = (data.detail && typeof data.detail === 'object') ? data.detail : null;
-    const detailText = structured ? (structured.error ?? null) : data.detail;
+    // A validation refusal (422) carries a LIST: [{loc, msg, type}, ...]. It
+    // is an object too, and read as the structured shape it has no `error`,
+    // so the message fell back to the HTTP status text and no page could say
+    // which field was refused.
+    const invalid = Array.isArray(data.detail)
+      ? data.detail.map((d) => {
+        const where = (d?.loc ?? []).filter((p) => p !== 'body' && p !== 'query' && p !== 'path').join('.');
+        return [where, d?.msg].filter(Boolean).join(': ');
+      }).filter(Boolean).join('; ')
+      : null;
+    structured = (data.detail && typeof data.detail === 'object' && !Array.isArray(data.detail)) ? data.detail : null;
+    const detailText = invalid || (structured ? (structured.error ?? null) : data.detail);
     detail = data.error?.message || detailText || data.error?.code || detail;
     code = data.error?.code ?? null;
   } catch { /* non-JSON error body */ }
