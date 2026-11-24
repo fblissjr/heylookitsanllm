@@ -92,6 +92,53 @@ Summary of what shipped for converted Gemma 4 Dense (`31B-it`) + MoE (`26B-A4B-i
 - [ ] **5.3 Notebook Save-to-Conversations (`frontend/js/pages/notebook.js`):** add "Save to Conversations" action persisting a Notebook buffer into the shared DuckDB store (`kind: 'notebook'`) so buffers survive browser storage clears and sync across Desktop and iPhone.
 - [ ] **5.4 Live browser verification & expanded evaluation sets:** run `#/embeddings` Compare and Embedding Lab across audio/video and larger multimodal corpora on MLX and GGUF embedding models.
 
+## From the 2026-11-24 frontend review (v2.0.279)
+
+The review, its evidence labels and the full finding list are in the local
+report `internal/reports/2026-11-24_frontend_review.md`. What is open:
+
+- [ ] **Runaway scroll on editor focus (iPhone): a trial is in, not a
+  confirmed fix** (P1). Owner report: in a very long conversation, focusing an
+  in-place message editor scrolls the view up without stopping until Send is
+  tapped. No app code can drive it (`sharp_edges.md`, "Scroll anchoring").
+  v2.0.279 opts `html`, `#main` and every `textarea` out of scroll anchoring.
+  To close: the owner reproduces before and after on the phone. If it still
+  happens, the report's section 1 has the Web Inspector capture snippet and
+  how to read it, and the next candidates (iOS selection autoscroll; an edit
+  box taller than the area above the keyboard).
+- [ ] **The browser e2e harness cannot launch** (P1). `launchBrowser()` in
+  `tests/e2e/lib/browser.mjs` throws since v2.0.240 removed `puppeteer-core`,
+  so every `e2e*` entry in `tests/e2e/package.json` except `test:unit` and
+  `e2e:ios` dies before its first check. `AGENTS.md`, `.claude/rules/tests.md`,
+  `tests/README.md` and `tests/e2e/README.md` still describe the suites as
+  runnable, and frontend changes since then landed without them. Owner call:
+  put the dependency back, or rebuild `launchBrowser` on the DevTools protocol
+  with node's built-in WebSocket (the driver calls the suites make are listed
+  by `grep -ohE '\.(evaluate|\$eval|waitFor\w+|click|type|select|setRequestInterception)\(' tests/e2e -r | sort | uniq -c`).
+  The suites have not run against three weeks of frontend changes, so expect
+  triage either way. v2.0.279 was checked with a one-off DevTools-protocol
+  script instead (session log 2026-11-24).
+- [ ] **Owner decisions the review raised** (each a short answer; report
+  section 8): what Return does on the phone's software keyboard; whether a
+  model switch mid-reply aborts the stream or lets it finish, and what exits
+  "still generating on the server" (re-clicking the open conversation is ruled
+  out by the mirror rule today); a scrim behind the phone conversation pane;
+  the touch floor for `btn--sm`; how Load is reached on the phone; arming
+  Regenerate when it is not the last row; removing `html.tab-hidden`; whether
+  the unsaved-row guard stays.
+- [ ] **Fixes held back because they need one of those decisions or a design**:
+  the select-load window (rows of the previous conversation stay tappable while
+  the next one loads); the switch-model warning sharing the status line; the
+  Models page rebuilding every row and the open config editor on any action;
+  the notebook's pre-create system prompt living only in page state; a
+  streaming caret that can outlive a stream whose resync never succeeds.
+- [ ] **Battery cuts wait for the phone baseline** (`plan_dark_mode.md` Phase 5
+  step 2, still not run): the thinking trace as one growing text node, the
+  per-paint sanitize and re-parse of the streaming tail, the admin model list
+  refetched after every reply, and the per-row model note in the row
+  signature. `e2e:cost` cannot see the first three as its workload stands
+  (fixed-length thread, no thinking, short blocks).
+
 ## Cache follow-ups from the Context Language Models paper (2026-10-05)
 
 Three measurements, none a feature; each through the real path with its

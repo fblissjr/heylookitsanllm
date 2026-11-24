@@ -147,11 +147,18 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
 
   // Resolves true when the list actually changed, so cosmetic repaints can be
   // skipped.
+  // The list, or a throw. refresh() is the tolerant caller, for repaints that
+  // can live with the list they already have; a write that must not land on a
+  // stale row (updateStamped) calls this one and stops on a failure.
+  async function load() {
+    const res = await api.listPresets({ signal: ctx.signal });
+    presets = res.presets ?? [];
+  }
+
   async function refresh() {
     const before = fingerprint();
     try {
-      const res = await api.listPresets({ signal: ctx.signal });
-      presets = res.presets ?? [];
+      await load();
     } catch (err) {
       if (ctx.alive) onStatus(`Could not load presets: ${err.message}`, true);
     }
@@ -379,8 +386,12 @@ export function createPresetBar(ctx, { getPrompt, setPrompt, onStatus, docId, on
     if (!now || now.id !== built.id || !now.modified) return;
     try {
       // Refetch FIRST. The write keeps no history, so it must not land on a
-      // row that changed after the line above was computed from it.
-      await refresh();
+      // row that changed after the line above was computed from it. load(),
+      // not refresh(): a refetch that fails has to stop the write (the catch
+      // below reports it), and refresh() swallows the failure and leaves the
+      // old list, against which the stamp check passes by comparing a cached
+      // row with itself.
+      await load();
       if (!ctx.alive) return;
       const target = presets.find((p) => p.id === built.id);
       if (!target) {

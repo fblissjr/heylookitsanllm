@@ -187,20 +187,33 @@ const ROUTES = {
   adminGetConfig:      ['GET', () => '/v1/admin/config'],
   adminSetConfig:      ['PUT', () => '/v1/admin/config', true],
   adminResetConfigKey: ['DELETE', (key) => `/v1/admin/config/${encodeURIComponent(key)}`],
-  adminGetLogs:        ['GET', (stream = 'events', limit = 50) =>
+  adminGetLogs:        ['GET', (stream, limit) =>
     `/v1/admin/config/logs?stream=${encodeURIComponent(stream)}&limit=${encodeURIComponent(limit)}`],
 };
 
-function makeCall(method, buildPath, hasBody) {
+// A call's arguments are split by the builder's declared arity: path
+// arguments, then the body, then options. `Function.length` stops counting at
+// the first default parameter, so a builder written with defaults reads as
+// arity 0: its arguments land in the body and options slots and every call is
+// sent with the defaults. Refused here, at load, where it is loud.
+function pathArity(name, buildPath) {
+  if (String(buildPath).split('=>')[0].includes('=')) {
+    throw new Error(`api route "${name}": a path builder cannot take default parameters`);
+  }
+  return buildPath.length;
+}
+
+function makeCall(name, method, buildPath, hasBody) {
+  const arity = pathArity(name, buildPath);
   return (...args) => {
-    const pathArgs = args.slice(0, buildPath.length);
-    const body = hasBody ? args[buildPath.length] : undefined;
-    const opts = args[buildPath.length + (hasBody ? 1 : 0)] || {};
+    const pathArgs = args.slice(0, arity);
+    const body = hasBody ? args[arity] : undefined;
+    const opts = args[arity + (hasBody ? 1 : 0)] || {};
     return request(method, buildPath(...pathArgs), body, opts);
   };
 }
 
 export const api = Object.fromEntries(
   Object.entries(ROUTES).map(([name, [method, buildPath, hasBody]]) =>
-    [name, makeCall(method, buildPath, hasBody)]),
+    [name, makeCall(name, method, buildPath, hasBody)]),
 );

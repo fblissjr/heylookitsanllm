@@ -794,7 +794,10 @@ export function createModelConfigEditor({ model, fields: allFields, draft, initi
   const dirtyFields = () =>
     fields.filter((f) => Object.hasOwn(draft, f.name) && draft[f.name] !== savedRaw(f));
 
-  const setNote = (text) => { noteEl.textContent = text; };
+  // `pending` marks the "Changed: ..." line, so reverting every edit can clear
+  // that line and only that line: any other note written here resets the mark.
+  let notePending = false;
+  const setNote = (text, pending = false) => { noteEl.textContent = text; notePending = pending; };
 
   // The pre-save note names what a save will DO, per effect class -- never a
   // reload cost for a live field (that lie trains the user to pay reloads for
@@ -816,7 +819,8 @@ export function createModelConfigEditor({ model, fields: allFields, draft, initi
     const dirty = dirtyFields();
     saveBtn.disabled = busy || dirty.length === 0;
     resetBtn.disabled = busy || dirty.length === 0;
-    if (dirty.length) setNote(pendingNote(dirty));
+    if (dirty.length) setNote(pendingNote(dirty), true);
+    else if (notePending) setNote('');
   };
 
   // Candidate config for the fit meter: the dirty fields' PARSED values over

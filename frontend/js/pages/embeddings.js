@@ -577,10 +577,12 @@ export default createPage({
         const body = { model: model.value, dimensions: Number(dimensions.value), input };
         s.runId = requestId(); stop.hidden = false;
         status.textContent = "Embedding… The model loads automatically if needed.";
-        const response = await fetch("/v1/embeddings", { method: "POST", signal: ctx.signal,
-          headers: { "Content-Type": "application/json", "X-Request-ID": s.runId }, body: JSON.stringify(body) });
-        if (!response.ok) throw await httpError(response);
-        const result = await response.json();
+        // The shared request, not a second copy of it: Compare's own fetch had
+        // drifted from the Lab's and lost the busy retry (429/503).
+        const result = await embedWithRetry({
+          model: body.model, dimensions: body.dimensions, items: body.input,
+          reqId: s.runId, signal: ctx.signal,
+        });
         if (!ctx.alive) return;
         const vectors = result.data.map((row) => row.embedding);
         const dot = (a, b) => a.reduce((sum, v, i) => sum + v * b[i], 0);

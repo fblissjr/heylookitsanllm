@@ -372,7 +372,9 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
 
 /* two-tap destructive confirm: same button, armed state */
 .btn--armed { background: var(--danger); border-color: var(--danger); color: var(--on-accent); }
-.btn--armed:hover { background: var(--danger); }
+/* Colour too: .btn--ghost:hover and .btn--icon:hover set an ink colour at this
+   specificity, and on touch :hover sticks after the arming tap. */
+.btn--armed:hover { background: var(--danger); color: var(--on-accent); }
 
 /* ================= settings panel (shared) ================= */
 
@@ -869,6 +871,12 @@ label { font-size: var(--text-ui); color: var(--ink-muted); }
   overflow-anchor: none;   /* chat.js owns scrollTop */
   padding: var(--space-5) var(--space-4) var(--space-2);
 }
+/* The rest of the chain opts out as well. The declaration above reaches the
+   list's own scroller and nothing nested inside another one: an edit box past
+   its height cap is a scroller of its own, and #main and the document sit
+   above the list. Safari 27 anchors all of them by default (sharp_edges.md,
+   "Scroll anchoring"). */
+html, #main, textarea { overflow-anchor: none; }
 .chat__messages-inner { max-width: 44rem; margin: 0 auto; }
 
 .message {
@@ -1833,7 +1841,7 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
   font-size: var(--text-ui);
   color: var(--ink-muted);
 }
-.notebook-item:hover { background: var(--surface-2); }
+.notebook-item:where(:hover) { background: var(--surface-2); }
 .notebook-item--active { background: var(--brand-tint); color: var(--ink); }
 .notebook-item__title {
   flex: 1;
@@ -2388,7 +2396,10 @@ details.cfg-section[open] summary.cfg-section__title { margin-bottom: 0.45rem; }
 @media (pointer: coarse) {
   .input:not(.notebook__title), select, textarea, .sysprompt-input,
   .chat__bar > select, .chat__load-select, .chat__ctx-select, .chat__ctx-custom,
-  .cfg-tmpl__body {
+  .cfg-tmpl__body, .chat__composer textarea, .message-edit textarea {
     font-size: max(16px, 1rem);
   }
+  /* Named with its own size for the same reason .notebook__title is excluded:
+     the floor may only raise a size, and this field is set above 1rem. */
+  .notebook__content { font-size: max(16px, 1.0625rem); }
 }

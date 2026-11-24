@@ -11,7 +11,9 @@
 //   throttleTime(fn, ms)  the same, rate-limited to one run per ms (use for
 //                   painters whose cost scales with the document)
 //   linkedController()  AbortController chained to signal; abort() it on release
-//   onTeardown(fn)  register extra cleanup (runs before teardown())
+//   onTeardown(fn)  register extra cleanup (runs before teardown()). Returns
+//                   an unsubscribe, for a consumer that is replaced during the
+//                   mount (a prompt section built per drawer render).
 //   onHide(fn)      the page is about to stop running: visibilitychange ->
 //                   hidden, or pagehide. Flush debounced writes here -- a
 //                   backgrounded phone tab fires no teardown and may never
@@ -26,7 +28,7 @@ import { throttleToFrame, throttleToInterval } from './utils.js';
 export function createPage(spec) {
   let current = null;
 
-  return {
+  const page = {
     async mount(el) {
       const controller = new AbortController();
       const cleanups = [];
@@ -35,7 +37,13 @@ export function createPage(spec) {
         state: {},
         signal: controller.signal,
         alive: true,
-        onTeardown(fn) { cleanups.push(fn); },
+        onTeardown(fn) {
+          cleanups.push(fn);
+          return () => {
+            const i = cleanups.indexOf(fn);
+            if (i !== -1) cleanups.splice(i, 1);
+          };
+        },
         guard(fn) {
           return (...args) => (ctx.alive ? fn(...args) : undefined);
         },
@@ -85,7 +93,16 @@ export function createPage(spec) {
         },
       };
       current = { ctx, controller, cleanups };
-      await spec.setup(ctx);
+      try {
+        await spec.setup(ctx);
+      } catch (err) {
+        // A setup that throws part-way has already registered what it got to:
+        // document listeners, hide and resume hooks, a drawer contribution.
+        // The router drops a page that failed to mount without unmounting it,
+        // so tear down here or those stay live with ctx.alive still true.
+        await page.unmount();
+        throw err;
+      }
     },
 
     async unmount() {
@@ -100,4 +117,5 @@ export function createPage(spec) {
       try { await spec.teardown?.(ctx); } catch (err) { console.error('teardown failed', err); }
     },
   };
+  return page;
 }

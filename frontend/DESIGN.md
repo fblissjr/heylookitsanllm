@@ -477,6 +477,9 @@ owner: "equally well on desktop web and iPhone 17 Pro Safari").
   `scrollHeight`; an engine that moves them on its own is the failure that
   removed `content-visibility` (the rule above). Do not turn anchoring back
   on to absorb a late height: reserve the height or re-aim from chat.js.
+  The same declaration sits on `html`, `#main` and every `textarea`: the
+  list's own opt-out does not reach a scroller nested inside it (an edit box
+  past its height cap) or the scrollers above it.
 
 Verify phone behavior at an iPhone-class viewport with **touch media emulated**
 (`hover:none`/`pointer:coarse`) — desktop Chrome reports `hover:hover`, so it

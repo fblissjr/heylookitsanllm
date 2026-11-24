@@ -88,11 +88,16 @@ export function mountSettingsDrawer(navDesktop, navPhone) {
 
   document.body.append(backdropEl, panelEl);
 
-  // Escape closes. Focus lives inside the drawer while open (modal backdrop),
-  // so this never races any page-level Escape handler, which are bound to
-  // their page roots.
+  // Escape closes, and is consumed. The page hotkeys (hotkeys.js) listen on
+  // document as well, registered after this one, and their "is a modal open"
+  // test runs after close() has already dropped the open class. Without the
+  // preventDefault, the Escape that closed the drawer also ran the page's
+  // Escape action: in chat that stops a running generation.
   document.addEventListener('keydown', (e) => {
-    if (isOpen && e.key === 'Escape') close();
+    if (isOpen && e.key === 'Escape') {
+      e.preventDefault();
+      close();
+    }
   });
 
   // A route change (nav link, or browser back/forward -- a common way to dismiss

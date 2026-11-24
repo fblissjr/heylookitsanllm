@@ -113,10 +113,23 @@ const LAST_CONV_KEY = STORAGE_KEYS.CHAT_LAST_CONVERSATION;
 
 function notifyChatActivity(ctx) {
   const s = ctx.state;
+  // The open conversation is answered by s.stream and s.remoteGenerating, which
+  // the page keeps current. Its list row is only as fresh as the last list
+  // fetch, so counting it left the dot on after a run the page watched finish.
   const busy = Boolean(
-    s.stream || s.remoteGenerating || s.conversations?.some((c) => c.generating),
+    s.stream || s.remoteGenerating
+    || s.conversations?.some((c) => c.generating && c.id !== s.activeId),
   );
   window.dispatchEvent(new CustomEvent('heylook:chat-activity', { detail: { busy } }));
+}
+
+// What the page learns about a conversation's run goes onto its list row too.
+// The row's flag otherwise moves only at a list fetch (boot, resume), and the
+// nav dot reads it for every conversation that is not the open one: a stale
+// `true` would light the dot the moment the user opened a different one.
+function noteRunState(ctx, convId, generating) {
+  const row = ctx.state.conversations?.find((c) => c.id === convId);
+  if (row) row.generating = generating;
 }
 
 export default createPage({
@@ -214,6 +227,11 @@ export default createPage({
     ctx.onTeardown(() => clearPendingAttachments(ctx));
     registerPageHotkeys(ctx, {
       onSubmit: () => {
+        // From the composer, or from no field at all. With focus in another
+        // field (an open message editor, the rename box) this chord is not
+        // "send whatever the composer holds".
+        const at = document.activeElement;
+        if (at && at !== s.textarea && at.matches?.('input, textarea, select, [contenteditable]')) return;
         if (!s.stream && !s.remoteGenerating) send(ctx);
       },
       onEscape: () => {
@@ -269,6 +287,7 @@ export default createPage({
       // The sampler cache is module state shared with notebook: without this
       // the draft started from whatever notebook last had open.
       hydrateDocParams(null);
+      refreshThinkBtn(ctx); // ran above against the cache this just replaced
       renderMessages(ctx);
     }
     // First paint of the sysprompt chip: the preset-fed funnel above only
@@ -925,6 +944,7 @@ function commitModelSwitch(ctx, to) {
     abortStream(ctx, ABANDON.MODEL);
   }
   s.committedModelId = to;
+  closePromptPreview(ctx); // it showed what the previous model would be sent
   // Say what this costs instead of asking whether to pay it. Silent when the
   // target is resident or residency is still unknown -- a guess would be
   // worse than nothing (same rule as the dots).
@@ -938,8 +958,17 @@ function commitModelSwitch(ctx, to) {
     showStatus(ctx, notes.join(' '));
   }
   if (s.activeId) {
-    api.updateConversation(s.activeId, { model_id: to })
-      .catch((err) => console.warn('model_id save failed', err));
+    const convId = s.activeId;
+    api.updateConversation(convId, { model_id: to })
+      .catch((err) => {
+        console.warn('model_id save failed', err);
+        // The select and the list row already show `to`. Unsaid, the next
+        // visit quietly reopens this conversation on its previous model.
+        if (ctx.alive && s.activeId === convId) {
+          showStatus(ctx, `The model choice was not saved (${err.message}). `
+            + 'This conversation may reopen on its previous model.', true);
+        }
+      });
     const conv = s.conversations.find((c) => c.id === s.activeId);
     if (conv) conv.model_id = to;
   }
@@ -1026,19 +1055,35 @@ async function previewNextPrompt(ctx) {
   const s = ctx.state;
   if (!s.activeId) { showStatus(ctx, 'Start a conversation to preview its prompt.', true); return; }
   const host = s.promptPreviewEl;
-  const close = () => { host.hidden = true; host.replaceChildren(); };
+  const close = () => closePromptPreview(ctx);
   const draft = s.textarea.value.trim();
+  // Anchored to the conversation and model it was asked for: an answer that
+  // lands after either moved describes something no longer on screen.
+  const convId = s.activeId;
+  const model = s.modelSelect.value;
+  const current = () => ctx.alive && s.activeId === convId && s.modelSelect.value === model;
   try {
-    const body = await api.previewPrompt(s.activeId, {
+    const body = await api.previewPrompt(convId, {
       mode: 'append',
       user_content: draft || undefined,
-      overrides: { model: s.modelSelect.value, ...samplerParams(currentModel(ctx)) },
+      overrides: { model, ...samplerParams(currentModel(ctx)) },
     });
-    if (!ctx.alive) return;
+    if (!current()) return;
     paintPromptPreview(host, body, close);
   } catch (err) {
-    if (ctx.alive) paintPromptPreviewError(host, err.message, close);
+    if (current()) paintPromptPreviewError(host, err.message, close);
   }
+}
+
+// The composer's preview states what one conversation would send to one model
+// from one draft. It is closed whenever any of the three moves (send, a
+// conversation switch, a model switch); left open it describes the wrong
+// prompt, and on a phone its only other exit is its own small Close.
+function closePromptPreview(ctx) {
+  const host = ctx.state.promptPreviewEl;
+  if (!host || host.hidden) return;
+  host.hidden = true;
+  host.replaceChildren();
 }
 
 // Attach button follows the model's input modalities (capabilities, not the
@@ -1319,7 +1364,9 @@ function startRename(ctx, conv, titleEl) {
   input.addEventListener('blur', commit);
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') input.blur();
-    if (e.key === 'Escape') { input.value = conv.title; input.blur(); }
+    // Consumed: the page hotkey would otherwise read this Escape as "stop the
+    // running generation" (hotkeys.js skips an event already prevented).
+    if (e.key === 'Escape') { e.preventDefault(); input.value = conv.title; input.blur(); }
   });
   input.addEventListener('click', (e) => e.stopPropagation());
   titleEl.replaceWith(input);
@@ -1329,6 +1376,10 @@ function startRename(ctx, conv, titleEl) {
 
 async function newConversation(ctx) {
   const s = ctx.state;
+  // One create at a time, as Clone has (cloneInFlight): a double tap on a
+  // phone is the norm, and each tap here made its own conversation.
+  if (s.newInFlight) return;
+  s.newInFlight = true;
   clearPendingAttachments(ctx); // staged attachments belong to the conv they were picked in
   try {
     // From an open conversation, the selected (or stamped) preset is the
@@ -1357,6 +1408,8 @@ async function newConversation(ctx) {
     s.textarea.focus();
   } catch (err) {
     if (ctx.alive) showStatus(ctx, `Create failed: ${err.message}`, true);
+  } finally {
+    s.newInFlight = false;
   }
 }
 
@@ -1422,6 +1475,7 @@ async function deleteConversation(ctx, convId) {
       // carries, its stamp and sampler values included.
       s.appliedPresetId = null;
       hydrateDocParams(null);
+      refreshThinkBtn(ctx); // a silent hydrate fires no settings listener
       drawer.requestRebuild({ force: true });
       s.presetBar.syncIndicator(); // no active doc -> chip clears
       renderMessages(ctx);
@@ -1510,6 +1564,7 @@ async function selectConversation(ctx, convId) {
   s.editingId = null;
   s.msgNodes = new Map(); // node reuse is per-document; never carry rows across
   clearPendingAttachments(ctx); // staged attachments belong to the conv they were picked in
+  closePromptPreview(ctx);      // so does a preview of what the one being left would send
   showStatus(ctx, '');
   renderConvList(ctx);
   try {
@@ -1563,6 +1618,7 @@ async function selectConversation(ctx, convId) {
       // not keep the PREVIOUS conversation's params under this id either --
       // the next knob edit would PUT them onto it.
       adoptConversationMeta(ctx, {});
+      refreshThinkBtn(ctx); // a silent hydrate fires no settings listener
       renderMessages(ctx);
       drawer.requestRebuild({ force: true });
       // resync so the chip doesn't keep claiming the previous conversation's
@@ -2470,6 +2526,10 @@ function setRemoteGenerating(ctx, on) {
   // microtasks; the switch awaits a GET), which is why no symptom was ever
   // seen -- but "no symptom" is a fact about scheduling, and the sentence
   // above is a claim about ownership. They should not have been the same line.
+  //
+  // The list row takes the answer first, ahead of both guards: it is what the
+  // server just said about this conversation, whoever owns the button.
+  if (s.activeId) noteRunState(ctx, s.activeId, on);
   if (s.stream && s.stream.targetConvId === s.activeId) return;
   if (s.remoteGenerating === on) return;
   s.remoteGenerating = on;
@@ -3190,7 +3250,19 @@ async function editedContentBlocks(original, text, images, audio) {
     ...images.map((e) => [e, 'image']),
     ...audio.map((e) => [e, 'audio']),
   ];
-  const keptBlocks = new Set(entries.filter(([e]) => e.kept).map(([e]) => e.kept));
+  // Kept media is matched by what it is, never by which object holds it. The
+  // editor's entries can outlive the row objects they were built from: a
+  // resync replaces every row object, and an editor rebuilt after that (a
+  // model switch changes its signature) carries the old entries across. Matched
+  // by identity, nothing was found, the save went out as text only, and the
+  // store's GC deleted the picture. Counted, so two identical blocks on one
+  // row are each kept once.
+  const keptLeft = new Map();
+  for (const [e] of entries) {
+    if (!e.kept) continue;
+    const key = blockFingerprint(e.kept);
+    keptLeft.set(key, (keptLeft.get(key) ?? 0) + 1);
+  }
   const fresh = entries.filter(([e]) => !e.kept);
   const blocks = [];
   let textPlaced = false;
@@ -3200,7 +3272,12 @@ async function editedContentBlocks(original, text, images, audio) {
       textPlaced = true;  // later text blocks were merged into the same box
       continue;
     }
-    if (keptBlocks.has(b)) blocks.push(b);
+    const key = blockFingerprint(b);
+    const left = keptLeft.get(key) ?? 0;
+    if (left > 0) {
+      blocks.push(b);
+      keptLeft.set(key, left - 1);
+    }
   }
   blocks.push(...await Promise.all(fresh.map(([e, type]) => encodeMediaEntry(e, type))));
   if (!textPlaced && text) blocks.push({ type: 'text', text });
@@ -3260,6 +3337,11 @@ async function send(ctx) {
   s.pendingAudio = [];
   renderAttachStrip(ctx);
   showStatus(ctx, '');
+  closePromptPreview(ctx); // it described the draft that is now being sent
+  // The conversation this message belongs to, for the failure path below: null
+  // until the first send creates one. s.activeId cannot stand in for it there,
+  // because the user can open another conversation while the POST is in flight.
+  let home = s.activeId ?? null;
 
   try {
     // Inside the try: encoding is real work that can fail, and the restore
@@ -3288,6 +3370,7 @@ async function send(ctx) {
       s.appliedPresetId = conv.applied_preset_id ?? null;
       s.conversations.unshift(conv);
       s.activeId = conv.id;
+      home = conv.id;
       // Every other activeId move goes through selectConversation, which is
       // where the remembered id is written. This branch does not, so without
       // this the conversation you START by typing and sending is the one case
@@ -3324,7 +3407,16 @@ async function send(ctx) {
     const msg = await api.addMessage(convId, { role: 'user', content });
     for (const img of images) { if (img.previewUrl) URL.revokeObjectURL(img.previewUrl); }
     for (const clip of audio) { if (clip.previewUrl) URL.revokeObjectURL(clip.previewUrl); }
-    if (!ctx.alive || s.activeId !== convId) return; // saved to its conv; reselect re-fetches it
+    if (!ctx.alive) return;
+    if (s.activeId !== convId) {
+      // Saved to its own conversation, and a reselect fetches it. But no reply
+      // was asked for: generation is started from the open conversation, and
+      // that is a different one now. Say so, or the message sits there
+      // unanswered with nothing to explain why.
+      showStatus(ctx, 'Your message was saved to the conversation you left, but no reply was '
+        + 'requested there. Open it, edit that message and use Save & Regenerate.', true);
+      return;
+    }
     // Idempotent by id: a resume merge that landed while the POST was in
     // flight may already hold this row (the server's list saw the bump).
     if (!s.messages.some((m) => m.id === msg.id)) s.messages.push(msg);
@@ -3335,6 +3427,21 @@ async function send(ctx) {
     if (!ctx.alive) {
       for (const img of images) { if (img.previewUrl) URL.revokeObjectURL(img.previewUrl); }
       for (const clip of audio) { if (clip.previewUrl) URL.revokeObjectURL(clip.previewUrl); }
+      return;
+    }
+    if ((s.activeId ?? null) !== home) {
+      // The user opened another conversation while this send was in flight.
+      // Putting the text and attachments back "as they were" would put them in
+      // the composer of the conversation now on screen, and the next Send
+      // would post them there. The text goes back to its own conversation's
+      // draft instead; staged attachments belong to the conversation they were
+      // picked in (clearPendingAttachments), so they are dropped, and said so.
+      if (text) s.composerDrafts.set(home ?? NO_DOC, text);
+      for (const img of images) { if (img.previewUrl) URL.revokeObjectURL(img.previewUrl); }
+      for (const clip of audio) { if (clip.previewUrl) URL.revokeObjectURL(clip.previewUrl); }
+      const kept = text ? ' Its text is back in that conversation\'s draft.' : '';
+      const lost = (images.length || audio.length) ? ' Its attachments were not kept.' : '';
+      showStatus(ctx, `Send failed in the conversation you left: ${err.message}.${kept}${lost}`, true);
       return;
     }
     // The message did NOT reach the store -- put the composer back exactly
@@ -3742,6 +3849,8 @@ async function finishGenerate(ctx, stream, { content, thinking, usage, aborted, 
   // already being fetched here and thrown away.
   let serverState = null;
   if (saved?.messages?.length) {
+    // heylook_saved is the server saying the run is over and committed.
+    noteRunState(ctx, stream.targetConvId, false);
     adoptSavedRows(ctx, saved.messages);
     renderMessages(ctx);
   } else {

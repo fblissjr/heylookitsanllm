@@ -378,7 +378,9 @@ function buildRename(ctx, preset) {
   cancelBtn.addEventListener('click', () => replaceCard(ctx, preset));
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') commit();
-    else if (e.key === 'Escape') replaceCard(ctx, preset);
+    // Consumed: the page hotkey would otherwise click the first Cancel on the
+    // page, which can be a different card's open editor.
+    else if (e.key === 'Escape') { e.preventDefault(); replaceCard(ctx, preset); }
   });
   queueMicrotask(() => { input.focus(); input.select(); });
   return createEl('div', { class: 'preset-card__rename-row' }, [input, saveBtn, cancelBtn]);

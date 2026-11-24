@@ -146,7 +146,7 @@ export function createPromptSection(ctx, adapter) {
   // for a removed field. The write targets the captured document id, so it
   // stays correct after the mount is gone; flush() is a no-op when nothing
   // is pending.
-  ctx.onTeardown(() => flush());
+  const offTeardown = ctx.onTeardown(() => flush());
 
   // The phone's version of the same window: backgrounding Safari (home,
   // app switch, lock) fires no teardown and no `change` -- the tab is frozen
@@ -159,9 +159,13 @@ export function createPromptSection(ctx, adapter) {
   // chat, replacing a section -- drops it.
   const offHide = ctx.onHide(() => flush({ keepalive: true }));
 
+  // Both hooks go, not only the hide one: the teardown hook closes over this
+  // section's textarea, and chat builds a section per drawer render, so one
+  // left behind per render pins a detached field for the life of the mount.
   function release() {
     flush();
     offHide();
+    offTeardown();
   }
 
   return { element, setValue, flush, release };

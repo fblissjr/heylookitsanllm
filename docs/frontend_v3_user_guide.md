@@ -343,6 +343,14 @@ the status line says so and the Send button reads **Stop**:
 Closing the tab or reloading is the one case that warns you first, because a
 reload also throws away anything not yet written.
 
+One narrow case is different: opening another conversation in the moment
+between pressing Send and the message being saved. The message is saved to the
+conversation you left, but no reply is requested there, and the status line
+says so. Open that conversation, edit the message and use **Save &
+Regenerate**. If the save itself fails in that moment, the text goes back into
+that conversation's composer rather than the one now on screen, and any
+attachments on it are dropped; the status line says that too.
+
 ### Stopping
 
 **Stop** is the same button as Send, relabelled while a run is in flight. It

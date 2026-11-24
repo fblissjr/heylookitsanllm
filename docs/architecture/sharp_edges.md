@@ -32,6 +32,9 @@ to it, so the headings stay stable as anchors.
   [generation lifecycle](#generation-lifecycle-and-stream-identity),
   [mirror and resume](#store-mirror-and-resume), [attachments](#attachments-and-paste),
   [URL schemes](#markdown-url-schemes), [streaming render](#incremental-streaming-render),
+  [scroll anchoring](#scroll-anchoring), [consumed keys](#a-key-a-handler-consumes-is-prevented),
+  [route arity](#api-routes-no-default-parameters-in-a-path-builder),
+  [a send's home](#a-send-belongs-to-the-conversation-it-was-sent-from),
   [presets](#presets-and-the-system-prompt),
   [model switching](#model-switching-and-the-config-editor)
 - MLX engine: [media placement](#media-placement), [vision prefill](#vision-prefill),
@@ -1290,6 +1293,81 @@ flag fed by scroll events was tried and is wrong: pinning coalesces scroll
 events to a handful across a whole generation, so the flag goes stale exactly
 when the viewport changes under it, which on a phone is every keyboard open
 (`tests/e2e/render.mjs` resizes mid-stream and was shown red against it).
+
+### Scroll anchoring
+
+`overflow-anchor: none` on a scroller reaches that scroller and nothing nested
+inside another one. The message list has carried the declaration since Safari
+27 turned anchoring on (commit `d2e05e04`), but an edit box past its height cap
+is a scroller of its own, and `#main` and the document sit above the list, so
+all of those kept the engine default. `app.css` sets it on `html`, `#main` and
+every `textarea` as well (v2.0.279).
+
+The reason is an owner report (2026-11-24): on an iPhone, in a very long
+conversation, focusing an in-place message editor made the view scroll up
+without stopping until Send was tapped. Nothing in the app can drive that. It
+has no scroll, resize, focus or viewport listener and no observer or interval
+(`git grep -nE "setInterval|Observer|visualViewport" -- frontend/js ':!frontend/js/vendor'`),
+and Send with an empty composer returns on its first check. So the movement is
+WebKit's, and so is whatever a tap on Send does to stop it. Safari 27's
+anchoring has a tracked regression in scrolled textareas (WebKit bug 330015),
+and an older WebKit fix (bug 267440) describes anchoring fighting the scroll
+that reveals a focused field above the keyboard. That makes anchoring the
+leading suspect and this declaration a trial of it, not a confirmed fix:
+whether the runaway stopped is tracked in `docs/project/TODO.md`, and the
+other candidates and the on-device capture that separates them are in the
+local review report (`internal/reports/2026-11-24_frontend_review.md`).
+
+### A key a handler consumes is prevented
+
+The page hotkeys (`hotkeys.js`) listen on `document` and skip an event that is
+already `defaultPrevented`. Nothing else keeps one keypress from doing two
+jobs, so a handler that acts on Escape calls `preventDefault()`.
+
+The settings drawer did not, from the release that added `hotkeys.js`
+(v2.0.218) until v2.0.279. Its listener is registered at boot and so runs
+first; `close()` drops the open class; the page hotkey's "is a modal open" test
+then finds no modal. The Escape that closed the drawer also ran the page's own
+Escape action, which in chat stops a running generation and on Presets cancels
+an open editor and its typed edits. The comment above the drawer's listener
+still said page handlers were bound to their page roots, which had stopped
+being true, and that stale comment is what made the listener read as safe. The
+rename boxes in chat and on Presets had the same shape.
+
+Cmd/Ctrl+Enter is scoped in chat for the same reason: with focus in another
+field (an open message editor, the rename box) it is not "send whatever the
+composer holds".
+
+### API routes: no default parameters in a path builder
+
+`api.js` splits a call's arguments by the path builder's declared arity (path
+arguments, then the body, then options), and `Function.length` stops counting
+at the first default parameter. `adminGetLogs` was written
+`(stream = 'events', limit = 50) =>`, which reads as arity 0: the stream name
+landed in the options slot, the abort signal was dropped, and the Perf page's
+metrics tab showed the events stream from the day it shipped. The e2e stub
+branched on `stream=metrics` and no check asserted on it. The loader now
+refuses a builder with a default parameter at import (`pathArity`), which is
+loud on every page at once.
+
+### A send belongs to the conversation it was sent from
+
+`send` records the conversation its message belongs to (`home`) before its
+first await, because `s.activeId` read after an await can be a different
+conversation. The failure path used to put the text and staged attachments
+back into the composer on screen, which after a switch is another
+conversation's composer, so the next Send would have posted them there: the
+wrong action per-conversation drafts exist to prevent. The text now returns to
+its own conversation's draft and the attachments are dropped with a line that
+says so. The success path had the mirror gap: a message saved after a switch
+gets no reply, because generation starts from the open conversation, and
+nothing said so. It now does.
+
+Kept media in the message editor is matched by fingerprint, never by object
+identity (`editedContentBlocks`). A resync replaces every row object, and an
+editor rebuilt after one (a model switch changes its signature) carries
+entries made from the old objects. Matched by identity nothing was found, the
+save went out as text only, and the store's GC deleted the picture.
 
 ### Presets and the system prompt
 
