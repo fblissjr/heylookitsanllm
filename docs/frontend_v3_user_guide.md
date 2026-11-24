@@ -230,6 +230,17 @@ One card per preset, showing its settings and its own prompt.
   save is refused if the preset changed elsewhere after you opened it.
 - **Rename** changes the name only. A name in use is refused.
 - **Duplicate** makes a copy named *X copy*.
+- **Export** on a card exports that preset to a single `.json` or `.md`
+  (YAML frontmatter + prompt body) file. **Export all JSON** writes all presets
+  into one `.json` file; **Export all Markdown** writes one `.md` file per
+  preset (directly into a chosen folder where supported, or as a `.zip` of
+  `.md` files).
+- **Import** opens a file picker accepting a single `.json`/`.md` file, a
+  multi-preset `.json` file, or multiple `.md` files at once. When an imported
+  preset already exists, a review dialog shows the before/after settings and
+  prompt diff before confirming overwrite. Bulk imports list which presets are
+  new and which already exist, with a choice to open the combined diff view
+  first or import and apply immediately (or import new presets only).
 - **Delete** asks once, then removes the preset. Conversations and notebooks
   that came from it keep their prompt and settings, because they are copies;
   their provenance line reads *No preset* from then on.

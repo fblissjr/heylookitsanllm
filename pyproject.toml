@@ -85,6 +85,7 @@ Repository = "https://github.com/fblissjr/heylookitsanllm"
 Issues = "https://github.com/fblissjr/heylookitsanllm/issues"
 
 [project.scripts]
+heylook = "heylook_llm.cli:entrypoint"
 heylookllm = "heylook_llm.server:main"
 
 # ── Packaging ───────────────────────────────────────────────────────────────

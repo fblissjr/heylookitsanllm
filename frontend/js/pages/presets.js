@@ -34,6 +34,16 @@ import { api } from '../api.js';
 import { createEl, setStatus, armedConfirm, autoGrow, createUnloadGuard } from '../utils.js';
 import { PARAM_META } from '../settings.js';
 import { registerPageHotkeys } from '../hotkeys.js';
+import {
+  buildZip,
+  parsePresetFiles,
+  planImport,
+  serializePresetJson,
+  serializePresetMarkdown,
+  serializePresetsJson,
+  slugifyPresetName,
+  uniqueMarkdownFilenames,
+} from '../preset-io.js';
 
 export default createPage({
   async setup(ctx) {
@@ -43,6 +53,50 @@ export default createPage({
     s.openEditors = new Set(); // ids with an editor or rename box open
     s.setUnloadGuard = createUnloadGuard(ctx);
 
+    s.importInput = createEl('input', {
+      type: 'file',
+      multiple: true,
+      accept: '.json,.md,.markdown,application/json,text/markdown,text/plain',
+      hidden: true,
+      'aria-label': 'Import preset files',
+    });
+    s.importInput.addEventListener('change', () => {
+      const files = [...(s.importInput.files ?? [])];
+      s.importInput.value = '';
+      if (files.length) handleImportFiles(ctx, files);
+    });
+
+    s.importBtn = createEl('button', {
+      type: 'button',
+      class: 'btn btn--sm',
+      title: 'Import one or more presets from JSON or Markdown file(s)',
+    }, ['Import']);
+    s.importBtn.addEventListener('click', () => s.importInput.click());
+
+    s.exportAllJsonBtn = createEl('button', {
+      type: 'button',
+      class: 'btn btn--sm',
+      title: 'Export all presets into one JSON file',
+      disabled: true,
+    }, ['Export all JSON']);
+    s.exportAllJsonBtn.addEventListener('click', () => exportAllJson(ctx));
+
+    s.exportAllMdBtn = createEl('button', {
+      type: 'button',
+      class: 'btn btn--sm',
+      title: 'Export all presets as individual Markdown files (one per preset)',
+      disabled: true,
+    }, ['Export all Markdown']);
+    s.exportAllMdBtn.addEventListener('click', () => exportAllMarkdown(ctx));
+
+    s.toolbarEl = createEl('div', { class: 'presets__toolbar' }, [
+      s.importBtn,
+      s.exportAllJsonBtn,
+      s.exportAllMdBtn,
+      s.importInput,
+    ]);
+
+    s.importDialog = buildImportDialog(ctx);
     s.statusEl = createEl('div', { class: 'presets__status', role: 'status' });
     s.listEl = createEl('div', { class: 'presets__list' }, [
       createEl('div', { class: 'empty-state' }, ['Loading presets…']),
@@ -50,13 +104,30 @@ export default createPage({
     ctx.el.append(createEl('div', { class: 'presets' }, [
       createEl('h1', {}, ['Presets']),
       createEl('p', { class: 'presets__lede muted' }, [
-        'Edit, rename, duplicate and delete presets here. A conversation or notebook keeps a '
-        + 'copy of the preset it was started from, so nothing done here changes one that is '
+        'Edit, rename, duplicate, import, export and delete presets here. A conversation or notebook '
+        + 'keeps a copy of the preset it was started from, so nothing done here changes one that is '
         + 'already running.',
       ]),
+      s.toolbarEl,
       s.statusEl,
       s.listEl,
+      s.importDialog,
     ]));
+
+    // Close any open per-card Export menu when clicking elsewhere on the page.
+    const closeExportMenus = (event) => {
+      for (const menu of ctx.el.querySelectorAll('.preset-export[open]')) {
+        if (!menu.contains(event.target)) menu.open = false;
+      }
+    };
+    document.addEventListener('click', closeExportMenus);
+    ctx.onTeardown(() => document.removeEventListener('click', closeExportMenus));
+
+    const closeDialogOnHash = () => {
+      if (s.importDialog?.open) s.importDialog.close();
+    };
+    window.addEventListener('hashchange', closeDialogOnHash);
+    ctx.onTeardown(() => window.removeEventListener('hashchange', closeDialogOnHash));
 
     // Another tab or device may have written while this one was away. Cards
     // with an open editor are left alone: their typed text is the user's, and
@@ -64,6 +135,11 @@ export default createPage({
     ctx.onResume(() => { if (!s.openEditors.size) load(ctx); });
     registerPageHotkeys(ctx, {
       onEscape: () => {
+        const openMenu = ctx.el.querySelector('.preset-export[open]');
+        if (openMenu) {
+          openMenu.open = false;
+          return true;
+        }
         if (!s.openEditors.size) return false;
         const cancelBtn = [...ctx.el.querySelectorAll('.preset-edit__buttons .btn, .preset-card__rename-row .btn')]
           .find((b) => b.textContent === 'Cancel');
@@ -80,6 +156,13 @@ export default createPage({
 
 const status = (ctx, text, isError = false) => setStatus(ctx.state.statusEl, text, isError);
 
+function updateToolbar(ctx) {
+  const s = ctx.state;
+  const empty = !s.presets.length;
+  s.exportAllJsonBtn.disabled = empty;
+  s.exportAllMdBtn.disabled = empty;
+}
+
 async function fetchPresets(ctx) {
   const res = await api.listPresets({ signal: ctx.signal });
   return res.presets ?? [];
@@ -95,10 +178,13 @@ async function load(ctx) {
   }
   if (!ctx.alive) return;
   s.cards.clear();
+  s.openEditors.clear();
+  s.setUnloadGuard(false);
+  updateToolbar(ctx);
   if (!s.presets.length) {
     s.listEl.replaceChildren(createEl('div', { class: 'empty-state' }, [
-      'No presets yet. Open the settings drawer on a chat or a notebook and use Save '
-      + 'to make one from what it is running.',
+      'No presets yet. Open the settings drawer on a chat or a notebook and use Save, '
+      + 'or use Import above to load JSON or Markdown preset files.',
     ]));
     return;
   }
@@ -163,6 +249,22 @@ function buildCard(ctx, preset) {
   const dupBtn = createEl('button', {
     type: 'button', class: 'btn btn--sm', title: 'Make a copy under a new name',
   }, ['Duplicate']);
+
+  const exportJsonItem = createEl('button', { type: 'button', class: 'btn btn--sm btn--ghost' }, ['JSON (.json)']);
+  const exportMdItem = createEl('button', { type: 'button', class: 'btn btn--sm btn--ghost' }, ['Markdown (.md)']);
+  const exportMenu = createEl('details', { class: 'preset-export' }, [
+    createEl('summary', { class: 'btn btn--sm', title: 'Export this preset to JSON or Markdown' }, ['Export']),
+    createEl('div', { class: 'preset-export__menu' }, [exportJsonItem, exportMdItem]),
+  ]);
+  exportJsonItem.addEventListener('click', () => {
+    exportMenu.open = false;
+    exportSingle(ctx, preset, 'json');
+  });
+  exportMdItem.addEventListener('click', () => {
+    exportMenu.open = false;
+    exportSingle(ctx, preset, 'md');
+  });
+
   const delBtn = armedConfirm(
     createEl('button', { type: 'button', class: 'btn btn--sm btn--ghost' }, ['Delete']),
     () => remove(ctx, preset),
@@ -170,7 +272,9 @@ function buildCard(ctx, preset) {
     null,
     () => preset.id,
   );
-  const actions = createEl('div', { class: 'preset-card__actions' }, [editBtn, renameBtn, dupBtn, delBtn]);
+  const actions = createEl('div', { class: 'preset-card__actions' }, [
+    editBtn, renameBtn, dupBtn, exportMenu, delBtn,
+  ]);
 
   const head = createEl('header', { class: 'preset-card__head' }, [
     createEl('div', { class: 'preset-card__title' }, [nameEl, tag]),
@@ -409,6 +513,7 @@ async function duplicate(ctx, preset) {
     });
     if (!ctx.alive) return;
     s.presets.push(created);
+    updateToolbar(ctx);
     const card = buildCard(ctx, created);
     (s.cards.get(preset.id) ?? s.listEl.lastElementChild).after(card);
     status(ctx, `Duplicated "${source.name}" as "${created.name}".`);
@@ -428,10 +533,406 @@ async function remove(ctx, preset) {
   if (!ctx.alive) return;
   setEditing(ctx, preset.id, false);
   s.presets = s.presets.filter((p) => p.id !== preset.id);
+  updateToolbar(ctx);
   s.cards.get(preset.id)?.remove();
   s.cards.delete(preset.id);
   // A document stamped with this preset keeps its own prompt and settings and
   // simply reads "No preset" from now on: its stamp resolves to nothing.
   status(ctx, `Deleted "${preset.name}". Anything started from it keeps its own copy.`);
   if (!s.presets.length) load(ctx);
+}
+
+// ---------------------------------------------------------------------------
+// export (single & bulk, JSON & Markdown)
+// ---------------------------------------------------------------------------
+
+function triggerDownload(filename, content, mimeType) {
+  const blob = content instanceof Blob ? content : new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = createEl('a', { href: url, download: filename });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function exportSingle(ctx, preset, format) {
+  const slug = slugifyPresetName(preset.name);
+  if (format === 'md') {
+    triggerDownload(`${slug}.md`, serializePresetMarkdown(preset), 'text/markdown;charset=utf-8');
+    status(ctx, `Exported "${preset.name}" as ${slug}.md.`);
+    return;
+  }
+  triggerDownload(`${slug}.json`, serializePresetJson(preset), 'application/json;charset=utf-8');
+  status(ctx, `Exported "${preset.name}" as ${slug}.json.`);
+}
+
+function exportAllJson(ctx) {
+  const presets = ctx.state.presets;
+  if (!presets.length) return;
+  triggerDownload('heylook-presets.json', serializePresetsJson(presets), 'application/json;charset=utf-8');
+  status(ctx, `Exported ${presets.length} preset${presets.length === 1 ? '' : 's'} to heylook-presets.json.`);
+}
+
+async function exportAllMarkdown(ctx) {
+  const presets = ctx.state.presets;
+  if (!presets.length) return;
+  if (presets.length === 1) {
+    exportSingle(ctx, presets[0], 'md');
+    return;
+  }
+  const filenames = uniqueMarkdownFilenames(presets);
+  const files = presets.map((p, i) => ({
+    name: filenames[i],
+    text: serializePresetMarkdown(p),
+  }));
+
+  // Prefer writing individual .md files directly into a chosen folder when supported.
+  if (typeof window.showDirectoryPicker === 'function') {
+    try {
+      const dir = await window.showDirectoryPicker({ mode: 'readwrite' });
+      for (const file of files) {
+        const handle = await dir.getFileHandle(file.name, { create: true });
+        const writable = await handle.createWritable();
+        await writable.write(file.text);
+        await writable.close();
+      }
+      if (ctx.alive) {
+        status(ctx, `Exported ${files.length} Markdown files to "${dir.name}".`);
+      }
+      return;
+    } catch (err) {
+      if (err?.name === 'AbortError') return;
+      // Fall through to ZIP archive if folder write failed (e.g. read-only directory).
+    }
+  }
+
+  const zipBytes = buildZip(files);
+  triggerDownload('heylook-presets-markdown.zip', new Blob([zipBytes], { type: 'application/zip' }), 'application/zip');
+  status(ctx, `Exported ${files.length} Markdown files in heylook-presets-markdown.zip.`);
+}
+
+// ---------------------------------------------------------------------------
+// import review modal (single conflict diff + bulk summary & combined diffs)
+// ---------------------------------------------------------------------------
+
+function buildImportDialog(ctx) {
+  const dialog = createEl('dialog', {
+    class: 'preset-import-dialog',
+    closedby: 'any',
+    'aria-labelledby': 'preset-import-title',
+  });
+  // Fallback for browsers without native <dialog closedby="any"> support (e.g. Safari).
+  if (typeof HTMLDialogElement !== 'undefined' && !('closedBy' in HTMLDialogElement.prototype)) {
+    dialog.addEventListener('click', (event) => {
+      if (event.target !== dialog) return;
+      const rect = dialog.getBoundingClientRect();
+      const inside = (
+        rect.top <= event.clientY
+        && event.clientY <= rect.top + rect.height
+        && rect.left <= event.clientX
+        && event.clientX <= rect.left + rect.width
+      );
+      if (!inside) dialog.close();
+    });
+  }
+  return dialog;
+}
+
+function formatParamVal(val) {
+  return typeof val === 'string' ? val : JSON.stringify(val);
+}
+
+function buildDiffBlock(item) {
+  const children = [
+    createEl('div', { class: 'preset-diff__head' }, [
+      createEl('strong', {}, [item.incoming.name]),
+      createEl('span', { class: 'preset-card__tag' }, [item.changed ? 'changed' : 'unchanged']),
+    ]),
+  ];
+
+  if (!item.changed) {
+    children.push(createEl('div', { class: 'muted small' }, ['No differences from the stored preset.']));
+    return createEl('section', { class: 'preset-diff' }, children);
+  }
+
+  if (item.paramDiffs.length) {
+    const rows = item.paramDiffs.map((d) => {
+      if (d.kind === 'added') {
+        return createEl('div', { class: 'preset-diff__line preset-diff__line--add' }, [
+          `+ ${d.key}: ${formatParamVal(d.after)}`,
+        ]);
+      }
+      if (d.kind === 'removed') {
+        return createEl('div', { class: 'preset-diff__line preset-diff__line--del' }, [
+          `- ${d.key}: ${formatParamVal(d.before)}`,
+        ]);
+      }
+      return createEl('div', { class: 'preset-diff__pair' }, [
+        createEl('div', { class: 'preset-diff__line preset-diff__line--del' }, [
+          `- ${d.key}: ${formatParamVal(d.before)}`,
+        ]),
+        createEl('div', { class: 'preset-diff__line preset-diff__line--add' }, [
+          `+ ${d.key}: ${formatParamVal(d.after)}`,
+        ]),
+      ]);
+    });
+    children.push(
+      createEl('div', { class: 'preset-diff__label small muted' }, ['Settings']),
+      createEl('div', { class: 'preset-diff__code' }, rows),
+    );
+  }
+
+  if (item.promptChanged) {
+    const label = !item.existing.system_prompt
+      ? 'System prompt (added)'
+      : !item.incoming.system_prompt
+        ? 'System prompt (removed — becomes settings only)'
+        : 'System prompt';
+    const lines = item.promptDiff.map((line) => {
+      const prefix = line.type === 'add' ? '+ ' : line.type === 'del' ? '- ' : line.type === 'hunk' ? '' : '  ';
+      const cls = line.type === 'add'
+        ? 'preset-diff__line preset-diff__line--add'
+        : line.type === 'del'
+          ? 'preset-diff__line preset-diff__line--del'
+          : line.type === 'hunk'
+            ? 'preset-diff__line preset-diff__line--hunk'
+            : 'preset-diff__line';
+      return createEl('div', { class: cls }, [`${prefix}${line.text}`]);
+    });
+    children.push(
+      createEl('div', { class: 'preset-diff__label small muted' }, [label]),
+      createEl('div', { class: 'preset-diff__code' }, lines),
+    );
+  }
+
+  return createEl('section', { class: 'preset-diff' }, children);
+}
+
+async function handleImportFiles(ctx, files) {
+  let incoming;
+  try {
+    const entries = await Promise.all(
+      files.map(async (f) => ({ name: f.name, text: await f.text() })),
+    );
+    incoming = parsePresetFiles(entries);
+  } catch (err) {
+    if (ctx.alive) status(ctx, `Import failed: ${err.message}`, true);
+    return;
+  }
+
+  let fresh;
+  try {
+    fresh = await fetchPresets(ctx);
+  } catch (err) {
+    if (ctx.alive) status(ctx, `Could not check existing presets: ${err.message}`, true);
+    return;
+  }
+  if (!ctx.alive) return;
+
+  const plan = planImport(incoming, fresh);
+  openImportDialog(ctx, plan);
+}
+
+function openImportDialog(ctx, plan) {
+  const dialog = ctx.state.importDialog;
+  const close = () => { if (dialog.open) dialog.close(); };
+
+  const single = plan.items.length === 1;
+  const titleText = single
+    ? (plan.items[0].existing ? 'Preset already exists' : 'Import preset')
+    : `Import ${plan.items.length} presets`;
+
+  const closeBtn = createEl('button', {
+    type: 'button', class: 'btn btn--ghost btn--sm', 'aria-label': 'Close import dialog',
+  }, ['Close']);
+  closeBtn.addEventListener('click', close);
+
+  const head = createEl('header', { class: 'preset-import__head' }, [
+    createEl('h2', { id: 'preset-import-title' }, [titleText]),
+    closeBtn,
+  ]);
+
+  const bodyChildren = [];
+  const footerBtns = [];
+  let diffsWrap = null;
+
+  const runApply = async (includeExisting, triggerBtn) => {
+    for (const b of footerBtns) b.disabled = true;
+    const prevLabel = triggerBtn.textContent;
+    triggerBtn.textContent = 'Importing…';
+    const result = await applyImportPlan(ctx, plan, { includeExisting });
+    if (!ctx.alive) return;
+    close();
+    await load(ctx);
+    if (!ctx.alive) return;
+    if (result.errors.length) {
+      status(ctx, `${result.summary} Failed: ${result.errors.join('; ')}`, true);
+    } else {
+      status(ctx, result.summary);
+    }
+    triggerBtn.textContent = prevLabel;
+  };
+
+  if (single) {
+    const item = plan.items[0];
+    if (!item.existing) {
+      bodyChildren.push(
+        createEl('p', { class: 'preset-import__note' }, [
+          `New preset "${item.incoming.name}".`,
+        ]),
+        createEl('div', { class: 'preset-card__knobs muted small' }, [knobSummary(item.incoming.params)]),
+        item.incoming.system_prompt
+          ? createEl('div', { class: 'preset-card__prompt' }, [item.incoming.system_prompt])
+          : createEl('div', { class: 'preset-card__prompt preset-card__prompt--none' }, [
+            'Carries no system prompt (settings only).',
+          ]),
+      );
+      const importBtn = createEl('button', { type: 'button', class: 'btn btn--sm btn--primary' }, ['Import preset']);
+      importBtn.addEventListener('click', () => runApply(true, importBtn));
+      const cancelBtn = createEl('button', { type: 'button', class: 'btn btn--sm btn--ghost' }, ['Cancel']);
+      cancelBtn.addEventListener('click', close);
+      footerBtns.push(importBtn, cancelBtn);
+    } else {
+      bodyChildren.push(
+        createEl('p', { class: 'preset-import__note' }, [
+          item.changed
+            ? `"${item.incoming.name}" already exists. Review the before/after diff below before overwriting.`
+            : `"${item.incoming.name}" already exists and has no differences.`,
+        ]),
+        buildDiffBlock(item),
+      );
+      if (item.changed) {
+        const overwriteBtn = createEl('button', { type: 'button', class: 'btn btn--sm btn--primary' }, ['Overwrite preset']);
+        overwriteBtn.addEventListener('click', () => runApply(true, overwriteBtn));
+        const cancelBtn = createEl('button', { type: 'button', class: 'btn btn--sm btn--ghost' }, ['Cancel']);
+        cancelBtn.addEventListener('click', close);
+        footerBtns.push(overwriteBtn, cancelBtn);
+      } else {
+        const okBtn = createEl('button', { type: 'button', class: 'btn btn--sm' }, ['Close']);
+        okBtn.addEventListener('click', close);
+        footerBtns.push(okBtn);
+      }
+    }
+  } else {
+    // Bulk import (Requirement 6): list New vs Already exist, and let the user
+    // either view combined diffs first OR import and apply directly.
+    if (plan.newItems.length) {
+      bodyChildren.push(
+        createEl('div', { class: 'preset-import__group' }, [
+          createEl('div', { class: 'preset-import__group-title' }, [`New (${plan.newItems.length})`]),
+          createEl('ul', { class: 'preset-import__list' }, plan.newItems.map((it) =>
+            createEl('li', {}, [
+              createEl('span', {}, [it.incoming.name]),
+              createEl('span', { class: 'preset-card__tag preset-import__badge--new' }, ['new']),
+            ]))),
+        ]),
+      );
+    }
+    if (plan.existingItems.length) {
+      bodyChildren.push(
+        createEl('div', { class: 'preset-import__group' }, [
+          createEl('div', { class: 'preset-import__group-title' }, [`Already exist (${plan.existingItems.length})`]),
+          createEl('ul', { class: 'preset-import__list' }, plan.existingItems.map((it) =>
+            createEl('li', {}, [
+              createEl('span', {}, [it.incoming.name]),
+              createEl('span', { class: 'preset-card__tag' }, [it.changed ? 'exists · changed' : 'exists · unchanged']),
+            ]))),
+        ]),
+      );
+    }
+
+    if (plan.existingItems.length) {
+      bodyChildren.push(
+        createEl('p', { class: 'preset-import__note muted small' }, [
+          'Inspect all existing preset diffs in a combined view below, or import and apply now.',
+        ]),
+      );
+      diffsWrap = createEl('div', { class: 'preset-import__diffs', hidden: true },
+        plan.existingItems.map((it) => buildDiffBlock(it)));
+      bodyChildren.push(diffsWrap);
+
+      const toggleDiffsBtn = createEl('button', {
+        type: 'button', class: 'btn btn--sm', 'aria-expanded': 'false',
+      }, ['View combined diffs']);
+      toggleDiffsBtn.addEventListener('click', () => {
+        const show = diffsWrap.hidden;
+        diffsWrap.hidden = !show;
+        toggleDiffsBtn.setAttribute('aria-expanded', String(show));
+        toggleDiffsBtn.textContent = show ? 'Hide combined diffs' : 'View combined diffs';
+      });
+
+      const applyAllBtn = createEl('button', { type: 'button', class: 'btn btn--sm btn--primary' }, ['Import and apply']);
+      applyAllBtn.addEventListener('click', () => runApply(true, applyAllBtn));
+
+      footerBtns.push(toggleDiffsBtn, applyAllBtn);
+      if (plan.newItems.length) {
+        const newOnlyBtn = createEl('button', { type: 'button', class: 'btn btn--sm' }, ['Import new only']);
+        newOnlyBtn.addEventListener('click', () => runApply(false, newOnlyBtn));
+        footerBtns.push(newOnlyBtn);
+      }
+      const cancelBtn = createEl('button', { type: 'button', class: 'btn btn--sm btn--ghost' }, ['Cancel']);
+      cancelBtn.addEventListener('click', close);
+      footerBtns.push(cancelBtn);
+    } else {
+      const applyBtn = createEl('button', { type: 'button', class: 'btn btn--sm btn--primary' }, [
+        `Import ${plan.newItems.length} presets`,
+      ]);
+      applyBtn.addEventListener('click', () => runApply(true, applyBtn));
+      const cancelBtn = createEl('button', { type: 'button', class: 'btn btn--sm btn--ghost' }, ['Cancel']);
+      cancelBtn.addEventListener('click', close);
+      footerBtns.push(applyBtn, cancelBtn);
+    }
+  }
+
+  const box = createEl('div', { class: 'preset-import__box' }, [
+    head,
+    createEl('div', { class: 'preset-import__body' }, bodyChildren),
+    createEl('footer', { class: 'preset-import__foot' }, footerBtns),
+  ]);
+  dialog.replaceChildren(box);
+  if (typeof dialog.showModal === 'function') dialog.showModal();
+  else dialog.setAttribute('open', '');
+}
+
+async function applyImportPlan(ctx, plan, { includeExisting }) {
+  let created = 0;
+  let updated = 0;
+  let unchanged = 0;
+  let skipped = 0;
+  const errors = [];
+
+  for (const item of plan.items) {
+    if (!ctx.alive) break;
+    try {
+      if (!item.existing) {
+        await api.createPreset({
+          name: item.incoming.name,
+          system_prompt: item.incoming.system_prompt,
+          params: item.incoming.params,
+        });
+        created += 1;
+      } else if (!includeExisting) {
+        skipped += 1;
+      } else if (!item.changed) {
+        unchanged += 1;
+      } else {
+        await api.updatePreset(item.existing.id, {
+          system_prompt: item.incoming.system_prompt,
+          params: item.incoming.params,
+        });
+        updated += 1;
+      }
+    } catch (err) {
+      errors.push(`${item.incoming.name}: ${err.message}`);
+    }
+  }
+
+  const parts = [];
+  if (created) parts.push(`${created} created`);
+  if (updated) parts.push(`${updated} updated`);
+  if (unchanged) parts.push(`${unchanged} unchanged`);
+  if (skipped) parts.push(`${skipped} skipped`);
+  const summary = parts.length ? `Import complete: ${parts.join(', ')}.` : 'Nothing imported.';
+  return { summary, errors };
 }

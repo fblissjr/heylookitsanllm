@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.280] - 2026-11-24
+
+Preset import/export (JSON and Markdown) with before/after diff confirmation in both the `heylook` CLI and the `#/presets` frontend page:
+- **Portable preset I/O and `heylook` CLI (`src/heylook_llm/preset_io.py`, `src/heylook_llm/cli.py`, `scripts/heylook.py`, `pyproject.toml`)**:
+  - Exposed `uv run heylook` (and `uv run scripts/heylook.py`) with zero-MLX startup, talking to a running server's `/v1/presets` over HTTP (reading `$HEYLOOK_API_KEY` / `~/.heylook/api_key`) with automatic local DuckDB fallback when offline (`--db` forces direct DB).
+  - `heylook presets list`, single/bulk `heylook presets export` to single JSON, bulk JSON (`{"presets": [...]}`), single YAML-frontmatter Markdown, or a directory of per-preset `.md` files with collision-safe filenames.
+  - `heylook presets import` accepting single JSON/Markdown files, multi-entry JSON, multiple Markdown files, or a directory. Single-preset conflicts show the before/after settings and unified system-prompt diff before confirmation; bulk imports list new vs. existing presets and prompt to inspect combined diffs, import and apply, import new only, or cancel (`--yes`, `--new-only`, `--diff` for scripting).
+- **Frontend `#/presets` import/export & review dialog (`frontend/js/preset-io.js`, `frontend/js/pages/presets.js`, `frontend/css/app.css`)**:
+  - Format-matched pure-ESM `preset-io.js` (JSON/Markdown round-trip, unified line diff, import planner, and zero-dep STORE ZIP fallback for bulk Markdown export when `showDirectoryPicker` is unavailable).
+  - Added per-card **Export** menu (`JSON (.json)` / `Markdown (.md)`), page toolbar (**Import**, **Export all JSON**, **Export all Markdown**), and a native `<dialog>` review modal showing single-preset conflict diffs or bulk new-vs-existing summaries with a **View combined diffs** toggle alongside **Import and apply** and **Import new only**.
+- **Docs & tests**: updated `scripts/README.md`, `docs/wiki/frontend_core.md`, `docs/frontend_v3_user_guide.md`, and `docs/project/CURRENT.md`; added `tests/unit/test_preset_io_cli.py` (17 tests including Python-vs-JS Markdown/ZIP parity) and `tests/e2e/preset-io.test.mjs` (6 Node tests).
+- **Verification**: full `tests/unit/` + `tests/contract/` `1873 passed, 2 subtests passed`; `node --test tests/e2e/preset-io.test.mjs` `6 passed`; `node --check` on `preset-io.js` and `presets.js`; `uv run heylook presets --help` and `uv run scripts/heylook.py presets --help`; `scripts/syntax_check.py` and `scripts/vendor_frontend.py --verify` clean. NOT run: browser E2E (`puppeteer-core` removed in v2.0.240), `tests/smoke/`, `tests/eval/`.
+
 ## [2.0.279] - 2026-11-24
 
 Frontend fixes from a full review of `frontend/`, asked for by the owner after two phone reports (battery use, and a view that scrolls up without stopping when a message editor is focused in a very long conversation). The review, its evidence labels and the findings not fixed here are in the local report `internal/reports/2026-11-24_frontend_review.md`; what is still open is in `docs/project/TODO.md` ("From the 2026-11-24 frontend review").
