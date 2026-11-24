@@ -53,6 +53,8 @@ on, and both of these found checks that could not.
   decisions block, and the 2026-07-28 re-plan re-cut Phases 1-5 into Waves 1-5)
 - [project/CURRENT.md](./project/CURRENT.md) -- graded done/left status
 - [project/TODO.md](./project/TODO.md) -- backlog
+- [project/frontend_open_bugs.md](./project/frontend_open_bugs.md) -- open frontend
+  defects from the 2026-11-24 review, each with its location, status and smallest fix
 - [project/plan_engine_coverage.md](./project/plan_engine_coverage.md) -- why
   provider is not engine, and the origin of the three smoke arms (mlx-text,
   mlx-vision, gguf); all phases shipped

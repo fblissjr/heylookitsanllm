@@ -97,6 +97,9 @@ Summary of what shipped for converted Gemma 4 Dense (`31B-it`) + MoE (`26B-A4B-i
 The review, its evidence labels and the full finding list are in the local
 report `internal/reports/2026-11-24_frontend_review.md`. What is open:
 
+The open defects are listed one per row, with location and status, in
+[frontend_open_bugs.md](./frontend_open_bugs.md).
+
 - [ ] **Runaway scroll on editor focus (iPhone): a trial is in, not a
   confirmed fix** (P1). Owner report: in a very long conversation, focusing an
   in-place message editor scrolls the view up without stopping until Send is
