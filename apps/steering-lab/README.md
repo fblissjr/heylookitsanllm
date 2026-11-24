@@ -2,7 +2,7 @@
 
 Standalone **MLX activation steering & mechanistic exploration workbench** built for experimenting with non-1D steering on Apple Silicon (`Swift-1.5-Qwen3.8-27B-MLX-8bit` first, extensible to any `mlx-vlm` checkpoint).
 
-See [PLAN.md](./PLAN.md) for the full math, operator specs, six lab instruments, runtime invariants, and Qwen 3.8 experiment playbook.
+See [docs/steering_lab_guide.md](../../docs/steering_lab_guide.md) for the full capabilities & operator guide, and [PLAN.md](./PLAN.md) for the math derivations, runtime invariants, and experiment playbook.
 
 ## What Is Inside
 

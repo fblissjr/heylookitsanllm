@@ -101,6 +101,7 @@ on, and both of these found checks that could not.
   deliberate differences from Anthropic's Messages spec). A scoped view of
   `frontend_v3_spec.md` §4, which stays authoritative for the contract
 - [optimization_log.md](./optimization_log.md) -- cross-session performance findings
+- [steering_lab_guide.md](./steering_lab_guide.md) -- standalone MLX Steering & Mechanistic Lab (`apps/steering-lab/`): non-1D operators (Regime A/B, `IF -> THEN`, `S3`), phase/modality masking, six lab instruments (sweeps, token microscope, Chain Lens, geometry, tangent X-Ray), CLI recipes, and shared access gate
 - [optloop_guide.md](./optloop_guide.md) -- optloop-lib benchmark harness
 - [mlx_optimization_plan.md](./mlx_optimization_plan.md) -- MLX engine optimization plan (historical)
 
