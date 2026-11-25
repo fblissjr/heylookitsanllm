@@ -32,7 +32,7 @@ Each file below holds the mechanisms that bite in its area. Claude Code loads it
 | gguf: llama-server templates, context, memory, spec decode, binary | [.claude/rules/gguf.md](./.claude/rules/gguf.md) |
 | MLX engine: mlx-vlm, threads, caches, tokenizers, parsers | [.claude/rules/mlx.md](./.claude/rules/mlx.md) |
 | Model registry, heylook.toml, config effect classes | [.claude/rules/registry-config.md](./.claude/rules/registry-config.md) |
-| API routes, the Messages wire, DuckDB store, observability | [.claude/rules/api-and-store.md](./.claude/rules/api-and-store.md) |
+| API routes, the Messages wire, SQLite store, observability | [.claude/rules/api-and-store.md](./.claude/rules/api-and-store.md) |
 | Frontend | [.claude/rules/frontend.md](./.claude/rules/frontend.md) |
 | Test harnesses, mocks, e2e, smoke, eval | [.claude/rules/tests.md](./.claude/rules/tests.md) |
 | pyproject, uv.lock, the mlx-vlm pin | [.claude/rules/dependencies.md](./.claude/rules/dependencies.md) |
@@ -76,7 +76,7 @@ Each file below holds the mechanisms that bite in its area. Claude Code loads it
 
 - Derive, never hand-copy. A hand-copied constant list is a defect with a delay. When you add a field to a cascade, grep for any tuple, set or frozenset that enumerates its siblings and derive from it (`X = SHARED_TUPLE + ("extra",)`).
 - Repo rules are enforced, not reminded: a deterministic rule belongs in a pre-commit guard (`scripts/check_version_sync.py`), a unit test (`test_field_keyword_defaults.py`) or a Claude Code hook whose logic lives in `scripts/hooks/` and whose wiring is `.claude/settings.json`.
-- Never write migration code (solo deploy, no data to preserve). Dropping, recreating or truncating a DuckDB store or config on a schema change is fine and preferred.
+- Never write migration code (solo deploy, no data to preserve). Dropping, recreating or truncating the SQLite store or config on a schema change is fine and preferred.
 - Parallel sessions are normal: assume another session has uncommitted work. Stage files by name (never `git add -A`/`-u`/`.` or `git commit -a`; `scripts/hooks/git_add_guard.py` refuses them), run `git status` before committing, and leave files you did not touch unstaged. After any scripted string-replace, check the edit landed.
 - Where knowledge goes: mechanisms in this file and `.claude/rules/`; status (what is done, counts, "until X lands") in `docs/project/`; rationale and incident history in `sharp_edges.md`; how a subsystem works in `docs/wiki/`, which carries no figures. `internal/` is unversioned: copy a long-lived doc there to an `archive/` subdir before rewriting it destructively.
 - `.claude/` is local by default. Tracking a new file there takes two edits: the `.gitignore` negation block and `ALLOWED_PATHS` in the local pre-commit hook.

@@ -448,7 +448,7 @@ Phase 3b; chat uses its conversation-scoped sibling below; the OpenAI-compatible
 - `DELETE /{id}` → `{status:"deleted",id}`.
 - `POST /{id}/messages` (201) `{role,content,thinking?}` → message.
 - `PUT /{id}/messages/{msgId}` `{content?,thinking?}` → message.
-- **Content blocks (added v1.34.20, DuckDB store):** `content` accepts a plain
+- **Content blocks (added v1.34.20, server-side SQLite store):** `content` accepts a plain
   string OR a Messages-style block list, e.g.
   `[{type:"image",source:{type:"base64",media_type,data}},{type:"text",text}]`.
   Every message response carries BOTH `content` (flattened text of the text

@@ -893,7 +893,7 @@ sets no token); everything else is open.
 | `POST /v1/requests/{request_id}/reasoning-end` | Close the open thinking block early, by `X-Request-ID` (§6) |
 | `POST /v1/embeddings` | One pooled vector per input item, embedding models only (§10) |
 
-**Server-side conversation store** (spec §4, conversations; DuckDB-backed,
+**Server-side conversation store** (spec §4, conversations; SQLite WAL-backed,
 what this repo's chat page uses). An alternative to keeping history
 client-side: the server stores the messages and media and builds each
 request itself.

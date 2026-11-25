@@ -2,7 +2,7 @@
 
 **Steering Lab** (`apps/steering-lab/`) is a standalone white-box activation-steering and mechanistic interpretability workbench for Apple Silicon MLX models (starting with `Swift-1.5-Qwen3.8-27B-MLX-8bit` + its sibling `-mtp` drafter).
 
-It stays deliberately decoupled from `heylook`'s daily-driver `/v1/messages` server, presets, GGUF subprocesses, and DuckDB store, while sharing `heylook`'s canonical MLX overlays, `heylook.toml` model discovery, and `~/.heylook/api_key` access gate.
+It stays deliberately decoupled from `heylook`'s daily-driver `/v1/messages` server, presets, GGUF subprocesses, and SQLite store, while sharing `heylook`'s canonical MLX overlays, `heylook.toml` model discovery, and `~/.heylook/api_key` access gate.
 
 For the full mathematical derivations and Qwen 3.8 runtime invariants, see [apps/steering-lab/PLAN.md](../apps/steering-lab/PLAN.md).
 

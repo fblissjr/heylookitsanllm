@@ -25,7 +25,7 @@ flowchart TB
         RouterHub["API Router Assembly (api.py)"]
         MsgWire["Messages Wire Router (/v1/messages & /v1/conversations/{id}/generate)"]
         ReqReg["RequestRegistry & AbortEvent"]
-        DuckDB[("DuckDB Store (conversations.duckdb)<br/>Single Serialized Thread")]
+        SQLite[("SQLite WAL Store (conversations.db)<br/>Single Serialized Thread")]
         ConfigEngine["Config Engine & ModelRegistry"]
         GenGate["Process-Global FIFO GenerationGate"]
         ModelRouter["ModelRouter (LRU Eviction / Lifecycle)"]
@@ -48,7 +48,7 @@ flowchart TB
     UI -->|"HTTP & SSE Streams"| RouterHub
     RouterHub --> MsgWire
     MsgWire --> ReqReg
-    MsgWire --> DuckDB
+    MsgWire --> SQLite
     MsgWire --> ModelRouter
     ModelRouter --> GenGate
 
@@ -76,7 +76,7 @@ A foundational design decision in `heylookitsanllm` is how providers are hosted:
 ### Why Out-of-Process `llama-server`?
 1. **Crash Isolation**: a memory fault, invalid GGUF tensor format, or Metal shader abort inside llama.cpp crashes only the child process, leaving the FastAPI backend alive to report it. How it surfaces depends on whether headers have gone out: a **non-streaming** request raises and becomes an HTTP 500; a **streaming** one is already past its 200, so the failure arrives as an in-band SSE `error` event, never as a status code. A 503 is *not* a crash outcome -- that code belongs to the gate's backpressure contract (§3.1) and to an uninitialized database.
 2. **Deterministic Cleanup & LRU**: when `ModelRouter` unloads a model (LRU eviction or idle timeout), it issues `SIGTERM` to the `llama-server` process **group**, escalating to `SIGKILL` if that is ignored, and the OS reclaims the process's memory on exit. Note the asymmetry with MLX: `MLXProvider.unload()` waits for in-flight generations *and* gate waiters (30s cap), because `_active_generations` is MLX-local. The gguf unload never waits for in-flight *requests* -- SIGTERM goes out regardless -- but it does wait for the process to exit before escalating, so it is not a bare signal either.
-3. **No llama.cpp C-extension in the Python process**: nothing links llama.cpp into the backend, so there are no CFFI/pybind11 build conflicts or GIL interactions from *it*. The environment does ship other native extensions (MLX, DuckDB); the claim is scoped to llama.cpp.
+3. **No llama.cpp C-extension in the Python process**: nothing links llama.cpp into the backend, so there are no CFFI/pybind11 build conflicts or GIL interactions from *it*. The environment does ship other native extensions (MLX); the claim is scoped to llama.cpp.
 
 ---
 
@@ -149,7 +149,9 @@ heylookitsanllm/
 │       ├── context-select.js    # GGUF context picker inside the load panel
 │       ├── model-config.js      # Schema-driven per-model admin editor
 │       ├── preset-bar.js        # Shared preset manager & prompt override guard
-│       └── pages/               # Page controllers: chat, notebook, models, perf
+│       ├── preset-io.js         # Portable JSON/Markdown/ZIP preset import/export & diffs
+│       ├── preset-assist.js     # Streaming /v1/messages tool loop for AI preset edits
+│       └── pages/               # Page controllers: chat, notebook, presets, models, perf, embeddings
 ├── scripts/                     # Developer & operational automation
 │   ├── build_llama.py           # Canonical C++ builder for llama-server
 │   ├── ram_report.py            # Unified RAM & Metal working set pre-flight

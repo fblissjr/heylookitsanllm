@@ -592,7 +592,7 @@ From `docs/project/frontend_open_bugs.md`:
 
 ## Not mapped, or not sure
 
-- Another session has uncommitted changes in `src/heylook_llm/db.py` (the store moving from DuckDB to SQLite). The media functions this page cites (`normalize_blocks`, `_externalize_media`, `_gc_orphans`, `get_media_blob`, `get_media_blobs`, `append_message`, `update_message`) sit outside the changed hunks; this page maps what is on disk.
+- `src/heylook_llm/db.py` migrated from DuckDB to SQLite (WAL) in `v2.0.283` and hardened SVG/XML media serving (`application/octet-stream` + `Content-Security-Policy: default-src 'none'; sandbox`, closing FB-37). Several chat-attachment bugs listed above (FB-08, FB-09, FB-26, FB-43, FB-52, FB-54, FB-61..65) were subsequently fixed in `v2.0.284`–`v2.0.285`; check `docs/project/frontend_open_bugs.md` for what remains open.
 - The comment in `buildEditEl` names `_gc_media`; the function on disk is `db._gc_orphans`.
 - EXIF orientation for images within the cap: `prepareImage` reports orientation-corrected dimensions but passes the original bytes, rotation flag included. Whether each engine applies that flag (and so whether the priced size and the model's view agree) was not checked.
 - Before the admin rows land, `currentProvider` is null, so the editor offers Attach on a non-user row and the staging role gate passes even if the model turns out to be MLX. The rebuild when residency lands removes the control but keeps any media already adopted.

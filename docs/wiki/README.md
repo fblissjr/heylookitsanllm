@@ -11,9 +11,9 @@ This wiki provides comprehensive, deep-dive technical documentation covering the
 | Document | Focus Area | Description |
 | :--- | :--- | :--- |
 | [**Architecture Overview**](./architecture_overview.md) | System & Architecture | High-level system topology, core invariants, data flow, thread model, and process boundaries. |
-| [**Core Backend**](./backend_core.md) | Backend Subsystems | FastAPI app assembly and the real router/prefix map, the Messages wire, the single-threaded DuckDB store, the effect-class config engine, override-only model discovery, and request cancellation. |
+| [**Core Backend**](./backend_core.md) | Backend Subsystems | FastAPI app assembly and the real router/prefix map, the Messages wire (including Anthropic `tools`), the single-threaded SQLite (WAL) store, the effect-class config engine, override-only model discovery, and request cancellation. |
 | [**Frontend flow maps**](./frontend/README.md) | Vanilla JS Web UI, flow by flow | For every user action: which functions run in which order, what each reads and writes, the requests, the exact strings shown, the guards, the awaits and what is re-checked after each. One page per area, below the Core Frontend page. |
-| [**Core Frontend**](./frontend_core.md) | Vanilla JS Web UI | Zero-build frontend, hash routing, DuckDB store mirroring, document lifecycle, preset system, settings drawer, and page architecture. |
+| [**Core Frontend**](./frontend_core.md) | Vanilla JS Web UI | Zero-build frontend, hash routing, SQLite store mirroring, document lifecycle, preset system, settings drawer, and page architecture. |
 | [**Providers & Generation**](./providers_architecture.md) | Multi-Engine Providers | Unified provider abstraction (`BaseProvider`), `GenerationChunk` contract, MLXProvider (one mlx-vlm engine, text and vision paths), reasoning parsers, and FIFO generation gate. |
 | [**Llama-Server & GGUF Deep Dive**](./llama_server_build_and_spawn.md) | GGUF Subprocess & Build | **Core Deep Dive**: How `llama-server` is built from C++ source, how the backend spawns and manages it, exact CLI parameters sent and why, the chat template ladder, and how settings are configured by model. |
 | [**Performance & Optimizations**](./performance_optimizations.md) | Cross-Stack Optimization | Complete guide to performance: Metal GPU shaders vs CPU glue, MLX prompt caching & KV snapshots, vision feature cache, speculative decoding, and incremental streaming UI rendering. |
@@ -41,7 +41,7 @@ The pages above explain; these records are what several of their statements rest
    - Process lifecycle is tied directly to model residency: loading spawns a process group; unloading cleanly SIGTERMs the process group.
 4. **Zero-Build, High-Fidelity Frontend**:
    - The web interface (`frontend/`) is 100% vanilla JavaScript, HTML, and CSS—no npm build step, no bundler, no SPA catch-all router.
-   - The frontend acts as an exact mirror of the DuckDB store with strict invalidation rules and incremental, linear-time markdown streaming.
+   - The frontend acts as an exact mirror of the SQLite (WAL) store with strict invalidation rules and incremental, linear-time markdown streaming.
 5. **Override-Only Model Configuration**:
    - `heylook.toml` is an override manifest, not an exhaustive inventory.
    - Local weights placed in scanned folders are automatically discovered, inspected via GGUF header/config analysis, and served with derived defaults without modifying `heylook.toml`.

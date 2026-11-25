@@ -65,6 +65,14 @@ the source, and found none that does not exist. A sample of flows was then read
 against the code step by step: selecting a conversation, and the watcher for a
 run the page is not subscribed to. Both matched.
 
+Subsequent releases (`v2.0.283`–`v2.0.285`) moved the server store from DuckDB
+to SQLite (WAL), added Anthropic `tools` on `/v1/messages` plus `#/presets`
+**Assist with AI** (`preset-assist.js`, streaming SSE + per-preset diff
+checkboxes), and closed 85 of the defects listed in
+[frontend_open_bugs.md](../../project/frontend_open_bugs.md). Treat
+`frontend_open_bugs.md` as the live status of which bugs remain open when an
+older flow-map note cites a closed `FB-*` ID.
+
 That is a check that the names are real and that a sample of sequences is
 right. It is not a proof that every step of every flow is in the right order.
 When a page and the code disagree, the code is right and the page needs the

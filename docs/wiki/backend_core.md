@@ -48,7 +48,7 @@ Model *load* is deliberately not behind it -- a generate request already loads a
 ### Application Lifespan
 The FastAPI `lifespan` handler coordinates subsystem lifecycle. Note that the `ModelRouter` is **not** built here -- `server.py` constructs it and passes it in on `app.state`. Nothing is warmed *by the lifespan*; a model named with `--model-id` is pre-warmed inside the router's own construction, before the lifespan runs.
 
-1. **Startup**: attaches a `MemoryManager` sharing the router's lifetime, starts the resource-snapshot loop task, opens the DuckDB connection, then resolves operational settings and configures the observability spine from them (`apply_runtime_settings`). The startup telemetry record is written *after* that, so it honours the level it just resolved rather than the pre-configure default.
+1. **Startup**: attaches a `MemoryManager` sharing the router's lifetime, starts the resource-snapshot loop task, opens the SQLite (WAL) connection, then resolves operational settings and configures the observability spine from them (`apply_runtime_settings`). The startup telemetry record is written *after* that, so it honours the level it just resolved rather than the pre-configure default.
 2. **Shutdown**: `router.unload_all()` runs **first and in its own `try`**. A gguf model's residency *is* a running `llama-server` subprocess in its own process group, which the terminal's Ctrl-C never reaches; anything still loaded at exit becomes a multi-GB orphan reparented to PID 1. Ordering it ahead of the DB close, guarded, means no later teardown failure can strand one. The database connection is closed next, then the snapshot task is cancelled.
 
 ---
@@ -59,8 +59,8 @@ In v1.79.66, legacy OpenAI-compatible endpoints (`/v1/chat/completions`, batch c
 
 ### 2.1. Dual-Route Architecture
 Inference is served by two distinct routes sharing a single wire grammar:
-- **`POST /v1/messages`** ([`messages_api.py`](../../src/heylook_llm/messages_api.py)): Stateless inference route conforming to Anthropic's Messages specification. Used by programmatic external clients and the Notebook frontend.
-- **`POST /v1/conversations/{id}/generate`** ([`conversation_generate_api.py`](../../src/heylook_llm/conversation_generate_api.py)): State-managed generation route used by the Chat frontend. The server reads conversation history directly from DuckDB, manages database persistence during generation, and terminates the SSE stream with an authoritative `heylook_saved` event containing persisted message metadata.
+- **`POST /v1/messages`** ([`messages_api.py`](../../src/heylook_llm/messages_api.py)): Stateless inference route conforming to Anthropic's Messages specification (including engine-neutral Anthropic `tools`, `tool_choice`, `tool_use` / `tool_result`, SSE `input_json_delta`, and `stop_reason: "tool_use"` across MLX and GGUF via [`tool_calling.py`](../../src/heylook_llm/tool_calling.py)). Used by programmatic external clients, the Notebook frontend, and `#/presets` **Assist with AI**.
+- **`POST /v1/conversations/{id}/generate`** ([`conversation_generate_api.py`](../../src/heylook_llm/conversation_generate_api.py)): State-managed generation route used by the Chat frontend. The server reads conversation history directly from SQLite, manages database persistence during generation, and terminates the SSE stream with an authoritative `heylook_saved` event containing persisted message metadata.
 
 ### 2.2. Internal `ChatRequest` Contract
 Although external requests use the Messages format (`MessageCreateRequest`), internal providers (`MLXProvider`, `LlamaServerProvider`) accept the internal [`ChatRequest`](../../src/heylook_llm/config.py):

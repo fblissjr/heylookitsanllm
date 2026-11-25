@@ -112,7 +112,7 @@ The prompts' lenses apply, read through heylook:
 
 - Reuse: the APC prefix cache, the vision feature cache, multi-turn context, long system prompts, images.
 - Engine parity: differences between MLX and gguf in the engine contract (`src/heylook_llm/providers/contract.py`), cache behaviour or report. A change to shared behaviour lands on both engines in the same commit, or the gap goes in TODO.md.
-- Request path: templating, tokenization, the streaming detokenizer, image preparation, SSE, serialization, the DuckDB writer, the generation gate.
+- Request path: templating, tokenization, the streaming detokenizer, image preparation, SSE, serialization, the SQLite writer, the generation gate.
 - Memory: unified-memory pressure, residency, load and unload, micro-batch sizing, the KV cache.
 - The gguf spawn and its flags.
 - Visibility: silent fallbacks, settings that can't explain their value and provenance, requests that can't say what they cost or reused. A value zeroed rather than omitted counts.

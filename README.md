@@ -1,6 +1,6 @@
 # Hey Look, It's an LLM
 
-Last updated: 2026-09-23
+Last updated: 2026-11-24
 
 <p align="center">
   <a href="assets/heylookitsanllm.jpeg">
@@ -25,8 +25,9 @@ it holds to: [VISION.md](VISION.md).
 ## Features
 
 - **One inference API**: Anthropic Messages-conformant `/v1/messages` with
-  typed content blocks (text, image, thinking) plus
-  documented heylook extensions; `/v1/models` keeps the OpenAI-shaped list for
+  typed content blocks (text, image, thinking, `tool_use`/`tool_result`) plus
+  Anthropic `tools`/`tool_choice` across both MLX and GGUF and documented
+  heylook extensions; `/v1/models` keeps the OpenAI-shaped list for
   discovery clients. The OpenAI-compatible `/v1/chat/completions` route was
   removed in v1.79.66: no page of the web UI had used it since v1.74.0 and the
   owner's other project speaks `/v1/messages`, so one generation now has one
@@ -81,20 +82,23 @@ it holds to: [VISION.md](VISION.md).
   `PUT /v1/admin/config`); raising it writes JSONL under `logs/`, local files
   only.
 - **Server-side storage** (conversations, notebooks, presets, settings) is a
-  single DuckDB file; `HEYLOOK_DB_PATH` relocates it, `HEYLOOK_LOGS_DIR` the
-  log dir.
+  single SQLite (WAL) file (`data/conversations.db`); `HEYLOOK_DB_PATH`
+  relocates it, `HEYLOOK_LOGS_DIR` the log dir.
 
 ## Web UI
 
 Vanilla JS frontend at `/` -- no bundler, no node_modules, no build step;
 served directly by the backend. Conversations, notebooks, and presets are
-stored server-side in DuckDB (messages as content blocks; images round-trip).
+stored server-side in SQLite (WAL mode; messages as content blocks; images
+round-trip).
 
 Pages: **Chat** (streaming with thinking blocks, capability-gated image/audio
 attach, per-conversation system prompt + presets, honest mid-conversation
-model switching), **Notebook** (base-model continuation), **Models** (watch
-folders, load/unload, schema-driven per-model config editor), and
-**Performance**.
+model switching), **Notebook** (base-model continuation), **Presets** (editor,
+JSON/Markdown import/export with diff review, and streaming **Assist with AI**
+tool-calling edits), **Models** (watch folders, load/unload, schema-driven
+per-model config editor), **Performance**, and **Embeddings** (Compare +
+Embedding Lab).
 
 Build contract: [docs/frontend_v3_spec.md](./docs/frontend_v3_spec.md) (§4 =
 the backend API contract).

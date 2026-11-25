@@ -113,8 +113,9 @@ Vanilla JS, **no framework, no bundler, no build step** -- one
 v1.79.76 moved it off `/v3` and
 dropped the SPA fallback -- hash routing means the server never sees a deep
 path, so an unknown path 404s and the API keeps its 404s).
-Source of truth for conversations/notebooks/presets is the **server-side DuckDB
-store** (`db.py`); the browser persists only sampler settings in localStorage.
+Source of truth for conversations/notebooks/presets is the **server-side SQLite
+(WAL) store** (`db.py`); browser-local storage goes exclusively through
+`frontend/js/storage.js` (draft prompts and remembered conversation id).
 Desktop + iPhone Safari are co-primary.
 
 Read `js/page.js` (the `createPage` lifecycle) before touching any page.
@@ -132,6 +133,9 @@ js/
   settings.js               # sampler store, IN-MEMORY since v2.0.38 (the panel is a view of a document; nothing persists it). null = backend-cascade; mergeKnown() filters unknown keys AND out-of-range values from every source; snapshotSettings()/applySettings(). The global display-pref store went with show_special_tokens. buildSettingsPanel: Thinking first (one control: Default / Off / the template's levels; On only without a default level) with the token cap as its sub-row, then the samplers, Advanced folded with a changed-count; a blank field's default source sits under its name. rowThinking(row) = engine.thinking + the template origin
   settings-drawer.js        # app-shell global slide-over settings drawer; registerSettings(contribution) shared by all pages (sections/sampling/extras)
   preset-bar.js             # shared drawer section (createPresetBar): a provenance line from the document's applied_preset_id ("No preset" / "From preset X" / "X, modified: ..."; one provenance() feeds the line, the bar chip and the picker mark) and two verbs, each opening a sheet -- Apply preset… (every preset with its OWN prompt, one Apply per entry, armed only to replace a differing prompt) and Save… (Save as a new preset: creates, refuses a name in use; Overwrite X: under the create, only while the document is stamped with X and differs, armed on every press; the one write to an existing preset, its target is the stamp and nothing can re-aim it). presetForNewDoc answers with the open document's stamped preset; used by chat + notebook
+  preset-io.js              # portable JSON/Markdown/ZIP preset import/export, unified prompt/param diffs, and import planner (parity with src/heylook_llm/preset_io.py)
+  preset-assist.js          # streaming /v1/messages Anthropic tool-calling loop for #/presets Assist with AI (stages diffs into the shared import review dialog)
+  storage.js                # single localStorage/IndexedDB registry (STORAGE_REGISTRY + startup sweepRetiredStorage)
   prompt-section.js         # shared drawer section (createPromptSection): the per-document system-prompt editor -- commits state per keystroke, debounces the PUT, flushes on blur AND on teardown; Clear (armed) writes null; used by chat + notebook
   engine.js                 # the engine contract's one reader and renderer: readFact, contextCeiling/contextRunning, renderEngine (models-page row panel: facts, later slots generically, settings grouped by effect, ui:"hidden" fields only when configured), renderEngineCompact (chat's engine chip panel)
   load-panel.js             # chat's load panel (createLoadPanel, plan W1): one control per `load_setting` field from /v1/admin/model-options beside the model select -- the context select below, and a default-first select per other field labelled with what the default is ("flash attn: default (on)"); choicesToSend() is the /reload body (null = the default)
@@ -143,7 +147,7 @@ js/
   document-writer.js          # the per-document write path shared by chat + notebook: system-prompt PUT chain and the keepalive ordering rule, applied_preset_id stamp
   utils.js                    # createEl/debounce/autoGrow + throttleToFrame (cheap work) and throttleToInterval (painters whose cost scales with the document)
   vendor/                   # marked.esm.js, purify.es.mjs (only vendored deps)
-  pages/  chat.js  notebook.js  presets.js  models.js  perf.js
+  pages/  chat.js  notebook.js  presets.js  models.js  perf.js  embeddings.js
 ```
 
 Batch was dropped from v3 scope on purpose (spec §6). The backend has none either: the endpoint went in v1.79.66 and the batch internals behind it in v2.0.57.
@@ -232,8 +236,8 @@ explorer in v1.79.74 -- it had no other consumer.
 2. **Sampler cascade** -- v3 sends only non-null keys; **null = backend cascade**.
    Don't make the backend require fields v3 omits.
 3. **Server-side persistence** is a product pillar (what makes iPhone+desktop
-   co-primary work; position-based truncation builds on it). The DuckDB store is
-   that pillar.
+   co-primary work; position-based truncation builds on it). The SQLite (WAL)
+   store is that pillar.
 
 ### Known gap: gguf entries imported before 2026-08-07 under-report (owner action)
 

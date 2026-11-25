@@ -16,15 +16,15 @@ paths:
 
 ## Inference operations
 
-- `/v1/messages` (Anthropic Messages-conformant plus documented heylook extensions) and `/v1/conversations/{id}/generate`, which shares its grammar. Do not re-add an OpenAI wire. `/v1/models` keeps the OpenAI list shape because clients read `data`; that is a shape, not a wire.
+- `/v1/messages` (Anthropic Messages-conformant plus documented heylook extensions, including engine-neutral Anthropic `tools`/`tool_choice`/`tool_use`/`tool_result` across MLX and GGUF gated on the derived `"tools"` capability) and `/v1/conversations/{id}/generate`, which shares its grammar. Do not re-add an OpenAI wire. `/v1/models` keeps the OpenAI list shape because clients read `data`; that is a shape, not a wire.
 - `/v1/embeddings` is a separate non-streaming operation with ordered multimodal items, one pooled vector per item. Its own strict schema rejects generation knobs; cancellation uses the same request registry. It adds no result store.
 - `ChatRequest` stays as the internal request every provider takes, in OpenAI vocabulary; the rename to Anthropic's happens once, in `converters`. Nothing binds `ChatRequest` as a request body, so a guard refusing a removed or renamed field belongs on `MessageCreateRequest`. A test for such a guard must go through the route.
 - Messages conformance: media blocks accept both nested `source` and flat `source_type` (`source` is a declared `MediaSource` field so it reaches the JSON Schema). Thinking blocks and `thinking_delta` carry text under both `thinking` and `text`; keep both. `stop_reason` comes from one table, `converters.STOP_REASON_FROM_FINISH_REASON`, and `TestStopReasonHasOneMapper` asserts it is the only writer across both routes. An aborted generate run reports `max_tokens`. `error` is not a stop reason. The `/v1/conversations` store accepts only nested `source`. Deliberate differences from Anthropic's spec are hand-listed in `docs/api_integration.md` and can be wrong.
 - Cancellation (`request_registry.py`): `DELETE /v1/requests/{request_id}` sets a run's `AbortEvent`. It makes a run stoppable, not self-stopping; disconnect polling was deliberately not built (owner call). The id comes from `X-Request-ID` via the shared `resolve_request_id` (bounded and charset-restricted). The registry maps an id to a set. Register a streaming body by wrapping the generator (`tracked_stream`), never with a `with` around the return.
 
-## DuckDB store
+## SQLite (WAL) store
 
-- `db.py` holds conversations, notebooks, presets and `settings`, with a single serialized writer thread and transactional ops. `HEYLOOK_DB_PATH` overrides the location.
+- `db.py` holds conversations, notebooks, presets and `settings` in stdlib `sqlite3` (`WAL` mode, `foreign_keys=ON`, `busy_timeout=10000`, `isolation_level=None`) with a single serialized worker thread (`data/conversations.db`) and explicit transactional ops. `HEYLOOK_DB_PATH` overrides the location.
 - Dynamic field names are gated by allowlists: the `_UPDATABLE_*_FIELDS` frozensets and the public `UPDATABLE_CONVERSATION_FIELDS`, which the update route also uses (never a second copy).
 - Schema changes: add a table with `CREATE TABLE IF NOT EXISTS`; for a real change, bump `_SCHEMA_VERSION`, which drops all tables. `settings` and `presets` are additive, drop-safe and not in the drop list. No migration code.
 - `params` on conversations, notebooks and presets is typed `schema.sampler_params.SamplerParams` on every write: keys from `REQUEST_SAMPLER_FIELDS`, types and ranges from `ChatRequest`'s fields (never a copy), unknown or bad = 422. A new route that writes `params` uses the same type.
